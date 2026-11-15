@@ -184,6 +184,10 @@ export interface SpaceProps extends PointerEvents {
    * ruler and the keys of a piano roll. Give it the same `unit`, `extent` and `zoom` on that axis.
    */
   follow?: { x?: string; y?: string };
+  /** A range in its units that it scrolls the least to show, with a little room, each time it changes: not when it shows already, and to its start when it is wider. Such as the bars just chosen. */
+  show?: Bind<{ x?: readonly [number, number]; y?: readonly [number, number] } | undefined>;
+  /** A live value across, such as `now.tick`: when it leaves what shows, it scrolls so the value sits a little in from its left edge, a page turn as a score follows playback. A scroll by hand away from it stays until it comes back and leaves again. With none it turns nothing. */
+  turns?: Bind<Live | undefined>;
   background?: Bind<Color>;
   radius?: Radius | number;
   /**

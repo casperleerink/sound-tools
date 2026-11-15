@@ -912,6 +912,30 @@ impl Live {
         });
     }
 
+    /// Answers an `openField` with the text typed or picked, or none.
+    pub(crate) fn field_typed(&mut self, question: u64, text: Option<&str>) {
+        self.host.send(&Request::Answer {
+            question,
+            answer: Answer::Typed(text),
+        });
+    }
+
+    /// The card that heard the last event shows `menu` when it draws next. With none, nothing
+    /// was picked.
+    fn open_menu(&mut self, menu: OpenedMenu, cx: &mut Context<Self>) {
+        let card = (self.last_event_card).filter(|card| self.cards.contains_key(card));
+        match card.and_then(|card| Some((card, self.cards.get_mut(&card)?))) {
+            Some((card, entry)) => {
+                entry.menu = Some(menu);
+                cx.emit(CardsChanged::One(card));
+            }
+            None => match menu.asks {
+                Asks::Item { .. } => self.menu_picked(menu.question, None),
+                Asks::Text { .. } => self.field_typed(menu.question, None),
+            },
+        }
+    }
+
     /// Puts the offer `key` at the child `path` of `instance`, as one edit `label`: a device a
     /// view of the project picked.
     fn add_offer(
@@ -1697,22 +1721,39 @@ impl Live {
                 width,
                 max_height,
                 search,
-            } => match (self.last_event_card).filter(|card| self.cards.contains_key(card)) {
-                Some(card) => {
-                    if let Some(entry) = self.cards.get_mut(&card) {
-                        entry.menu = Some(OpenedMenu {
-                            question,
-                            items,
-                            notes,
-                            width,
-                            max_height,
-                            search,
-                        });
-                    }
-                    cx.emit(CardsChanged::One(card));
-                }
-                None => self.menu_picked(question, None),
-            },
+            } => {
+                let asks = Asks::Item {
+                    items,
+                    notes,
+                    max_height,
+                    search,
+                };
+                let menu = OpenedMenu {
+                    question,
+                    width,
+                    asks,
+                };
+                self.open_menu(menu, cx);
+            }
+            Event::OpenField {
+                question,
+                value,
+                placeholder,
+                suggestions,
+                width,
+            } => {
+                let asks = Asks::Text {
+                    value,
+                    placeholder,
+                    suggestions,
+                };
+                let menu = OpenedMenu {
+                    question,
+                    width,
+                    asks,
+                };
+                self.open_menu(menu, cx);
+            }
             Event::Offers {
                 question,
                 takes,
@@ -2635,14 +2676,28 @@ pub(crate) struct Asked {
     pub confirm: String,
 }
 
-/// A menu the code of a card opened, which the card shows when it draws next.
+/// A menu or a field the code of a card opened, which the card shows when it draws next.
 pub(crate) struct OpenedMenu {
     pub question: u64,
-    pub items: Vec<MenuItemSpec>,
-    pub notes: Vec<String>,
     pub width: Option<f32>,
-    pub max_height: Option<f32>,
-    pub search: bool,
+    pub asks: Asks,
+}
+
+/// What a menu the code of a card opened asks the composer for.
+pub(crate) enum Asks {
+    /// The place of one of `items`.
+    Item {
+        items: Vec<MenuItemSpec>,
+        notes: Vec<String>,
+        max_height: Option<f32>,
+        search: bool,
+    },
+    /// Text: what is typed in a field that opens with `value`, or one of `suggestions`.
+    Text {
+        value: String,
+        placeholder: String,
+        suggestions: Vec<String>,
+    },
 }
 
 #[cfg(test)]

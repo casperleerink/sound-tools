@@ -14,7 +14,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - No toolbars and no tools: what the pointer is on decides what a drag does.
 - Chrome is one quiet menu on the project name, and the live input beside it.
 - Cards have no chips, rack ears, screws or gradients. Secondary parameters sit behind expand.
-- Text in the window is for a musician, not a programmer: no names of languages, programs, formats or files (TypeScript, Bun, JSON, `extensions/`). Something that cannot run says why in plain words (`This project does not load plugins.`); what to edit is for the agent docs.
+- Text in the window is for a musician, not a programmer: no names of languages, programs, formats or files (TypeScript, Bun, JSON, `extensions/`). Something that cannot run says why in plain words; what to edit is for the agent docs.
 - Notices are quiet lines in the bottom right corner. Nothing blocks. Files that are not live are a sign beside the project menu, not a notice: they stay until fixed.
 - Accessible: visible focus rings for keyboard focus, labelled controls, full keyboard reach. This is a product requirement.
 
@@ -26,7 +26,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - Every drag control shares one gesture: a press never jumps, shift is ten times finer, double click or backspace sets the default, escape puts a drag back. A click on a value, or enter, types it.
 - A value an automation lane of the track moves is not the composer's to drag: its control shows what the lane plays at the playhead and stays put, and its keys and reset do nothing. It stays a tab stop, and a small dot and a tooltip say why. Taking the lane out gives the control back the record. While Write automation is on and the piece plays, it drags from what plays and writes into the lane (touch).
 - Two-finger scroll never changes a value. A control that took it would change a sound scrolled past.
-- Interface state that is about how the composer works (zoom, snap, the loop, expanded cards, shown lanes, open returns, armed tracks) is not saved in the project. A setting in a project file would be one more thing an agent could change under the composer. What belongs to the machine is kept in the app's support folder, outside every project: whether the agent sidebar is open, the agent's approval mode and model, its threads, the composer's own shortcuts, and how the last export was made.
+- Interface state that is about how the composer works (zoom, snap, the loop, expanded cards, shown lanes, open returns, armed tracks) is not saved in the project. A setting in a project file would be one more thing an agent could change under the composer. What belongs to the machine is kept in the app's support folder: the agent's sidebar, approval mode, model and threads, the composer's shortcuts and the last export's settings.
 - Our own look: plain parameter names and our own drawings. We learn from Ableton but copy no graphic, name or text of it.
 - Every built-in device has its own icon in the pickers, a line drawing of what it does to the sound; a plugin shows a plug. Effects are grouped by what they do, plugins last. A plugin in two formats is one row, the CLAP one: its numbers keep their units.
 
@@ -61,7 +61,7 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 
 ## Using the app
 
-The DAW template follows these rules; its own gestures and keys are its code, in `templates/daw/extensions`.
+Templates follow these rules; their keys are in `templates/*/extensions`. The Composer is one line of score with quiet marks; the music is the picture, so it opens with no panel. Tempo changes at once or in a straight line.
 
 ### Gestures
 
@@ -77,7 +77,7 @@ The DAW template follows these rules; its own gestures and keys are its code, in
 - Adding something never changes the sound: a new automation lane holds the value its number plays now.
 - A drag shows what it will do before the drop: a lavender ring where it lands.
 - Audio comes from files only. A dropped file is copied into the project.
-- Arming, the metronome and the computer keys are not saved and are no undo step.
+- Arming, the metronome and the computer keys are no undo step.
 
 ### Keys
 

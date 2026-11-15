@@ -1,9 +1,12 @@
 //! What moves on a page moves in the window, with no Bun: a knob turns its field as one undo
-//! step, and a drag moves what binds to it; Bun hears the drag once, at its end.
+//! step, a drag moves what binds to it, and a space scrolls to what it is told to keep in view;
+//! Bun hears the drag once, at its end.
 
 use gpui::{
     Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, TestAppContext, point, px,
 };
+
+use sound_core::Ticks;
 
 use super::{ONLY_THE_TOOL, Opened, open};
 use crate::support::write_outside;
@@ -213,6 +216,137 @@ fn a_drag_moves_what_binds_to_it_and_bun_hears_it_once_at_its_end(cx: &mut TestA
     );
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Move the block"));
+}
+
+/// A space 400 points wide over 2000 units that shows the range the div clicked last sets, and
+/// says where a press on it falls.
+const SHOWN: &str = r#"import { h, Space, tool } from "./sdk";
+
+const ranges: [string, [number, number]][] = [["near", [50, 100]], ["far", [1000, 1100]], ["back", [800, 900]]];
+
+tool({
+  name: "shows",
+  title: "Shows",
+  when: "Never",
+  doc: "A space that shows a range.",
+  state: {},
+  memory: () => ({ show: undefined as { x: [number, number] } | undefined, heard: "" }),
+  view: ({ memory }) =>
+    h("div", { style: { padding: 40, gap: 8 } },
+      h(Space, {
+        key: "board", width: 400, height: 40, extent: { x: [0, 2000] },
+        show: () => memory.show,
+        onPress: ({ x }) => (memory.heard = `at-${Math.round(x)}`),
+      }),
+      ranges.map(([name, range]) =>
+        h("div", { key: name, style: { width: 80, height: 20 }, onClick: () => { memory.show = { x: range }; memory.heard = ""; } }, name)),
+      () => memory.heard && h("div", { key: `heard-${memory.heard}` }, memory.heard),
+    ),
+});
+"#;
+
+/// After a click on the div `name`, a press 10 points into the space falls `at` its units.
+fn press_after(window: &mut Opened<'_>, name: &str, at: u32) {
+    let board = window.space("board") + point(px(10.), px(10.));
+    let button = window.until_found(&format!("div-{name}"));
+    window.click(button);
+    window.wait_for_bun();
+    window.click(board);
+    window.until_found(&format!("div-heard-at-{at}"));
+}
+
+/// A range in view moves nothing; one past the right edge scrolls the least, to 24 points past
+/// its end, and from there one in view moves nothing again.
+#[gpui::test]
+fn a_space_scrolls_the_least_to_show_a_range_it_does_not_show(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("shows", SHOWN));
+    press_after(&mut window, "near", 10);
+    press_after(&mut window, "far", 734);
+    press_after(&mut window, "back", 734);
+}
+
+/// A space 400 points wide over 4000 ticks, whose page turns with the playhead, and which says
+/// where a press on it falls.
+const PAGES: &str = r#"import { h, Space, tool } from "./sdk";
+
+tool({
+  name: "pages",
+  title: "Pages",
+  when: "Never",
+  doc: "A space that turns its pages with the playhead.",
+  state: {},
+  memory: () => ({ heard: "" }),
+  view: ({ memory, now }) =>
+    h("div", { style: { padding: 40, gap: 8 } },
+      h(Space, {
+        key: "board", width: 400, height: 40, unit: { x: 0.1 }, extent: { x: [0, 20000] },
+        turns: now.tick,
+        onPress: ({ x }) => (memory.heard = `at-${Math.round(x)}`),
+      }),
+      () => memory.heard && h("div", { key: `heard-${memory.heard}` }, memory.heard),
+    ),
+});
+"#;
+
+/// The playhead moving inside the space turns nothing; once it passes the right edge, its page
+/// turns so it sits 24 points in from the left.
+#[gpui::test]
+fn a_space_turns_its_page_when_the_playhead_passes_its_right_edge(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("pages", PAGES));
+    let board = window.space("board") + point(px(10.), px(10.));
+    for (tick, at) in [(3000, "at-100"), (5000, "at-4860")] {
+        let session = window.session.clone();
+        window.cx.update(|_, cx| {
+            session.update(cx, |session, _| session.engine().seek(Ticks(tick)));
+        });
+        window.until_playhead(tick);
+        window.settle();
+        window.click(board);
+        window.until_found(&format!("div-heard-{at}"));
+    }
+}
+
+/// The space of [`PAGES`] whose `turns` its code takes away at the first press.
+const PAGES_UNTIL_PRESSED: &str = r#"import { h, Space, tool } from "./sdk";
+
+tool({
+  name: "pages",
+  title: "Pages",
+  when: "Never",
+  doc: "A space that turns its pages with the playhead until it is pressed.",
+  state: {},
+  memory: () => ({ heard: "", presses: 0, follows: true }),
+  view: ({ memory, now }) =>
+    h("div", { style: { padding: 40, gap: 8 } },
+      h(Space, {
+        key: "board", width: 400, height: 40, unit: { x: 0.1 }, extent: { x: [0, 20000] },
+        turns: () => (memory.follows ? now.tick : undefined),
+        onPress: ({ x }) => {
+          memory.presses += 1;
+          memory.heard = `at-${Math.round(x)}-${memory.presses}`;
+          memory.follows = false;
+        },
+      }),
+      () => memory.heard && h("div", { key: `heard-${memory.heard}` }, memory.heard),
+    ),
+});
+"#;
+
+/// Once its code took `turns` away, the playhead passing the right edge turns no page.
+#[gpui::test]
+fn a_space_whose_turns_is_taken_away_turns_no_page(cx: &mut TestAppContext) {
+    let mut window = open_project(cx, &project("pages", PAGES_UNTIL_PRESSED));
+    let board = window.space("board") + point(px(10.), px(10.));
+    for (tick, at) in [(3000, "at-100-1"), (5000, "at-100-2")] {
+        let session = window.session.clone();
+        window.cx.update(|_, cx| {
+            session.update(cx, |session, _| session.engine().seek(Ticks(tick)));
+        });
+        window.until_playhead(tick);
+        window.settle();
+        window.click(board);
+        window.until_found(&format!("div-heard-{at}"));
+    }
 }
 
 const STEPS: &str = r#"import { h, pattern, Steps, tool } from "./sdk";

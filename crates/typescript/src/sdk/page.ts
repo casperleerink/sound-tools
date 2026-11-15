@@ -119,6 +119,8 @@ export interface TransportProps {
    * region or a recorder. Say `time` for a tool whose code alone reads the clock.
    */
   time?: boolean;
+  /** `false` for a tool that keeps the tempo and the time signature itself, such as one of each bar: the transport shows neither, and the tool its own controls. */
+  tempo?: false;
 }
 
 /**
@@ -130,11 +132,12 @@ export interface TransportProps {
  * Space plays and pauses a tool that shows it, wherever the focus is: it gives the tool the
  * action `play`, unless the tool has its own.
  */
-export function Transport({ record, computerKeys, writeAutomation, time }: TransportProps = {}): UiNode {
+export function Transport({ record, computerKeys, writeAutomation, time, tempo }: TransportProps = {}): UiNode {
   const { clock, tool, children } = currentCard().drawn;
   const spec = host.tools.get(tool);
   if (spec && spec.actions?.play === undefined) spec.actions = { play: playPause, ...spec.actions };
   const timed = time ?? (inTime(tool) || untrack(() => anyInTime(children)));
+  const marked = timed && tempo !== false;
   const pill: Style = {
     direction: "row", align: "center", gap: "md", height: 36, paddingLeft: "xs", paddingRight: "lg",
     radius: "full", background: "fill-strong", borderColor: "border-strong", borderWidth: 1, keep: true,
@@ -168,11 +171,11 @@ export function Transport({ record, computerKeys, writeAutomation, time }: Trans
     ),
     timed && clockText("transport-position", 44, "position", "text"),
     timed && clockText("transport-time", 40, "time", "muted"),
-    timed && h("div", { style: row },
+    marked && h("div", { style: row },
       NumberBox({ key: "transport-tempo", width: 32, per: 2, min: 10, max: 1000, value: () => clock.bpm, onChange: setTempo, show: now.bpm.round() }),
       word("transport-bpm", 32, 0, "bpm"),
     ),
-    timed && h("div", { style: row },
+    marked && h("div", { style: row },
       NumberBox({ key: "transport-beats", width: 14, min: 1, max: 32, unit: "beats", value: () => signature().beats, onChange: (beats) => setSignature(beats, signature().note), show: now.tick }),
       word("transport-slash", 14, 3, "/"),
       NumberBox({ key: "transport-note", width: 14, values: NOTES, unit: "note", value: () => signature().note, onChange: (note) => setSignature(signature().beats, note), show: now.tick }),

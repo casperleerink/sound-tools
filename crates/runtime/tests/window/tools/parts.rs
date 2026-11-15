@@ -1,6 +1,6 @@
-//! Parts of a view that come and go: a popover and a dialog its code opens and closes, a timer
-//! that goes with the part that made it, the one branch of a `Switch` that shows, and rows put
-//! in before others.
+//! Parts of a view that come and go: a popover and a dialog its code opens and closes, a menu
+//! and a field it asks with, a timer that goes with the part that made it, the one branch of a
+//! `Switch` that shows, and rows put in before others.
 
 use gpui::{ScrollDelta, ScrollEvent, TestAppContext, TouchPhase, point, px};
 
@@ -523,6 +523,67 @@ fn the_end_of_a_drag_starts_a_timer(cx: &mut TestAppContext) {
     let block = window.until_found("space-board");
     window.drag(block, block + point(px(20.), px(0.)));
     window.until_found("div-ended");
+}
+
+/// A div whose click opens a field with `old` in it and three tempo words under it, and says
+/// what it answered.
+const FIELD: &str = r#"import { h, tool } from "./sdk";
+
+tool({
+  name: "field",
+  title: "Field",
+  when: "Never",
+  doc: "A field its code opens.",
+  state: {},
+  memory: () => ({ heard: "" }),
+  view: ({ memory, openField }) =>
+    h("div", { style: { padding: 40, gap: 8 } },
+      h("div", {
+        key: "open",
+        style: { width: 80, height: 20 },
+        onClick: () => openField({ value: "old", suggestions: ["Adagio", "Allegro", "Andante"] })
+          .then((typed) => (memory.heard = `typed-${typed}`)),
+      }, "Open"),
+      () => memory.heard && h("div", { key: `heard-${memory.heard}` }, memory.heard),
+    ),
+});
+"#;
+
+/// Opens the field of [`FIELD`], once it shows.
+fn open_field(cx: &mut TestAppContext) -> Opened<'_> {
+    let mut window = page(cx, "field", FIELD);
+    let open = window.until_found("div-open");
+    window.click(open);
+    window.until_found("menu-search");
+    window
+}
+
+/// What is typed replaces the selected value and is answered trimmed, though no suggestion
+/// holds it.
+#[gpui::test]
+fn a_field_answers_what_was_typed_over_its_value(cx: &mut TestAppContext) {
+    let mut window = open_field(cx);
+    window.cx.simulate_input(" Lento ");
+    window.keys("enter");
+    window.until_found("div-heard-typed-Lento");
+}
+
+/// What is typed narrows the suggestions, and enter answers the one the arrows highlight.
+#[gpui::test]
+fn a_field_answers_the_suggestion_the_arrows_highlight(cx: &mut TestAppContext) {
+    let mut window = open_field(cx);
+    window.cx.simulate_input("al");
+    window.keys("down enter");
+    window.until_found("div-heard-typed-Allegro");
+}
+
+#[gpui::test]
+fn escape_closes_a_field_with_no_answer(cx: &mut TestAppContext) {
+    let mut window = open_field(cx);
+    window.cx.simulate_input("Lento");
+    window.keys("escape");
+    window.until_found("div-heard-typed-null");
+    assert!(window.find("menu-search").is_none());
 }
 
 /// Two divs whose clicks open menus of three items, the second with its first checked, and a

@@ -393,6 +393,18 @@ export interface MenuOptions {
   search?: boolean;
 }
 
+/** How a field of `openField` shows. */
+export interface FieldOptions {
+  /** The text it opens with, selected, so what is typed replaces it. */
+  value?: string;
+  /** What it says while it is empty. */
+  placeholder?: string;
+  /** Rows under it that what is typed narrows: up and down highlight one, and enter or a click answers it. */
+  suggestions?: readonly string[];
+  /** In points; 200 when left out. */
+  width?: number;
+}
+
 /** A number `numbers` gives: what a lane or a cable moves, from `min` to `max`, as its knob travels them. */
 export interface MovedNumber {
   name: string;

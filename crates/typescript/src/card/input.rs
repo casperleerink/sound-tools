@@ -992,12 +992,7 @@ impl TypeScriptCard {
     ) {
         let mut spaces = self.spaces.borrow_mut();
         spaces.insert(key.to_string(), view);
-        if let Some(leader) = follow.x.as_ref().and_then(|key| spaces.get_mut(key)) {
-            (leader.left, leader.zoom_x) = (view.left, view.zoom_x);
-        }
-        if let Some(leader) = follow.y.as_ref().and_then(|key| spaces.get_mut(key)) {
-            (leader.top, leader.zoom_y) = (view.top, view.zoom_y);
-        }
+        super::space::move_leaders(&mut spaces, &view, follow);
         drop(spaces);
         cx.notify();
     }

@@ -91,10 +91,10 @@ my-piece/
 `crates/core/src/project/history.rs`.
 
 - **One system.** Undo, redo and the History tab are moves through the same points; there is no undo stack. Only files are history: playback, arming and selection are not.
-- **A git repository of its own** in `.sound-tools/history`, written by hand (loose objects, refs, a detached `HEAD`), so plain `git --git-dir … log --all --graph` reads it. Rejected: the folder's own `.git`, which an agent's git commands rewrite; jj; a git library, heavier than the three object types we write. Packs are not read: nothing here makes one.
+- **A git repository of its own** in `.sound-tools/history`, written by hand (loose objects, refs, a detached `HEAD`), so plain `git --git-dir … log --all --graph` reads it. Rejected: the folder's own `.git`, which an agent's git commands rewrite; jj; a git library, heavier than the three object types we write.
 - **Kept:** `project.json`, `state/` and the project's tool code in `extensions/`, without what the runtime writes there. Assets are never written over, so they need no history.
 - **Same state is the same bytes.** A rewrite in another layout is a change. Undo writes a point's files back byte for byte and the project follows them as it follows an agent's write: a file that does not load comes back as it was, and the sound plays the last good version. Rejected: applying in-memory records, which rewrote an agent's file in our layout.
-- **A point** is a finished edit, a run of a tool once quiet, or outside changes. Outside groups within 15 s or of one request replace the point before, and one that takes back what it wrote leaves none. A drag in memory never reached disk, so it is no point. Before any move, what the folder holds that history has not seen is saved first, so nothing is lost.
+- **A point** is a finished edit, a run of a tool once quiet, or outside changes. Outside groups within 15 s or of one request replace the point before, and one that takes back what it wrote leaves none. A drag in memory never reached disk, so it is no point. Before any move, what the folder holds that history has not seen is saved, so nothing is lost.
 - **Going somewhere is never a point.** The next change after it starts a version. After undo, it does only when the undone work was big (10 points or 2 minutes); small undone work is marked undone, kept in git and findable. alt-cmd-Z undoes as going back does.
 - **Lines are explicit** in `lines.json` next to the repository: each version or undone run with its start and tip, number and name. A point's line follows from its children while reading newest first, so pages of 300 need no older point. A lost or broken file is built again from the refs, without names. Rejected: working out lines from "first child" order, which needs the whole history and moves lanes when undone work is kept.
 - **Commit times are milliseconds** in the message and always after the parents', so newest first never shows a parent before its child.
@@ -132,7 +132,8 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 
 - A project keeps its own copy of the template's code. Rejected: the template loaded from the app, which updates by itself but makes a project look different under two releases and needs an "eject" to change one file; hashes of the files, which leave a merge nothing to merge from.
 - The DAW is only a template of tools of the project. Rejected: keeping the Rust arrangement next to it, two DAWs to maintain.
-- A saved template is a folder in the support folder, laid out as one of `templates/`, so it can later be shared as it is. "Tools only" keeps the records at the top and the children their tools require by name, such as a song's master and no track, and no sections or later tempo: the core cannot tell a tool's setup from its music, but a tool says which children it must have. A project made from one keeps no template code: there is no newer version to update from.
+- A saved template is a folder in the support folder, laid out as one of `templates/`, so it can be shared as it is. "Tools only" keeps the top records and the children their tools require, such as a song's master, and no sections or later tempo: the core cannot tell setup from music, but a tool names the children it must have. A project made from one keeps no template code.
+- The Composer template keeps the form in its own record: sections of bars, each with its time signature and tempo. The clock's tempo map, the section names and each part's start and length are derived from it; notes count from their section's start, so a longer bar moves only what follows. Rejected for now: this form in the core before the template proves it.
 
 ## Audio files and the Sampler
 
@@ -156,7 +157,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - A recorded note is saved at the tick the engine sounded it, so playback matches what was heard. The raw performance is kept as an asset.
 - Live input and the sound of other apps are `project.json` connections. Input and output keep their own clocks: the engine drops old frames or plays silence instead of resampling. Rejected for app sound: a virtual device of our own, which needs a driver install.
 - A take goes to the `onTake` of its recorder's parent: what a take becomes, and where, is structure, which the project owns. Rejected: the recorder writing children itself.
-- A hand writes automation only into a lane that exists, while Write automation is on and the piece plays (touch): the lane lets go while the hand holds its number, and the drag is one undo step that leaves the device's record as it was (`crates/typescript/src/touch.rs`). It writes few points, on a 1/32 grid with three digits, so people and agents can read and edit the lane. Rejected: a take to `onTake` and a trip through Bun; recording on the audio thread, which would give the core lanes; latch and write modes; fitting curves to the hand.
+- A hand writes automation only into a lane that exists, while Write automation is on and the piece plays (touch): the lane lets go while the hand holds its number; the drag is one undo step that leaves the device's record as it was (`crates/typescript/src/touch.rs`). It writes few points, on a 1/32 grid with three digits, so people and agents can read it. Rejected: a take to `onTake` and a trip through Bun; recording on the audio thread, which would give the core lanes; latch and write modes; fitting curves to the hand.
 
 ## Built-in instruments and effects
 
@@ -175,7 +176,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 - What a plugin sends out is dropped or read into fixed-size queues, so a plugin cannot make our audio thread allocate. What its own process sends back is read only as numbers held to a bound.
 - Inspect loads no plugin. Printing a project must not run third-party code.
-- A session that plays runs every plugin in a process of its own (the same program), so a crash or a hang costs its slot: silent (an effect lets the sound through), a problem, back only by Start again, never by itself. Rejected: one process for all plugins, where one crash silences all; one per track, which this host cannot know.
+- A session that plays runs every plugin in a process of its own, so a crash or a hang costs its slot: silent (an effect lets the sound through), a problem, back only by Start again. Rejected: one process for all plugins, where one crash silences all; one per track, which this host cannot know.
 - The audio thread waits for each sub-block of a plugin's process, one round trip of about 10 µs. Rejected: playing a block behind, a block of latency per plugin in a chain.
 - A child is hung when its main thread has not come back to its loop for 10 s, a minute while it loads or saves: the app waits for it, and a longer freeze is worse than a lost plugin.
 - Renders stay in their own process, so a crash fails the render instead of leaving a plugin out. Windows (the OS) plays plugins in-process for now: Rust has no Unix sockets there. So does a window session on macOS.
@@ -186,11 +187,11 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 `crates/ui` and `crates/runtime/src/window`.
 
 - Musical interfaces such as a piano roll belong to a project's tools, not `crates/ui`.
-- What moves every frame draws over a page, not in it: the spaces that read live values on one layer, and each device card as a view of its own. In GPUI a view that changes renders every view it is in, and a page is the heaviest. Rejected: a meter node of the window, which drew the whole page as it moved.
+- What moves every frame draws over a page, not in it: the spaces that read live values on one layer, and each device card as a view of its own. In GPUI a view that changes renders every view it is in. Rejected: a meter node of the window, which drew the whole page as it moved.
 - Every div that scrolls fades where more waits, painted by the window on that layer. Rejected: a style, as a hard cut is never wanted; a fade in the view, which lies over the cards and pulls them back into the page.
 - A number shown only while its control is touched is `quiet` on the control, which the window reads by field, so a fader shows the number beside it. Rejected: a hover and a timer in the view, through Bun, which hid the number from the keys.
-- "Open project…" starts a new process, because that tears down the device, plugins and their windows for free.
-- Settings covers the whole window (cmd-, or the project menu), its sections listed on the left: Agents, Audio, Shortcuts. Audio devices are picked there, not in the project menu. Rejected: a window of its own; a dialog, which blocks.
+- "Open project…" starts a new process, which tears down the device, plugins and their windows for free.
+- Settings covers the whole window (cmd-, or the project menu), its sections on the left. Audio devices are picked there, not in the project menu. Rejected: a window of its own; a dialog, which blocks.
 - Windows installs per user with Inno Setup. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
 
 ## Shortcuts

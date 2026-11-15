@@ -211,12 +211,16 @@ mod tests {
         None
     }
 
-    /// The DAW template and the SDK's own components are what agents copy. Each raw colour or
+    /// The templates and the SDK's own components are what agents copy. Each raw colour or
     /// size in them came back in every tool an agent built, so they name tokens only.
     #[test]
     fn our_own_views_name_tokens_only() -> anyhow::Result<()> {
         let mut violations = Vec::new();
-        for path in files(&["templates/daw/extensions", "crates/typescript/src/sdk"])? {
+        for path in files(&[
+            "templates/daw/extensions",
+            "templates/composer/extensions",
+            "crates/typescript/src/sdk",
+        ])? {
             let text = fs::read_to_string(&path)?;
             for (number, line) in text.lines().enumerate() {
                 let code = line.trim_start();

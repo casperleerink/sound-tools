@@ -1,0 +1,35 @@
+{
+  "format": 1,
+  "tempo_map": {
+    "time_signatures": [
+      {
+        "signature": "4/4",
+        "bars": 8
+      }
+    ],
+    "tempo_changes": [
+      {
+        "tick": 0,
+        "bpm": 120.0
+      }
+    ]
+  },
+  "sections": [
+    {
+      "bar": 1,
+      "name": "Section 1"
+    }
+  ],
+  "connections": [
+    {
+      "from": {
+        "instance": "piece",
+        "port": "audio"
+      },
+      "to": {
+        "device_output": 0
+      }
+    }
+  ],
+  "main": "piece"
+}
