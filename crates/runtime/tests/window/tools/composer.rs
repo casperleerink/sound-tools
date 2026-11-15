@@ -293,14 +293,14 @@ fn a_new_composer_project_opens_its_piece_and_its_first_instrument_plays(cx: &mu
     assert!(window.loudest(4_800) > 0.01);
 }
 
-/// Bar 2 chosen and shift-T, 5/4: the notes before it and in it stay, the one after it in A and
+/// Bar 2 chosen and T, 5/4: the notes before it and in it stay, the one after it in A and
 /// the whole of B are a beat later, and the clock's bars, tempo change and section names follow.
 #[gpui::test]
 fn a_bar_made_longer_pushes_what_comes_after_it_and_nothing_else(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
     window.choose_bar(1);
     let before = mark(&mut window);
-    window.keys("shift-t");
+    window.keys("t");
     window.type_in_field("5/4");
     window.until("the bar made longer", |window| {
         window.part("t00", "sec-b").0 != 4 * BAR
@@ -612,7 +612,7 @@ fn a_whole_time_signature_typed_is_one_change(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
     window.choose_bar(1);
     let before = mark(&mut window);
-    window.keys("shift-t");
+    window.keys("t");
     window.type_in_field("6/8");
     window.until("the bar made shorter", |window| {
         window.part("t00", "sec-b").0 != 4 * BAR
@@ -683,13 +683,13 @@ fn a_time_signature_typed_on_its_mark_changes_its_run_up_to_the_next(cx: &mut Te
     assert_eq!(window.problems(), []);
 }
 
-/// Bar 2 chosen and T, "100 bpm": that bar alone is at 100, and the bar after it at 120 again.
+/// Bar 2 chosen and shift-T, "100 bpm": that bar alone is at 100, and the bar after it at 120 again.
 #[gpui::test]
 fn a_tempo_typed_for_one_bar_changes_that_bar_only(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
     window.choose_bar(1);
     let before = mark(&mut window);
-    window.keys("t");
+    window.keys("shift-t");
     window.type_in_field("100 bpm");
     window.until("the tempo changed", |window| {
         window.sections()[0]["bars"].as_array().unwrap().len() == 3
@@ -714,7 +714,7 @@ fn a_tempo_typed_for_one_bar_changes_that_bar_only(cx: &mut TestAppContext) {
     assert_eq!(window.problems(), []);
 }
 
-/// The last bar of A and the first of B chosen, and T, 100: both are at 100, in one undo step.
+/// The last bar of A and the first of B chosen, and shift-T, 100: both are at 100, in one undo step.
 #[gpui::test]
 fn a_tempo_typed_for_bars_across_a_section_line_is_one_change(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
@@ -722,7 +722,7 @@ fn a_tempo_typed_for_bars_across_a_section_line_is_one_change(cx: &mut TestAppCo
     window.keys("shift-right");
     window.wait_for_bun();
     let before = mark(&mut window);
-    window.keys("t");
+    window.keys("shift-t");
     window.type_in_field("100");
     window.until("the tempo changed", |window| {
         window.sections()[1]["bars"].as_array().unwrap().len() == 2
@@ -808,7 +808,7 @@ fn a_bar_made_too_short_for_a_note_says_so(cx: &mut TestAppContext) {
     let mut window = open_piece(cx);
     window.choose_bar(1);
     let before = mark(&mut window);
-    window.keys("shift-t");
+    window.keys("t");
     window.type_in_field("1/8");
     let notice = "1 note did not fit and was removed. Undo brings it back.";
     window.until("the notice", |window| window.shows(notice));
@@ -933,7 +933,7 @@ fn a_rit_over_bars_across_a_section_line_is_one_line_and_one_change(cx: &mut Tes
 }
 
 /// A rit. over bars 2 and 3, then "Steady tempo" picked in the field alt-T opens on them: they
-/// are at 120 again, as the piece was. Undone to the rit., a tempo typed with T, 100, also leaves
+/// are at 120 again, as the piece was. Undone to the rit., a tempo typed with shift-T, 100, also leaves
 /// them steady, at 100.
 #[gpui::test]
 fn steady_tempo_or_a_tempo_typed_ends_a_rit(cx: &mut TestAppContext) {
@@ -960,7 +960,7 @@ fn steady_tempo_or_a_tempo_typed_ends_a_rit(cx: &mut TestAppContext) {
     window.keys("secondary-z");
     window.until("the rit. again", |window| window.shows("rit."));
     let before = mark(&mut window);
-    window.keys("t");
+    window.keys("shift-t");
     window.type_in_field("100");
     window.until("steady", |window| !window.shows("rit."));
     window.after_the_runs();
@@ -1124,7 +1124,7 @@ fn a_fermata_from_the_menu_of_a_bar_goes_on_the_count_under_the_pointer(cx: &mut
 fn a_shorter_time_signature_keeps_the_fermata_on_a_count_the_bar_has(cx: &mut TestAppContext) {
     let mut window = with_a_fermata(cx);
     let before = mark(&mut window);
-    window.keys("shift-t");
+    window.keys("t");
     window.type_in_field("3/4");
     window.until("the bar made shorter", |window| {
         window.sections()[0]["bars"][1]["signature"] == "3/4"
@@ -1268,7 +1268,7 @@ fn a_rit_then_an_accel_are_two_marks(cx: &mut TestAppContext) {
     window.until("the rit.", |window| window.shows("rit."));
     window.after_the_runs();
     window.choose_bar(2);
-    window.keys("t");
+    window.keys("shift-t");
     window.type_in_field("60");
     window.until("bar 3 at 60", |window| {
         window.sections()[0]["bars"][2]["bpm"] == 60
@@ -1300,7 +1300,7 @@ fn a_rit_that_starts_at_another_tempo_says_it(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_fermata_holds_no_longer_than_its_tempo_can_play(cx: &mut TestAppContext) {
     let mut window = with_a_fermata(cx);
-    window.keys("t");
+    window.keys("shift-t");
     window.type_in_field("15");
     window.until("bar 2 at 15", |window| {
         window.sections()[0]["bars"][1]["bpm"] == 15
@@ -1375,5 +1375,45 @@ fn bars_typed_as_a_number_are_added_in_one_step(cx: &mut TestAppContext) {
         (0, vec![IN_A[0], IN_A[1], IN_A[2] + 3 * BAR])
     );
     one_undo_step(&mut window, "Add bars", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// A rit. over bars 2 and 3, from 120 to 60, and a bar added after bar 2: the three bars are one
+/// rit. to 60, its line spread over them. The added bar removed, it is over two bars again.
+#[gpui::test]
+fn a_bar_added_inside_a_rit_joins_it_and_one_removed_leaves_it_whole(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(1);
+    window.keys("shift-right");
+    window.keys("alt-t");
+    window.type_in_field("60");
+    window.until("the rit.", |window| window.shows("rit. to 60"));
+    window.after_the_runs();
+    let rit = window.sections()[0]["bars"].clone();
+    window.choose_bar(1);
+    window.wait_for_bun();
+    let before = mark(&mut window);
+    window.keys("shift-b");
+    window.until("five bars in A", |window| {
+        window.sections()[0]["bars"].as_array().unwrap().len() == 5
+    });
+    window.after_the_runs();
+    let bars = json!([
+        { "bars": 1, "signature": "4/4", "bpm": 120 },
+        { "bars": 1, "signature": "4/4", "bpm": 120, "to": 100 },
+        { "bars": 1, "signature": "4/4", "bpm": 100, "to": 80 },
+        { "bars": 1, "signature": "4/4", "bpm": 80, "to": 60 },
+        { "bars": 1, "signature": "4/4", "bpm": 120 },
+    ]);
+    assert_eq!(window.sections()[0]["bars"], bars);
+    assert_slide(&window.tempos(), BAR, 4 * BAR, 120., 60.);
+    one_undo_step(&mut window, "Add a bar", &before);
+
+    window.wait_for_bun();
+    // The added bar is chosen: removed, the rit. is as it was.
+    window.keys("backspace");
+    window.until("four bars in A", |window| {
+        window.sections()[0]["bars"] == rit
+    });
     assert_eq!(window.problems(), []);
 }

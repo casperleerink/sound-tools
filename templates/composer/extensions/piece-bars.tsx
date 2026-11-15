@@ -1,7 +1,7 @@
 import { Arc, Button, Circle, For, Fragment, h, Label, Line, memo, now, Rect, Show, Space, Text, untrack, type Drag, type Live, type Num, type Press, type SpaceValues } from "./sdk";
 import { addBar, askSignature, askSlide, askTempo, choiceMenu, choiceOf, chooseRows, clearChosen, fermataMenu, moveFermata } from "./piece-choice";
 import { moveSection } from "./piece-edits";
-import { beatOf, countOf, endOf, formText, tempoOf, type Bar } from "./piece-form";
+import { beatOf, countOf, endOf, formText, slidesOn, tempoOf, type Bar } from "./piece-form";
 import { ACROSS, AFTER, barAtTick, chooseBars, clamp, colourOf, DIM, HEADER, LEAD, LOW_ROW, MARKS, muted, ROW, ZOOM, type Page } from "./piece-page";
 import { addSectionAtEnd, chooseSection, nameSection, sectionMenu } from "./piece-sections";
 import { addTrack } from "./piece-tracks";
@@ -46,8 +46,7 @@ function marksOf({ all, end }: Page) {
   const { bars, starts } = all();
   const slides = (index: number) => bars[index]?.to !== undefined;
   const rises = (index: number) => endOf(bars[index]!) > bars[index]!.bpm;
-  /** Whether a bar slides on from the bar before it: from the tempo that one ends at, the same way. */
-  const goesOn = (index: number) => slides(index) && slides(index - 1) && bars[index - 1]!.to === bars[index]!.bpm && rises(index) === rises(index - 1);
+  const goesOn = (index: number) => slidesOn(bars, index);
   const tempoAt = (index: number) => index === 0 || (slides(index) ? !goesOn(index) : slides(index - 1) || said(bars[index - 1]!) !== said(bars[index]!));
   const signatureAt = (index: number) => index === 0 || bars[index - 1]!.signature !== bars[index]!.signature;
   /** The bars the time signature or the tempo of the bar `index` stands for: from the last mark of its kind up to the next. */
@@ -250,7 +249,9 @@ export const Marks = ({ page }: { page: Page }) => {
           // The last one ends where "+ Section" starts.
           const room = () => (parts().find((each) => each.from > part.from)?.from ?? end()) - part.from;
           const widths = [part.name.length * BOLD_LABEL_CHAR + 26, 32];
-          const shows = [() => fits(page, room(), widths[0]!), () => fits(page, room(), widths[1]!).times(not(fits(page, room(), widths[0]!))), () => not(fits(page, room(), widths[1]!))];
+          // Not while its name is typed: the field is where it is.
+          const named = () => (memory.naming === part.id ? 0 : 1);
+          const shows = [() => fits(page, room(), widths[0]!).times(named()), () => fits(page, room(), widths[1]!).times(not(fits(page, room(), widths[0]!))).times(named()), () => not(fits(page, room(), widths[1]!))];
           // Its name stays at the left edge while the section goes on past it, up to its end.
           const nameX = () => band.left.max(part.from).min(space.pointX.times(-widths[0]!).plus(part.to)).max(part.from);
           // Bright while all its bars, and only they, are chosen.
@@ -309,7 +310,7 @@ export const Marks = ({ page }: { page: Page }) => {
             const { end } = mark.slide;
             // The line starts after the form that shows, while it has the room.
             const words = mark.forms.filter((form) => form.tempo !== "").map((form, index) => ({ width: form.width, shows: shown[index]! }));
-            const lineShows = words.reduce((sum, word) => sum.plus(word.shows.times(fits(page, end - mark.tick, word.width + 12))), NONE);
+            const lineShows = words.reduce((sum, word) => sum.plus(word.shows.times(fits(page, end - mark.tick, word.width + 24))), NONE);
             const word = words.reduce((sum, each) => sum.plus(each.shows.times(each.width - mark.lead - 10)), NONE);
             const lineEnd = () => space.pointX.times(-5).plus(end);
             const lineStart = () => space.pointX.times(word).plus(tempoX()).min(lineEnd());

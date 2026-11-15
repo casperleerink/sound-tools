@@ -35,7 +35,9 @@ export function moveSectionBy(piece: Piece, id: string, by: -1 | 1) {
 /** Opens the name of the section `id` to type, where the pointer pressed last; no name keeps the one it has. */
 export async function nameSection(piece: Piece, id: string) {
   const name = piece.state.sections.find((section) => section.id === id)?.name ?? "";
+  piece.memory.naming = id;
   const typed = await piece.openField({ value: name, placeholder: "Name of the section", width: 200 });
+  piece.memory.naming = null;
   if (typed !== null && typed !== name) renameSection(piece, id, typed);
 }
 /**

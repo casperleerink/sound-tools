@@ -201,7 +201,7 @@ const NOTES = [1, 2, 4, 8, 16, 32];
 export async function askSignature(piece: Piece, bars: { from: number; to: number } = chosenOrPlaying(piece)) {
   const bar = barsOfPiece(piece.state).bars[bars.from];
   if (!bar) return;
-  const typed = await piece.openField({ placeholder: bar.signature, suggestions: SIGNATURES, width: 120 });
+  const typed = await piece.openField({ placeholder: bar.signature, suggestions: SIGNATURES, width: 84 });
   const [, beats, note] = /^\s*(\d+)\s*\/\s*(\d+)\s*$/.exec(typed ?? "") ?? [];
   if (!beats || Number(beats) < 1 || Number(beats) > 32 || !NOTES.includes(Number(note))) {
     if (typed) piece.memory.notice = { text: "A time signature is written like 3/4 or 6/8.", form: formText(piece.state.sections as Parameters<typeof formText>[0]) };
@@ -218,7 +218,7 @@ function tempoIn(typed: string | null): number | undefined {
 export async function askTempo(piece: Piece, bars: { from: number; to: number } = chosenOrPlaying(piece)) {
   const bar = barsOfPiece(piece.state).bars[bars.from];
   if (!bar) return;
-  const tempo = tempoIn(await piece.openField({ placeholder: `${beatOf(bar.signature).sign} = ${tempoOf(bar)}`, width: 120 }));
+  const tempo = tempoIn(await piece.openField({ placeholder: `${beatOf(bar.signature).sign} = ${tempoOf(bar)}`, width: 100 }));
   if (tempo !== undefined) setTempo(piece, spansOf(barsOfPiece(piece.state), bars.from, bars.to), tempo);
 }
 const STEADY = "Steady tempo";
@@ -297,15 +297,16 @@ export async function fermataMenu(piece: Piece, index: number) {
 
 /** Asks how many bars to add after the chosen ones, or at the end with none chosen, and adds them, chosen. */
 export async function askBars(piece: Piece) {
-  const [, number] = /(\d+)/.exec((await piece.openField({ placeholder: "Bars to add after, such as 4", width: 210 })) ?? "") ?? [];
-  const count = clamp(Number(number ?? 0), 0, 200);
   const choice = choiceOf(piece);
   const { bars } = barsOfPiece(piece.state);
-  const after = bars[choice ? choice.to : bars.length - 1];
-  if (count < 1 || !after) return;
+  const last = choice ? choice.to : bars.length - 1;
+  const after = bars[last];
+  if (!after) return;
+  const [, number] = /(\d+)/.exec((await piece.openField({ placeholder: `Bars to add after bar ${last + 1}`, width: 210 })) ?? "") ?? [];
+  const count = clamp(Number(number ?? 0), 0, 200);
+  if (count < 1) return;
   addBars(piece, after.id, after.at + 1, count);
-  const at = (choice ? choice.to : bars.length - 1) + 1;
-  chooseBars(piece, at, at + count - 1);
+  chooseBars(piece, last + 1, last + count);
 }
 
 /** The menu of the choice, each item with its key: whole bars also add a bar or start a section, music opens its notes. Opened at the tick `tick`, its fermata goes on the count there. */
