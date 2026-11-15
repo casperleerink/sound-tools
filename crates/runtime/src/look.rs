@@ -56,7 +56,8 @@ pub enum Step {
 #[derive(Debug, PartialEq)]
 pub struct Part {
     name: String,
-    /// `name@x,y`: in the units of a space, in points from the top left of anything else.
+    /// `name@x,y`: in the units of a space, or of the space of a shape; in points from the top
+    /// left of anything else.
     at: Option<(f64, f64)>,
 }
 

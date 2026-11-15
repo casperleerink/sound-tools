@@ -26,7 +26,7 @@ pub struct Seen {
     pub bounds: Bounds<Pixels>,
     /// All of it, what shows or not.
     pub whole: Bounds<Pixels>,
-    /// For a space: where its units are in the window.
+    /// For a space and its shapes: where the space's units are in the window.
     pub units: Option<Units>,
 }
 
@@ -233,11 +233,8 @@ pub fn listing(seen: &[Seen]) -> String {
         if let Some(units) = &each.units {
             let (left, top) = units.at(each.bounds.origin);
             let (right, bottom) = units.at(each.bounds.bottom_right());
-            write!(
-                line,
-                " units x {left:.4}..{right:.4} y {top:.4}..{bottom:.4}"
-            )
-            .ok();
+            let [left, right, top, bottom] = [left, right, top, bottom].map(short);
+            write!(line, " units x {left}..{right} y {top}..{bottom}").ok();
         }
         // Two plain texts over each other are a layout gone wrong; a tooltip or a menu over
         // a text is not.
@@ -259,6 +256,16 @@ pub fn listing(seen: &[Seen]) -> String {
         out.push('\n');
     }
     out
+}
+
+/// A number with up to three decimals and no zeros at its end: 5760, not 5759.9999.
+fn short(number: f64) -> String {
+    let text = format!("{number:.3}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    match text {
+        "-0" => "0".to_string(),
+        text => text.to_string(),
+    }
 }
 
 #[cfg(test)]

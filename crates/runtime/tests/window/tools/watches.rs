@@ -51,9 +51,5 @@ fn a_binding_that_starts_reading_a_watch_gets_its_current_value(cx: &mut TestApp
     window.wait_for_bun();
     set(&mut window, "show", json!(true));
     window.wait_for_bun();
-    let shell = window.shell.clone();
-    assert!(window.cx.read(|cx| {
-        let page = shell.read(cx).main_view().unwrap();
-        sound_typescript::page_has_text(page, "0.75", cx)
-    }));
+    assert!(window.seen("0.75").is_some());
 }

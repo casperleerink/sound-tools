@@ -220,8 +220,8 @@ pub(super) fn prepaint(
     (hitbox, Rc::new(painted))
 }
 
-/// What a look sees of a space: the space with its units, and each of its shapes with a key or
-/// a text, the text as wide as it is drawn.
+/// What a look sees of a space: the space, and each of its shapes with a key or a text, the
+/// text as wide as it is drawn, each with the space's units.
 pub(super) fn seen(
     frame: &SpaceFrame,
     bounds: Bounds<Pixels>,
@@ -270,7 +270,9 @@ pub(super) fn seen(
             _ => continue,
         };
         let name = key.map_or_else(String::new, |key| format!("shape-{key}"));
-        let seen = Seen::named(name).at(whole, each.clip.unwrap_or(bounds).intersect(&mask));
+        let mut seen = Seen::named(name).at(whole, each.clip.unwrap_or(bounds).intersect(&mask));
+        // Where its numbers put it, in the units they are in.
+        seen.units = Some(units);
         on_screen::record(match text {
             Some(text) => seen.text(text),
             None => seen,

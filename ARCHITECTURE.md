@@ -186,11 +186,12 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 `crates/ui` and `crates/runtime/src/window`.
 
 - Musical interfaces such as a piano roll belong to a project's tools, not `crates/ui`.
-- What moves every frame draws over a page, not in it: the spaces that read live values on one layer, and each device card as a view of its own. In GPUI a view that changes renders every view it is in, and a page is the heaviest. Rejected: a meter node of the window, which drew the whole page as it moved.
-- Every div that scrolls fades where more waits, painted by the window on that layer. Rejected: a style, as a hard cut is never wanted; a fade in the view, which lies over the cards and pulls them back into the page.
+- What moves every frame draws on a layer over the page, and each device card is a view of its own: a GPUI view that changes renders every view it is in. Rejected: a meter node of the window, which drew the whole page as it moved.
+- Every div that scrolls fades where more waits, painted by the window on that layer. Rejected: a style, as a hard cut is never wanted; a fade in the view, which lies over the cards.
 - A number shown only while its control is touched is `quiet` on the control, which the window reads by field, so a fader shows the number beside it. Rejected: a hover and a timer in the view, through Bun, which hid the number from the keys.
-- "Open project…" starts a new process, because that tears down the device, plugins and their windows for free.
-- Settings covers the whole window (cmd-, or the project menu), its sections listed on the left: Agents, Audio, Shortcuts. Audio devices are picked there, not in the project menu. Rejected: a window of its own; a dialog, which blocks.
+- "Open project…" starts a new process, which tears down the device, plugins and their windows for free.
+- Settings covers the whole window (cmd-,) and picks the audio devices. Rejected: a window of its own; a dialog, which blocks.
+- Tests and agents read a window as a look (`sound_ui::on_screen`, `sound-tools --look`): each named part with its text, state and place, drawn on request, so other frames do nothing. Rejected: gpui's AccessKit tree, off in test and offscreen windows, blind to a space's shapes; measuring text and printing live values in a space, as a look shows what they made.
 - Windows installs per user with Inno Setup. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
 
 ## Shortcuts

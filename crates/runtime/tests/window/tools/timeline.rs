@@ -21,13 +21,7 @@ impl Opened<'_> {
     }
 
     fn snap_applied(&mut self, label: &str) {
-        let shell = self.shell.clone();
-        self.until("the snap shows", |window| {
-            window.cx.read(|cx| {
-                let page = shell.read(cx).main_view().unwrap();
-                sound_typescript::page_has_text(page, label, cx)
-            })
-        });
+        self.until("the snap shows", |window| window.seen(label).is_some());
     }
 }
 
