@@ -28,7 +28,7 @@ const [LABEL_CHAR, TITLE_CHAR, DIGIT, LETTER] = [5.6, 8.6, 10, 34];
 const FERMATA = 7;
 const HINT = "Double-click a bar to write notes";
 /** Where the piece opens: whole when a bar of 4/4 keeps this many points, else at zoom 1. */
-const NARROWEST = 40;
+const NARROWEST = 10;
 const [FIT_BEFORE, FIT_AFTER] = [12, 120];
 /** How wide the two buttons on chosen whole bars are together, and the points they keep from an edge or the last row. */
 const [BUTTONS, GAP] = [152, 6];
@@ -93,7 +93,7 @@ function tempoMarksOf(page: Page) {
     // A slide that does not start where the bar before it ends says the tempo it starts at.
     const jumps = index === 0 || endOf(bars[index - 1]!) !== bar.bpm;
     const forms = sliding
-      ? [...(jumps ? [withNote(bar, `= ${tempoOf(bar)}  ${word} ${reached}`)] : []), plain(`${word} ${reached}`), plain(word)]
+      ? [...(jumps ? [withNote(bar, `= ${tempoOf(bar)}  ${word} to ${reached}`)] : []), plain(`${word} to ${reached}`), plain(`${word} ${reached}`), plain(word)]
       : [withNote(bar, `= ${tempoOf(bar)}`), plain(String(tempoOf(bar)))];
     const [top, bottom] = [Math.min(heightOf(bar.bpm), heightOf(endOf(last))), Math.max(heightOf(bar.bpm), heightOf(endOf(last)))];
     return { index, tick: starts[index]!, next: starts[to + 1]!, run: { from: index, to }, sliding, forms, y: top - WORDS_ABOVE, bottom };
@@ -183,7 +183,10 @@ export const Marks = ({ page }: { page: Page }) => {
     const apart = NUMBERED.find((every) => (index + 1) % every === 0)!;
     // The first and the last chosen bar always say their number.
     const chosen = memory.chosen !== null && (index === memory.chosen.from || index === memory.chosen.to);
-    return index === 0 || chosen ? not(NONE) : fits(page, (starts()[index + apart] ?? tick + apart * 4 * 960) - tick, NUMBER_ROOM);
+    const shows = index === 0 || chosen ? not(NONE) : fits(page, (starts()[index + apart] ?? tick + apart * 4 * 960) - tick, NUMBER_ROOM);
+    // Never into the next time signature, nor into the number of a chosen bar after it.
+    const next = Math.min(signatures().find((each) => each.index > index)?.tick ?? end(), memory.chosen && memory.chosen.from > index ? starts()[memory.chosen.from]! : end());
+    return shows.times(fits(page, next - tick, numberX(index) + String(index + 1).length * LABEL_CHAR + 6));
   };
   /** Where bar `index`'s number starts: after its time signature, where one is. */
   const numberX = (index: number) => {
