@@ -981,9 +981,10 @@ fn steady_tempo_or_a_tempo_typed_ends_a_rit(cx: &mut TestAppContext) {
 }
 
 /// Bar 2 chosen and F: a fermata on its last count, which the clock plays at half the tempo, so
-/// the bar lasts one beat longer, 2.5 seconds at 120. F again takes it off.
+/// the bar lasts one beat longer, 2.5 seconds at 120. F again opens its menu, so a key reaches
+/// how long it holds; "Remove the fermata" there takes it off.
 #[gpui::test]
-fn a_fermata_holds_the_last_count_one_beat_longer_and_f_again_takes_it_off(
+fn a_fermata_holds_the_last_count_one_beat_longer_and_f_again_opens_its_menu(
     cx: &mut TestAppContext,
 ) {
     let mut window = open_piece(cx);
@@ -1020,6 +1021,8 @@ fn a_fermata_holds_the_last_count_one_beat_longer_and_f_again_takes_it_off(
     window.wait_for_bun();
     let before = mark(&mut window);
     window.keys("f");
+    let remove = window.until_found("menu-5");
+    window.click(remove);
     window.until("no fermata", |window| {
         window.sections()[0]["bars"].as_array().unwrap().len() == 1
     });

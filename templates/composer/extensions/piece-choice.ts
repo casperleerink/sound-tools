@@ -244,13 +244,14 @@ function countAt(all: ReturnType<typeof barsOfPiece>, tick: number) {
 }
 /** The bar a fermata goes on: the one at `tick`, or with none the last chosen bar, or the one that plays. */
 const fermataBar = (piece: Piece, tick?: number) => (tick === undefined ? chosenOrPlaying(piece).to : barAtTick(barsOfPiece(piece.state), tick));
-/** Puts a fermata on the count at `tick`, or with none on the last count of the last chosen bar; a bar that has one loses it. */
+/** Puts a fermata on the count at `tick`, or with none on the last count of the last chosen bar. On a bar that has one: at `tick` it goes, with none its menu opens, so a key reaches how long it holds. */
 export function toggleFermata(piece: Piece, tick?: number): boolean {
   const all = barsOfPiece(piece.state);
   const bar = all.bars[fermataBar(piece, tick)];
   if (!bar) return false;
   const beat = tick === undefined ? partsOf(bar.signature)[0] : countAt(all, tick).beat;
-  if (bar.fermata) setFermatas(piece, "Remove a fermata", [{ id: bar.id, bar: bar.at, fermata: null }]);
+  if (bar.fermata && tick === undefined) void fermataMenu(piece, fermataBar(piece));
+  else if (bar.fermata) setFermatas(piece, "Remove a fermata", [{ id: bar.id, bar: bar.at, fermata: null }]);
   else setFermatas(piece, "Add a fermata", [{ id: bar.id, bar: bar.at, fermata: { beat, extra: 1 } }]);
   return true;
 }

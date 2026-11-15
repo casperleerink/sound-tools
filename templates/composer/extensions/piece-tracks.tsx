@@ -16,7 +16,7 @@ export const Heads = ({ page }: { page: Page }) => {
   const { rows, returns, clock, memory } = page;
   return (
     <div style={{ width: HEADER - 1, keep: true }}>
-      <div style={{ height: MARKS, keep: true, justify: "end", paddingX: "lg", paddingBottom: "md" }}>
+      <div style={{ height: MARKS, keep: true, justify: "end", paddingX: "lg", paddingBottom: "xs" }}>
         <div style={{ direction: "row" }}>
           <Toggle key="loop" label="Loop" size="sm" on={() => clock.repeat !== null} shortcut="piece.loop" onClick={() => toggleLoop(page)}
             tooltip={() => (clock.repeat !== null ? "Stop looping" : memory.chosen ? "Loop the chosen bars as it plays" : "Loop the section that plays")} />

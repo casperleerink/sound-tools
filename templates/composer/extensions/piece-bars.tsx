@@ -21,7 +21,7 @@ const NUMBERED = [1000, 500, 100, 50, 10, 5, 1];
 /** About how many points a character takes: of a label, of a bold label, of a bold digit of a time signature. */
 const [LABEL_CHAR, BOLD_LABEL_CHAR, DIGIT] = [5.6, 6.6, 8.4];
 /** A fermata, in the line of the bar numbers: where the middle of its arc is, and its radius. */
-const [FERMATA_Y, FERMATA] = [NUMBER_Y + 8, 6];
+const [FERMATA_Y, FERMATA] = [NUMBER_Y + 9, 7];
 const HINT = "Double-click a bar to write notes";
 /** Where the piece opens: whole when a bar of 4/4 keeps this many points, else at zoom 1. */
 const NARROWEST = 40;
@@ -148,11 +148,11 @@ export const Marks = ({ page }: { page: Page }) => {
   const numberShows = (index: number) => {
     const tick = starts()[index] ?? 0;
     const apart = NUMBERED.find((every) => (index + 1) % every === 0)!;
-    const room = index === 0 ? not(NONE) : fits(page, (starts()[index + apart] ?? tick + apart * 4 * 960) - tick, NUMBER_ROOM);
+    // The first and the last chosen bar always say their number.
+    const chosen = memory.chosen !== null && (index === memory.chosen.from || index === memory.chosen.to);
+    const room = index === 0 || chosen ? not(NONE) : fits(page, (starts()[index + apart] ?? tick + apart * 4 * 960) - tick, NUMBER_ROOM);
     // Not under the fermata of its bar.
     const fermata = all().bars[index]?.fermata;
-    // The first and the last chosen bar always say their number.
-    if (memory.chosen && (index === memory.chosen.from || index === memory.chosen.to)) return not(NONE);
     return fermata ? room.times(fits(page, (fermata.beat - 0.5) * countOf(all().bars[index]!.signature), 28)) : room;
   };
   const fermatas = memo(() => all().bars.flatMap((bar, index) => (bar.fermata ? [{ index, middle: starts()[index]! + (bar.fermata.beat - 0.5) * countOf(bar.signature), end: starts()[index + 1]! }] : [])));
@@ -294,7 +294,8 @@ export const Marks = ({ page }: { page: Page }) => {
             const words = mark.forms.filter((form) => form.tempo !== "").map((form, index) => ({ width: form.width, shows: shown[index]! }));
             const number = reached.length * LABEL_CHAR + (reached ? 10 : 0);
             const room = (points: number) => words.reduce((sum, word) => sum.plus(word.shows.times(fits(page, end - mark.tick, word.width + points))), NONE);
-            const [lineShows, numberShows] = [room(12), reached ? room(number + 14) : NONE];
+            // The tempo it reaches shows before its line does: with little room, the word and the number.
+            const [lineShows, numberShows] = [room(number + (reached ? 14 : 12)), reached ? room(number + 2) : NONE];
             const word = words.reduce((sum, each) => sum.plus(each.shows.times(each.width)), NONE);
             const [y, lineStart, lineEnd] = [TEMPO_Y + 8, () => space.pointX.times(word.minus(4)).plus(mark.tick), () => space.pointX.times(-number).times(numberShows).plus(space.pointX.times(-5)).plus(end)];
             return [
@@ -340,7 +341,7 @@ export const Marks = ({ page }: { page: Page }) => {
         ]}
       </For>
       {fermataSign(hold.x, () => hold.active.times(hold.dx.abs().gt(0)).times(0.5))}
-      <QuietButton space={band} id="add-bar-end" x={after(10)} y={() => TOP_DIGIT + 4} text="+ Bar" width={46} shown={() => 1} onClick={() => addBar(page, "end")} />
+      <QuietButton space={band} id="add-bar-end" x={after(10)} y={() => TOP_DIGIT + 4} text="+ Bar" width={72} shown={() => 1} onClick={() => addBar(page, "end")} />
       <QuietButton space={band} id="add-section" x={after(10)} y={() => NAME_Y - 2} text="+ Section" width={72} shown={() => 1} onClick={() => addSectionAtEnd(page)} />
       <Rect x={() => repeat().x} y={MARKS - 3} width={() => repeat().width} height={2} radius={1} color="text" opacity={() => repeat().shown} />
       <Circle x={playhead} y={MARKS - 3} radius={2.5} color="text" />
