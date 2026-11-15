@@ -334,14 +334,15 @@ export async function choiceMenu(piece: Piece, tick?: number) {
     { label: hasFermata ? "Fermata…" : "Fermata", shortcut: "piece.fermata", run: () => toggleFermata(piece, tick) },
     ...(whole
       ? ([
-          { label: "Add a bar before", shortcut: "piece.add_bar_before", separator: true, run: () => addBar(piece, "before") },
-          { label: "Add a bar after", shortcut: "piece.add_bar", run: () => addBar(piece, "after") },
-          { label: "Add bars after…", shortcut: "piece.add_bars", run: () => askBars(piece) },
           { label: "Start a section here", shortcut: "piece.add_section", disabled: startsSection, separator: true, run: () => startSectionAt(piece) },
+          // One bar after them is the button under them, and shift-B.
+          { label: "Add a bar before", shortcut: "piece.add_bar_before", separator: true, run: () => addBar(piece, "before") },
+          { label: "Add bars after…", shortcut: "piece.add_bars", run: () => askBars(piece) },
         ] satisfies Item[])
       : ([{ label: "Edit notes", shortcut: "piece.edit_notes", separator: true, run: () => editChosen(piece) }] satisfies Item[])),
     { label: "Choose to the end of the section", shortcut: "piece.bars_to_end", disabled: choice.to === choice.all.bars.length - 1, separator: true, run: () => chooseToEnd(piece) },
   ];
-  const picked = await piece.openMenu(items.map(({ run: _, ...item }) => item));
+  // Taller than a menu is by itself: all of it shows.
+  const picked = await piece.openMenu(items.map(({ run: _, ...item }) => item), { maxHeight: 560 });
   if (picked !== null) items[picked]?.run();
 }
