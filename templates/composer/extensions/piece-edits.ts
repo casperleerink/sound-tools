@@ -243,11 +243,12 @@ export function paste(piece: Piece, { id, bar }: { id: string; bar: number }, ro
     if (!place) return;
     const start = place.start + (startsOf(barsOf(sectionOf(draft, id)?.bars ?? []))[bar] ?? place.length);
     const last = draft.state.sections.at(-1);
-    // Music that would end past the piece gets the bars it needs, each as the last: none of it is cut.
+    // Music that would end past the piece gets the bars it needs, each as the last ends, with no fermata: none of it is cut.
     if (last) {
       rebar(draft, last.id, (bars) => {
         const added: Bar[] = [];
-        for (let end = laidOut(draft.state.sections).end; end < start + length && bars.length > 0; end += ticksOf(bars.at(-1)!.signature)) added.push({ ...bars.at(-1)! });
+        const end = bars.at(-1);
+        for (let tick = laidOut(draft.state.sections).end; end && tick < start + length; tick += ticksOf(end.signature)) added.push({ signature: end.signature, bpm: endOf(end) });
         return inserted(bars, bars.length, added);
       });
     }

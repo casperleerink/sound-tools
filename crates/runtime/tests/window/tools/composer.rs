@@ -3,7 +3,8 @@
 //! bar added or removed moves the rest, a section started at a bar takes the music after it
 //! along, a section moved takes its music with it, and a part an agent left in the wrong place is
 //! laid out again. A time signature or a tempo typed in place changes the bars it is typed for,
-//! across section lines too. Each edit is one undo step.
+//! across section lines too; a rit. or accel. reaches the clock in steps, and a fermata as a
+//! slower count. Each edit is one undo step.
 
 use std::path::Path;
 
@@ -28,6 +29,7 @@ const OPENED: u64 = 6 * BAR;
 const NAMES: f32 = 17.;
 const MARKS: f32 = 42.;
 const BARS: f32 = 72.;
+const FERMATA: f32 = 70.;
 /// The notes of `t00` in section A, one in each of its first three bars, and in B.
 const IN_A: [u64; 3] = [0, BAR + BEAT / 2, 2 * BAR];
 const IN_B: [u64; 1] = [0];
@@ -212,6 +214,56 @@ impl Opened<'_> {
 
     fn sections(&mut self) -> Value {
         self.record("piece")["sections"].clone()
+    }
+
+    /// The clock's tempo changes: the tick each is at and its tempo.
+    fn tempos(&mut self) -> Vec<(u64, f64)> {
+        let changes = self.project_file()["tempo_map"]["tempo_changes"].clone();
+        (changes.as_array().unwrap().iter())
+            .map(|change| {
+                (
+                    change["tick"].as_u64().unwrap(),
+                    change["bpm"].as_f64().unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    /// Where the fermata over the count `count`, from 1, of the bar `bar`, from 0, is.
+    fn fermata(&mut self, bar: u64, count: u64) -> Point<Pixels> {
+        self.in_band(bar * BAR + (count - 1) * BEAT + BEAT / 2, 0., FERMATA)
+    }
+}
+
+/// How many seconds the clock takes from `from` to `to`, along `tempos`.
+fn seconds(tempos: &[(u64, f64)], from: u64, to: u64) -> f64 {
+    let mut seconds = 0.;
+    for (index, &(tick, bpm)) in tempos.iter().enumerate() {
+        let next = tempos.get(index + 1).map_or(u64::MAX, |&(next, _)| next);
+        let (start, end) = (tick.max(from), next.min(to));
+        if end > start {
+            seconds += (end - start) as f64 / BEAT as f64 * 60. / bpm;
+        }
+    }
+    seconds
+}
+
+/// The tempo changes from `from` to `to` are steps every sixteenth along a straight line from
+/// `bpm` at `from` to `reached` at `to`, each at the tempo of its middle.
+fn assert_slide(tempos: &[(u64, f64)], from: u64, to: u64, bpm: f64, reached: f64) {
+    let steps: Vec<(u64, f64)> = (tempos.iter())
+        .filter(|(tick, _)| (from..to).contains(tick))
+        .copied()
+        .collect();
+    let step = BEAT / 4;
+    assert_eq!(steps.len() as u64, (to - from) / step, "{steps:?}");
+    for (index, &(tick, tempo)) in steps.iter().enumerate() {
+        let middle = (index as f64 + 0.5) * step as f64 / (to - from) as f64;
+        assert_eq!(tick, from + index as u64 * step);
+        assert!(
+            (tempo - (bpm + (reached - bpm) * middle)).abs() < 0.002,
+            "{tick}: {tempo}"
+        );
     }
 }
 
@@ -809,4 +861,395 @@ fn the_rows_go_to_the_playhead_as_the_piece_starts_to_play(cx: &mut TestAppConte
     window.until("it stops", |window| !playhead(window).playing);
     window.click(rows + point(px(34.), px(20.)));
     window.until_playhead(2 * BAR);
+}
+
+/// Bars 2 and 3 chosen and alt-T, 60: they slow down in a straight line from 120 to 60, which
+/// the clock plays in steps over exactly those bars; bar 4 is at 120 again, and the band says
+/// "rit.".
+#[gpui::test]
+fn a_rit_typed_for_chosen_bars_slows_the_clock_down_over_them_only(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(1);
+    window.keys("shift-right");
+    window.wait_for_bun();
+    let before = mark(&mut window);
+    window.keys("alt-t");
+    window.type_in_field("60");
+    window.until("the rit.", |window| window.shows("rit."));
+    window.after_the_runs();
+    let bars = json!([
+        { "bars": 1, "signature": "4/4", "bpm": 120 },
+        { "bars": 1, "signature": "4/4", "bpm": 120, "to": 90 },
+        { "bars": 1, "signature": "4/4", "bpm": 90, "to": 60 },
+        { "bars": 1, "signature": "4/4", "bpm": 120 },
+    ]);
+    assert_eq!(window.sections()[0]["bars"], bars);
+    let tempos = window.tempos();
+    assert_eq!(tempos[0], (0, 120.));
+    assert_slide(&tempos, BAR, 3 * BAR, 120., 60.);
+    assert_eq!(
+        tempos[tempos.len() - 2..],
+        [(3 * BAR, 120.), (4 * BAR, 90.)]
+    );
+    assert_eq!(window.part("t00", "sec-a"), (0, IN_A.to_vec()));
+    one_undo_step(&mut window, "Change the tempo gradually", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// The last bar of A and the first of B chosen, and alt-T, 60: one straight line from 120 to 60
+/// over both, in one undo step; the last bar of B keeps its 90.
+#[gpui::test]
+fn a_rit_over_bars_across_a_section_line_is_one_line_and_one_change(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(3);
+    window.keys("shift-right");
+    window.wait_for_bun();
+    let before = mark(&mut window);
+    window.keys("alt-t");
+    window.type_in_field("60");
+    window.until("the rit.", |window| {
+        window.sections()[1]["bars"].as_array().unwrap().len() == 2
+    });
+    window.after_the_runs();
+    assert_eq!(
+        window.sections()[0]["bars"],
+        json!([
+            { "bars": 3, "signature": "4/4", "bpm": 120 },
+            { "bars": 1, "signature": "4/4", "bpm": 120, "to": 90 },
+        ])
+    );
+    assert_eq!(
+        window.sections()[1]["bars"],
+        json!([
+            { "bars": 1, "signature": "4/4", "bpm": 90, "to": 60 },
+            { "bars": 1, "signature": "4/4", "bpm": 90 },
+        ])
+    );
+    let tempos = window.tempos();
+    assert_slide(&tempos, 3 * BAR, 5 * BAR, 120., 60.);
+    assert_eq!(tempos.last(), Some(&(5 * BAR, 90.)));
+    one_undo_step(&mut window, "Change the tempo gradually", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// A rit. over bars 2 and 3, then "Steady tempo" picked in the field alt-T opens on them: they
+/// are at 120 again, as the piece was. Undone to the rit., a tempo typed with T, 100, also leaves
+/// them steady, at 100.
+#[gpui::test]
+fn steady_tempo_or_a_tempo_typed_ends_a_rit(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    let (bars, tempos) = (window.sections()[0]["bars"].clone(), window.tempos());
+    window.choose_bar(1);
+    window.keys("shift-right");
+    window.keys("alt-t");
+    window.type_in_field("60");
+    window.until("the rit.", |window| window.shows("rit."));
+    window.after_the_runs();
+
+    let before = mark(&mut window);
+    window.keys("alt-t");
+    let steady = window.until_found("menu-Steady tempo");
+    window.click(steady);
+    window.until("steady", |window| !window.shows("rit."));
+    window.after_the_runs();
+    assert_eq!(window.sections()[0]["bars"], bars);
+    assert_eq!(window.tempos(), tempos);
+    one_undo_step(&mut window, "Keep the tempo steady", &before);
+
+    window.wait_for_bun();
+    window.keys("secondary-z");
+    window.until("the rit. again", |window| window.shows("rit."));
+    let before = mark(&mut window);
+    window.keys("t");
+    window.type_in_field("100");
+    window.until("steady", |window| !window.shows("rit."));
+    window.after_the_runs();
+    assert_eq!(
+        window.sections()[0]["bars"],
+        json!([
+            { "bars": 1, "signature": "4/4", "bpm": 120 },
+            { "bars": 2, "signature": "4/4", "bpm": 100 },
+            { "bars": 1, "signature": "4/4", "bpm": 120 },
+        ])
+    );
+    assert_eq!(
+        window.tempos(),
+        [(0, 120.), (BAR, 100.), (3 * BAR, 120.), (4 * BAR, 90.)]
+    );
+    one_undo_step(&mut window, "Change the tempo", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// Bar 2 chosen and F: a fermata on its last count, which the clock plays at half the tempo, so
+/// the bar lasts one beat longer, 2.5 seconds at 120. F again takes it off.
+#[gpui::test]
+fn a_fermata_holds_the_last_count_one_beat_longer_and_f_again_takes_it_off(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_piece(cx);
+    let tempos = window.tempos();
+    window.choose_bar(1);
+    let before = mark(&mut window);
+    window.keys("f");
+    window.until("the fermata", |window| {
+        window.sections()[0]["bars"].as_array().unwrap().len() == 3
+    });
+    window.after_the_runs();
+    assert_eq!(
+        window.sections()[0]["bars"],
+        json!([
+            { "bars": 1, "signature": "4/4", "bpm": 120 },
+            { "bars": 1, "signature": "4/4", "bpm": 120, "fermata": 4, "hold": 1 },
+            { "bars": 2, "signature": "4/4", "bpm": 120 },
+        ])
+    );
+    let held = window.tempos();
+    assert_eq!(
+        held,
+        [
+            (0, 120.),
+            (BAR + 3 * BEAT, 60.),
+            (2 * BAR, 120.),
+            (4 * BAR, 90.)
+        ]
+    );
+    assert_eq!(seconds(&held, BAR, 2 * BAR), 2.5);
+    assert_eq!(seconds(&held, 2 * BAR, 3 * BAR), 2.);
+    one_undo_step(&mut window, "Add a fermata", &before);
+
+    window.wait_for_bun();
+    let before = mark(&mut window);
+    window.keys("f");
+    window.until("no fermata", |window| {
+        window.sections()[0]["bars"].as_array().unwrap().len() == 1
+    });
+    window.after_the_runs();
+    assert_eq!(window.tempos(), tempos);
+    one_undo_step(&mut window, "Remove a fermata", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// Opens the piece with a fermata on the last count of bar 2.
+fn with_a_fermata(cx: &mut TestAppContext) -> Opened<'_> {
+    let mut window = open_piece(cx);
+    window.choose_bar(1);
+    window.keys("f");
+    window.until("the fermata", |window| {
+        window.sections()[0]["bars"][1]["fermata"] == 4
+    });
+    window.after_the_runs();
+    window
+}
+
+/// A click on the fermata of bar 2 and "2 beats longer": it holds two beats, its count a third
+/// as fast. A click again and "Remove the fermata" takes it off.
+#[gpui::test]
+fn the_menu_of_a_fermata_changes_how_long_it_holds_and_removes_it(cx: &mut TestAppContext) {
+    let mut window = with_a_fermata(cx);
+    let sign = window.fermata(1, 4);
+    let before = mark(&mut window);
+    window.click(sign);
+    let two = window.until_found("menu-2");
+    window.click(two);
+    window.until("held longer", |window| {
+        window.sections()[0]["bars"][1]["hold"] == 2
+    });
+    window.after_the_runs();
+    assert_eq!(window.sections()[0]["bars"][1]["fermata"], 4);
+    assert_eq!(window.tempos()[1], (BAR + 3 * BEAT, 40.));
+    assert_eq!(seconds(&window.tempos(), BAR, 2 * BAR), 3.);
+    one_undo_step(&mut window, "Change a fermata", &before);
+
+    window.wait_for_bun();
+    let before = mark(&mut window);
+    window.click(sign);
+    let remove = window.until_found("menu-5");
+    window.click(remove);
+    window.until("no fermata", |window| {
+        window.sections()[0]["bars"].as_array().unwrap().len() == 1
+    });
+    window.after_the_runs();
+    one_undo_step(&mut window, "Remove a fermata", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// The fermata of bar 2 dragged onto the second count of bar 3: it is there, and bar 2 has none.
+#[gpui::test]
+fn a_fermata_dragged_to_another_count_moves_there(cx: &mut TestAppContext) {
+    let mut window = with_a_fermata(cx);
+    let (sign, onto) = (window.fermata(1, 4), window.fermata(2, 2));
+    let before = mark(&mut window);
+    window.drag(sign, onto);
+    window.until("the fermata moved", |window| {
+        window.sections()[0]["bars"][1]["fermata"] == 2
+    });
+    window.after_the_runs();
+    assert_eq!(
+        window.sections()[0]["bars"],
+        json!([
+            { "bars": 2, "signature": "4/4", "bpm": 120 },
+            { "bars": 1, "signature": "4/4", "bpm": 120, "fermata": 2, "hold": 1 },
+            { "bars": 1, "signature": "4/4", "bpm": 120 },
+        ])
+    );
+    assert_eq!(window.tempos()[1], (2 * BAR + BEAT, 60.));
+    one_undo_step(&mut window, "Move a fermata", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// A right-click on the first count of bar 2, and "Fermata" in its menu: the fermata is on that
+/// count.
+#[gpui::test]
+fn a_fermata_from_the_menu_of_a_bar_goes_on_the_count_under_the_pointer(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    let count = window.in_band(BAR + BEAT / 2, 0., BARS);
+    let before = mark(&mut window);
+    window.right_click(count);
+    let fermata = window.until_found("menu-8");
+    window.click(fermata);
+    window.until("the fermata", |window| {
+        window.sections()[0]["bars"][1]["fermata"] == 1
+    });
+    window.after_the_runs();
+    assert_eq!(window.tempos()[1], (BAR, 60.));
+    one_undo_step(&mut window, "Add a fermata", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// Bar 2, with a fermata on its fourth count, made 3/4: the fermata is on its third.
+#[gpui::test]
+fn a_shorter_time_signature_keeps_the_fermata_on_a_count_the_bar_has(cx: &mut TestAppContext) {
+    let mut window = with_a_fermata(cx);
+    let before = mark(&mut window);
+    window.keys("shift-t");
+    window.type_in_field("3/4");
+    window.until("the bar made shorter", |window| {
+        window.sections()[0]["bars"][1]["signature"] == "3/4"
+    });
+    window.after_the_runs();
+    assert_eq!(
+        window.sections()[0]["bars"][1],
+        json!({ "bars": 1, "signature": "3/4", "bpm": 120, "fermata": 3, "hold": 1 })
+    );
+    assert_eq!(
+        window.tempos()[1..3],
+        [(BAR + 2 * BEAT, 60.), (BAR + 3 * BEAT, 120.)]
+    );
+    one_undo_step(&mut window, "Change the time signature", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// Shift-B on bar 2, which has a fermata, adds a bar with none. Bars 3 and 4 then slowing down to
+/// 60 and shift-B: the bar added is steady at 60, and the bar after it at 120 as it was.
+#[gpui::test]
+fn a_bar_added_after_a_fermata_or_a_rit_is_steady_at_the_tempo_reached(cx: &mut TestAppContext) {
+    let mut window = with_a_fermata(cx);
+    let before = mark(&mut window);
+    window.keys("shift-b");
+    window.until("a bar added", |window| {
+        window.part("t00", "sec-b").0 == 5 * BAR
+    });
+    window.after_the_runs();
+    assert_eq!(
+        window.sections()[0]["bars"],
+        json!([
+            { "bars": 1, "signature": "4/4", "bpm": 120 },
+            { "bars": 1, "signature": "4/4", "bpm": 120, "fermata": 4, "hold": 1 },
+            { "bars": 3, "signature": "4/4", "bpm": 120 },
+        ])
+    );
+    one_undo_step(&mut window, "Add a bar", &before);
+
+    window.wait_for_bun();
+    window.choose_bar(2);
+    window.keys("shift-right");
+    window.keys("alt-t");
+    window.type_in_field("60");
+    window.until("the rit.", |window| window.shows("rit."));
+    window.after_the_runs();
+    let before = mark(&mut window);
+    window.keys("shift-b");
+    window.until("a bar added", |window| {
+        window.part("t00", "sec-b").0 == 6 * BAR
+    });
+    window.after_the_runs();
+    assert_eq!(
+        window.sections()[0]["bars"].as_array().unwrap()[4..],
+        [
+            json!({ "bars": 1, "signature": "4/4", "bpm": 60 }),
+            json!({ "bars": 1, "signature": "4/4", "bpm": 120 }),
+        ]
+    );
+    let tempos = window.tempos();
+    assert_slide(&tempos, 2 * BAR, 4 * BAR, 120., 60.);
+    let after: Vec<_> = (tempos.iter())
+        .filter(|(tick, _)| *tick >= 4 * BAR)
+        .copied()
+        .collect();
+    assert_eq!(after, [(4 * BAR, 60.), (5 * BAR, 120.), (6 * BAR, 90.)]);
+    one_undo_step(&mut window, "Add a bar", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// An agent writes a run that slows down from 120 to 90 over bars 2 and 3: the clock gets its
+/// steps, and the band says "rit.".
+#[gpui::test]
+fn a_rit_an_agent_writes_in_the_record_reaches_the_clock_in_steps(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    let mut piece = window.record("piece");
+    piece["sections"][0]["bars"] = json!([
+        { "bars": 1, "signature": "4/4", "bpm": 120 },
+        { "bars": 2, "signature": "4/4", "bpm": 120, "to": 90 },
+        { "bars": 1, "signature": "4/4", "bpm": 120 },
+    ]);
+    let record = json!({ "tool": "piece", "state": piece });
+    write_outside(
+        &mut window,
+        "state/piece/instance.json",
+        &record.to_string(),
+    );
+    window.until("the steps", |window| window.tempos().len() > 2);
+    window.after_the_runs();
+    let tempos = window.tempos();
+    assert_slide(&tempos, BAR, 3 * BAR, 120., 90.);
+    assert_eq!(
+        tempos[tempos.len() - 2..],
+        [(3 * BAR, 120.), (4 * BAR, 90.)]
+    );
+    assert!(window.shows("rit."));
+    assert_eq!(window.problems(), []);
+}
+
+/// The last bar of B slowing down to 60 with a fermata, and the music of B repeated past it: the
+/// two bars the piece gets are steady at 60, with no fermata.
+#[gpui::test]
+fn bars_music_needs_past_a_rit_and_a_fermata_are_steady_at_the_tempo_reached(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_piece(cx);
+    window.choose_bar(5);
+    window.keys("f");
+    window.keys("alt-t");
+    window.type_in_field("60");
+    window.until("the rit.", |window| window.shows("rit."));
+    window.after_the_runs();
+    window.choose_music(4, 0);
+    window.keys("shift-right");
+    window.wait_for_bun();
+    window.keys("secondary-d");
+    window.until("repeated", |window| {
+        window.record("piece/t00/sec-b")["length"] == 4 * BAR
+    });
+    window.after_the_runs();
+    assert_eq!(
+        window.sections()[1]["bars"],
+        json!([
+            { "bars": 1, "signature": "4/4", "bpm": 90 },
+            { "bars": 1, "signature": "4/4", "bpm": 90, "to": 60, "fermata": 4, "hold": 1 },
+            { "bars": 2, "signature": "4/4", "bpm": 60 },
+        ])
+    );
+    let tempos = window.tempos();
+    assert_eq!(tempos.last(), Some(&(6 * BAR, 60.)));
+    assert_eq!(window.problems(), []);
 }

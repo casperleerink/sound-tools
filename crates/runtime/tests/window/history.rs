@@ -117,25 +117,6 @@ fn without_the_agent_cmd_l_does_nothing(cx: &mut TestAppContext) {
 }
 
 impl Opened<'_> {
-    fn right_click(&mut self, position: gpui::Point<gpui::Pixels>) {
-        let (button, modifiers) = (gpui::MouseButton::Right, gpui::Modifiers::default());
-        self.cx.simulate_mouse_move(position, None, modifiers);
-        self.cx.simulate_event(gpui::MouseDownEvent {
-            position,
-            modifiers,
-            button,
-            click_count: 1,
-            first_mouse: false,
-        });
-        self.cx.simulate_event(gpui::MouseUpEvent {
-            position,
-            modifiers,
-            button,
-            click_count: 1,
-        });
-        self.cx.run_until_parked();
-    }
-
     fn pick_in_menu(&mut self, selector: &str, item: &str) {
         let row = self.control(selector);
         self.right_click(row);

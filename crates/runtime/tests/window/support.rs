@@ -675,6 +675,25 @@ impl Opened<'_> {
         self.release(position);
     }
 
+    pub(crate) fn right_click(&mut self, position: Point<Pixels>) {
+        let (button, modifiers) = (MouseButton::Right, Modifiers::default());
+        self.cx.simulate_mouse_move(position, None, modifiers);
+        self.cx.simulate_event(MouseDownEvent {
+            position,
+            modifiers,
+            button,
+            click_count: 1,
+            first_mouse: false,
+        });
+        self.cx.simulate_event(MouseUpEvent {
+            position,
+            modifiers,
+            button,
+            click_count: 1,
+        });
+        self.cx.run_until_parked();
+    }
+
     pub(crate) fn double_click(&mut self, position: Point<Pixels>) {
         self.double_press(position);
         self.release_times(position, 2);
