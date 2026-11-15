@@ -17,9 +17,12 @@ export const Heads = ({ page }: { page: Page }) => {
   return (
     <div style={{ width: HEADER - 1, keep: true }}>
       <div style={{ height: MARKS, keep: true, justify: "end", paddingX: "lg", paddingBottom: "xs" }}>
-        <div style={{ direction: "row" }}>
+        <div style={{ direction: "row", gap: "sm" }}>
           <Toggle key="loop" label="Loop" size="sm" on={() => clock.repeat !== null} shortcut="piece.loop" onClick={() => toggleLoop(page)}
             tooltip={() => (clock.repeat !== null ? "Stop looping" : memory.chosen ? "Loop the chosen bars as it plays" : "Loop the section that plays")} />
+          <Show when={() => clock.playing && !memory.follows}>
+            {() => <Button key="follow" label="Follow" size="sm" variant="ghost" shortcut="piece.follow" tooltip="Turn the page with the playhead again" onClick={() => (memory.follows = true)} />}
+          </Show>
         </div>
       </div>
       <div style={{ grow: true }} follow={{ y: "rows" }}>

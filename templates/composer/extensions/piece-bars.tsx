@@ -50,10 +50,10 @@ function marksOf({ all, end }: Page) {
   const goesOn = (index: number) => slides(index) && slides(index - 1) && bars[index - 1]!.to === bars[index]!.bpm && rises(index) === rises(index - 1);
   const tempoAt = (index: number) => index === 0 || (slides(index) ? !goesOn(index) : slides(index - 1) || said(bars[index - 1]!) !== said(bars[index]!));
   const signatureAt = (index: number) => index === 0 || bars[index - 1]!.signature !== bars[index]!.signature;
-  /** The bars a mark stands for: from its bar up to the next with a mark of its kind. */
+  /** The bars the time signature or the tempo of the bar `index` stands for: from the last mark of its kind up to the next. */
   const runOf = (index: number, marked: (index: number) => boolean) => {
     const next = bars.findIndex((_, at) => at > index && marked(at));
-    return { from: index, to: next < 0 ? bars.length - 1 : next - 1 };
+    return { from: Math.max(bars.findLastIndex((_, at) => at <= index && marked(at)), 0), to: next < 0 ? bars.length - 1 : next - 1 };
   };
   const changes = bars.flatMap((bar, index) => (signatureAt(index) || tempoAt(index) ? [{ index, tick: starts[index]!, bar, signature: signatureAt(index), tempo: tempoAt(index) }] : []));
   return changes.map((change, at) => {
@@ -80,6 +80,9 @@ function marksOf({ all, end }: Page) {
       room: (changes[at + 1]?.tick ?? end()) - change.tick,
       signatureRun: runOf(index, signatureAt),
       slide: sliding ? { end: starts[tempoRun.to + 1]!, reached } : null,
+      // What the mark says of the tempo once its bar is off the left edge, where it stays: also when the tempo did not change at it.
+      edgeTempo: slides(index) ? word : said(bar),
+      slides: slides(index),
     };
   });
 }
@@ -279,14 +282,28 @@ export const Marks = ({ page }: { page: Page }) => {
           const last = mark.forms.at(-1)!;
           const dot = not(fits(page, mark.room, last.width));
           const signatureShows = mark.signature ? not(dot) : NONE;
-          const left = (points: number) => () => space.pointX.times(points).plus(mark.tick);
-          // A right press chooses the bar of the mark, as one on the band over it does.
-          const pressMark = (type: () => unknown) => (event: Press) => (event.button === "left" ? void type() : press({ ...event, x: mark.tick }));
+          // Once its bar is off the left edge, a mark stays there up to the next one, and says the time signature and the tempo both, as a score's continuous view keeps them: while it has the room.
+          const [signatureLead, next] = [mark.signatureWidth + 8, mark.tick + mark.room];
+          const edgeWidth = 6 + signatureLead + Math.max(mark.forms[0]?.tempo.length ?? 0, mark.edgeTempo.length) * LABEL_CHAR + 8;
+          const stays = fits(page, mark.room, edgeWidth + 24);
+          const atEdge = band.left.gt(mark.tick).times(stays);
+          const along = (from: Live, to: Live) => to.max(from).minus(from).times(stays).plus(from);
+          const signatureX = () => along(now.tick.times(0).plus(mark.tick), band.left.min(space.pointX.times(-edgeWidth).plus(next)));
+          const tempoX = () =>
+            along(space.pointX.times(6 + mark.lead).plus(mark.tick), band.left.plus(space.pointX.times(6 + signatureLead)).min(space.pointX.times(-(edgeWidth - 6 - signatureLead)).plus(next)));
+          const left = (points: number) => () => space.pointX.times(points).plus(signatureX());
+          // A click types for the bars the mark stands for, which it chooses, so they show; a right press chooses the bar of the mark, as one on the band over it does.
+          const pressMark = (run: { from: number; to: number }, type: () => unknown) => (event: Press) => {
+            if (event.button !== "left") return press({ ...event, x: mark.tick });
+            chooseBars(page, run.from, run.to);
+            void type();
+          };
+          const signatureOpacity = mark.signature ? signatureShows : atEdge;
           const digit = (text: string, y: number) => (
-            <Label x={left(6 + mark.signatureWidth / 2)} y={y} align="center" variant="body" text={[{ text, weight: "semibold" }]} color="text" opacity={signatureShows} />
+            <Label x={left(6 + mark.signatureWidth / 2)} y={y} align="center" variant="body" text={[{ text, weight: "semibold" }]} color="text" opacity={signatureOpacity} />
           );
-          const typeTempo = pressMark(() => (mark.slide ? askSlide : askTempo)(page, mark.tempoRun));
-          // The line of a slide, from its word to where it ends, with the tempo it reaches or a hook.
+          const typeTempo = pressMark(mark.tempoRun, () => (mark.slides ? askSlide : askTempo)(page, mark.tempoRun));
+          // The line of a slide, from its word to where it ends, with the tempo it reaches.
           const slide = (() => {
             if (!mark.slide) return [];
             const { end, reached } = mark.slide;
@@ -296,34 +313,32 @@ export const Marks = ({ page }: { page: Page }) => {
             const room = (points: number) => words.reduce((sum, word) => sum.plus(word.shows.times(fits(page, end - mark.tick, word.width + points))), NONE);
             // The tempo it reaches shows before its line does: with little room, the word and the number.
             const [lineShows, numberShows] = [room(number + (reached ? 14 : 12)), reached ? room(number + 2) : NONE];
-            const word = words.reduce((sum, each) => sum.plus(each.shows.times(each.width)), NONE);
-            const [y, lineStart, lineEnd] = [TEMPO_Y + 8, () => space.pointX.times(word.minus(4)).plus(mark.tick), () => space.pointX.times(-number).times(numberShows).plus(space.pointX.times(-5)).plus(end)];
+            const word = words.reduce((sum, each) => sum.plus(each.shows.times(each.width - mark.lead - 10)), NONE);
+            const lineEnd = () => space.pointX.times(-number).times(numberShows).plus(space.pointX.times(-5)).plus(end);
+            const lineStart = () => space.pointX.times(word).plus(tempoX()).min(lineEnd());
+            const y = TEMPO_Y + 8;
             return [
               <Line from={() => [lineStart(), y] as const} to={() => [lineEnd(), y] as const} color="text-muted" width={1} opacity={lineShows} />,
               <Label x={() => space.pointX.times(-5).plus(end)} y={TEMPO_Y} align="right" text={reached} color="text-muted" opacity={numberShows} />,
-              <Rect key={`slide-${mark.index}`} x={lineStart} y={TOP_DIGIT - 2} width={() => space.pointX.times(word.negate()).plus(end - mark.tick).times(lineShows)} height={30} color="none" cursor="pointer" onPress={typeTempo} />,
+              <Rect key={`slide-${mark.index}`} x={lineStart} y={TOP_DIGIT - 2} width={() => lineStart().negate().plus(end).times(lineShows)} height={30} color="none" cursor="pointer" onPress={typeTempo} />,
             ];
           })();
+          const tempoBox = (key: string, width: number, shows: Num) => (
+            <Rect key={key} x={() => space.pointX.times(-4).plus(tempoX())} y={TOP_DIGIT - 2} width={space.pointX.times(width).times(shows)} height={30} color="none" cursor="pointer" onPress={typeTempo} />
+          );
           return [
-            ...(mark.signature
-              ? [
-                  digit(mark.beats, TOP_DIGIT), digit(mark.note, BOTTOM_DIGIT),
-                  <Rect key={`signature-${mark.index}`} x={left(2)} y={TOP_DIGIT - 2} width={() => space.pointX.times(mark.signatureWidth + 8).times(signatureShows)} height={30} color="none" cursor="pointer"
-                    onPress={pressMark(() => askSignature(page, mark.signatureRun))} />,
-                ]
-              : []),
+            digit(mark.beats, TOP_DIGIT), digit(mark.note, BOTTOM_DIGIT),
+            <Rect key={`signature-${mark.index}`} x={left(2)} y={TOP_DIGIT - 2} width={() => space.pointX.times(mark.signatureWidth + 8).times(signatureOpacity)} height={30} color="none" cursor="pointer"
+              onPress={pressMark(mark.signatureRun, () => askSignature(page, mark.signatureRun))} />,
             ...slide,
-            ...mark.forms.flatMap((form, index) =>
-              form.tempo === "" && !mark.tempo
-                ? []
-                : [
-                    form.tempo === ""
-                      ? <Circle x={left(6 + mark.lead + 2.5)} y={TEMPO_Y + 8} radius={2} color="text-muted" opacity={shown[index]} />
-                      : <Label x={left(6 + mark.lead)} y={TEMPO_Y} text={form.tempo} color="text-secondary" opacity={shown[index]} />,
-                    <Rect key={`tempo-${mark.index}-${index}`} x={left(2 + mark.lead)} y={TOP_DIGIT - 2} width={space.pointX.times(form.width - mark.lead - 4).times(shown[index]!)} height={30} color="none" cursor="pointer"
-                      onPress={typeTempo} />,
-                  ],
-            ),
+            ...(mark.tempo
+              ? mark.forms.flatMap((form, index) => [
+                  form.tempo === ""
+                    ? <Circle x={() => space.pointX.times(2.5).plus(tempoX())} y={TEMPO_Y + 8} radius={2} color="text-muted" opacity={shown[index]} />
+                    : <Label x={tempoX} y={TEMPO_Y} text={form.tempo} color="text-secondary" opacity={shown[index]} />,
+                  tempoBox(`tempo-${mark.index}-${index}`, form.width - mark.lead - 4, shown[index]!),
+                ])
+              : [<Label x={tempoX} y={TEMPO_Y} text={mark.edgeTempo} color="text-secondary" opacity={atEdge} />, tempoBox(`tempo-${mark.index}-edge`, mark.edgeTempo.length * LABEL_CHAR + 8, atEdge)]),
             <Circle x={left(8)} y={TEMPO_Y + 8} radius={2} color="text-muted" opacity={dot} />,
           ];
         }}

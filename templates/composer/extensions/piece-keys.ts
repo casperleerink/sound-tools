@@ -1,10 +1,10 @@
 import { type Action, type ActionKey } from "./sdk";
 import { chosenStart, noteCommand, type NoteCommand } from "./clip-editor";
 import type { Piece } from "./piece";
-import { addBar, askSignature, askSlide, askTempo, choiceOf, chooseToEnd, clearChosen, copyChosen, cutChosen, editChosen, pasteChosen, repeatChosen, startSectionAt, stepBars, stepRows, toggleFermata, toggleLoop } from "./piece-choice";
+import { addBar, askBars, askSignature, askSlide, askTempo, choiceMenu, choiceOf, chooseToEnd, clearChosen, copyChosen, cutChosen, editChosen, pasteChosen, repeatChosen, startSectionAt, stepBars, stepRows, toggleFermata, toggleLoop } from "./piece-choice";
 import { barsOfPiece, chooseBars, clamp, editedPart, editPart, formOf, instrumentsOf, partSectionOf, showPanel } from "./piece-page";
 import { chosenEffect, stepEffect } from "./piece-panel";
-import { addSectionAtEnd, currentSection, moveSectionBy, nameSection, stepSection } from "./piece-sections";
+import { addSectionAtEnd, currentSection, moveSectionBy, nameSection, sectionMenu, stepSection } from "./piece-sections";
 import { askToDelete } from "./piece-tracks";
 
 // What the piece does on a key. The actions of one key are tried from the top: the notes of the
@@ -124,6 +124,15 @@ export const pieceActions: Record<string, PieceAction> = {
   more_above: on(["shift-up"], "Choose the instrument above too", (tool) => stepRows(tool, -1, true)),
   more_below: on(["shift-down"], "Choose the instrument below too", (tool) => stepRows(tool, 1, true)),
   add_bar: on(["shift-b"], "Add a bar after the chosen ones, or at the end", (tool) => addBar(tool, "after")),
+  add_bars: on(["alt-b"], "Type how many bars to add after the chosen ones, or at the end", (tool) => void askBars(tool)),
+  bars_menu: on(["m"], "Open the menu of the chosen bars", (tool) => {
+    if (!choiceOf(tool)) return false;
+    void choiceMenu(tool);
+  }),
+  follow: on(["alt-f"], "Turn the page with the playhead again", ({ clock, memory }) => {
+    if (!clock.playing || memory.follows) return false;
+    memory.follows = true;
+  }),
   add_bar_before: on(["alt-shift-b"], "Add a bar before", (tool) => addBar(tool, "before")),
   loop: on(["l"], "Loop the chosen bars, or the section that plays, as it plays", toggleLoop),
 
@@ -131,6 +140,10 @@ export const pieceActions: Record<string, PieceAction> = {
   next_section: on(["alt-shift-right"], "Choose the first bar of the next section", (tool) => stepSection(tool, 1)),
   move_section_earlier: on(["alt-shift-up"], "Move the section earlier", (tool) => moveSectionBy(tool, currentSection(tool) ?? "", -1)),
   move_section_later: on(["alt-shift-down"], "Move the section later", (tool) => moveSectionBy(tool, currentSection(tool) ?? "", 1)),
+  section_menu: on(["shift-m"], "Open the menu of the section", (tool) => {
+    const id = currentSection(tool);
+    if (id) void sectionMenu(tool, id);
+  }),
   rename_section: on(["shift-r"], "Rename the section", (tool) => {
     const id = currentSection(tool);
     if (id) void nameSection(tool, id);

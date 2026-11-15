@@ -1021,7 +1021,7 @@ fn a_fermata_holds_the_last_count_one_beat_longer_and_f_again_opens_its_menu(
     window.wait_for_bun();
     let before = mark(&mut window);
     window.keys("f");
-    let remove = window.until_found("menu-5");
+    let remove = window.until_found("menu-7");
     window.click(remove);
     window.until("no fermata", |window| {
         window.sections()[0]["bars"].as_array().unwrap().len() == 1
@@ -1066,7 +1066,7 @@ fn the_menu_of_a_fermata_changes_how_long_it_holds_and_removes_it(cx: &mut TestA
     window.wait_for_bun();
     let before = mark(&mut window);
     window.click(sign);
-    let remove = window.until_found("menu-5");
+    let remove = window.until_found("menu-7");
     window.click(remove);
     window.until("no fermata", |window| {
         window.sections()[0]["bars"].as_array().unwrap().len() == 1
@@ -1311,5 +1311,69 @@ fn a_fermata_holds_no_longer_than_its_tempo_can_play(cx: &mut TestAppContext) {
     assert!(tempos.contains(&(BAR + 3 * BEAT, 10.)));
     // Four beats at 15 are 16 seconds, and half a beat more is 2.
     assert_eq!(seconds(&tempos, BAR, 2 * BAR), 18.);
+    assert_eq!(window.problems(), []);
+}
+
+/// A click on the time signature at the start of the piece chooses the bars it stands for, all
+/// six, so the composer sees what the field changes: the playhead goes to the first, and a bar
+/// added after the choice lands at the end of B, not after bar 2, which was chosen before.
+#[gpui::test]
+fn a_click_on_a_mark_chooses_the_bars_it_changes(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(1);
+    let digits = window.in_band(0, 10., MARKS);
+    window.click(digits);
+    window.until_playhead(0);
+    window.type_in_field("3/4");
+    window.until("six bars of 3/4", |window| {
+        window.sections()[1]["bars"][0]["signature"] == "3/4"
+    });
+    window.after_the_runs();
+    window.keys("shift-b");
+    window.until("a third bar in B", |window| {
+        window.sections()[1]["bars"][0]["bars"] == 3
+    });
+    assert_eq!(window.sections()[0]["bars"][0]["bars"], 4);
+    assert_eq!(window.problems(), []);
+}
+
+/// The fermata of bar 2, on its last count, moved a beat earlier from its menu, which F opens:
+/// it is on count 3, in one undo step.
+#[gpui::test]
+fn a_fermata_moves_a_beat_earlier_from_its_menu(cx: &mut TestAppContext) {
+    let mut window = with_a_fermata(cx);
+    window.wait_for_bun();
+    let before = mark(&mut window);
+    window.keys("f");
+    let earlier = window.until_found("menu-5");
+    window.click(earlier);
+    window.until("on count 3", |window| {
+        window.sections()[0]["bars"][1]["fermata"] == 3
+    });
+    window.after_the_runs();
+    assert!(window.tempos().contains(&(BAR + 2 * BEAT, 60.)));
+    one_undo_step(&mut window, "Move a fermata", &before);
+    assert_eq!(window.problems(), []);
+}
+
+/// Alt-B and "3" with bar 2 chosen: three bars after it, as one undo step, and the notes after
+/// them three bars later.
+#[gpui::test]
+fn bars_typed_as_a_number_are_added_in_one_step(cx: &mut TestAppContext) {
+    let mut window = open_piece(cx);
+    window.choose_bar(1);
+    window.wait_for_bun();
+    let before = mark(&mut window);
+    window.keys("alt-b");
+    window.type_in_field("3");
+    window.until("seven bars in A", |window| {
+        window.sections()[0]["bars"][0]["bars"] == 7
+    });
+    window.after_the_runs();
+    assert_eq!(
+        window.part("t00", "sec-a"),
+        (0, vec![IN_A[0], IN_A[1], IN_A[2] + 3 * BAR])
+    );
+    one_undo_step(&mut window, "Add bars", &before);
     assert_eq!(window.problems(), []);
 }

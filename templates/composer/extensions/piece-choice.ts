@@ -266,25 +266,43 @@ export function moveFermata(piece: Piece, from: number, tick: number) {
 /** How much longer a fermata holds, to pick from. */
 const HOLDS = [0.5, 1, 2, 4];
 const holdSaid = (beats: number) => (beats === 0.5 ? "Half a beat longer" : beats === 1 ? "1 beat longer" : `${beats} beats longer`);
-/** The menu of the fermata of the bar `index` of the piece: how much longer it holds, a length to type, or off. */
+/** The menu of the fermata of the bar `index` of the piece: how much longer it holds, a length to type, the count before or after, or off. */
 export async function fermataMenu(piece: Piece, index: number) {
   const bar = barsOfPiece(piece.state).bars[index];
   const fermata = bar?.fermata;
   if (!bar || !fermata) return;
-  const set = (extra: number | null) => setFermatas(piece, extra === null ? "Remove a fermata" : "Change a fermata", [{ id: bar.id, bar: bar.at, fermata: extra === null ? null : { ...fermata, extra } }]);
-  const other = !HOLDS.includes(fermata.extra);
-  const picked = await piece.openMenu([
+  const set = (to: typeof fermata | null, label: string) => setFermatas(piece, label, [{ id: bar.id, bar: bar.at, fermata: to }]);
+  const hold = (extra: number) => set({ ...fermata, extra }, "Change a fermata");
+  const step = (by: number) => set({ ...fermata, beat: fermata.beat + by }, "Move a fermata");
+  const [longest, other] = [longestHold(bar), !HOLDS.includes(fermata.extra)];
+  const type = async () => {
+    const [, number] = /(\d+(?:[.,]\d+)?)/.exec((await piece.openField({ placeholder: `Beats longer, up to ${longest}`, width: 200 })) ?? "") ?? [];
+    if (number && Number(number.replace(",", ".")) > 0) hold(Math.min(Math.round(Number(number.replace(",", ".")) * 100) / 100, longest));
+  };
+  type Item = MenuItem & { run: () => unknown };
+  const items: Item[] = [
     // Not a hold the bar's tempo cannot play: the clock goes no slower than 10.
-    ...HOLDS.map((beats) => ({ label: holdSaid(beats), checked: fermata.extra === beats, disabled: beats > longestHold(bar) })),
-    { label: other ? `${holdSaid(fermata.extra)}…` : "Another length…", checked: other },
-    { label: "Remove the fermata", separator: true },
-  ]);
-  if (picked === null) return;
-  if (picked > HOLDS.length) return set(null);
-  if (picked < HOLDS.length) return set(HOLDS[picked]!);
-  const longest = longestHold(bar);
-  const [, number] = /(\d+(?:[.,]\d+)?)/.exec((await piece.openField({ placeholder: `Beats longer, up to ${longest}`, width: 200 })) ?? "") ?? [];
-  if (number && Number(number.replace(",", ".")) > 0) set(Math.min(Math.round(Number(number.replace(",", ".")) * 100) / 100, longest));
+    ...HOLDS.map((beats) => ({ label: holdSaid(beats), checked: fermata.extra === beats, disabled: beats > longest, run: () => hold(beats) })),
+    { label: other ? `${holdSaid(fermata.extra)}…` : "Another length…", checked: other, run: type },
+    { label: "Move a beat earlier", disabled: fermata.beat <= 1, separator: true, run: () => step(-1) },
+    { label: "Move a beat later", disabled: fermata.beat >= partsOf(bar.signature)[0], run: () => step(1) },
+    { label: "Remove the fermata", separator: true, run: () => set(null, "Remove a fermata") },
+  ];
+  const picked = await piece.openMenu(items.map(({ run: _, ...item }) => item));
+  if (picked !== null) void items[picked]?.run();
+}
+
+/** Asks how many bars to add after the chosen ones, or at the end with none chosen, and adds them, chosen. */
+export async function askBars(piece: Piece) {
+  const [, number] = /(\d+)/.exec((await piece.openField({ placeholder: "Bars to add, such as 4", width: 180 })) ?? "") ?? [];
+  const count = clamp(Number(number ?? 0), 0, 200);
+  const choice = choiceOf(piece);
+  const { bars } = barsOfPiece(piece.state);
+  const after = bars[choice ? choice.to : bars.length - 1];
+  if (count < 1 || !after) return;
+  addBars(piece, after.id, after.at + 1, count);
+  const at = (choice ? choice.to : bars.length - 1) + 1;
+  chooseBars(piece, at, at + count - 1);
 }
 
 /** The menu of the choice, each item with its key: whole bars also add a bar or start a section, music opens its notes. Opened at the tick `tick`, its fermata goes on the count there. */
@@ -311,6 +329,7 @@ export async function choiceMenu(piece: Piece, tick?: number) {
       ? ([
           { label: "Add a bar before", shortcut: "piece.add_bar_before", separator: true, run: () => addBar(piece, "before") },
           { label: "Add a bar after", shortcut: "piece.add_bar", run: () => addBar(piece, "after") },
+          { label: "Add bars…", shortcut: "piece.add_bars", run: () => askBars(piece) },
           { label: "Start a section here", shortcut: "piece.add_section", disabled: startsSection, separator: true, run: () => startSectionAt(piece) },
         ] satisfies Item[])
       : ([{ label: "Edit notes", shortcut: "piece.edit_notes", separator: true, run: () => editChosen(piece) }] satisfies Item[])),
