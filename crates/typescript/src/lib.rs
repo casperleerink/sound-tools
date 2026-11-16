@@ -24,6 +24,7 @@ mod feeds;
 mod lane;
 mod live;
 mod meter;
+pub mod next;
 mod path;
 #[cfg(test)]
 mod performance;
@@ -215,6 +216,8 @@ const SDK_MODULES: [(&str, &str); 12] = [
     ("sdk/card.ts", include_str!("sdk/card.ts")),
     ("sdk/host.ts", include_str!("sdk/host.ts")),
 ];
+/// The views of the new window, written only into a project of it, see [`next::THEME`].
+const VIEW_SDK: (&str, &str) = ("sdk/view.ts", include_str!("sdk/view.ts"));
 pub const HOST: &str = include_str!("host.ts");
 /// What [`HOST`] uses of Node and Bun, for a check of its types.
 pub const HOST_TYPES: &str = include_str!("node.d.ts");
@@ -274,6 +277,21 @@ pub const AGENT_DOCS: [AgentDoc; 5] = [
         markdown: include_str!("extensions-children.md"),
     },
 ];
+/// How an agent writes a tool of a project of the new window, in place of [`AGENT_DOCS`].
+pub const VIEW_AGENT_DOCS: [AgentDoc; 1] = [AgentDoc {
+    name: "tools",
+    group: WRITING,
+    when: "No tool does what you need: write a device for a track, change the song page, or make the whole project one tool",
+    markdown: include_str!("tools.md"),
+}];
+
+/// The docs of writing tools for the project in `folder`.
+pub fn agent_docs(folder: &Path) -> &'static [AgentDoc] {
+    match next::has_views(folder) {
+        true => &VIEW_AGENT_DOCS,
+        false => &AGENT_DOCS,
+    }
+}
 const WRITING: &str = "Writing tools";
 /// The group of the docs of the built-in children.
 const BLOCKS: &str = "Blocks a parent plays";
@@ -599,7 +617,8 @@ fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
     if !ignore.exists() {
         std::fs::write(ignore, format!("{}\n", bun::LOG_FILE))?;
     }
-    for (name, text) in files.into_iter().chain(SDK_MODULES) {
+    let views = extensions.join(next::THEME).is_file().then_some(VIEW_SDK);
+    for (name, text) in files.into_iter().chain(SDK_MODULES).chain(views) {
         let path = extensions.join(name);
         if name == "bun.d.ts" && bun_types {
             match std::fs::remove_file(&path) {

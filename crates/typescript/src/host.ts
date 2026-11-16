@@ -3,7 +3,7 @@
 // message per line: the runtime tells on stdin, this says on stdout. What a tool logs goes to
 // stderr, so it cannot break a message.
 
-import { realpathSync, writeSync } from "node:fs";
+import { existsSync, realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { Child, Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, MenuOptions, MovedNumber, NoteEvent, Offers, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
@@ -15,6 +15,17 @@ const stackPaths = files.map((file) => [file, `${realpathSync(join(folder, file)
 // So the stack `tool` keeps reaches its file through any number of helpers.
 Error.stackTraceLimit = Infinity;
 const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
+/** What the host uses of `sdk/view.ts`, which only a project of the new window has. */
+type Next = {
+  host: {
+    views: Map<string, unknown>;
+    run(instance: string, made: unknown, self: unknown, change: unknown): unknown;
+    perform(instance: string, key: string, action: string, value?: unknown): boolean;
+    forget(instance: string): void;
+  };
+};
+/** The views of the new window: loaded before the tools, which register theirs. */
+const next: Next | undefined = existsSync(join(folder, "sdk/view.ts")) ? await import(join(folder, "sdk/view.ts")) : undefined;
 
 for (const name of ["log", "info", "debug", "warn"] as const) {
   console[name] = (...values: unknown[]) => console.error(...values);
@@ -60,7 +71,11 @@ type Request =
   | { type: "drop"; card: number }
   | { type: "behaviour"; question: number; tool: string; instance: string }
   /** The answer to a question of `ask`. */
-  | { type: "answer"; question: number; answer: unknown };
+  | { type: "answer"; question: number; answer: unknown }
+  /** The instances whose views the new window shows: each sends its tree now, and again when its records change. */
+  | { type: "show"; instances: string[] }
+  /** An action on an element of a shown view, by its key: `press`, `drag` with `{ dx, dy }`, or one it names. */
+  | { type: "act"; instance: string; key: string; action: string; value?: number | { dx: number; dy: number } };
 
 /** What bindings of an instance read: the window tells this Bun at once only what they read. */
 type Reads = { state: string[] | null; children: boolean; watches: string[] | null };
@@ -656,6 +671,63 @@ function hear({ records, gone, edits: heard }: Extract<Request, { type: "records
     if (known) known.told = undefined;
   }
   refresh(touched);
+  for (const id of touched) {
+    if (shown.has(id)) drawNext(id);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Views of the new window (`sdk/view.ts`): a plain function of the records, run again on every
+// change of them. The window gets the whole tree; what a `memo` kept it has already.
+
+const shown = new Set<string>();
+
+/** Runs the view of `instance` and sends its tree, or that its tool has none. */
+function drawNext(instance: string) {
+  const record = recordOf(instance);
+  const spec = sdk.host.tools.get(record?.tool ?? "");
+  const made = record && next?.host.views.get(record.tool);
+  if (!record || !spec || !made) {
+    say({ type: "tree", instance, none: true });
+    return;
+  }
+  const self = { name: instance.slice(instance.lastIndexOf("/") + 1), state: filledState(spec, record), children: childrenOf(instance) };
+  const change = (edit: (draft: Part<State>) => void, label = "Change") => updater(instance, true)(label, edit);
+  runs(spec.name, "view");
+  try {
+    say({ type: "tree", instance, tree: next!.host.run(instance, made, self, change) });
+  } catch (error) {
+    fail(spec.name, `its view failed: ${error}`);
+    say({ type: "tree", instance, error: String(error) });
+  }
+}
+
+function show(instances: string[]) {
+  const asked = new Set(instances);
+  for (const instance of shown) {
+    if (!asked.has(instance)) {
+      shown.delete(instance);
+      next?.host.forget(instance);
+    }
+  }
+  for (const instance of asked) {
+    if (!shown.has(instance)) {
+      shown.add(instance);
+      drawNext(instance);
+    }
+  }
+}
+
+/** An action on a shown view; it runs again after, also when nothing changed, as its memory may have. */
+function act({ instance, key, action, value }: Extract<Request, { type: "act" }>) {
+  const tool = recordOf(instance)?.tool ?? "";
+  runs(tool, `${action} on ${key}`);
+  try {
+    next?.host.perform(instance, key, action, value);
+  } catch (error) {
+    fail(tool, `its ${action} on ${key} failed: ${error}`);
+  }
+  if (shown.has(instance)) drawNext(instance);
 }
 
 /** The record of `id` as its code knows it: as told, and with the edits not heard on top when `latest`. */
@@ -914,7 +986,7 @@ function created(id: string, child: OwnedChild, changes: Change[]) {
  * What changes the record of an instance and those of its children, each time on the latest the
  * code knows: also after an `await`, while the instance is there.
  */
-function updater(instance: string) {
+function updater(instance: string, gesture = false) {
   return (label: string, change: (part: Part<State>) => void) => {
     if (typeof label !== "string") {
       throw new TypeError(`the label of an update is ${JSON.stringify(label)}: give text, such as "Save the take"`);
@@ -949,7 +1021,7 @@ function updater(instance: string) {
     }
     const wired = changes.map(({ id, ...change }) => (id === instance ? change : { ...change, child: id.slice(instance.length + 1) }));
     // Before it counts: a value JSON cannot hold, such as a cycle, throws here.
-    const line = JSON.stringify({ type: "edit", instance, label, changes: wired }) + "\n";
+    const line = JSON.stringify({ type: "edit", instance, label, changes: wired, ...(gesture ? { gesture } : {}) }) + "\n";
     edits += 1;
     unheard.push({ number: edits, changes });
     writeSync(1, line);
@@ -1431,6 +1503,12 @@ function handle(request: Request) {
       break;
     case "behaviour":
       declare(request);
+      break;
+    case "show":
+      show(request.instances);
+      break;
+    case "act":
+      act(request);
       break;
     case "answer":
       asked.get(request.question)?.(request.answer);

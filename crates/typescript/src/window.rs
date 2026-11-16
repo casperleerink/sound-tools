@@ -317,7 +317,7 @@ fn start(
 /// Watches `folder` and its folders but `node_modules`, and says on `changed` when a file
 /// that may be imported changes, or a folder. Not hidden files, such as an editor's. With
 /// what it cannot watch, which is a problem.
-fn watch(
+pub(crate) fn watch(
     folder: &Path,
     changed: smol::channel::Sender<()>,
 ) -> (Option<RecommendedWatcher>, Option<Problem>) {
@@ -536,7 +536,7 @@ fn list_actions(tools: &[ToolInfo], cx: &mut App) {
     cx.default_global::<Shortcuts>().set_tool_groups(groups);
 }
 
-fn find<'a>(tools: &'a [Rc<ToolInfo>], name: &str) -> Option<&'a Rc<ToolInfo>> {
+pub(crate) fn find<'a>(tools: &'a [Rc<ToolInfo>], name: &str) -> Option<&'a Rc<ToolInfo>> {
     tools.iter().find(|info| info.name == name)
 }
 
@@ -557,13 +557,13 @@ fn played<'a>(project: &Project, id: &'a InstanceId) -> Played<'a> {
 }
 
 /// Every instance of `project`, as changed records when a Bun starts: it holds none.
-fn every_instance(project: &Project) -> BTreeSet<InstanceId> {
+pub(crate) fn every_instance(project: &Project) -> BTreeSet<InstanceId> {
     project.instances().map(|(id, _)| id.clone()).collect()
 }
 
 /// Whether Bun holds the record of `id`: one of a tool of the project, or one inside one at
 /// any depth, which the code of that tool reads.
-fn told_to_bun(project: &Project, tools: &[Rc<ToolInfo>], id: &InstanceId) -> bool {
+pub(crate) fn told_to_bun(project: &Project, tools: &[Rc<ToolInfo>], id: &InstanceId) -> bool {
     let ours =
         |id: &InstanceId| (project.tool_of(id)).is_some_and(|tool| find(tools, tool).is_some());
     ours(id) || id.ancestors().any(|owner| ours(&owner))
@@ -1627,7 +1627,10 @@ impl Live {
                 instance,
                 label,
                 changes,
+                ..
             } => self.edit(&instance, &label, changes, cx),
+            // The new window's.
+            Event::Tree { .. } => {}
             Event::Control {
                 instance,
                 child,
@@ -2422,7 +2425,7 @@ impl Live {
 
 /// The changes of `edits` that the code of `instance` of the tool `info` made, on the records as
 /// they are now, with each record they touch. Or what is wrong with one of them.
-fn changes_of(
+pub(crate) fn changes_of(
     project: &Project,
     info: &ToolInfo,
     instance: &InstanceId,

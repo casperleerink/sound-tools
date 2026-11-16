@@ -166,6 +166,19 @@ pub(crate) enum Request<'a> {
         tool: &'a str,
         instance: &'a InstanceId,
     },
+    /// The instances whose views the new window shows: each new one sends its tree, and each
+    /// again when a record of it or inside it changes.
+    Show {
+        instances: Vec<&'a InstanceId>,
+    },
+    /// An action on the element `key` of the view of `instance`: `press`, `drag` with `{dx, dy}`,
+    /// or one the element names, such as `toggle` or `set` with a number.
+    Act {
+        instance: &'a InstanceId,
+        key: &'a str,
+        action: &'a str,
+        value: Option<Value>,
+    },
 }
 
 /// What happened on a node, which names the handler that hears it.
@@ -440,6 +453,17 @@ pub(crate) enum Event {
         instance: InstanceId,
         label: String,
         changes: Vec<RecordEdit>,
+        /// An action on a view of the new window made it: one step of undo at once.
+        #[serde(default)]
+        gesture: bool,
+    },
+    /// A view of the new window ran: its tree, or none for a tool without one, or why it failed.
+    Tree {
+        instance: InstanceId,
+        #[serde(default)]
+        tree: Option<Value>,
+        #[serde(default)]
+        error: Option<String>,
     },
     /// Code moved a number input of an instance, or of its child `child`, or sent a bang when
     /// there is no value: at `at`, engine time in seconds, or at once.
@@ -896,7 +920,7 @@ impl Bun {
         Err(LoadFailure { file, why })
     }
 
-    #[cfg(feature = "test-support")]
+    /// Whether it did all it was told, and the window heard all it said.
     pub(crate) fn is_idle(&self) -> bool {
         self.busy
             .lock()
@@ -947,8 +971,11 @@ impl Bun {
                 | Request::Mount { .. }
                 | Request::Resize { .. }
                 | Request::Watches { .. }
-                | Request::Clock { .. } => SENT_UPDATES.fetch_add(1, Ordering::Relaxed),
-                Request::Event { .. } => SENT_EVENTS.fetch_add(1, Ordering::Relaxed),
+                | Request::Clock { .. }
+                | Request::Show { .. } => SENT_UPDATES.fetch_add(1, Ordering::Relaxed),
+                Request::Event { .. } | Request::Act { .. } => {
+                    SENT_EVENTS.fetch_add(1, Ordering::Relaxed)
+                }
                 _ => 0,
             };
         } else {

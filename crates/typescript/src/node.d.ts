@@ -2,6 +2,7 @@
 // SDK it runs next to.
 
 declare module "node:fs" {
+  export function existsSync(path: string): boolean;
   export function realpathSync(path: string): string;
   export function writeSync(fd: number, data: string): number;
 }

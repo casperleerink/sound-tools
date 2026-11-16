@@ -12,11 +12,11 @@ use std::path::Path;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Duration;
 
-use anyhow::{Context as _, Result, anyhow, bail};
-use plugin_host::{PluginFormat, Plugins};
 use crate::report::Timeline;
 use crate::templates::{self, Keep};
 use crate::{OFFLINE, open_or_create_with, open_read_only_at, problems, summary};
+use anyhow::{Context as _, Result, anyhow, bail};
+use plugin_host::{PluginFormat, Plugins};
 use sound_core::{
     Clock, Engine, EngineConfig, EngineStatus, OutputDevice, Project, ProjectEvent, Ticks,
 };
@@ -710,10 +710,7 @@ fn list_plugin_parameters(format: &str, plugin_id: &str) -> Result<()> {
         bail!("{format:?} is not a plugin format: clap or vst3");
     };
     let plugins = crate::read_only_plugins()?;
-    println!(
-        "{}",
-        crate::plugin_parameters(&plugins, format, plugin_id)?
-    );
+    println!("{}", crate::plugin_parameters(&plugins, format, plugin_id)?);
     Ok(())
 }
 
