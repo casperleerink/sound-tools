@@ -84,8 +84,10 @@ def short(tool: str, arguments: dict) -> str:
 
 
 def environment() -> dict:
+    """The agent's environment: none of Claude Code's own, nor the eval's, which names the
+    checkout the program came from."""
     found = {key: value for key, value in os.environ.items()
-             if key != "CLAUDECODE" and not key.startswith("CLAUDE_CODE_")}
+             if key != "CLAUDECODE" and not key.startswith(("CLAUDE_CODE_", "SOUND_TOOLS_"))}
     found["PATH"] = sound_tools_on_path()
     return found
 
