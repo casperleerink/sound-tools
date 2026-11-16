@@ -10,7 +10,8 @@ council: Opus and GPT, each on a copy of its own, check each criterion by using 
 through the app, score its UI and UX against DESIGN.md, and keep the screenshots that show it.
 It prints one JSON line per run: the checks, each message's cost and how the builder checked its
 work, and the council's verdicts. `report.py` puts runs side by side by `--label`. Logs go to
-/tmp/sound-tools-eval/.
+/tmp/sound-tools-eval/. `$SOUND_TOOLS_RUNTIME` and `$SOUND_TOOLS_TEMPLATE` (the DAW template's
+folder) pick another program and template to compare.
 
 `examples/` holds tools agents built in these runs, from one prompt each: a gravity harp view,
 a storm drone played from its display, a generative part in D dorian, and a grain cloud of a sample. Copy one into the
@@ -19,6 +20,7 @@ a storm drone played from its display, a generative part in D dorian, and a grai
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -318,7 +320,7 @@ def check_keys_composer(folder: Path) -> dict:
 
 
 # The DAW template: a song of tracks written with the SDK, as "New DAW project" makes it.
-DAW = HERE.parents[1] / "templates" / "daw"
+DAW = Path(os.environ.get("SOUND_TOOLS_TEMPLATE", HERE.parents[1] / "templates" / "daw"))
 SONG = "state/song"
 
 
