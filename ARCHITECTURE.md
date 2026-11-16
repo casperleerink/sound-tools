@@ -23,7 +23,7 @@ The technical decisions, why we made them, and what we rejected. How something w
 - One process, the runtime (`crates/runtime`), opens one project folder: as a window, headless, or read-only to inspect, render or analyze.
 - Agents only edit files in the project folder, and the runtime applies them live. There is no edit API for agents.
 - Every extension is compiled into the one binary. `project.json` enables extensions by name.
-- Rust for the core and extensions, and for the window (GPUI, moving to Rune). Audio and saved data never depend on the window's toolkit.
+- Rust for the core and extensions, and for the window (GPUI, moving to Rune: it checks a window for an agent built in, and was as fast on the DAW template). Audio and saved data never depend on the toolkit.
 - The project, the views and every plugin handle share the main thread, which plugins require. Rejected: a separate control thread; it would split the project from its plugins, and every view would need a synced copy.
 - macOS is the main platform. No plugin windows on Linux: plugins there need an X11 parent and a host run loop.
 - System programs come from the system, never the `PATH` (`sound_core::process`).
@@ -189,10 +189,10 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - What moves every frame draws over a page, not in it: in GPUI a view that changes renders every view it is in. Rejected: a meter node of the window, which drew the whole page as it moved.
 - Every div that scrolls fades where more waits, painted by the window. Rejected: a style; a fade in the view, which lies over the cards.
 - A number shown only while its control is touched is `quiet` on the control. Rejected: a hover and a timer in the view, through Bun, which hid the number from the keys.
-- "Open project…" starts a new process, because that tears down the device, plugins and their windows for free.
+- "Open project…" starts a new process, which tears down the device, plugins and their windows.
 - Settings covers the whole window; audio devices are picked there. Rejected: a window of its own; a dialog, which blocks.
 - The window moves to Rune (`sound-tools-next`) beside the GPUI app, the release until parity. Plan: `spikes/tool-sdk/PORT-MAP.md`.
-- There a tool's view (`sdk/view.ts`) is a plain function of its records, run again on every change, with `memo`. Rejected: signals, a runtime to own; Luau in the app, which agents wrote worse.
+- There a tool's view (v2, `sdk/view.ts`) is a plain function of its records, run again on every change, with `memo`. Rejected: signals, a runtime to own; Luau in the app, which agents wrote worse.
 - A project with `extensions/theme.json` is one of the new window; its tokens and components (`extensions/ui/`) are its own, so an agent restyles all of it.
 - Every control declares its meaning once (role, label, state, actions), so an agent lists and runs it as a click would. A run without a window waits for Bun each frame, so it repeats.
 - Windows installs per user with Inno Setup. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
@@ -235,11 +235,11 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - **No compiled code in a project.** Rejected: Rust a project adds (rebuilding the app, wasm, dylibs), which needs the Xcode tools or MSVC and a build when a project opens. A TS tool runs unchanged on any OS.
 - **One signals processor**; speed-ups keep renders bit for bit the same. Rejected: compiling to machine code, fast but a compiler to own.
 - **A spectrum is a graph per bin** (`spectral`) on the same machine. Rejected: an op per effect, Rust for each new idea; bins as a list to loop over, a second way to write a sound.
-- **A view runs once, as in Solid**; only the ops of what changed cross to the window. Our own runtime in the SDK, so misuse is an error that says the fix. Rejected: a whole tree per change, as React (1 MB a click at 20,000 notes); Solid itself, a Babel transform in every project and DOM only.
-- **A field reads as it plays**, on every control and in `now.value`: a lane's number shows the lane and does not drag, as the window's knobs. Rejected: an option, which the shortest form left off.
-- **A number from 0 to 1 reads as a percent** unless its field says `plain`, and a knob with its label outside `Controls` fails its view. Rejected: laying that knob out for the author, which hides why.
-- **A view draws the sound of its tool or of a child with no meter**: the frame that first draws it asks the tool's behaviour for a tap. Rejected: a tap on every tool, which a song of many devices pays for.
-- **A page's transport shows the bars only for a tool that plays in them**: its sound reads `beat` or `bpm`, or a child it names is in time. Rejected: a prop per part.
+- **(v1) A view runs once, as in Solid**; only the ops of what changed cross. Rejected: a whole tree per change (1 MB a click at 20,000 notes), which v2 answers with `memo`; Solid itself, a Babel transform per project.
+- **(v1) A field reads as it plays**, on every control and in `now.value`: a lane's number shows the lane and does not drag, as the window's knobs. Rejected: an option, which the shortest form left off.
+- **(v1) A number from 0 to 1 reads as a percent** unless its field says `plain`; a knob with its label outside `Controls` fails its view. Rejected: laying it out for the author, which hides why.
+- **(v1) A view draws the sound of its tool or of a child with no meter**: the frame that first draws it asks the tool's behaviour for a tap. Rejected: a tap on every tool, which a song of many devices pays for.
+- **(v1) A page's transport shows the bars only for a tool that plays in them**: its sound reads `beat` or `bpm`, or a child it names is in time. Rejected: a prop per part.
 - **One import, `./sdk`, over modules by area**, so an agent reads one area. Rejected: `export *`, which makes the internals they share importable.
 - **Children reach all code filled with their defaults**, as one shape. A slot names a tool, or `takes(port)`: any tool with that port, so a project's own instruments and plugins fit. Rejected: a list of tools, which grows with every block.
 - **A tool's code edits its record and its children's** by the fields it changed, on the records as they are: a late edit takes nothing back.

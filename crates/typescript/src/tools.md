@@ -39,14 +39,10 @@ export const chopView = view(chop, (self, { change }) => (
 
 ## Views
 
-`view(tool, (self, ctx) => …)` is a plain function of the records, `self.state` and `self.children`, run again after every change: no hooks, no signals. Never name a variable `h`: JSX calls `h`.
+`view(tool, (self, ctx) => …)` is a plain function of the records, `self.state` and `self.children`, run again after every change: no hooks, no signals. `sdk/view.ts` lists every element (`row`, `col`, `box`, `text`, `shapes`, `child`) and prop with its doc. Never name a variable `h`: JSX calls `h`.
 
-- `row`, `col`, `box`: layout (`w`, `h` in points or `"full"`, `grow`, `pad`, `px`, `py`, `gap`, `align`, `justify`, `at` to place it, `inset` to pin it, `clip`, `scroll`) and look (`fill`, `border`, `borderSides`, `radius`, `shadow`, `opacity`).
-- `text`: `style`, `color`, `truncate`.
-- `shapes`: `lines` and `rects`. With `units` they are in your own units (ticks, pitches) and stretch to `w` × `h`.
-- `child path="t00/synth"`: the card of a child, its own view or its fields.
-- `memo(key, deps, () => …)`: a part built again only when a dep changes; `deps` lists all it shows.
-- `ctx.memory`: what the view keeps while the window is open, never saved, such as the chosen track. Change it in a handler; give its start as `view(tool, draw, { memory: () => ({ … }) })`.
+- `memo(key, deps, () => …)` builds a part again only when a dep changes: `deps` lists all it shows. Build its keys from what is in `deps`, such as a track's name, never its index.
+- `ctx.memory` is kept while the window is open, never saved, such as the chosen track. Change it in a handler.
 
 ## Look
 
@@ -54,10 +50,10 @@ Colours, text styles, spacing, radius and shadows are names from `extensions/the
 
 ## Changes, actions and what moves
 
-- `ctx.change((draft) => …, label)` changes records: write to `draft.state` and `draft.children` as to the records. It is one step of undo, called `label`. Read the value to change from `draft` or from `self`.
-- An element a pointer or an agent uses has a `key`, unique in the view, and a `label` that says what it is ("Mute Track 2"), and declares what it does once: `onPress`, `actions={{ toggle, set, increment, decrement }}`, `role` (`button`, `switch`, `slider`, `tab`), and its state, `checked` or `value`. The window lists every such control for an agent, and runs its actions by label or key. A missing label is a type error.
-- A `drag={{ axis, min, max }}` moves the element in the window while the pointer moves; `onDragEnd({ dx, dy })` hears where it stopped. Nothing crosses to your code while it moves.
-- What moves every frame is bound by name, never set from code: `x={{ live: "playhead", scale, offset }}` (ticks), `level="meter:t00/mix"` (the level of a child, 0 to 1), `<text live="time">`.
+- `ctx.change((draft) => …, label)` changes records: write to `draft` as to the records. All the changes of one press, action or drag are one step of undo.
+- An element a pointer or an agent uses has a unique `key`, a `label` that says what it is ("Mute Track 2"), its handlers and its state (`checked`, `value`). The window lists every such control for an agent and runs its actions by label or key; an action that throws fails `--act` with its message.
+- A `drag` moves the element in the window; your code hears only where it stopped. What moves every frame (playhead, meters, time) is bound by name with `x`, `level` and `live`, never set from code.
+- A tool's `tick` runs about 30 times a second while the window is open, with `clock`; also in `--play`.
 
 ## Check your work
 
@@ -70,9 +66,9 @@ With the app's program, `sound-tools-next` (`$SOUND_TOOLS_RUNTIME` when set), on
 
 - `--snap out.png`: a picture of the window. Look at it.
 - `--tree out.json`: every element, and `controls`: each control's key, label, role, value or `checked`, and actions; also `playing`, `playhead`, `meters` and `problems`.
-- `--act steps.json`: runs actions before the picture, on the project itself, as a click would: `[{ "label": "Mute Track 2", "action": "toggle" }, { "key": "fader-0", "action": "set", "value": -6 }, { "action": "undo" }]`. Check the records after.
+- `--act steps.json`: runs actions before the picture, on the project itself, as a click would: `[{ "label": "Mute Track 2", "action": "toggle" }, { "key": "fader-t00", "action": "set", "value": -6 }, { "action": "undo" }]`. Check the records after.
 - `--play 2`: plays two seconds from the start before the picture or the tree.
-- `--script steps.json`: pointer and keys by element key, such as `{"events": [{ "t": 0.1, "type": "tap", "key": "mute-1" }]}`.
+- `--script steps.json`: pointer and keys by element key, such as `{"events": [{ "t": 0.1, "type": "tap", "key": "mute-t01" }]}`.
 - `--inspect` prints the records; `--analyze` and `--render` play the sound.
 
 Read `problems.txt` after each change: what does not load says why there.
