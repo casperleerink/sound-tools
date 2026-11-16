@@ -536,6 +536,38 @@ fn list_actions(tools: &[ToolInfo], cx: &mut App) {
     cx.default_global::<Shortcuts>().set_tool_groups(groups);
 }
 
+/// What moves the number input `name` of a tool to `value` at the frame `at`, or sends the
+/// bang `name` when `value` is `None`, or why it cannot.
+pub(crate) fn control_update(
+    info: &ToolInfo,
+    name: &str,
+    value: Option<f32>,
+    at: Option<u64>,
+) -> Result<SignalsUpdate, String> {
+    match (info.input(name), value) {
+        (Some((index, Input::Number { .. })), Some(value)) => {
+            Ok(SignalsUpdate::Live { index, value, at })
+        }
+        (Some((index, Input::Bang { .. })), None) => Ok(SignalsUpdate::Trigger { index, at }),
+        _ => {
+            let kind = if value.is_some() {
+                "number input"
+            } else {
+                "bang input"
+            };
+            let names: Vec<&str> = (info.inputs.0.iter())
+                .filter(|(_, input)| matches!(input, Input::Number { .. }) == value.is_some())
+                .map(|(name, _)| name.as_str())
+                .collect();
+            let names = match names.is_empty() {
+                true => "none".to_string(),
+                false => names.join(", "),
+            };
+            Err(format!("has no {kind} {name}: its {kind}s are {names}"))
+        }
+    }
+}
+
 pub(crate) fn find<'a>(tools: &'a [Rc<ToolInfo>], name: &str) -> Option<&'a Rc<ToolInfo>> {
     tools.iter().find(|info| info.name == name)
 }
@@ -1051,32 +1083,8 @@ impl Live {
         at: Option<f64>,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        let update = |info: &ToolInfo, session: &Session| match (info.input(name), value) {
-            (Some((index, Input::Number { .. })), Some(value)) => Ok(SignalsUpdate::Live {
-                index,
-                value,
-                at: at.map(|at| frames_of(at, session)),
-            }),
-            (Some((index, Input::Bang { .. })), None) => Ok(SignalsUpdate::Trigger {
-                index,
-                at: at.map(|at| frames_of(at, session)),
-            }),
-            _ => {
-                let kind = if value.is_some() {
-                    "number input"
-                } else {
-                    "bang input"
-                };
-                let names: Vec<&str> = (info.inputs.0.iter())
-                    .filter(|(_, input)| matches!(input, Input::Number { .. }) == value.is_some())
-                    .map(|(name, _)| name.as_str())
-                    .collect();
-                let names = match names.is_empty() {
-                    true => "none".to_string(),
-                    false => names.join(", "),
-                };
-                Err(format!("has no {kind} {name}: its {kind}s are {names}"))
-            }
+        let update = |info: &ToolInfo, session: &Session| {
+            control_update(info, name, value, at.map(|at| frames_of(at, session)))
         };
         self.send_update(id, update, cx)?;
         if let Some(value) = value {

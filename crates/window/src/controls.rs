@@ -217,8 +217,25 @@ pub(crate) fn read_steps(path: &Path) -> Result<Vec<Step>> {
 }
 
 impl Step {
-    /// Runs the step on `state`, as a pointer or a key would.
+    /// Runs the step on `state`, as a pointer or a key would, and waits for what it changed to
+    /// show: the next step acts on the view as it is then.
     pub(crate) fn run(&self, state: &mut State) -> Result<()> {
+        let done = self.act(state);
+        state.settle();
+        done?;
+        match state.take_failed_action() {
+            Some(why) => bail!("{} did not {}: {why}", self.named(), self.action),
+            None => Ok(()),
+        }
+    }
+
+    fn named(&self) -> &str {
+        (self.label.as_ref())
+            .or(self.key.as_ref())
+            .map_or("", String::as_str)
+    }
+
+    fn act(&self, state: &mut State) -> Result<()> {
         if self.label.is_none() && self.key.is_none() {
             return match self.action.as_str() {
                 "undo" => state.undo(),
@@ -229,11 +246,7 @@ impl Step {
         let found = collect(state).controls.into_iter().find(|control| {
             Some(&control.key) == self.key.as_ref() || Some(&control.label) == self.label.as_ref()
         });
-        let named = self
-            .label
-            .as_ref()
-            .or(self.key.as_ref())
-            .map_or("", String::as_str);
+        let named = self.named();
         let Some(control) = found else {
             let controls = collect(state).controls;
             let labels: Vec<String> = controls
@@ -252,11 +265,6 @@ impl Step {
                 self.action
             );
         }
-        state.perform(&control.target, &self.action, self.value.clone())?;
-        state.settle();
-        match state.take_failed_action() {
-            Some(why) => bail!("{named} did not {}: {why}", self.action),
-            None => Ok(()),
-        }
+        state.perform(&control.target, &self.action, self.value.clone())
     }
 }

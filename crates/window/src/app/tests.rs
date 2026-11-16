@@ -44,11 +44,7 @@ fn control<'a>(controls: &'a [controls::Control], label: &str) -> &'a controls::
 }
 
 fn act(state: &mut State, step: Value) {
-    serde_json::from_value::<Step>(step)
-        .unwrap()
-        .run(state)
-        .unwrap();
-    state.settle();
+    try_act(state, step).unwrap();
 }
 
 #[test]
@@ -146,9 +142,11 @@ export const counterView = view(counter, (self, { change }) => {
     change((draft) => void (draft.state.count += 1));
     change((draft) => void (draft.state.count += 1));
   };
+  const set = (count: number) => change((draft) => void (draft.state.count = count));
   return (
     <row>
       {pad}
+      <box key="count" label="Count" role="slider" value={self.state.count} actions={{ set }} />
       <box key="twice" label="Twice" onPress={twice} />
       <box key="fail" label="Fail" onPress={() => { throw new Error("it broke"); }} />
     </row>
@@ -357,12 +355,6 @@ fn while_the_code_starts_again_the_view_stays_and_an_action_says_it_did_nothing(
         json!({ "label": "Mute Track 2", "action": "toggle" }),
     );
     assert!(refused.unwrap_err().to_string().contains("did nothing"));
-    let tools = state.tools.as_mut().unwrap();
-    let loads = tools.loads();
-    while tools.loads() == loads {
-        tools.poll(&mut state.project, &[]);
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
     control(&controls::collect(&state).controls, "Mute Track 2");
 }
 
@@ -527,4 +519,143 @@ fn the_test_helpers_change_and_draw_as_the_window_does() {
     let said =
         String::from_utf8_lossy(&ran.stdout).to_string() + &String::from_utf8_lossy(&ran.stderr);
     assert!(ran.status.success(), "{said}");
+}
+
+#[test]
+fn a_step_after_undo_acts_on_the_view_undo_left() {
+    let scratch = new_project();
+    let mut state = opened(&scratch.path().join("song"));
+    let mute = json!({ "label": "Mute Track 2", "action": "toggle" });
+    for step in [mute.clone(), json!({ "action": "undo" }), mute] {
+        try_act(&mut state, step).unwrap();
+    }
+    assert_eq!(record(&state, "song/t01/mix.json")["state"]["mute"], true);
+}
+
+#[test]
+fn an_action_whose_change_is_refused_fails_the_steps() {
+    let (_scratch, folder) = with_tools(&[("counter", COUNTER)]);
+    let mut state = opened(&folder);
+    let refused = try_act(
+        &mut state,
+        json!({ "label": "Count", "action": "set", "value": 500 }),
+    );
+    assert!(refused.is_err());
+}
+
+#[test]
+fn what_an_action_changed_lands_when_the_code_starts_again_meanwhile() {
+    let scratch = new_project();
+    let mut state = opened(&scratch.path().join("song"));
+    let song = InstanceId::new("song").unwrap();
+    state.act_on_view(&song, "mute-t01", "press", None).unwrap();
+    state.tools.as_mut().unwrap().code_changed();
+    state.settle();
+    assert_eq!(record(&state, "song/t01/mix.json")["state"]["mute"], true);
+}
+
+/// A control loop that plays its own input, and stops the piece a beat in.
+const BEEP: &str = r#"import { number, sine, tool } from "./sdk";
+export const beep = tool({
+  name: "beep", title: "Beep", when: "Never", doc: "A beep.", state: {},
+  inputs: { gain: number({ min: 0, max: 1, default: 0 }) },
+  sound: ({ gain }) => sine(440).times(gain),
+  tick: ({ clock, send }) => {
+    send("gain", 1);
+    if (clock.playing && clock.tick >= 960) clock.stop();
+  },
+});
+"#;
+
+#[test]
+fn a_control_loop_plays_its_input_and_stops_the_piece() {
+    let (_scratch, folder) = with_tools(&[("beep", BEEP)]);
+    let mut state = opened(&folder);
+    play(&mut state, 0.0, 1.0);
+    assert!(!state.playing);
+    let levels = state.lives.levels();
+    assert!(
+        levels
+            .iter()
+            .any(|(name, level)| name == "meter:song/t00/mix" && *level > 0.0),
+        "{levels:?}"
+    );
+}
+
+/// A control loop slower than its interval, which adds up the time it was told passed.
+const SLOW: &str = r#"import { number, tool } from "./sdk";
+export const slow = tool({
+  name: "slow", title: "Slow", when: "Never", doc: "Slow.",
+  state: { total: number({ min: 0, max: 1000, default: 0 }) },
+  memory: () => ({ total: 0 }),
+  tick: ({ dt, memory, update }) => {
+    const end = performance.now() + 50;
+    while (performance.now() < end);
+    memory.total += dt;
+    update("Total", (part) => void (part.state.total = memory.total));
+  },
+});
+"#;
+
+#[test]
+fn a_control_loop_slower_than_its_interval_is_told_all_the_time_that_passed() {
+    let (_scratch, folder) = with_tools(&[("slow", SLOW)]);
+    let mut state = opened(&folder);
+    // The first step keeps Bun busy through the others.
+    for step in 1..=10 {
+        run_loops(&mut state, f64::from(step) * 0.04);
+    }
+    state.settle();
+    assert!(run_loops(&mut state, 0.5));
+    state.settle();
+    let id = InstanceId::new("song/t00/chain/slow").unwrap();
+    let held: Value = serde_json::from_str(&state.project.state_json(&id).unwrap()).unwrap();
+    let total = held["total"].as_f64().unwrap();
+    assert!((total - 0.5).abs() < 1e-4, "{total}");
+}
+
+#[test]
+fn a_view_that_failed_says_so_no_more_once_no_code_runs() {
+    let (_scratch, folder) = with_tools(&[("counter", COUNTER)]);
+    let file = folder.join(runtime::PROJECT_FILE);
+    let code = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(
+        &file,
+        code.replace(r#""main": "song""#, r#""main": "song/t00/chain/counter""#),
+    )
+    .unwrap();
+    let mut state = opened(&folder);
+    act(&mut state, json!({ "label": "Break", "action": "press" }));
+    let failed = |state: &State| {
+        (state.project.problems().iter()).any(|problem| problem.message.contains("its view failed"))
+    };
+    assert!(failed(&state));
+    for entry in std::fs::read_dir(state.project.root().join("extensions")).unwrap() {
+        let path = entry.unwrap().path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "tsx" || extension == "ts")
+            && path.file_name().is_some_and(|name| name != "sdk.ts")
+        {
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+    state.tools.as_mut().unwrap().code_changed();
+    frame(&mut state, 0.1);
+    state.settle();
+    assert!(!failed(&state), "{:?}", state.project.problems());
+}
+
+#[test]
+fn a_press_that_fails_tells_the_composer_in_plain_words() {
+    let (_scratch, folder) = with_tools(&[("counter", COUNTER)]);
+    let mut state = opened(&folder);
+    let counter = InstanceId::new("song/t00/chain/counter").unwrap();
+    state.pointed(&counter, "fail", "press", None);
+    frame(&mut state, 0.1);
+    let notice = state.notice.clone().unwrap_or_default();
+    assert!(
+        !notice.is_empty() && !notice.contains("it broke"),
+        "{notice}"
+    );
 }

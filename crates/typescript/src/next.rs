@@ -16,13 +16,16 @@ use std::time::{Duration, Instant};
 use notify::RecommendedWatcher;
 use serde_json::{Map, Value, json};
 use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEdit, ProjectEvent, Ticks};
+use sound_notes::{NOTES_INPUT, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
+use sound_signals::{Signals, SignalsUpdate};
 
 pub use crate::bun::Waker;
 use crate::bun::{
-    Bun, Clock, Event, Played, RecordEdit, Request, Runs, Skipped, Telling, Transport, record_key,
+    Bun, Clock, Event, Played, RecordEdit, Request, Runs, Skipped, Telling, Transport, TransportOp,
+    record_key,
 };
-use crate::tools::{Choice, Field, ToolInfo};
-use crate::window::{changes_of, every_instance, find, played, told_to_bun, watch};
+use crate::tools::{Choice, Field, ToolInfo, feed_child, feed_processor};
+use crate::window::{changes_of, control_update, every_instance, find, played, told_to_bun, watch};
 use crate::{Extensions, FOLDER, Launched};
 
 /// The file of a project's design tokens, in `extensions/`. A project that has one is a project
@@ -74,8 +77,6 @@ pub struct Tools {
     shown: BTreeSet<InstanceId>,
     told_shown: bool,
     drawn: HashMap<InstanceId, Drawn>,
-    /// The instances the Bun that runs drew: the others show what an older one drew, until it does.
-    fresh: BTreeSet<InstanceId>,
     /// Why a view does not draw, by instance, until it draws again.
     view_problems: BTreeMap<InstanceId, Problem>,
     /// The edit of the action on a view that runs now: one step of undo, finished once it ran.
@@ -127,7 +128,6 @@ impl Tools {
             shown: BTreeSet::new(),
             told_shown: true,
             drawn: HashMap::new(),
-            fresh: BTreeSet::new(),
             view_problems: BTreeMap::new(),
             acting: None,
             acts: 0,
@@ -182,7 +182,6 @@ impl Tools {
     pub fn show(&mut self, instances: BTreeSet<InstanceId>) {
         if instances != self.shown {
             self.drawn.retain(|id, _| instances.contains(id));
-            self.fresh.retain(|id| instances.contains(id));
             self.shown = instances;
             self.told_shown = false;
         }
@@ -247,10 +246,17 @@ impl Tools {
     /// One step of the control loop of every instance whose tool has one, `dt` seconds after
     /// the last, while the project plays at `tick` or stands there, at `time` seconds of engine
     /// time; also tells Bun the clock when what its code follows of it changed. Not while the
-    /// last step runs.
-    pub fn run_loops(&mut self, project: &Project, playing: bool, tick: Ticks, time: f64, dt: f32) {
+    /// last step runs. Whether the step went to Bun.
+    pub fn run_loops(
+        &mut self,
+        project: &Project,
+        playing: bool,
+        tick: Ticks,
+        time: f64,
+        dt: f32,
+    ) -> bool {
         let Some(bun) = self.bun.clone() else {
-            return;
+            return false;
         };
         let tempo_map = &project.project_file().tempo_map;
         let at = tempo_map.time_signatures().bar_beat_of(tick);
@@ -270,14 +276,14 @@ impl Tools {
             self.told_transport = Some(clock.transport);
         }
         if self.ticking {
-            return;
+            return false;
         }
         let instances: Vec<Played> = (project.instances())
             .filter(|(_, tool)| self.ticks(tool))
             .map(|(id, _)| played(project, id))
             .collect();
         if instances.is_empty() {
-            return;
+            return false;
         }
         // Its code reads the records as they are now.
         self.tell(project);
@@ -286,6 +292,7 @@ impl Tools {
             instances,
             clock,
         });
+        self.ticking
     }
 
     /// A change in `extensions/`, as the watcher says it.
@@ -307,6 +314,12 @@ impl Tools {
         while self.changes.try_recv().is_ok() {
             self.changed_at = Some(Instant::now());
         }
+        let mut changed = self.launched(project);
+        if let Some(events) = self.bun.as_ref().map(|bun| bun.events()) {
+            while let Ok(event) = events.try_recv() {
+                changed |= self.heard(event, project);
+            }
+        }
         // Until it is quiet: an editor saves in several writes, an agent several files.
         if self
             .changed_at
@@ -315,12 +328,6 @@ impl Tools {
             self.changed_at = None;
             self.skipped.clear();
             self.restart();
-        }
-        let mut changed = self.launched(project);
-        if let Some(events) = self.bun.as_ref().map(|bun| bun.events()) {
-            while let Ok(event) = events.try_recv() {
-                changed |= self.heard(event, project);
-            }
         }
         let (shown, problems) = (&self.shown, self.view_problems.len());
         self.view_problems.retain(|id, _| shown.contains(id));
@@ -433,19 +440,18 @@ impl Tools {
         } = match launched {
             Ok(Some(launched)) => launched,
             Ok(None) => {
-                self.drawn.clear();
+                self.forget_views();
                 self.problems.clear();
+                self.report(project);
                 return true;
             }
             Err(message) => {
-                self.drawn.clear();
+                self.forget_views();
                 self.problems = vec![crate::folder_problem(message)];
                 self.report(project);
                 return true;
             }
         };
-        // The views drawn before show until the new Bun draws them.
-        self.fresh.clear();
         self.skipped = skipped;
         let tools = crate::define(sounds, &mut problems, |tools| {
             let names: Vec<String> = tools.iter().map(|tool| tool.name.clone()).collect();
@@ -480,6 +486,12 @@ impl Tools {
         (self.ticking, self.told_transport) = (false, None);
     }
 
+    /// No Bun draws the views now.
+    fn forget_views(&mut self) {
+        self.drawn.clear();
+        self.view_problems.clear();
+    }
+
     fn report(&self, project: &mut Project) {
         let problems = self.problems().cloned().collect();
         project.set_problems_in(&format!("{FOLDER}/"), problems);
@@ -496,9 +508,7 @@ impl Tools {
                 if !self.shown.contains(&instance) {
                     return false;
                 }
-                let before =
-                    (self.drawn.remove(&instance)).filter(|_| self.fresh.contains(&instance));
-                self.fresh.insert(instance.clone());
+                let before = self.drawn.remove(&instance);
                 let problem = (error.as_ref()).and_then(|error| {
                     self.problem_of(project, &instance, &format!("its view failed: {error}"))
                 });
@@ -558,7 +568,167 @@ impl Tools {
                 self.failed(blame, &why, project);
                 true
             }
+            Event::Control {
+                instance,
+                child,
+                name,
+                value,
+                at,
+            } => {
+                let at = at.map(|at| frame_of(project, at));
+                let played = self.played_on(project, &instance, child.as_deref());
+                let sent = played.and_then(|id| {
+                    let info = self.info_of(project, &id).ok_or_else(|| {
+                        let tool = project.tool_of(&id).unwrap_or("nothing");
+                        format!("has no live controls or triggers: it is {tool}")
+                    })?;
+                    let update = control_update(&info, &name, value, at)?;
+                    (project.send::<Signals>(&id, info.processor(), update))
+                        .map_err(|error| error.to_string())
+                });
+                self.performed(project, &instance, child.as_deref(), sent);
+                false
+            }
+            Event::Note {
+                instance,
+                child,
+                pitch,
+                velocity,
+                seconds,
+                at,
+            } => {
+                let performed = Performed::Play {
+                    pitch: Pitch::nearest(i64::from(pitch)),
+                    velocity: Velocity::nearest((velocity.clamp(0.0, 1.0) * 127.0).round() as i64),
+                    at: performed_frame(project, at),
+                    frames: frame_of(project, f64::from(seconds)),
+                };
+                let sent = self.play_note(project, &instance, child.as_deref(), performed);
+                self.performed(project, &instance, child.as_deref(), sent);
+                false
+            }
+            Event::Send {
+                instance,
+                child,
+                event,
+                at,
+            } => {
+                // The SDK sends no controller from 120 on, MIDI's channel mode messages.
+                let sent = match event.event() {
+                    Some(event) => {
+                        let at = performed_frame(project, at);
+                        let performed = Performed::Send { event, at };
+                        self.play_note(project, &instance, child.as_deref(), performed)
+                    }
+                    None => Err(format!("sends {event:?}, which is no note event")),
+                };
+                self.performed(project, &instance, child.as_deref(), sent);
+                false
+            }
+            Event::Transport { op } => {
+                self.transport(project, op);
+                false
+            }
             _ => false,
+        }
+    }
+
+    fn info_of(&self, project: &Project, id: &InstanceId) -> Option<Rc<ToolInfo>> {
+        (project.tool_of(id))
+            .and_then(|tool| find(&self.tools, tool))
+            .cloned()
+    }
+
+    /// The instance a performer of `instance` plays: itself, or its child at the path `child`,
+    /// never one outside it.
+    fn played_on(
+        &self,
+        project: &Project,
+        instance: &InstanceId,
+        child: Option<&str>,
+    ) -> Result<InstanceId, String> {
+        let Some(child) = child else {
+            return Ok(instance.clone());
+        };
+        InstanceId::new(&format!("{instance}/{child}"))
+            .ok()
+            .filter(|id| id.is_inside(instance) && project.tool_of(id).is_some())
+            .ok_or_else(|| "is not one it owns".to_string())
+    }
+
+    /// Plays a key of `instance`, or lets go of one, as the keyboard would: on its own voices,
+    /// or into the `notes` of its child `child` through the feed it declares.
+    fn play_note(
+        &self,
+        project: &mut Project,
+        instance: &InstanceId,
+        child: Option<&str>,
+        performed: Performed,
+    ) -> Result<(), String> {
+        let error = |error: sound_core::ProjectError| error.to_string();
+        let Some(child) = child else {
+            let info = (self.info_of(project, instance)).ok_or("has no voices to play")?;
+            let update = SignalsUpdate::Note(performed);
+            return (project.send::<Signals>(instance, info.processor(), update)).map_err(error);
+        };
+        let played = self.played_on(project, instance, Some(child))?;
+        if project.input_port(&played, NOTES_INPUT).is_none() {
+            return Err("has no `notes` input".to_string());
+        }
+        if feed_child(project.assets(), instance, child) {
+            project.rebind(instance).map_err(error)?;
+        }
+        let (feed, update) = (feed_processor(child), NoteFeedUpdate::Note(performed));
+        (project.send::<NoteFeed>(instance, &feed, update)).map_err(error)
+    }
+
+    /// What code of `instance` played could not be played: a problem of its tool, once, as its
+    /// types do not check it.
+    fn performed(
+        &mut self,
+        project: &mut Project,
+        instance: &InstanceId,
+        child: Option<&str>,
+        sent: Result<(), String>,
+    ) {
+        let Err(error) = sent else {
+            return;
+        };
+        let message = match child {
+            Some(child) => format!("a performer plays the child {child:?}, which {error}"),
+            None => format!("a performer plays it, but it {error}"),
+        };
+        if let Some(problem) = self.problem_of(project, instance, &message)
+            && !self.problems.contains(&problem)
+        {
+            self.problems.push(problem);
+            self.report(project);
+        }
+    }
+
+    /// Code played, stopped or moved the clock.
+    fn transport(&mut self, project: &mut Project, op: TransportOp) {
+        let engine = project.engine();
+        match op {
+            TransportOp::Play => engine.play(),
+            TransportOp::Pause => engine.pause(),
+            TransportOp::Stop => engine.stop(),
+            TransportOp::Jump { to, at: None } => engine.seek(Ticks(to)),
+            TransportOp::Jump { to, at: Some(at) } => engine.jump_at(Ticks(at), Ticks(to)),
+            TransportOp::Repeat { range } => {
+                engine.set_loop(range.map(|[from, to]| Ticks(from)..Ticks(to)));
+            }
+            TransportOp::Click { .. }
+            | TransportOp::Keys { .. }
+            | TransportOp::Automation { .. } => {
+                let problem = crate::folder_problem(
+                    "code turns the click, the computer keys or the writing of automation, which this window does not have yet".to_string(),
+                );
+                if !self.problems.contains(&problem) {
+                    self.problems.push(problem);
+                    self.report(project);
+                }
+            }
         }
     }
 
@@ -610,16 +780,16 @@ impl Tools {
                 bun.tell([]);
             }
         }
-        if let Some(refused) = refused {
-            let problem =
-                format!("its update {label:?} was refused, and none of it applied: {refused}");
-            let info = project
-                .tool_of(instance)
-                .and_then(|tool| find(&self.tools, tool));
-            if let Some(info) = info {
-                self.problems.push(info.problem(problem));
-                self.report(project);
-            }
+        let Some(refused) = refused else {
+            return;
+        };
+        let problem =
+            format!("its update {label:?} was refused, and none of it applied: {refused}");
+        if gesture {
+            self.failed_actions.push(problem);
+        } else if let Some(problem) = self.problem_of(project, instance, &problem) {
+            self.problems.push(problem);
+            self.report(project);
         }
     }
 
@@ -642,7 +812,7 @@ impl Tools {
             _ => {
                 self.bun = None;
                 // A card of fields works without Bun.
-                self.drawn.clear();
+                self.forget_views();
                 let message = format!(
                     "the code of the project {why} with no tool to blame, so the tools do not run: fix them and save"
                 );
@@ -689,12 +859,14 @@ impl Tools {
 }
 
 /// A tree as Bun `bun` sends it, with the memos the window kept from `before` that it still
-/// uses. A memo's version holds the number of its Bun, whose builds count from one again.
+/// uses. A memo's version holds the number of its Bun, whose builds count from one again: an
+/// older Bun's memos are not this one's, which sends every memo it uses.
 fn drawn(mut tree: Value, before: Option<Drawn>, bun: u64) -> Drawn {
     let mut memos = match before {
         Some(Drawn::View { memos, .. }) => memos,
         _ => HashMap::new(),
     };
+    memos.retain(|_, ((number, _), _)| *number == bun);
     if let Some(Value::Array(dropped)) = tree.get_mut("drop").map(Value::take) {
         for key in dropped.iter().filter_map(Value::as_str) {
             memos.remove(key);
@@ -708,6 +880,19 @@ fn drawn(mut tree: Value, before: Option<Drawn>, bun: u64) -> Drawn {
     }
     let root = Rc::new(tree.get_mut("root").map(Value::take).unwrap_or_default());
     Drawn::View { root, memos }
+}
+
+/// The frame of engine time at `seconds` of it.
+fn frame_of(project: &Project, seconds: f64) -> u64 {
+    let rate = f64::from(project.clock().sample_rate());
+    (seconds.max(0.0) * rate).round() as u64
+}
+
+/// The frame of engine time at `at`, or now when that is gone or left out.
+fn performed_frame(project: &mut Project, at: Option<f64>) -> u64 {
+    let rate = f64::from(project.clock().sample_rate());
+    let now = project.engine().poll().map_or(0, |status| status.frames) as f64 / rate;
+    frame_of(project, at.map_or(now, |at| at.max(now)))
 }
 
 /// A field of a tool of the project as a JSON Schema says it: what a card with no view shows.
