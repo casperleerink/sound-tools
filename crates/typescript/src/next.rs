@@ -194,7 +194,7 @@ impl Tools {
         let properties: Map<String, Value> = (info.fields.0.iter())
             .filter_map(|(name, field)| Some((name.clone(), field_schema(field)?)))
             .collect();
-        Some(json!({ "properties": properties }))
+        Some(json!({ "x-title": info.title, "properties": properties }))
     }
 
     /// A change in `extensions/`, as the watcher says it.

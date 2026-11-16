@@ -1,0 +1,37 @@
+{
+  "color": {
+    "background": "#121317",
+    "surface": "#1b1d23",
+    "well": "#0c0d10",
+    "fill": "#ffffff0d",
+    "fill-strong": "#ffffff1a",
+    "selected": "#ffffff14",
+    "border": "#ffffff0d",
+    "border-strong": "#ffffff1a",
+    "text": "#e9ebef",
+    "text-secondary": "#989ca8",
+    "text-muted": "#7c808c",
+    "text-inverse": "#0c0d10",
+    "green": "#7ee0a0",
+    "yellow": "#f3d27a",
+    "peach": "#f7a26b",
+    "red": "#f7657a",
+    "lavender": "#a9b1ff",
+    "blue": "#7aa7ff",
+    "sky": "#74d3ea",
+    "teal": "#5fd4c4",
+    "mauve": "#b894ff",
+    "pink": "#f28fd0"
+  },
+  "text": {
+    "display": { "size": 24, "lineHeight": 32, "tracking": 0, "weight": 400 },
+    "title": { "size": 16, "lineHeight": 22, "tracking": 0, "weight": 500 },
+    "heading": { "size": 14, "lineHeight": 20, "tracking": 0, "weight": 500 },
+    "body": { "size": 14, "lineHeight": 20, "tracking": 0, "weight": 400 },
+    "label": { "size": 12, "lineHeight": 16, "tracking": 0, "weight": 400 },
+    "number": { "size": 12, "lineHeight": 16, "tracking": 0, "weight": 400, "tabular": true }
+  },
+  "space": { "0": 0, "1": 4, "2": 8, "3": 12, "4": 16, "6": 24, "8": 32 },
+  "radius": { "sm": 4, "md": 6, "lg": 8, "full": 9999 },
+  "shadow": { "sm": { "y": 1, "blur": 2, "color": "#00000066" }, "md": { "y": 4, "blur": 12, "color": "#00000080" } }
+}

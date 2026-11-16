@@ -7359,6 +7359,8 @@ name = "sound-window"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "dunce",
+ "plugin-host",
  "rune",
  "runtime",
  "serde",
