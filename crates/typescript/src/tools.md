@@ -33,14 +33,14 @@ export const chop = tool({
 
 - `name` is no built-in tool's. `when` and `doc` are what the next agent reads. A number field is a `Signal` in `sound`, never a number: turning a knob does not build the sound again.
 - To put a device on a track, add its record to the track's chain, `state/song/<track>/chain/<name>.json` as `{"tool": "chop", "state": {}}`, and its name to `order` in the chain's `instance.json`. The chosen track's panel shows the chain in that order.
-- A tool without `view` gets a card with a knob per number, a switch per boolean and segments per choice.
+- A tool without `view` gets a card with a control per field.
 
 ## Views
 
 `view: (self, ctx) => …` is a plain function of the records, `self.state` and `self.children`, run again after every change and action: no hooks, no signals. `sdk/view.ts` documents every element and prop. Never name a variable `h`: JSX calls `h`. A part of a view in its own function types its records with `Drawn<ValuesOf<typeof fields>, typeof children>`, never `typeof` its own tool.
 
 - `memo(key, deps, () => …)` builds a part again only when a dep changes: `deps` lists all it shows. Build its keys from what is in `deps`, such as a track's name, never its index.
-- `ctx.memory` is the tool's `memory`, which `tick` gets too: never saved, such as the chosen track.
+- `ctx.memory` is the tool's `memory`, which `tick` gets too: never saved, such as the chosen track. Changed in `tick` it does not draw the view again: change it in a handler or a `change`.
 
 ## Look
 

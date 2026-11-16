@@ -2,6 +2,7 @@
 
 import { ActionKey, AppKey, Clock, KeyName, MenuItem, MenuOptions, Modifiers, MovedNumber, Offers, PLAIN_KEYS, PlainKey, SHIFTED_KEYS, SYMBOL_KEYS } from "./clock";
 import { BangInput, Fields, InputNames, Inputs, NumberField, Outputs, SoundOf, StateOf, ValuesOf } from "./fields";
+// The runtime writes the old window's `host.ts` or the new one's, so these change with the window.
 import type { ToolView, ViewContext } from "./host";
 import { Tools } from "./records";
 import { Operand, Stereo } from "./sound";
