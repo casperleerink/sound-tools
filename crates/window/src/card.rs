@@ -1,7 +1,8 @@
 //! The card of a device: its own view when its tool has one, else a control per field of its
 //! record, made from the record's schema: a knob for a number, a switch for a yes or no, and
 //! segments for a choice. So every device shows, a built-in one, a plugin and a tool an agent
-//! wrote without a view.
+//! wrote without a view. Its controls sit in whole columns of two cells, the first few shown
+//! and the rest behind expand, so a card grows wider, never taller.
 
 use rune::{El, LineCap, Shape, canvas, col, el, row, text};
 use serde_json::{Value, json};
@@ -11,8 +12,12 @@ use sound_typescript::next::Drawn;
 use crate::app::State;
 use crate::tree;
 
-/// The most controls a card shows. Cards grow wider, never taller.
-const MOST: usize = 8;
+/// How many controls a card shows until it is expanded.
+const FEW: usize = 4;
+/// A cell of a card: a control, its label line and its value line. A choice takes two columns
+/// or more.
+const COLUMN: f32 = 72.0;
+const CELL: f32 = 72.0;
 const KNOB: f32 = 32.0;
 /// How far a drag moves a knob from its start to its end, in points.
 const TRAVEL: f32 = 120.0;
@@ -50,8 +55,19 @@ pub(crate) fn title(state: &State, id: &InstanceId) -> String {
     titled.unwrap_or_else(|| words(tool.rsplit('.').next().unwrap_or(tool)))
 }
 
-/// The fields of the record of `id` a card shows, at most [`MOST`].
-pub(crate) fn fields(state: &State, id: &InstanceId) -> Vec<Field> {
+/// The fields of the record of `id` a card shows: the first few until it is expanded, and
+/// whether it has more.
+pub(crate) fn shown(state: &State, id: &InstanceId) -> (Vec<Field>, bool) {
+    let mut fields = fields(state, id);
+    let more = fields.len() > FEW;
+    if !state.expanded.contains(id) {
+        fields.truncate(FEW);
+    }
+    (fields, more)
+}
+
+/// The fields of the record of `id` a card has a control for.
+fn fields(state: &State, id: &InstanceId) -> Vec<Field> {
     let Some(tool) = state.project.tool_of(id) else {
         return Vec::new();
     };
@@ -119,9 +135,6 @@ pub(crate) fn fields(state: &State, id: &InstanceId) -> Vec<Field> {
             kind,
             value,
         });
-        if fields.len() == MOST {
-            break;
-        }
     }
     fields
 }
@@ -179,36 +192,82 @@ pub(crate) fn number(value: f64) -> String {
 /// The card of the device `id`.
 pub(crate) fn card(state: &State, id: &InstanceId) -> El {
     let theme = &state.theme;
-    let body = match state.drawn(id) {
+    let prefix = state.prefix_of(id);
+    let (body, more) = match state.drawn(id) {
         Some(drawn @ (Drawn::View { .. } | Drawn::Failed(_))) => {
-            tree::view(state, id, &state.prefix_of(id), drawn)
+            (tree::view(state, id, &prefix, drawn), false)
         }
-        _ if state.pending(id) => el(),
+        _ if state.pending(id) => (el(), false),
         _ => controls(state, id),
     };
+    let title = title(state, id);
+    let expand = more.then(|| {
+        let expanded = state.expanded.contains(id);
+        let id = id.clone();
+        row()
+            .key(format!("{prefix}expand"))
+            .role("switch")
+            .label(format!("Expand {title}"))
+            .checked(expanded)
+            .focusable(true)
+            .h(24.0)
+            .px(theme.space(2))
+            .items_center()
+            .radius(theme.radius("sm").unwrap_or(4.0))
+            .on_press(move |s: &mut State| s.expand(&id))
+            .child(
+                text(if expanded { "Less" } else { "More" })
+                    .font(theme.text("label"))
+                    .color(theme.color("text-muted")),
+            )
+    });
     col()
-        .key(format!("{}card", state.prefix_of(id)))
+        .key(format!("{prefix}card"))
         .padding(theme.space(3))
         .gap(theme.space(2))
         .fill(theme.color("surface"))
         .border(1.0, theme.color("border-strong"))
         .radius(theme.radius("lg").unwrap_or(8.0))
         .child(
-            text(title(state, id))
-                .font(theme.text("heading"))
-                .color(theme.color("text")),
+            row()
+                .h(24.0)
+                .gap(theme.space(2))
+                .items_center()
+                .justify_between()
+                .child(
+                    text(title)
+                        .font(theme.text("heading"))
+                        .color(theme.color("text")),
+                )
+                .children(expand),
         )
         .child(body)
 }
 
-/// A control per field.
-pub(crate) fn controls(state: &State, id: &InstanceId) -> El {
+/// A control per field shown, in whole columns of two cells, and whether there are more.
+pub(crate) fn controls(state: &State, id: &InstanceId) -> (El, bool) {
+    let (fields, more) = shown(state, id);
     let prefix = state.prefix_of(id);
-    row().gap(state.theme.space(4)).children(
-        fields(state, id)
-            .into_iter()
-            .map(|field| control(state, id, &prefix, field)),
-    )
+    let mut columns: Vec<(bool, Vec<El>)> = Vec::new();
+    for field in fields {
+        let wide = matches!(field.kind, Kind::Choice(_));
+        match columns.last_mut() {
+            Some((same, cells)) if *same == wide && cells.len() < 2 => {
+                cells.push(control(state, id, &prefix, field));
+            }
+            _ => columns.push((wide, vec![control(state, id, &prefix, field)])),
+        }
+    }
+    let gap = state.theme.space(2);
+    let columns = columns.into_iter().map(|(wide, cells)| {
+        let column = col().h(2.0 * CELL + gap).gap(gap).children(cells);
+        match wide {
+            // As wide as its segments, two columns at least.
+            true => column.min_w(2.0 * COLUMN + gap),
+            false => column.w(COLUMN),
+        }
+    });
+    (row().gap(gap).children(columns), more)
 }
 
 fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
@@ -218,12 +277,21 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
         text(words)
             .font(theme.text("label"))
             .color(theme.color("text-secondary"))
+            .truncate()
     };
+    let cell = || col().h(CELL).gap(theme.space(1)).items_center();
     match field.kind {
         Kind::Number { min, max, log, .. } => {
-            let value = field.value.as_f64().unwrap_or(min);
+            let turned = (state.turning.as_ref()).filter(|(turned, _)| *turned == key);
+            let record = field.value.as_f64().unwrap_or(min);
+            let value = turned.map_or(record, |(_, value)| *value);
             let at = travelled(value, min, max, log) as f32;
-            let (id, name, kind) = (id.clone(), field.name.clone(), field.kind.clone());
+            let (id, name, kind, turning) = (
+                id.clone(),
+                field.name.clone(),
+                field.kind.clone(),
+                key.clone(),
+            );
             let knob = canvas(arc(
                 arc(Shape::new(), 1.0, theme.color("fill-strong")),
                 at,
@@ -237,46 +305,52 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
             .focusable(true)
             .on_drag(
                 move |s: &mut State, drag: &mut rune::Drag, _: &mut rune::Tx| {
-                    if drag.phase == rune::Phase::Up && !drag.cancelled() {
-                        let at = travelled(value, min, max, log) + f64::from(-drag.dy / TRAVEL);
-                        s.set_field(
-                            &id,
-                            &name,
-                            kind.fit(value_at(at.clamp(0.0, 1.0), min, max, log)),
-                        );
+                    let at = travelled(record, min, max, log) + f64::from(-drag.dy / TRAVEL);
+                    let to = kind.fit(value_at(at.clamp(0.0, 1.0), min, max, log));
+                    match drag.phase {
+                        rune::Phase::Down => {}
+                        rune::Phase::Move => {
+                            s.turning = Some((turning.clone(), to.as_f64().unwrap_or(record)));
+                        }
+                        rune::Phase::Up => {
+                            s.turning = None;
+                            if !drag.cancelled() {
+                                s.set_field(&id, &name, to);
+                            }
+                        }
                     }
                 },
             );
-            col()
-                .gap(theme.space(1))
-                .items_center()
-                .child(knob)
-                .child(caption(field.label))
-                .child(
-                    text(number(value))
-                        .font(theme.text("number"))
-                        .color(theme.color("text-muted")),
-                )
+            cell().child(knob).child(caption(field.label)).child(
+                text(number(value))
+                    .font(theme.text("number"))
+                    .color(theme.color("text-muted")),
+            )
         }
         Kind::Switch => {
+            // A switch carries its name and is lit while on.
             let on = field.value.as_bool().unwrap_or(false);
             let (id, name) = (id.clone(), field.name.clone());
-            let switch = el()
+            let switch = row()
                 .key(key)
                 .role("switch")
                 .label(field.label.clone())
                 .checked(on)
                 .focusable(true)
-                .size(20.0, 20.0)
+                .h(28.0)
+                .px(theme.space(2))
+                .items_center()
                 .radius(theme.radius("sm").unwrap_or(4.0))
                 .border(1.0, theme.color(if on { "green" } else { "border-strong" }))
-                .fill(theme.color(if on { "green/25" } else { "fill" }))
-                .on_press(move |s: &mut State| s.set_field(&id, &name, json!(!on)));
-            col()
-                .gap(theme.space(1))
-                .items_center()
-                .child(switch)
-                .child(caption(field.label))
+                .fill(theme.color(if on { "green/25" } else { "background" }))
+                .on_press(move |s: &mut State| s.set_field(&id, &name, json!(!on)))
+                .child(
+                    text(field.label)
+                        .font(theme.text("label"))
+                        .color(theme.color(if on { "text" } else { "text-muted" }))
+                        .truncate(),
+                );
+            cell().child(switch)
         }
         Kind::Choice(options) => {
             let segments = options.into_iter().map(|option| {
@@ -306,8 +380,7 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
                             .color(theme.color(if chosen { "text" } else { "text-muted" })),
                     )
             });
-            col()
-                .gap(theme.space(1))
+            cell()
                 .child(row().gap(2.0).children(segments))
                 .child(caption(field.label))
         }

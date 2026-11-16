@@ -46,6 +46,8 @@ pub(crate) enum Target {
         field: Field,
         option: Option<Value>,
     },
+    /// The switch that shows all the controls of a card, or the first few.
+    Expand(InstanceId),
     Play,
 }
 
@@ -143,7 +145,19 @@ impl Found {
 
     fn fields(&mut self, state: &State, id: &InstanceId, prefix: &str) {
         let title = card::title(state, id);
-        for field in card::fields(state, id) {
+        let (fields, more) = card::shown(state, id);
+        if more {
+            self.controls.push(Control {
+                key: format!("{prefix}expand"),
+                label: format!("Expand {title}"),
+                role: Some("switch".into()),
+                value: None,
+                checked: Some(state.expanded.contains(id)),
+                actions: ["press", "toggle"].map(String::from).to_vec(),
+                target: Target::Expand(id.clone()),
+            });
+        }
+        for field in fields {
             let key = format!("{prefix}{}", field.name);
             let label = format!("{title} {}", field.label);
             let target = |option| Target::Field {

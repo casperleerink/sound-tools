@@ -85,6 +85,10 @@ pub(crate) struct State {
     /// What went wrong last, said in the corner.
     notice: Option<String>,
     pub(crate) shown: BTreeSet<InstanceId>,
+    /// The cards that show all their controls. How the composer works, so never saved.
+    pub(crate) expanded: BTreeSet<InstanceId>,
+    /// The knob a drag turns now, by key, and where it is.
+    pub(crate) turning: Option<(String, f64)>,
     waker: Arc<Mutex<Option<rune::Waker>>>,
     /// The steps of `--act` and the seconds of `--play`, for the first frame of a run without a window.
     first: Option<(Vec<Step>, Option<f64>)>,
@@ -178,6 +182,8 @@ impl State {
             theme_loads,
             notice: theme_problem,
             shown: BTreeSet::new(),
+            expanded: BTreeSet::new(),
+            turning: None,
             waker,
             first: headless.then(|| (act.unwrap_or_default(), play)),
             last: 0.0,
@@ -275,6 +281,7 @@ impl State {
     ) -> Result<()> {
         match target {
             Target::Play => self.play_or_stop(),
+            Target::Expand(instance) => self.expand(instance),
             Target::View { instance, key } => {
                 let value = match action {
                     "drag" => value.or_else(|| Some(json!({ "dx": 0, "dy": 0 }))),
@@ -311,6 +318,14 @@ impl State {
             }
         }
         Ok(())
+    }
+
+    /// Shows all the controls of the card of `id`, or the first few again.
+    pub(crate) fn expand(&mut self, id: &InstanceId) {
+        if !self.expanded.remove(id) {
+            self.expanded.insert(id.clone());
+        }
+        self.handled();
     }
 
     /// Changes one field of the record of `id`: one step of undo.

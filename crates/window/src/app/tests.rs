@@ -1068,3 +1068,41 @@ fn the_devices_take_the_height_they_need_and_scroll_past_the_most() {
         "it scrolls"
     );
 }
+
+#[test]
+fn a_card_of_fields_shows_a_few_and_grows_wider_not_taller_when_expanded() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    let chain = folder.join("state/song/t00/chain");
+    std::fs::write(
+        chain.join("comp.json"),
+        r#"{"tool": "compressor", "state": {}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        chain.join("instance.json"),
+        r#"{"tool": "chain", "state": {"order": ["comp"]}}"#,
+    )
+    .unwrap();
+    let mut window = laid_out(opened(&folder));
+    let card = |window: &rune::Runtime<State>| window.presented("t00/chain/comp:card").unwrap().0;
+    let shown = |window: &rune::Runtime<State>| {
+        let labels = labels(&window.state);
+        labels
+            .iter()
+            .filter(|label| label.starts_with("Compressor "))
+            .count()
+    };
+    let (few, closed) = (shown(&window), card(&window));
+    assert_eq!(few, 4);
+    act(
+        &mut window.state,
+        json!({ "label": "Expand Compressor", "action": "press" }),
+    );
+    window.invalidate();
+    window.frame(0.1);
+    let open = card(&window);
+    assert!(shown(&window) > few);
+    assert!(open[2] > closed[2], "{open:?} {closed:?}");
+    assert_eq!(open[3], closed[3]);
+}
