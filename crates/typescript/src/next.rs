@@ -47,6 +47,16 @@ pub const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 /// Why an action on a view did nothing while no Bun runs.
 const NOT_RUNNING: &str = "the code of the project does not run now, so this did nothing";
 
+/// What [`Tools::run_loops`] did with a step of the control loops.
+#[derive(Debug, PartialEq)]
+pub enum Looped {
+    Sent,
+    /// Bun still runs the last step: the time keeps for the next.
+    Busy,
+    /// No Bun runs, or no instance has a control loop: no time keeps.
+    Nothing,
+}
+
 /// What the window shows of an instance: the tree of its view, or why there is none.
 pub enum Drawn {
     View {
@@ -88,6 +98,9 @@ pub struct Tools {
     /// Whether Bun runs a frame of the control loops now.
     ticking: bool,
     told_transport: Option<Transport>,
+    /// Where the code of the running Bun played: an instance's own voices and controls, or the
+    /// `notes` of its child, by path. Released when that Bun ends.
+    performed_on: BTreeSet<(InstanceId, Option<String>)>,
     /// How many times Buns loaded, or none could: the window reads its design tokens again.
     loads: u64,
     /// How many trees came, for a test that a frame runs no view.
@@ -134,6 +147,7 @@ impl Tools {
             failed_actions: Vec::new(),
             ticking: false,
             told_transport: None,
+            performed_on: BTreeSet::new(),
             loads: 0,
             view_runs: 0,
             waker,
@@ -246,7 +260,7 @@ impl Tools {
     /// One step of the control loop of every instance whose tool has one, `dt` seconds after
     /// the last, while the project plays at `tick` or stands there, at `time` seconds of engine
     /// time; also tells Bun the clock when what its code follows of it changed. Not while the
-    /// last step runs. Whether the step went to Bun.
+    /// last step runs.
     pub fn run_loops(
         &mut self,
         project: &Project,
@@ -254,9 +268,9 @@ impl Tools {
         tick: Ticks,
         time: f64,
         dt: f32,
-    ) -> bool {
+    ) -> Looped {
         let Some(bun) = self.bun.clone() else {
-            return false;
+            return Looped::Nothing;
         };
         let tempo_map = &project.project_file().tempo_map;
         let at = tempo_map.time_signatures().bar_beat_of(tick);
@@ -276,14 +290,14 @@ impl Tools {
             self.told_transport = Some(clock.transport);
         }
         if self.ticking {
-            return false;
+            return Looped::Busy;
         }
         let instances: Vec<Played> = (project.instances())
             .filter(|(_, tool)| self.ticks(tool))
             .map(|(id, _)| played(project, id))
             .collect();
         if instances.is_empty() {
-            return false;
+            return Looped::Nothing;
         }
         // Its code reads the records as they are now.
         self.tell(project);
@@ -292,7 +306,10 @@ impl Tools {
             instances,
             clock,
         });
-        self.ticking
+        match self.ticking {
+            true => Looped::Sent,
+            false => Looped::Nothing,
+        }
     }
 
     /// A change in `extensions/`, as the watcher says it.
@@ -327,7 +344,7 @@ impl Tools {
         {
             self.changed_at = None;
             self.skipped.clear();
-            self.restart();
+            self.restart(project);
         }
         let (shown, problems) = (&self.shown, self.view_problems.len());
         self.view_problems.retain(|id, _| shown.contains(id));
@@ -379,12 +396,13 @@ impl Tools {
     }
 
     /// Ends Bun, if one runs, and starts a new one on the files as they are now.
-    fn restart(&mut self) {
+    fn restart(&mut self, project: &mut Project) {
         if let Some((_, again)) = &mut self.starting {
             *again = true;
             return;
         }
         let old = self.bun.take();
+        self.performer_gone(project);
         let (folder, opening, skipped) = (self.folder.clone(), self.opening, self.skipped.clone());
         let (send, launched) = mpsc::channel();
         let wake = self.waker.clone();
@@ -417,7 +435,7 @@ impl Tools {
         if again {
             // Its tools are older than the folder.
             drop(launched);
-            self.restart();
+            self.restart(project);
             return false;
         }
         self.loaded(launched, project)
@@ -577,6 +595,9 @@ impl Tools {
             } => {
                 let at = at.map(|at| frame_of(project, at));
                 let played = self.played_on(project, &instance, child.as_deref());
+                if let Ok(id) = &played {
+                    self.performed_on.insert((id.clone(), None));
+                }
                 let sent = played.and_then(|id| {
                     let info = self.info_of(project, &id).ok_or_else(|| {
                         let tool = project.tool_of(&id).unwrap_or("nothing");
@@ -659,12 +680,13 @@ impl Tools {
     /// Plays a key of `instance`, or lets go of one, as the keyboard would: on its own voices,
     /// or into the `notes` of its child `child` through the feed it declares.
     fn play_note(
-        &self,
+        &mut self,
         project: &mut Project,
         instance: &InstanceId,
         child: Option<&str>,
         performed: Performed,
     ) -> Result<(), String> {
+        (self.performed_on).insert((instance.clone(), child.map(str::to_string)));
         let error = |error: sound_core::ProjectError| error.to_string();
         let Some(child) = child else {
             let info = (self.info_of(project, instance)).ok_or("has no voices to play")?;
@@ -680,6 +702,30 @@ impl Tools {
         }
         let (feed, update) = (feed_processor(child), NoteFeedUpdate::Note(performed));
         (project.send::<NoteFeed>(instance, &feed, update)).map_err(error)
+    }
+
+    /// Tells each place the code of the Bun that ended played on that it is gone, so what it
+    /// held lets go. A place deleted since has nothing left to release.
+    fn performer_gone(&mut self, project: &mut Project) {
+        for (id, child) in std::mem::take(&mut self.performed_on) {
+            let gone = match &child {
+                None => match self.info_of(project, &id) {
+                    Some(info) => {
+                        project.send::<Signals>(&id, info.processor(), SignalsUpdate::PerformerGone)
+                    }
+                    None => Ok(()),
+                },
+                Some(child) => project.send::<NoteFeed>(
+                    &id,
+                    &feed_processor(child),
+                    NoteFeedUpdate::PerformerGone,
+                ),
+            };
+            match gone {
+                Ok(()) | Err(sound_core::ProjectError::MissingProcessor { .. }) => {}
+                Err(error) => self.problems.push(crate::folder_problem(error.to_string())),
+            }
+        }
     }
 
     /// What code of `instance` played could not be played: a problem of its tool, once, as its
@@ -807,10 +853,11 @@ impl Tools {
                     runs.what
                 ));
                 self.skipped.insert(info.file.clone(), problem.message);
-                self.restart();
+                self.restart(project);
             }
             _ => {
                 self.bun = None;
+                self.performer_gone(project);
                 // A card of fields works without Bun.
                 self.forget_views();
                 let message = format!(

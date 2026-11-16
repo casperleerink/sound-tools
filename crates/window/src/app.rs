@@ -12,7 +12,7 @@ use plugin_host::{Plugins, ScanCache, ScanCommand};
 use rune::{Cx, El, KeyEvent, Tx, col, el, row, text};
 use serde_json::{Value, json};
 use sound_core::{Engine, GROUPING_WINDOW, InstanceId, OutputDevice, OutputStream, Project, Ticks};
-use sound_typescript::next::{Drawn, FRAME_INTERVAL, Tools};
+use sound_typescript::next::{Drawn, FRAME_INTERVAL, Looped, Tools};
 
 use crate::card::Kind;
 use crate::controls::{self, Step, Target};
@@ -589,17 +589,17 @@ fn run_loops(state: &mut State, seconds: f64) -> bool {
     if dt < FRAME_INTERVAL.as_secs_f64() {
         return false;
     }
-    let sent = tools.run_loops(
+    let looped = tools.run_loops(
         &state.project,
         state.playing,
         state.playhead,
         state.engine_time,
         dt as f32,
     );
-    if sent {
+    if looped != Looped::Busy {
         state.looped = seconds;
     }
-    sent
+    looped == Looped::Sent
 }
 
 /// The least a step of an integer field moves.

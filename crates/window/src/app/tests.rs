@@ -692,3 +692,106 @@ fn a_peak_held_three_seconds_shows_in_decibels_then_drops() {
     }
     assert_eq!(shown(&state), "-120.0");
 }
+
+/// A tool whose control loop holds a note on its child `synth` once, or that has no loop.
+fn holder(holds: bool) -> String {
+    let tick = match holds {
+        true => {
+            r#"memory: () => ({ held: false }),
+  tick: ({ memory, play }) => {
+    if (memory.held) return;
+    memory.held = true;
+    play(60, { child: "synth", hold: true });
+  },"#
+        }
+        false => "",
+    };
+    format!(
+        r#"import {{ tool }} from "./sdk";
+export const holder = tool({{
+  name: "holder", title: "Holder", when: "Never", doc: "Holds a note.", state: {{}},
+  behaviour: () => ({{ connections: [{{ from: {{ child: "synth" }}, to: {{ port: "audio" }} }}] }}),
+  {tick}
+}});
+"#
+    )
+}
+
+#[test]
+fn a_note_a_control_loop_held_on_a_child_ends_with_its_bun() {
+    let (_scratch, folder) = with_tools(&[("holder", &holder(true))]);
+    let chain = folder.join("state/song/t00/chain");
+    std::fs::remove_file(chain.join("holder.json")).unwrap();
+    std::fs::create_dir(chain.join("holder")).unwrap();
+    let files = [
+        ("instance.json", r#"{"tool": "holder", "state": {}}"#),
+        (
+            "synth.json",
+            r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#,
+        ),
+    ];
+    for (name, text) in files {
+        std::fs::write(chain.join("holder").join(name), text).unwrap();
+    }
+    let mut state = opened(&folder);
+    build(&state);
+    let level = |state: &State| {
+        let levels = state.lives.levels();
+        let mix = levels.iter().find(|(name, _)| name == "song/t00/mix");
+        mix.map_or(-120.0, |(_, db)| *db)
+    };
+    for step in 1..=30 {
+        frame(&mut state, f64::from(step) / 60.0);
+    }
+    assert!(level(&state) > -60.0, "{}", level(&state));
+    let file = state.project.root().join("extensions/holder.tsx");
+    std::fs::write(file, holder(false)).unwrap();
+    state.tools.as_mut().unwrap().code_changed();
+    for step in 31..=90 {
+        frame(&mut state, f64::from(step) / 60.0);
+    }
+    assert!(level(&state) < -60.0, "{}", level(&state));
+}
+
+/// A control loop that keeps the `dt` of its first step, once its code has one.
+fn first_step(ticks: bool) -> String {
+    let tick = match ticks {
+        true => {
+            r#"memory: () => ({ told: false }),
+  tick: ({ dt, memory, update }) => {
+    if (memory.told) return;
+    memory.told = true;
+    update("First", (part) => void (part.state.dt = dt));
+  },"#
+        }
+        false => "",
+    };
+    format!(
+        r#"import {{ number, tool }} from "./sdk";
+export const first = tool({{
+  name: "first", title: "First", when: "Never", doc: "First.",
+  state: {{ dt: number({{ min: 0, max: 1000, default: 0 }}) }},
+  {tick}
+}});
+"#
+    )
+}
+
+#[test]
+fn the_first_step_of_a_new_control_loop_is_one_interval_long() {
+    let (_scratch, folder) = with_tools(&[("first", &first_step(false))]);
+    let mut state = opened(&folder);
+    for step in 1..=300 {
+        frame(&mut state, f64::from(step) / 60.0);
+    }
+    let file = state.project.root().join("extensions/first.tsx");
+    std::fs::write(file, first_step(true)).unwrap();
+    state.tools.as_mut().unwrap().code_changed();
+    for step in 301..=330 {
+        frame(&mut state, f64::from(step) / 60.0);
+    }
+    let id = InstanceId::new("song/t00/chain/first").unwrap();
+    let held: Value = serde_json::from_str(&state.project.state_json(&id).unwrap()).unwrap();
+    let first = held["dt"].as_f64().unwrap();
+    assert!(first > 0.0 && first < 0.1, "{first}");
+}
