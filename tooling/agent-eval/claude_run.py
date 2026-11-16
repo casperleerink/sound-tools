@@ -16,7 +16,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 RUNTIME = Path(os.environ.get("SOUND_TOOLS_RUNTIME", REPO / "target" / "debug" / "runtime"))
-BIN = Path("/tmp/sound-tools-eval-bin")
+LOGS = Path.home() / ".cache" / "sound-tools-eval"
+BIN = LOGS / "bin"
 APP_TOOLS = "Bash,Read,Edit,Write,Glob,Grep"
 
 

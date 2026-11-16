@@ -10,8 +10,8 @@ council: Opus and GPT, each on a copy of its own, check each criterion by using 
 through the app, score its UI and UX against DESIGN.md, and keep the screenshots that show it.
 It prints one JSON line per run: the checks, each message's cost and how the builder checked its
 work, and the council's verdicts. `report.py` puts runs side by side by `--label`. Logs go to
-/tmp/sound-tools-eval/. `$SOUND_TOOLS_RUNTIME` and `$SOUND_TOOLS_TEMPLATE` (the DAW template's
-folder) pick another program and template to compare.
+~/.cache/sound-tools-eval/, which a restart keeps. `$SOUND_TOOLS_RUNTIME` and
+`$SOUND_TOOLS_TEMPLATE` (the DAW template's folder) pick another program and template to compare.
 
 `examples/` holds tools agents built in these runs, from one prompt each: a gravity harp view,
 a storm drone played from its display, a generative part in D dorian, and a grain cloud of a sample. Copy one into the
@@ -29,7 +29,7 @@ from pathlib import Path
 
 import claude_run
 
-LOGS = Path("/tmp/sound-tools-eval")
+LOGS = claude_run.LOGS
 HERE = Path(__file__).resolve().parent
 
 
@@ -619,7 +619,7 @@ def review(folder: Path, scenario: str, member: str) -> dict:
     copy = folder.with_name(f"{folder.name}-{member}")
     shutil.rmtree(copy, ignore_errors=True)
     shutil.copytree(folder, copy, symlinks=True, ignore=shutil.ignore_patterns(".sound-tools.lock"))
-    scratch = Path("/tmp") / copy.name
+    scratch = LOGS / "scratch" / copy.name
     shutil.rmtree(scratch, ignore_errors=True)
     scratch.mkdir(parents=True)
     asked = "\n".join(f"{n + 1}. \"{text}\"" for n, text in enumerate(prompts(scenario)))
@@ -691,7 +691,7 @@ def main() -> None:
     parser.add_argument("--label", default="gpui", help="what is being compared, such as the "
                         "SDK: results and folders carry it, and report.py puts labels side by side")
     arguments = parser.parse_args()
-    LOGS.mkdir(exist_ok=True)
+    LOGS.mkdir(parents=True, exist_ok=True)
     scenarios = [one for name in arguments.scenarios for one in (CRITERIA if name == "ui" else [name])]
     for scenario in scenarios:
         for number in range(arguments.first, arguments.first + arguments.runs):
