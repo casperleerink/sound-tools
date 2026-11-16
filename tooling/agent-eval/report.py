@@ -1,7 +1,7 @@
 """Puts eval runs side by side as one HTML page: per scenario a column per `--label`, with what
 the builder spent, each council member's verdicts, UI and UX scores and the screenshots it kept.
 
-    python3 tooling/agent-eval/report.py [--labels gpui,rune] [--out /tmp/sound-tools-eval/report]
+    python3 tooling/agent-eval/report.py [--labels gpui,rune] [--out ~/.cache/sound-tools-eval/report]
 """
 
 import argparse
