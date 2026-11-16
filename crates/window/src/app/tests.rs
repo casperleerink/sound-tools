@@ -1031,3 +1031,40 @@ fn a_live_text_with_no_width_is_as_wide_as_the_widest_it_showed() {
         width(&window, "loudest")
     );
 }
+
+/// A device whose view is `tall` points tall.
+fn tall(tall: u32) -> String {
+    format!(
+        r#"import {{ h, input, tool }} from "./sdk";
+export const tall = tool({{ name: "tall", title: "Tall", when: "Never", doc: "Tall.", state: {{}}, sound: () => input, view: () => <box key="tall" w={{100}} h={{{tall}}} /> }});
+"#
+    )
+}
+
+#[test]
+fn the_devices_take_the_height_they_need_and_scroll_past_the_most() {
+    let rect = |window: &rune::Runtime<State>, key: &str| {
+        window
+            .presented(key)
+            .unwrap_or_else(|| panic!("no {key}"))
+            .0
+    };
+    let (_scratch, folder) = with_tools(&[("tall", &tall(230))]);
+    let window = laid_out(opened(&folder));
+    let [_, top, _, height] = rect(&window, "t00/chain/tall:tall");
+    assert!(
+        top + height <= rect(&window, "strip-t00")[1],
+        "under the mixer"
+    );
+    let (_scratch, folder) = with_tools(&[("tall", &tall(900))]);
+    let mut window = laid_out(opened(&folder));
+    let [x, top, ..] = rect(&window, "t00/chain/tall:tall");
+    window.wheel(x + 10.0, top + 10.0, -200.0);
+    for _ in 0..60 {
+        window.frame(1.0 / 60.0);
+    }
+    assert!(
+        rect(&window, "t00/chain/tall:tall")[1] < top - 50.0,
+        "it scrolls"
+    );
+}

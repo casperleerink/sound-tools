@@ -79,8 +79,11 @@ export type BoxProps = Interactive & Size & {
   at?: [Num, Num];
   /** Pinned to its parent's edges: [left, top, right, bottom] points, `null` for free. */
   inset?: [number | null, number | null, number | null, number | null];
+  /** The most points tall it grows; past it, what does not fit is cut, or scrolls with `scroll`. */
+  maxH?: number;
   clip?: boolean;
-  scroll?: boolean;
+  /** Scrolls what does not fit, along `x`, `y` or both; the window fades an edge where more waits. */
+  scroll?: "x" | "y" | "both";
   /** Lets presses through, to what is under it. */
   inert?: boolean;
   fill?: Color;

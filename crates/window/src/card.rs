@@ -188,7 +188,6 @@ pub(crate) fn card(state: &State, id: &InstanceId) -> El {
     };
     col()
         .key(format!("{}card", state.prefix_of(id)))
-        .h_full()
         .padding(theme.space(3))
         .gap(theme.space(2))
         .fill(theme.color("surface"))

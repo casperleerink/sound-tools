@@ -78,7 +78,7 @@ export const song = tool({
       <col w="full" h="full" fill="background">
         <Ruler />
         <box grow={1} w="full" clip>
-          <col w="full" h="full" scroll>
+          <col w="full" h="full" scroll="y">
             {tracks.map((each, index) => (
               <TrackRow
                 each={each}
@@ -103,7 +103,7 @@ export const song = tool({
           </box>
         </box>
         {chosen && <Panel each={chosen} title={titleOf(chosen, tracks.indexOf(chosen))} />}
-        <row w="full" h={MIXER} px={3} gap={1} fill="surface" border="border-strong" borderSides={[1, 0, 0, 0]}>
+        <row w="full" h={MIXER} px={3} gap={1} fill="surface" border="border-strong" borderSides={[1, 0, 0, 0]} scroll="x">
           {tracks.map((each, index) => (
             <Strip id={each.name} name={each.name} title={titleOf(each, index)} db={dbOf(mixOf(each)?.gain_db)} onChange={(db) => mixing(each.name, `Volume ${titleOf(each, index)}`, (mix) => (mix.gain_db = db))} />
           ))}
@@ -127,9 +127,9 @@ type Track = Extract<Child, { tool: typeof track }>;
 type Memory = { chosen: string | null; armed: string[] };
 
 const [BAR, BEAT] = [3840, 960];
-/** Points per tick, and the bars the timeline shows. */
+/** Points per tick, and the bars the timeline shows. `PANEL` is the most the devices take before they scroll. */
 const [ZOOM, BARS] = [0.03, 32];
-const [HEAD, ROW, RULER, LEAD, PANEL, MIXER, FADER] = [208, 56, 24, 8, 168, 208, 120];
+const [HEAD, ROW, RULER, LEAD, PANEL, MIXER, FADER] = [208, 56, 24, 8, 320, 208, 120];
 const [LOW, HIGH] = [36, 96];
 const COLOURS = ["blue", "green", "yellow", "peach", "red", "lavender", "sky", "teal", "mauve", "pink"];
 
@@ -217,13 +217,15 @@ const Panel = ({ each, title }: { each: Track; title: string }) => {
   const effects = chain?.tool === "chain" ? chain.state.order.filter((name) => chain.children.some((child) => child.name === name)) : [];
   const devices = [...(each.children.some((child) => child.name === "synth") ? ["synth"] : []), ...effects.map((name) => `chain/${name}`)];
   return (
-    <col w="full" h={PANEL} px={3} py={2} gap={2} fill="background" border="border-strong" borderSides={[1, 0, 0, 0]}>
+    <col w="full" px={3} py={2} gap={2} fill="background" border="border-strong" borderSides={[1, 0, 0, 0]}>
       <text style="heading" color="text-secondary">{title}</text>
-      <row gap={2} grow={1}>
-        {devices.map((path) => (
-          <child path={`${each.name}/${path}`} />
-        ))}
-      </row>
+      <box w="full" maxH={PANEL} scroll="both">
+        <row gap={2}>
+          {devices.map((path) => (
+            <child path={`${each.name}/${path}`} />
+          ))}
+        </row>
+      </box>
     </col>
   );
 };

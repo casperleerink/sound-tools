@@ -81,10 +81,10 @@ pub(crate) struct BoxNode {
     justify: Option<String>,
     at: Option<[Num; 2]>,
     inset: Option<[Option<f32>; 4]>,
+    max_h: Option<f32>,
     #[serde(default)]
     clip: bool,
-    #[serde(default)]
-    scroll: bool,
+    scroll: Option<Scroll>,
     #[serde(default)]
     inert: bool,
     fill: Option<String>,
@@ -135,6 +135,14 @@ impl DragSpec {
             Axis::Y => [0.0, dy.clamp(low, high)],
         }
     }
+}
+
+#[derive(Deserialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Scroll {
+    X,
+    Y,
+    Both,
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq)]
@@ -411,10 +419,11 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
     if b.clip {
         e = e.clip_soft(0.0);
     }
-    if b.scroll {
-        e = e.scroll(ScrollSpec {
-            stick_bottom: false,
-        });
+    if let Some(h) = b.max_h {
+        e = e.max_h(h);
+    }
+    if let Some(scroll) = b.scroll {
+        e = scrolled(e, scroll);
     }
     if b.inert {
         e = e.inert();
@@ -467,6 +476,21 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
     }
     e.children(b.children.iter().map(|child| build(scope, child)))
 }
+
+/// `e` scrolling along `axes`, its edges fading where more waits.
+pub(crate) fn scrolled(e: El, axes: Scroll) -> El {
+    let e = match axes {
+        Scroll::X => e.scroll_x(),
+        Scroll::Y => e.scroll(ScrollSpec {
+            stick_bottom: false,
+        }),
+        Scroll::Both => e.scroll_xy(),
+    };
+    e.scroll_edge_fade(FADE)
+}
+
+/// How far the edge of a scroll fades, in points.
+const FADE: f32 = 24.0;
 
 /// What the element is for an agent and a screen reader, and what a press does.
 fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>) -> El {
