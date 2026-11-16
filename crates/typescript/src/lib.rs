@@ -514,6 +514,8 @@ fn tool_files(extensions: &Path) -> Vec<String> {
             (name.ends_with(".ts") || name.ends_with(".tsx"))
                 && !OWNED.contains(&name.as_str())
                 && !name.ends_with(".d.ts")
+                // What `bun test` runs.
+                && !name.contains(".test.")
         })
         .collect();
     files.sort();
