@@ -1,8 +1,9 @@
-//! The runtime apart from its command line in `main.rs`: the bundled extensions and their
-//! views, the agent sidebar, templates, the project summary, offline rendering and the window.
+//! The runtime apart from `main.rs`: the bundled extensions and their views, the agent sidebar,
+//! templates, the project summary, offline rendering, the command line and the window.
 //! Tests of whole projects use this crate.
 
 pub mod app;
+pub mod cli;
 pub mod log_file;
 pub mod recorder;
 pub mod report;
