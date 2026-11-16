@@ -5,6 +5,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::rc::Rc;
 
 use rune::LiveText;
 use sound_core::{InstanceId, Ticks};
@@ -32,7 +33,8 @@ pub(crate) enum Shows {
 /// What Rune draws of a [`Shows`] every frame.
 #[derive(Clone)]
 pub(crate) enum Shown {
-    Text(LiveText),
+    /// What it shows, and the widest it showed, which sizes it: Rune never resizes live text.
+    Text(LiveText, Rc<RefCell<String>>),
     Rect(rune::Live<[f32; 4]>),
     Offset(rune::Live<[f32; 2]>),
     Opacity(rune::Live<f32>),
@@ -42,7 +44,7 @@ impl Shown {
     /// Binds `e` to it: a live place takes the element out of the flow.
     pub(crate) fn apply(&self, e: rune::El) -> rune::El {
         match self {
-            Self::Text(text) => e.live_text(text),
+            Self::Text(text, _) => e.live_text(text),
             Self::Rect(rect) => e.absolute(0.0, 0.0).live_rect(rect),
             Self::Offset(offset) => e.absolute(0.0, 0.0).live_offset(offset),
             Self::Opacity(opacity) => e.live_opacity(opacity),
@@ -69,6 +71,8 @@ pub(crate) struct Lives {
     playhead: Cell<f64>,
     /// Whether an eased value still moves without new sound.
     moving: Cell<bool>,
+    /// Whether a live text showed wider than it was built for since the last look.
+    wider: Cell<bool>,
     drags: RefCell<HashMap<String, rune::Live<[f32; 2]>>>,
     /// Where the piece plays, as the title row shows it.
     pub(crate) time: LiveText,
@@ -85,6 +89,7 @@ impl Lives {
             elapsed: Cell::new(0.0),
             playhead: Cell::new(0.0),
             moving: Cell::new(false),
+            wider: Cell::new(false),
             drags: RefCell::default(),
             time: LiveText::new(time.to_string()),
         }
@@ -103,7 +108,7 @@ impl Lives {
             return binding.shown.clone();
         }
         let shown = match &shows {
-            Shows::Text { .. } => Shown::Text(LiveText::new("")),
+            Shows::Text { .. } => Shown::Text(LiveText::new(""), Rc::default()),
             Shows::Rect(_) => Shown::Rect(rune::Live::new([0.0; 4])),
             Shows::Offset(_) => Shown::Offset(rune::Live::new([0.0; 2])),
             Shows::Opacity(_) => Shown::Opacity(rune::Live::new(1.0)),
@@ -179,13 +184,19 @@ impl Lives {
                     unit,
                     digits,
                 },
-                Shown::Text(shown),
+                Shown::Text(shown, widest),
             ) => {
                 let value = number(value, &sources);
                 let text = match digits {
                     Some(digits) => format!("{value:.digits$}"),
                     None => text_of(value, *unit, Some(project.clock())),
                 };
+                let mut widest = widest.borrow_mut();
+                if text.chars().count() > widest.chars().count() {
+                    // The first text sizes it as it is built; a wider one builds it again.
+                    self.wider.set(self.wider.get() || !widest.is_empty());
+                    widest.clone_from(&text);
+                }
                 shown.set(text);
             }
             (Shows::Rect(rect), Shown::Rect(shown)) => {
@@ -199,6 +210,12 @@ impl Lives {
             }
             _ => {}
         }
+    }
+
+    /// Whether a live text showed wider than it was built for, since the last call: the view
+    /// is built again to make room.
+    pub(crate) fn take_wider(&self) -> bool {
+        self.wider.replace(false)
     }
 
     /// The loudest of each meter the views read this frame, in dB, by instance path, for the
@@ -270,7 +287,7 @@ impl Lives {
         let bindings = self.bindings.borrow();
         (bindings.values())
             .filter_map(|binding| match &binding.shown {
-                Shown::Text(shown) => Some(shown.get().to_string()),
+                Shown::Text(shown, _) => Some(shown.get().to_string()),
                 _ => None,
             })
             .collect()

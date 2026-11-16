@@ -567,6 +567,7 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
     let dt = (seconds - state.last).max(0.0);
     state.last = seconds;
     let moving = state.lives.update(state, dt);
+    changed |= state.lives.take_wider();
     if headless {
         *REPORT.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.report());
         return (changed, None);

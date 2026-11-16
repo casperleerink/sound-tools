@@ -983,3 +983,51 @@ fn a_menu_this_window_cannot_show_answers_none_and_says_so() {
         "{problems:?}"
     );
 }
+
+/// The window of `state` as Rune lays it out and draws it, with the window's fonts.
+fn laid_out(state: State) -> rune::Runtime<State> {
+    let fonts = rune::text::TextSystem::new(&crate::FONTS, ("Inter Display", "ui-monospace"));
+    let env = rune::Env::new(true, 1.0);
+    let mut window = rune::Runtime::with_text(state, view, (1470.0, 920.0), env, fonts);
+    window.frame(0.0);
+    window
+}
+
+/// A frame of the window `seconds` in, as the app runs it: its poll, then Rune's frame.
+fn drawn_frame(window: &mut rune::Runtime<State>, seconds: f64) {
+    let dt = seconds - window.state.last;
+    if frame(&mut window.state, seconds).0 {
+        window.invalidate();
+    }
+    window.frame(dt);
+}
+
+fn width(window: &rune::Runtime<State>, key: &str) -> f32 {
+    let presented = window.presented(key);
+    presented.unwrap_or_else(|| panic!("no {key}")).0[2]
+}
+
+#[test]
+fn a_live_text_with_no_width_is_as_wide_as_the_widest_it_showed() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    let song = folder.join("extensions/song.tsx");
+    let loudest = r#"<Ruler /><row><text key="loudest" live={live.peak("t00/mix").decibels()} unit="db" /></row>"#;
+    let code = std::fs::read_to_string(&song).unwrap();
+    std::fs::write(&song, code.replace("<Ruler />", loudest)).unwrap();
+    let mut window = laid_out(opened(&folder));
+    window.state.project.engine().play();
+    for step in 1..=60 {
+        drawn_frame(&mut window, f64::from(step) / 60.0);
+    }
+    let shown = window.state.lives.texts().concat();
+    assert!(shown.ends_with("dB"), "{shown}");
+    let measured = rune::text::TextSystem::new(&crate::FONTS, ("Inter Display", "ui-monospace"))
+        .measure(&shown, window.state.theme.text("body"), 1.0)
+        .0;
+    assert!(
+        width(&window, "loudest") >= measured,
+        "{} < {measured}",
+        width(&window, "loudest")
+    );
+}

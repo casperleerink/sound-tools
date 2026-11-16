@@ -12,7 +12,7 @@ use sound_typescript::live::{Num, Readout};
 use sound_typescript::next::Drawn;
 
 use crate::app::State;
-use crate::lives::{Lives, Shows};
+use crate::lives::{Lives, Shown, Shows};
 
 /// A node of `sdk/view.ts`. A test reads every field it sends, so the two cannot drift.
 #[derive(Deserialize)]
@@ -506,7 +506,14 @@ fn role(name: &str) -> Option<&'static str> {
 
 fn label(scope: &Scope, t: &TextNode) -> El {
     let theme = &scope.state.theme;
-    let mut e = text(t.text.clone())
+    let lives = &scope.state.lives;
+    let live =
+        (t.live.as_ref()).map(|value| lives.bind(scope.state, scope.instance, t.shows(value)));
+    let words = match &live {
+        Some(Shown::Text(_, widest)) => widest.borrow().clone(),
+        _ => t.text.clone(),
+    };
+    let mut e = text(words)
         .font(theme.text(t.style.as_deref().unwrap_or("body")))
         .color(theme.color(t.color.as_deref().unwrap_or("text")));
     if let Some(key) = &t.key {
@@ -518,8 +525,8 @@ fn label(scope: &Scope, t: &TextNode) -> El {
     if t.truncate {
         e = e.truncate();
     }
-    if let Some(value) = &t.live {
-        e = scope.bind(e, t.shows(value));
+    if let Some(live) = live {
+        e = live.apply(e);
     }
     scope.placed(e, t.at.as_ref(), (None, None), t.opacity.as_ref())
 }
