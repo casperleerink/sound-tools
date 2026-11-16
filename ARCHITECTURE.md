@@ -23,7 +23,7 @@ The technical decisions, why we made them, and what we rejected. How something w
 - One process, the runtime (`crates/runtime`), opens one project folder: as a window, headless, or read-only to inspect, render or analyze.
 - Agents only edit files in the project folder, and the runtime applies them live. There is no edit API for agents.
 - Every extension is compiled into the one binary. `project.json` enables extensions by name.
-- Rust for the core and extensions, GPUI for the window: a one-line extension edit reaches a new running window in about two seconds, and an agent wrote working GPUI views from our docs on the first try. Audio and saved data never depend on GPUI.
+- Rust for the core and extensions, and for the window (GPUI, moving to Rune). Audio and saved data never depend on the window's toolkit.
 - The project, the views and every plugin handle share the main thread, which plugins require. Rejected: a separate control thread; it would split the project from its plugins, and every view would need a synced copy.
 - macOS is the main platform. No plugin windows on Linux: plugins there need an X11 parent and a host run loop.
 - System programs come from the system, never the `PATH` (`sound_core::process`).
@@ -183,14 +183,18 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 ## The window
 
-`crates/ui` and `crates/runtime/src/window`.
+`crates/ui` and `crates/runtime/src/window`; the new window in `crates/window`.
 
-- Musical interfaces such as a piano roll belong to a project's tools, not `crates/ui`.
-- What moves every frame draws over a page, not in it: the spaces that read live values on one layer, and each device card as a view of its own. In GPUI a view that changes renders every view it is in, and a page is the heaviest. Rejected: a meter node of the window, which drew the whole page as it moved.
-- Every div that scrolls fades where more waits, painted by the window on that layer. Rejected: a style, as a hard cut is never wanted; a fade in the view, which lies over the cards and pulls them back into the page.
-- A number shown only while its control is touched is `quiet` on the control, which the window reads by field, so a fader shows the number beside it. Rejected: a hover and a timer in the view, through Bun, which hid the number from the keys.
+- Musical interfaces such as a piano roll belong to a project's tools.
+- What moves every frame draws over a page, not in it: in GPUI a view that changes renders every view it is in. Rejected: a meter node of the window, which drew the whole page as it moved.
+- Every div that scrolls fades where more waits, painted by the window. Rejected: a style; a fade in the view, which lies over the cards.
+- A number shown only while its control is touched is `quiet` on the control. Rejected: a hover and a timer in the view, through Bun, which hid the number from the keys.
 - "Open project…" starts a new process, because that tears down the device, plugins and their windows for free.
-- Settings covers the whole window (cmd-, or the project menu), its sections listed on the left: Agents, Audio, Shortcuts. Audio devices are picked there, not in the project menu. Rejected: a window of its own; a dialog, which blocks.
+- Settings covers the whole window; audio devices are picked there. Rejected: a window of its own; a dialog, which blocks.
+- The window moves to Rune (`sound-tools-next`) beside the GPUI app, the release until parity. Plan: `spikes/tool-sdk/PORT-MAP.md`.
+- There a tool's view (`sdk/view.ts`) is a plain function of its records, run again on every change, with `memo`. Rejected: signals, a runtime to own; Luau in the app, which agents wrote worse.
+- A project with `extensions/theme.json` is one of the new window; its tokens and components (`extensions/ui/`) are its own, so an agent restyles all of it.
+- Every control declares its meaning once (role, label, state, actions), so an agent lists and runs it as a click would. A run without a window waits for Bun each frame, so it repeats.
 - Windows installs per user with Inno Setup. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
 
 ## Shortcuts
