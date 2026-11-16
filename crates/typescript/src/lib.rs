@@ -622,7 +622,12 @@ fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
     if !ignore.exists() {
         std::fs::write(ignore, format!("{}\n", bun::LOG_FILE))?;
     }
-    let views = extensions.join(next::THEME).is_file().then_some(VIEW_SDK).into_iter().flatten();
+    let views = extensions
+        .join(next::THEME)
+        .is_file()
+        .then_some(VIEW_SDK)
+        .into_iter()
+        .flatten();
     for (name, text) in files.into_iter().chain(SDK_MODULES).chain(views) {
         let path = extensions.join(name);
         if name == "bun.d.ts" && bun_types {
