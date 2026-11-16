@@ -1,6 +1,6 @@
 # Writing a tool for this project
 
-When no tool does what the composer asks, write one in TypeScript, with no build: a device on a track (an effect or an instrument), a change of the song page, or the whole project as one tool. One tool per file in `extensions/`, `.tsx` when it has a view. The runtime writes `sdk.ts`, `sdk/` and `tsconfig.json`; do not edit them. A save while the app is open loads the tools again in a moment.
+Write a tool in TypeScript, with no build: a device on a track, a change of the song page, or the whole project as one tool. One tool per file in `extensions/`, `.tsx` with a view. Do not edit `sdk.ts`, `sdk/` or `tsconfig.json`, which the runtime writes. A save while the app is open loads the tools again.
 
 ## A tool
 
@@ -33,25 +33,24 @@ export const chopView = view(chop, (self, { change }) => (
 ));
 ```
 
-- `name` is no built-in tool's. `tool` describes the record (`state`), its `sound` and, for a parent, its `children` and `behaviour`; `sdk.ts` lists every name with its doc. A number field is a `Signal` in `sound`, never a number: turning a knob does not build the sound again.
-- `when` and `doc` are what the next agent reads: what it does to the sound, and what each field does.
+- `name` is no built-in tool's. `tool` describes the record (`state`), its `sound` and, for a parent, its `children` and `behaviour`; `sdk.ts` lists every name with its doc. `when` and `doc` are what the next agent reads. A number field is a `Signal` in `sound`, never a number: turning a knob does not build the sound again.
 - To put a device on a track, add its record to the track's chain, `state/song/<track>/chain/<name>.json` as `{"tool": "chop", "state": {}}`, and its name to `order` in the chain's `instance.json`. The chosen track's panel shows the chain in that order.
-- A tool without `view` gets a card with a knob per number, a switch per boolean and segments per choice. Write a view when the tool needs more, such as steps.
+- A tool without `view` gets a card with a knob per number, a switch per boolean and segments per choice.
 
 ## Views
 
-`view(tool, (self, ctx) => …)` is a plain function of the records: `self.state` with every field filled, and `self.children` with theirs. It runs again after every change, so write plain code: no hooks, no signals. Never name a variable `h`: JSX calls `h`.
+`view(tool, (self, ctx) => …)` is a plain function of the records, `self.state` and `self.children`, run again after every change: no hooks, no signals. Never name a variable `h`: JSX calls `h`.
 
 - `row`, `col`, `box`: layout (`w`, `h` in points or `"full"`, `grow`, `pad`, `px`, `py`, `gap`, `align`, `justify`, `at` to place it, `inset` to pin it, `clip`, `scroll`) and look (`fill`, `border`, `borderSides`, `radius`, `shadow`, `opacity`).
 - `text`: `style`, `color`, `truncate`.
 - `shapes`: `lines` and `rects`. With `units` they are in your own units (ticks, pitches) and stretch to `w` × `h`.
 - `child path="t00/synth"`: the card of a child, its own view or its fields.
-- `memo(key, deps, () => …)`: a big part built again only when a dep changes. List everything it shows in `deps`.
+- `memo(key, deps, () => …)`: a part built again only when a dep changes; `deps` lists all it shows.
 - `ctx.memory`: what the view keeps while the window is open, never saved, such as the chosen track. Change it in a handler; give its start as `view(tool, draw, { memory: () => ({ … }) })`.
 
 ## Look
 
-Colours, text styles, spacing, radius and shadows are names from `extensions/theme.json` (`fill="surface"`, `gap={2}`, `radius="md"`, `style="label"`); a wrong name is a type error. `"green/25"` is a colour at 25%. Change the look of everything in `theme.json`. Components are files in `extensions/ui/` (button, toggle, knob, fader, meter): read them, change them, add your own. Follow their rules: a value is the one bright line (`text`), green is sound, a toggle that is on is tinted with its colour and hollow when off, corners and sizes come from the theme.
+Colours, text styles, spacing, radius and shadows are names from `extensions/theme.json` (`fill="surface"`, `gap={2}`, `radius="md"`, `style="label"`); a wrong name is a type error. `"green/25"` is a colour at 25%. Change the look of everything in `theme.json`. Components are files in `extensions/ui/` (button, toggle, knob, fader, meter): read them, change them, add your own. Follow their rules: a value is the one bright line (`text`), green is sound, a toggle that is on is tinted and hollow when off.
 
 ## Changes, actions and what moves
 
@@ -76,4 +75,4 @@ With the app's program, `sound-tools-next` (`$SOUND_TOOLS_RUNTIME` when set), on
 - `--script steps.json`: pointer and keys by element key, such as `{"events": [{ "t": 0.1, "type": "tap", "key": "mute-1" }]}`.
 - `--inspect` prints the records; `--analyze` and `--render` play the sound.
 
-Read `problems.txt` after each change: a tool that does not load says why there.
+Read `problems.txt` after each change: what does not load says why there.

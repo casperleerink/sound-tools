@@ -197,6 +197,11 @@ impl Tools {
         Some(json!({ "x-title": info.title, "properties": properties }))
     }
 
+    /// Whether a new Bun waits for the folder to be quiet, or loads: the window polls again soon.
+    pub fn waits(&self) -> bool {
+        self.changed_at.is_some() || self.starting.is_some()
+    }
+
     /// A change in `extensions/`, as the watcher says it.
     pub fn code_changed(&mut self) {
         self.changed_at = Some(Instant::now() - GROUPING_WINDOW);

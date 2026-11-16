@@ -131,6 +131,10 @@ fn window(arguments: &[String]) -> Result<()> {
         )
     };
     rune::App::new(spec)
+        .chrome(rune::Chrome {
+            traffic_lights: Some(app::WINDOW_BUTTONS),
+            ..rune::Chrome::DEFAULT
+        })
         .args(rune_arguments)
         .init(move || state)
         .run();

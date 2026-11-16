@@ -23,6 +23,14 @@ use crate::tree;
 /// How often a playing window draws: what moves, moves at 60 frames a second.
 const FRAME: std::time::Duration = std::time::Duration::from_millis(16);
 const TITLE_ROW: f32 = 44.0;
+/// The room the title row leaves at its left for the window's buttons, which macOS draws on it.
+const TITLE_LEFT: f32 = if cfg!(target_os = "macos") {
+    88.0
+} else {
+    16.0
+};
+/// Where macOS draws the window's buttons: in the middle of the title row.
+pub(crate) const WINDOW_BUTTONS: (f32, f32) = (16.0, 15.0);
 
 /// The template of a new project: the DAW with views of `sdk/view.ts`.
 pub(crate) const TEMPLATE: runtime::Template = runtime::Template {
@@ -498,7 +506,8 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, bool) {
     if headless {
         *REPORT.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.report());
     }
-    (changed, !headless && (state.playing || moving))
+    let waiting = state.tools.as_ref().is_some_and(Tools::waits);
+    (changed, !headless && (state.playing || moving || waiting))
 }
 
 pub(crate) fn on_key(state: &mut State, key: &KeyEvent, _: &mut Tx) -> bool {
@@ -588,6 +597,8 @@ fn title_row(state: &State) -> El {
         .w_full()
         .h(TITLE_ROW)
         .px(theme.space(4))
+        .pl(TITLE_LEFT)
+        .window_drag()
         .gap(theme.space(3))
         .items_center()
         .fill(theme.color("surface"))

@@ -213,7 +213,9 @@ fn build(scope: &Scope, node: &Node) -> El {
                     Ok(node) => build(scope, &node),
                     Err(error) => failed(scope.state, &error.to_string()),
                 };
-                memo(scope.key(key), *version, built)
+                // Rune keys a memo's root with the memo's key: the root keeps its own.
+                let root = node.get("key").and_then(Value::as_str).unwrap_or(key);
+                memo(scope.key(root), *version, built)
             }
             None => el(),
         },
