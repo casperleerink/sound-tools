@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use sound_core::{Engine, InstanceId, OutputDevice, OutputStream, Peaks, Project, Ticks};
 use sound_typescript::next::{Drawn, Tools};
 
+use crate::card::Kind;
 use crate::controls::{self, Step, Target};
 use crate::lives::Lives;
 use crate::theme::Theme;
@@ -37,7 +38,8 @@ pub(crate) struct Options {
     pub(crate) headless: bool,
     /// Plays from the start for this many seconds before the picture.
     pub(crate) play: Option<f64>,
-    pub(crate) act: Vec<Step>,
+    /// The steps of `--act`, which runs in the folder itself: what they change is the point.
+    pub(crate) act: Option<Vec<Step>>,
 }
 
 /// What a run without a window says after Rune wrote its tree, and what failed in it.
@@ -67,6 +69,7 @@ pub(crate) struct State {
     /// What went wrong last, said in the corner.
     notice: Option<String>,
     shown: BTreeSet<InstanceId>,
+    meters: BTreeSet<String>,
     waker: Arc<Mutex<Option<rune::Waker>>>,
     /// The steps of `--act` and the seconds of `--play`, for the first frame of a run without a window.
     first: Option<(Vec<Step>, Option<f64>)>,
@@ -83,7 +86,7 @@ impl State {
             play,
             act,
         } = options;
-        let copy = match (headless, act.is_empty()) {
+        let copy = match (headless, act.is_none()) {
             (true, true) => Some(copied(&folder)?),
             _ => None,
         };
@@ -156,8 +159,9 @@ impl State {
             peaks: RefCell::default(),
             notice: theme_problem,
             shown: BTreeSet::new(),
+            meters: BTreeSet::new(),
             waker,
-            first: headless.then_some((act, play)),
+            first: headless.then(|| (act.unwrap_or_default(), play)),
             last: 0.0,
             _copy: copy,
         })
@@ -220,22 +224,28 @@ impl State {
                 field,
                 option,
             } => {
-                let now = (self.project.state_json(instance))
-                    .and_then(|json| serde_json::from_str::<Value>(&json).ok())
-                    .and_then(|state| state.get(field).cloned());
-                let number =
-                    |value: Option<&Value>| value.and_then(Value::as_f64).unwrap_or_default();
+                let now = field.value.as_f64().unwrap_or_default();
+                let (low, high, step) = match field.kind {
+                    Kind::Number { min, max, .. } => {
+                        (min.min(max), max.max(min), (max - min).abs() / 100.0)
+                    }
+                    _ => (f64::MIN, f64::MAX, 1.0),
+                };
                 let next = match (action, option) {
                     (_, Some(option)) => option.clone(),
-                    ("press" | "toggle", None) => {
-                        json!(!now.and_then(|now| now.as_bool()).unwrap_or(false))
+                    ("press" | "toggle", None) => json!(!field.value.as_bool().unwrap_or(false)),
+                    ("set", None) => {
+                        let value = value
+                            .as_ref()
+                            .and_then(Value::as_f64)
+                            .ok_or_else(|| anyhow!("set takes a number"))?;
+                        json!(value.clamp(low, high))
                     }
-                    ("set", None) => value.ok_or_else(|| anyhow!("set takes a value"))?,
-                    ("increment", None) => json!(number(now.as_ref()) + 1.0),
-                    ("decrement", None) => json!(number(now.as_ref()) - 1.0),
+                    ("increment", None) => json!((now + step).clamp(low, high)),
+                    ("decrement", None) => json!((now - step).clamp(low, high)),
                     (other, None) => bail!("a field takes no {other}"),
                 };
-                self.set_field(instance, field, next);
+                self.set_field(instance, &field.name, next);
             }
         }
         Ok(())
@@ -300,7 +310,9 @@ impl State {
     fn discover(&mut self, settle: bool) -> bool {
         let mut changed = false;
         loop {
-            let (_, shown) = controls::collect(self);
+            let found = controls::collect(self);
+            self.meters = found.meters;
+            let shown = found.shown;
             if shown == self.shown {
                 return changed;
             }
@@ -340,7 +352,7 @@ impl State {
 
     /// What `--tree` adds for an agent: the controls, where the piece plays and the meters.
     fn report(&self) -> Value {
-        let (controls, _) = controls::collect(self);
+        let controls = controls::collect(self).controls;
         let problems: Vec<String> = self
             .project
             .problems()
@@ -426,6 +438,17 @@ pub(crate) fn setup(state: &mut State, waker: rune::Waker) {
 
 /// The start of every frame: Bun, the project, the engine and what moves.
 pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
+    let (changed, moving) = frame(state, seconds);
+    if moving {
+        tx.wake_after(FRAME);
+    }
+    tx.instant();
+    changed
+}
+
+/// One frame `seconds` after the start. Whether what the window shows changed, and whether
+/// something moves on, in a window, so the next frame is due soon.
+pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, bool) {
     let headless = matches!(state.sound, Sound::Offline { .. });
     let mut changed = false;
     if headless {
@@ -469,16 +492,13 @@ pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
     let time = state.time();
     let moving = state
         .lives
-        .update(state.playhead.0 as f32, time, dt, |name| {
+        .update(&state.meters, state.playhead.0 as f32, time, dt, |name| {
             state.amplitude(name)
         });
     if headless {
         *REPORT.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.report());
-    } else if state.playing || moving {
-        tx.wake_after(FRAME);
     }
-    tx.instant();
-    changed
+    (changed, !headless && (state.playing || moving))
 }
 
 pub(crate) fn on_key(state: &mut State, key: &KeyEvent, _: &mut Tx) -> bool {
@@ -589,3 +609,6 @@ fn title_row(state: &State) -> El {
         )
         .child(play)
 }
+
+#[cfg(test)]
+mod tests;

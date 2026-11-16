@@ -17,13 +17,20 @@ const KNOB: f32 = 32.0;
 /// How far a drag moves a knob from its start to its end, in points.
 const TRAVEL: f32 = 120.0;
 
+#[derive(Clone)]
 pub(crate) enum Kind {
-    Number { min: f64, max: f64 },
+    /// `log`: its knob travels in octaves, as a frequency's.
+    Number {
+        min: f64,
+        max: f64,
+        log: bool,
+    },
     Switch,
     Choice(Vec<Value>),
 }
 
 /// A field of a record a card shows a control for.
+#[derive(Clone)]
 pub(crate) struct Field {
     pub(crate) name: String,
     /// What the composer reads, such as "Cutoff".
@@ -86,7 +93,11 @@ pub(crate) fn fields(state: &State, id: &InstanceId) -> Vec<Field> {
             number("maximum"),
         ) {
             _ if !options.is_empty() => Kind::Choice(options),
-            (Some("number" | "integer"), Some(min), Some(max)) => Kind::Number { min, max },
+            (Some("number" | "integer"), Some(min), Some(max)) => {
+                let log = property.get("x-scale").and_then(Value::as_str) == Some("logarithmic")
+                    && min > 0.0;
+                Kind::Number { min, max, log }
+            }
             (Some("boolean"), ..) => Kind::Switch,
             _ => continue,
         };
@@ -184,9 +195,9 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
             .color(theme.color("text-secondary"))
     };
     match field.kind {
-        Kind::Number { min, max } => {
+        Kind::Number { min, max, log } => {
             let value = field.value.as_f64().unwrap_or(min);
-            let at = ((value - min) / (max - min).max(f64::EPSILON)).clamp(0.0, 1.0) as f32;
+            let at = travelled(value, min, max, log) as f32;
             let (id, name) = (id.clone(), field.name.clone());
             let knob = canvas(arc(
                 arc(Shape::new(), 1.0, theme.color("fill-strong")),
@@ -202,11 +213,11 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
             .on_drag(
                 move |s: &mut State, drag: &mut rune::Drag, _: &mut rune::Tx| {
                     if drag.phase == rune::Phase::Up && !drag.cancelled() {
-                        let moved = f64::from(-drag.dy / TRAVEL) * (max - min);
+                        let at = travelled(value, min, max, log) + f64::from(-drag.dy / TRAVEL);
                         s.set_field(
                             &id,
                             &name,
-                            json!((value + moved).clamp(min.min(max), max.max(min))),
+                            json!(value_at(at.clamp(0.0, 1.0), min, max, log)),
                         );
                     }
                 },
@@ -275,6 +286,26 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
                 .child(row().gap(2.0).children(segments))
                 .child(caption(field.label))
         }
+    }
+}
+
+/// Where `value` is on the travel of a knob, from 0 to 1.
+fn travelled(value: f64, min: f64, max: f64, log: bool) -> f64 {
+    let at = match log {
+        true => (value.max(min) / min).ln() / (max / min).ln(),
+        false => (value - min) / (max - min),
+    };
+    if at.is_finite() {
+        at.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+fn value_at(at: f64, min: f64, max: f64, log: bool) -> f64 {
+    match log {
+        true => min * (max / min).powf(at),
+        false => min + at * (max - min),
     }
 }
 

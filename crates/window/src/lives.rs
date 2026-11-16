@@ -3,7 +3,9 @@
 //! survives a new tree.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+
+use sound_core::InstanceId;
 
 use rune::{Live, LiveText};
 
@@ -78,19 +80,11 @@ impl Lives {
         }
     }
 
-    /// The meters bound, by live name, such as `meter:song/t01/mix`.
-    pub(crate) fn meter_names(&self) -> Vec<String> {
-        let levels = self.levels.borrow();
-        let mut names: Vec<String> = levels.values().map(|(_, name, _)| name.clone()).collect();
-        names.sort();
-        names.dedup();
-        names
-    }
-
     /// One frame `seconds` after the last: the playhead in ticks, the time as text, and the
     /// loudest amplitude of each meter since. Whether a meter still moves.
     pub(crate) fn update(
         &self,
+        names: &BTreeSet<String>,
         playhead: f32,
         time: String,
         seconds: f32,
@@ -101,9 +95,10 @@ impl Lives {
         let mut moving = false;
         {
             let mut meters = self.meters.borrow_mut();
-            for name in self.meter_names() {
+            meters.retain(|name, _| names.contains(name));
+            for name in names {
                 let heard = 20.0 * amplitude(&name).max(1e-6).log10();
-                let shown = meters.entry(name).or_insert(FLOOR_DB);
+                let shown = meters.entry(name.clone()).or_insert(FLOOR_DB);
                 *shown = heard.max(*shown - FALL_DB * seconds).max(FLOOR_DB);
                 moving |= *shown > FLOOR_DB;
             }
@@ -137,12 +132,22 @@ impl Lives {
 
     /// What each meter shows from 0 to 1, by live name, for the agent's tree.
     pub(crate) fn levels(&self) -> Vec<(String, f32)> {
-        self.meter_names()
+        let names: Vec<String> = self.meters.borrow().keys().cloned().collect();
+        names
             .into_iter()
             .map(|name| {
                 let level = self.value(&name);
                 (name, level)
             })
             .collect()
+    }
+}
+
+/// A live name with its path made whole for the view of `instance`: `meter:t01/mix` of the
+/// song is `meter:song/t01/mix`.
+pub(crate) fn live_name(instance: &InstanceId, name: &str) -> String {
+    match name.strip_prefix("meter:").map(|path| instance.child(path)) {
+        Some(Ok(id)) => format!("meter:{id}"),
+        _ => name.to_string(),
     }
 }

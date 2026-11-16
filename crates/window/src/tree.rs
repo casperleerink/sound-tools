@@ -162,15 +162,8 @@ impl Scope<'_> {
         format!("{}{key}", self.prefix)
     }
 
-    /// A live name with its path made whole: `meter:t01/mix` of the song is `meter:song/t01/mix`.
     fn live(&self, name: &str) -> String {
-        match name.strip_prefix("meter:") {
-            Some(path) => match self.instance.child(path) {
-                Ok(id) => format!("meter:{id}"),
-                Err(_) => name.to_string(),
-            },
-            None => name.to_string(),
-        }
+        crate::lives::live_name(self.instance, name)
     }
 }
 

@@ -12,7 +12,8 @@ use sound_core::InstanceId;
 use sound_typescript::next::Drawn;
 
 use crate::app::State;
-use crate::card::{self, Kind};
+use crate::card::{self, Field, Kind};
+use crate::lives::live_name;
 
 /// One control of the window, as `--tree` lists it under `controls`.
 #[derive(Serialize)]
@@ -41,14 +42,14 @@ pub(crate) enum Target {
     /// The window, for a field of a card without a view: `option` is the choice a segment sets.
     Field {
         instance: InstanceId,
-        field: String,
+        field: Field,
         option: Option<Value>,
     },
     Play,
 }
 
-/// Every control the window shows now, and the instances whose views it shows.
-pub(crate) fn collect(state: &State) -> (Vec<Control>, BTreeSet<InstanceId>) {
+/// Every control the window shows now, the instances whose views it shows, and the meters.
+pub(crate) fn collect(state: &State) -> Found {
     let mut found = Found::default();
     found.controls.push(Control {
         key: "play".into(),
@@ -62,13 +63,15 @@ pub(crate) fn collect(state: &State) -> (Vec<Control>, BTreeSet<InstanceId>) {
     if let Some(main) = &state.main {
         found.instance(state, main);
     }
-    (found.controls, found.shown)
+    found
 }
 
 #[derive(Default)]
-struct Found {
-    controls: Vec<Control>,
-    shown: BTreeSet<InstanceId>,
+pub(crate) struct Found {
+    pub(crate) controls: Vec<Control>,
+    pub(crate) shown: BTreeSet<InstanceId>,
+    /// The meters the views bind, by live name, such as `meter:song/t01/mix`.
+    pub(crate) meters: BTreeSet<String>,
 }
 
 impl Found {
@@ -114,6 +117,9 @@ impl Found {
             _ => {}
         }
         let text = |name| node.get(name).and_then(Value::as_str).map(str::to_string);
+        if let Some(level) = text("level") {
+            self.meters.insert(live_name(id, &level));
+        }
         let mut actions: Vec<String> = (node.get("press") == Some(&Value::Bool(true)))
             .then(|| "press".to_string())
             .into_iter()
@@ -158,10 +164,10 @@ impl Found {
             let label = format!("{title} {}", field.label);
             let target = |option| Target::Field {
                 instance: id.clone(),
-                field: field.name.clone(),
+                field: field.clone(),
                 option,
             };
-            match field.kind {
+            match &field.kind {
                 Kind::Number { .. } => self.controls.push(Control {
                     key,
                     label,
@@ -181,7 +187,7 @@ impl Found {
                     target: target(None),
                 }),
                 Kind::Choice(options) => {
-                    for option in options {
+                    for option in options.clone() {
                         let word = option
                             .as_str()
                             .map_or_else(|| option.to_string(), str::to_string);
@@ -230,8 +236,7 @@ impl Step {
                 other => bail!("{other} needs a control: give its label or key"),
             };
         }
-        let (controls, _) = collect(state);
-        let found = controls.into_iter().find(|control| {
+        let found = collect(state).controls.into_iter().find(|control| {
             Some(&control.key) == self.key.as_ref() || Some(&control.label) == self.label.as_ref()
         });
         let named = self
@@ -240,7 +245,7 @@ impl Step {
             .or(self.key.as_ref())
             .map_or("", String::as_str);
         let Some(control) = found else {
-            let (controls, _) = collect(state);
+            let controls = collect(state).controls;
             let labels: Vec<String> = controls
                 .iter()
                 .map(|control| format!("{} ({})", control.label, control.key))

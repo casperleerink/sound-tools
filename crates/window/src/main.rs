@@ -115,10 +115,7 @@ fn window(arguments: &[String]) -> Result<()> {
         folder,
         headless,
         play,
-        act: act
-            .map(|path| controls::read_steps(&path))
-            .transpose()?
-            .unwrap_or_default(),
+        act: act.map(|path| controls::read_steps(&path)).transpose()?,
     })?;
     let spec = rune::AppSpec {
         poll: Some(app::poll),
