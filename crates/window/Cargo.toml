@@ -1,0 +1,22 @@
+[package]
+name = "sound-window"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "sound-tools-next"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+rune.workspace = true
+runtime = { path = "../runtime" }
+serde.workspace = true
+serde_json.workspace = true
+sound-core.workspace = true
+sound-typescript.workspace = true
+tempfile.workspace = true

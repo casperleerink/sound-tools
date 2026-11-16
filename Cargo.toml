@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/agent", "crates/core", "crates/dsp", "crates/export", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/pitch-correction", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
+members = ["crates/agent", "crates/core", "crates/dsp", "crates/export", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/window", "crates/gallery", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/pitch-correction", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -13,6 +13,9 @@ publish = false
 # Zed stable v1.26.2. Keep the rev and rust-toolchain.toml in step with Zed's pin.
 # `wayland` and `x11` are the window systems of Linux. Without them Linux opens no window.
 # `version` picks gpui from a test crate of the same name in Zed's repo.
+# Rune, the window gpui gives way to (`crates/window`). Its patches below are at the same rev.
+# `tooling`: `--snap`, `--tree` and `--script` in release builds, which agents check with.
+rune = { git = "https://github.com/anomalyco/rune", rev = "7a92d24d63d9be8480e3e475489d2a4d0ed48c8d", default-features = false, features = ["accessibility", "dbus", "metal-backend", "svg", "tooling"] }
 gpui = { git = "https://github.com/zed-industries/zed", version = "0.2", rev = "c4273271092b0287f7d181f616bd5171e0a2f70c" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "c4273271092b0287f7d181f616bd5171e0a2f70c", features = ["runtime_shaders", "font-kit", "wayland", "x11"] }
 analyzer = { path = "extensions/analyzer" }
@@ -44,6 +47,7 @@ sound-notes = { path = "crates/notes" }
 sound-signals = { path = "crates/signals" }
 sound-typescript = { path = "crates/typescript" }
 sound-ui = { path = "crates/ui" }
+sound-window = { path = "crates/window" }
 tone = { path = "extensions/tone" }
 utility = { path = "extensions/utility" }
 vocoder = { path = "extensions/vocoder" }
@@ -160,6 +164,14 @@ style = { level = "allow", priority = -1 }
 type_complexity = "allow"
 too_many_arguments = "allow"
 
+# Rune's own changes to crates it builds on. Cargo does not take a dependency's patches.
+[patch.crates-io]
+winit = { git = "https://github.com/anomalyco/rune", rev = "7a92d24d63d9be8480e3e475489d2a4d0ed48c8d" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "7a92d24d63d9be8480e3e475489d2a4d0ed48c8d" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "7a92d24d63d9be8480e3e475489d2a4d0ed48c8d" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "7a92d24d63d9be8480e3e475489d2a4d0ed48c8d" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "7a92d24d63d9be8480e3e475489d2a4d0ed48c8d" }
+
 [profile.dev]
 debug = 0
 # Off: the incremental cache was more than half of a build folder, and every worktree has its own.
@@ -182,6 +194,11 @@ gpui_macros = { opt-level = 3 }
 gpui = { opt-level = 3 }
 taffy = { opt-level = 3 }
 resvg = { opt-level = 3 }
+rune = { opt-level = 3 }
+rune-taffy = { opt-level = 3 }
+parley = { opt-level = 3 }
+swash = { opt-level = 3 }
+skrifa = { opt-level = 3 }
 # The shapes of waveforms and curves are tessellated on every paint of them.
 lyon_tessellation = { opt-level = 3 }
 lyon_path = { opt-level = 3 }

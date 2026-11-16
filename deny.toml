@@ -50,4 +50,4 @@ unknown-git = "deny"
 allow-git = ["https://github.com/gfx-rs/wgpu"]
 
 [sources.allow-org]
-github = ["zed-industries"]
+github = ["zed-industries", "anomalyco"]
