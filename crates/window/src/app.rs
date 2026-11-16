@@ -4,7 +4,6 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -32,6 +31,8 @@ const TITLE_LEFT: f32 = if cfg!(target_os = "macos") {
 } else {
     16.0
 };
+/// What the composer reads when a control did nothing: why is for the agent, in `--act`.
+const DID_NOTHING: &str = "That did nothing: this tool could not do it.";
 /// Where macOS draws the window's buttons: in the middle of the title row.
 pub(crate) const WINDOW_BUTTONS: (f32, f32) = (16.0, 15.0);
 
@@ -81,8 +82,6 @@ pub(crate) struct State {
     looped: f64,
     /// How many Buns loaded when the design tokens were last read.
     theme_loads: u64,
-    /// The project's watcher heard a file: the folder is read once quiet.
-    files_heard: Arc<AtomicBool>,
     /// What went wrong last, said in the corner.
     notice: Option<String>,
     shown: BTreeSet<InstanceId>,
@@ -154,13 +153,8 @@ impl State {
                 wake();
             }
         });
-        let files_heard = Arc::new(AtomicBool::new(false));
         if !headless {
-            let (heard, wake) = (files_heard.clone(), wake.clone());
-            project.watch_waking(move || {
-                heard.store(true, Ordering::Relaxed);
-                wake();
-            })?;
+            project.watch()?;
         }
         let tools =
             extensions.map(|extensions| Tools::start(extensions, &project, !headless, wake));
@@ -183,7 +177,6 @@ impl State {
             engine_time: 0.0,
             looped: 0.0,
             theme_loads,
-            files_heard,
             notice: theme_problem,
             shown: BTreeSet::new(),
             meters: BTreeSet::new(),
@@ -255,8 +248,8 @@ impl State {
         action: &str,
         value: Option<Value>,
     ) {
-        if let Err(error) = self.act_on_view(instance, key, action, value) {
-            self.notice = Some(error.to_string());
+        if self.act_on_view(instance, key, action, value).is_err() {
+            self.notice = Some(DID_NOTHING.to_string());
         }
         self.handled();
     }
@@ -560,11 +553,15 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
         (state.playing, state.playhead) = (status.playing, status.playhead_tick);
         state.engine_time = status.frames as f64 / f64::from(state.project.clock().sample_rate());
     }
-    changed |= run_loops(state, seconds);
+    if run_loops(state, seconds) && headless {
+        changed |= state.settle();
+    }
+    if let Some(tools) = &mut state.tools
+        && !tools.take_failed_actions().is_empty()
+    {
+        state.notice = Some(DID_NOTHING.to_string());
+    }
     if let Some(tools) = &mut state.tools {
-        if let Some(why) = tools.take_failed_actions().pop() {
-            state.notice = Some(why);
-        }
         if tools.loads() != state.theme_loads {
             state.theme_loads = tools.loads();
             let (theme, problem) = Theme::of(state.project.root());
@@ -585,20 +582,21 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
         return (changed, None);
     }
     let tools = state.tools.as_ref();
-    let next = if state.playing || moving {
-        FRAME
-    } else if tools.is_some_and(|tools| tools.loops(&state.project)) {
-        FRAME_INTERVAL
-    } else if tools.is_some_and(Tools::waits) || state.files_heard.swap(false, Ordering::Relaxed) {
-        GROUPING_WINDOW + FRAME
-    } else {
-        IDLE
-    };
+    let mut next = if state.playing || moving { FRAME } else { IDLE };
+    if tools.is_some_and(|tools| tools.loops(&state.project)) {
+        // Overdue only while Bun runs the last step: it wakes the window when done.
+        let left = FRAME_INTERVAL.saturating_sub(Duration::from_secs_f64(seconds - state.looped));
+        next = next.min(if left.is_zero() { FRAME_INTERVAL } else { left });
+    }
+    if tools.is_some_and(Tools::waits) {
+        next = next.min(GROUPING_WINDOW + FRAME);
+    }
     (changed, Some(next))
 }
 
 /// Runs the control loops when their interval passed on the window's clock, the virtual one of
-/// a run without a window, which then waits for them. Whether what the window shows changed.
+/// a run without a window. A step Bun is still busy with keeps its time for the next. Whether a
+/// step went to Bun.
 fn run_loops(state: &mut State, seconds: f64) -> bool {
     let dt = seconds - state.looped;
     let Some(tools) = &mut state.tools else {
@@ -607,15 +605,17 @@ fn run_loops(state: &mut State, seconds: f64) -> bool {
     if dt < FRAME_INTERVAL.as_secs_f64() {
         return false;
     }
-    state.looped = seconds;
-    tools.run_loops(
+    let sent = tools.run_loops(
         &state.project,
         state.playing,
         state.playhead,
         state.engine_time,
         dt as f32,
     );
-    state.headless() && state.settle()
+    if sent {
+        state.looped = seconds;
+    }
+    sent
 }
 
 /// The least a step of an integer field moves.

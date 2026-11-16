@@ -130,18 +130,6 @@ impl Project {
         self.watch_with(Box::new(notify::recommended_watcher(sender)?), events)
     }
 
-    /// [`Self::watch`], calling `wake` on each event: for a window that sleeps until something
-    /// happens. It must poll again [`GROUPING_WINDOW`] after the last.
-    pub fn watch_waking(&mut self, wake: impl Fn() + Send + 'static) -> Result<(), ProjectError> {
-        let (sender, events) = channel();
-        let heard = move |event| {
-            // Only once the project is gone, which polls no more.
-            sender.send(event).ok();
-            wake();
-        };
-        self.watch_with(Box::new(notify::recommended_watcher(heard)?), events)
-    }
-
     /// [`Self::watch`] with `watcher`, whose events come on `events`.
     fn watch_with(
         &mut self,
