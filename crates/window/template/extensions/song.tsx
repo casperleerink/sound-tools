@@ -3,7 +3,7 @@ import { h, memo, view, type Color, type Lines, type Self } from "./sdk/view";
 import { bus } from "./bus";
 import { tape } from "./tape";
 import { track } from "./track";
-import { Fader } from "./ui/fader";
+import { Fader, MIN_DB } from "./ui/fader";
 import { Meter } from "./ui/meter";
 import { Toggle } from "./ui/toggle";
 
@@ -86,6 +86,8 @@ const COLOURS = ["blue", "green", "yellow", "peach", "red", "lavender", "sky", "
 
 const colourOf = (each: Track): Color => (COLOURS.includes(each.state.colour) ? (each.state.colour as Color) : "blue");
 const titleOf = (each: Track, index: number) => each.state.title || `Track ${index + 1}`;
+/** A fader's gain, which may be `"-inf"`, as a number of dB. */
+const dbOf = (gain: number | "-inf" | undefined) => (gain === "-inf" ? MIN_DB : (gain ?? 0));
 const mixOf = (each: Track) => {
   const mix = each.children.find((child) => child.name === "mix");
   return mix?.tool === "fader" ? mix.state : undefined;
@@ -97,7 +99,7 @@ export const songView = view(
     const tracks = ordered(self.children.filter((child): child is Track => child.tool === "track"), self.state.order);
     const chosen = tracks.find((each) => each.name === memory.chosen) ?? tracks[0];
     /** Changes the fader of `name`, a track or the master. */
-    const mixing = (name: string, label: string, edit: (mix: { gain_db: number; mute: boolean }) => void) =>
+    const mixing = (name: string, label: string, edit: (mix: { gain_db: number | "-inf"; mute: boolean }) => void) =>
       change((draft) => {
         const owner = draft.children.find((child) => child.name === name);
         const mix = name === "master" ? owner : owner?.children.find((child) => child.name === "mix");
@@ -134,10 +136,10 @@ export const songView = view(
         {chosen && <Panel each={chosen} title={titleOf(chosen, tracks.indexOf(chosen))} />}
         <row w="full" h={MIXER} px={3} gap={1} fill="surface" border="border-strong" borderSides={[1, 0, 0, 0]}>
           {tracks.map((each, index) => (
-            <Strip id={`${index}`} name={each.name} title={titleOf(each, index)} db={mixOf(each)?.gain_db ?? 0} onChange={(db) => mixing(each.name, `Volume ${titleOf(each, index)}`, (mix) => (mix.gain_db = db))} />
+            <Strip id={`${index}`} name={each.name} title={titleOf(each, index)} db={dbOf(mixOf(each)?.gain_db)} onChange={(db) => mixing(each.name, `Volume ${titleOf(each, index)}`, (mix) => (mix.gain_db = db))} />
           ))}
           <box grow={1} />
-          <Strip id="master" name="master" title="Master" db={self.children.find((child) => child.name === "master" && child.tool === "fader")?.state.gain_db ?? 0} onChange={(db) => mixing("master", "Volume Master", (mix) => (mix.gain_db = db))} />
+          <Strip id="master" name="master" title="Master" db={dbOf(self.children.find((child) => child.name === "master" && child.tool === "fader")?.state.gain_db)} onChange={(db) => mixing("master", "Volume Master", (mix) => (mix.gain_db = db))} />
         </row>
       </col>
     );
@@ -185,7 +187,7 @@ const TrackRow = ({ each, index, chosen, armed, soloed, onChoose, onMute, onSolo
   const lane = memo(`lane-${each.name}`, [each.children, each.state.colour], () => (
     <box w={LEAD + BARS * BAR * ZOOM} h={ROW}>
       {each.children.flatMap((clip) => (clip.tool !== "timeline" ? [] : [
-        <Clip name={clip.name} start={clip.state.start} length={clip.state.length} notes={clip.state.notes} colour={colourOf(each)} />,
+        <Clip name={clip.name} start={clip.state.start ?? 0} length={clip.state.length ?? Math.max(BAR, ...clip.state.notes.map((note) => note.start + note.length))} notes={clip.state.notes} colour={colourOf(each)} />,
       ]))}
     </box>
   ));

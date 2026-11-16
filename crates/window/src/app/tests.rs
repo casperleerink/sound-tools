@@ -170,3 +170,22 @@ fn a_tool_with_a_view_shows_in_the_panel_and_one_without_shows_its_fields() {
         0.25
     );
 }
+
+/// What the agent doc tells an agent to run in a new project: the type check, and its tests.
+#[test]
+fn a_new_project_type_checks_and_its_tests_pass() {
+    let scratch = new_project();
+    let state = opened(&scratch.path().join("song"));
+    let bun = sound_typescript::bun_program().expect("Bun is installed, see tooling/fetch-bun.sh");
+    let extensions = state.project.root().join("extensions");
+    for check in [&["check", "-p", "."][..], &["test"]] {
+        let ran = sound_core::process::background_command(&bun)
+            .args(check)
+            .current_dir(&extensions)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&ran.stdout).to_string()
+            + &String::from_utf8_lossy(&ran.stderr);
+        assert!(ran.status.success(), "bun {check:?}: {said}");
+    }
+}

@@ -217,7 +217,10 @@ const SDK_MODULES: [(&str, &str); 12] = [
     ("sdk/host.ts", include_str!("sdk/host.ts")),
 ];
 /// The views of the new window, written only into a project of it, see [`next::THEME`].
-const VIEW_SDK: (&str, &str) = ("sdk/view.ts", include_str!("sdk/view.ts"));
+const VIEW_SDK: [(&str, &str); 2] = [
+    ("sdk/view.ts", include_str!("sdk/view.ts")),
+    ("sdk/test.d.ts", include_str!("sdk/test.d.ts")),
+];
 pub const HOST: &str = include_str!("host.ts");
 /// What [`HOST`] uses of Node and Bun, for a check of its types.
 pub const HOST_TYPES: &str = include_str!("node.d.ts");
@@ -617,7 +620,7 @@ fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
     if !ignore.exists() {
         std::fs::write(ignore, format!("{}\n", bun::LOG_FILE))?;
     }
-    let views = extensions.join(next::THEME).is_file().then_some(VIEW_SDK);
+    let views = extensions.join(next::THEME).is_file().then_some(VIEW_SDK).into_iter().flatten();
     for (name, text) in files.into_iter().chain(SDK_MODULES).chain(views) {
         let path = extensions.join(name);
         if name == "bun.d.ts" && bun_types {

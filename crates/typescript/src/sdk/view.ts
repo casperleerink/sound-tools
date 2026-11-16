@@ -253,8 +253,8 @@ let tested: { made: View; self: Self<any>; changes: Op[] } | undefined;
 export function render<T, M>(made: View<T, M>, self: Self<T>): Node {
   if (tested?.made !== made) instances.delete(TESTED);
   tested = { made, self, changes: [] };
-  const recorded = tested;
-  run(TESTED, made, self, (edit) => edit(recording(self, recorded.changes)));
+  // A handler a memo kept from an earlier run changes what the last run shows, as in the window.
+  run(TESTED, made, self, (edit) => tested && edit(recording(tested.self, tested.changes)));
   return instances.get(TESTED)!.last;
 }
 
