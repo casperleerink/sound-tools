@@ -1,8 +1,9 @@
 """Runs Claude Code the way the app's agent runs it, in a project folder, and measures the run.
+`codex` runs Codex the same way, for a QA member of another provider.
 
 The flags are the app's (`crates/agent/src/provider/claude/mod.rs`): the same tools, no setting
 sources, no MCP, no slash commands, and the project as an added folder so its CLAUDE.md loads.
-`sound-tools` on the PATH is this checkout's debug build.
+`sound-tools` on the PATH is this checkout's debug build, or `$SOUND_TOOLS_RUNTIME`.
 """
 
 import json
@@ -14,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-RUNTIME = REPO / "target" / "debug" / "runtime"
+RUNTIME = Path(os.environ.get("SOUND_TOOLS_RUNTIME", REPO / "target" / "debug" / "runtime"))
 BIN = Path("/tmp/sound-tools-eval-bin")
 APP_TOOLS = "Bash,Read,Edit,Write,Glob,Grep"
 
@@ -37,6 +38,8 @@ class Run:
     input_tokens: int
     output_tokens: int
     is_error: bool
+    # The conversation to resume for a follow-up message.
+    session: str = ""
     # Every tool call as (tool, short input), in order.
     calls: list = field(default_factory=list)
 
@@ -80,15 +83,17 @@ def short(tool: str, arguments: dict) -> str:
     return json.dumps(arguments)[:400]
 
 
+def environment() -> dict:
+    found = {key: value for key, value in os.environ.items()
+             if key != "CLAUDECODE" and not key.startswith("CLAUDE_CODE_")}
+    found["PATH"] = sound_tools_on_path()
+    return found
+
+
 def run(folder: Path, prompt: str, timeout: int = 1800, log: Path | None = None,
-        model: str | None = None, tools: str = APP_TOOLS) -> Run:
-    """One headless run of Claude Code in `folder`, with the app's flags."""
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key != "CLAUDECODE" and not key.startswith("CLAUDE_CODE_")
-    }
-    environment["PATH"] = sound_tools_on_path()
+        model: str | None = None, tools: str = APP_TOOLS, resume: str = "") -> Run:
+    """One headless run of Claude Code in `folder`, with the app's flags; `resume` goes on in
+    that conversation, as the sidebar does with a thread's next message."""
     arguments = [
         "claude", "-p", prompt,
         "--output-format", "stream-json", "--verbose",
@@ -99,9 +104,10 @@ def run(folder: Path, prompt: str, timeout: int = 1800, log: Path | None = None,
         "--disable-slash-commands",
         "--add-dir", str(folder),
         *(["--model", model] if model else []),
+        *(["--resume", resume] if resume else []),
     ]
     started = time.monotonic()
-    process = subprocess.run(arguments, cwd=folder, env=environment, capture_output=True,
+    process = subprocess.run(arguments, cwd=folder, env=environment(), capture_output=True,
                              text=True, timeout=timeout)
     seconds = time.monotonic() - started
     if log:
@@ -128,5 +134,48 @@ def run(folder: Path, prompt: str, timeout: int = 1800, log: Path | None = None,
         + usage.get("cache_creation_input_tokens", 0),
         output_tokens=usage.get("output_tokens", 0),
         is_error=final.get("is_error", True),
+        session=final.get("session_id", ""),
+        calls=calls,
+    )
+
+
+def codex(folder: Path, prompt: str, model: str, effort: str = "high", timeout: int = 1800,
+          log: Path | None = None) -> Run:
+    """One headless run of Codex in `folder`. Codex reports tokens, not cost."""
+    arguments = ["codex", "exec", prompt, "--json", "-m", model,
+                 "-c", f'model_reasoning_effort="{effort}"',
+                 "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check",
+                 "--ignore-user-config", "-C", str(folder)]
+    started = time.monotonic()
+    process = subprocess.run(arguments, cwd=folder, env=environment(), capture_output=True,
+                             text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    seconds = time.monotonic() - started
+    if log:
+        log.write_text(process.stdout + "\n--- stderr ---\n" + process.stderr)
+    calls, messages, usage, turns = [], [], {}, 0
+    for line in process.stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        item = event.get("item", {})
+        if event.get("type") == "item.completed":
+            if item.get("type") == "agent_message":
+                messages.append(item.get("text", ""))
+            elif item.get("type") == "command_execution":
+                calls.append(("Bash", str(item.get("command", ""))[:400]))
+            else:
+                calls.append((str(item.get("type")), json.dumps(item)[:400]))
+        if event.get("type") == "turn.completed":
+            turns += 1
+            usage = event.get("usage", {})
+    return Run(
+        result=messages[-1] if messages else process.stderr[-2000:],
+        turns=turns,
+        seconds=seconds,
+        cost_usd=0.0,
+        input_tokens=usage.get("input_tokens", 0),
+        output_tokens=usage.get("output_tokens", 0) + usage.get("reasoning_output_tokens", 0),
+        is_error=process.returncode != 0,
         calls=calls,
     )
