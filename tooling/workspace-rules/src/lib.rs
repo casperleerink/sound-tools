@@ -157,8 +157,13 @@ mod tests {
         // Named without the extension here, so this file does not match itself.
         let docs = DOCS.map(|(doc, _)| format!("{doc}.md"));
         let mut violations = Vec::new();
+        // The agent eval hands a QA agent the whole design doc to score by: a doc it cannot
+        // find fails the eval at once, not silently.
+        let reads_a_whole_doc = workspace_root().join("tooling/agent-eval/eval.py");
         for path in files(&["crates", "extensions", "tooling", "Cargo.toml"])? {
-            if path.extension().is_some_and(|extension| extension == "md") {
+            if path.extension().is_some_and(|extension| extension == "md")
+                || path == reads_a_whole_doc
+            {
                 continue;
             }
             // Snapshots and other binary files are not code.
