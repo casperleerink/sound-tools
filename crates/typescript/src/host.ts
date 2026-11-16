@@ -20,7 +20,7 @@ type Next = {
   host: {
     views: Map<string, unknown>;
     run(instance: string, made: unknown, self: unknown, change: unknown): unknown;
-    perform(instance: string, key: string, action: string, value?: unknown): boolean;
+    perform(instance: string, key: string, action: string, value?: unknown): void;
     forget(instance: string): void;
   };
 };
@@ -692,12 +692,11 @@ function drawNext(instance: string) {
     return;
   }
   const self = { name: instance.slice(instance.lastIndexOf("/") + 1), state: filledState(spec, record), children: childrenOf(instance) };
-  const change = (edit: (draft: Part<State>) => void, label = "Change") => updater(instance, true)(label, edit);
+  const change = (edit: (draft: Part<State>) => void, label = "Change") => updater(instance)(label, edit);
   runs(spec.name, "view");
   try {
     say({ type: "tree", instance, tree: next!.host.run(instance, made, self, change) });
   } catch (error) {
-    fail(spec.name, `its view failed: ${error}`);
     say({ type: "tree", instance, error: String(error) });
   }
 }
@@ -718,15 +717,22 @@ function show(instances: string[]) {
   }
 }
 
+/** The instance whose view runs an action now: what it changes is one step of undo, which ends with `acted`. */
+let acting: string | undefined;
+
 /** An action on a shown view; it runs again after, also when nothing changed, as its memory may have. */
 function act({ instance, key, action, value }: Extract<Request, { type: "act" }>) {
-  const tool = recordOf(instance)?.tool ?? "";
-  runs(tool, `${action} on ${key}`);
+  runs(recordOf(instance)?.tool ?? "", `${action} on ${key}`);
+  let error: string | undefined;
+  acting = instance;
   try {
     next?.host.perform(instance, key, action, value);
-  } catch (error) {
-    fail(tool, `its ${action} on ${key} failed: ${error}`);
+  } catch (thrown) {
+    error = thrown instanceof Error ? thrown.message : String(thrown);
+  } finally {
+    acting = undefined;
   }
+  say({ type: "acted", ...(error === undefined ? {} : { error }) });
   if (shown.has(instance)) drawNext(instance);
 }
 
@@ -986,7 +992,7 @@ function created(id: string, child: OwnedChild, changes: Change[]) {
  * What changes the record of an instance and those of its children, each time on the latest the
  * code knows: also after an `await`, while the instance is there.
  */
-function updater(instance: string, gesture = false) {
+function updater(instance: string) {
   return (label: string, change: (part: Part<State>) => void) => {
     if (typeof label !== "string") {
       throw new TypeError(`the label of an update is ${JSON.stringify(label)}: give text, such as "Save the take"`);
@@ -1021,7 +1027,7 @@ function updater(instance: string, gesture = false) {
     }
     const wired = changes.map(({ id, ...change }) => (id === instance ? change : { ...change, child: id.slice(instance.length + 1) }));
     // Before it counts: a value JSON cannot hold, such as a cycle, throws here.
-    const line = JSON.stringify({ type: "edit", instance, label, changes: wired, ...(gesture ? { gesture } : {}) }) + "\n";
+    const line = JSON.stringify({ type: "edit", instance, label, changes: wired, ...(acting === instance ? { gesture: true } : {}) }) + "\n";
     edits += 1;
     unheard.push({ number: edits, changes });
     writeSync(1, line);

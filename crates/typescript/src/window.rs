@@ -549,7 +549,7 @@ pub(crate) fn state_of(project: &Project, id: &InstanceId) -> Option<serde_json:
 }
 
 /// An instance as its code gets it, with its watches as they are now.
-fn played<'a>(project: &Project, id: &'a InstanceId) -> Played<'a> {
+pub(crate) fn played<'a>(project: &Project, id: &'a InstanceId) -> Played<'a> {
     Played {
         instance: id,
         watches: watches_of(project, id),
@@ -1630,7 +1630,7 @@ impl Live {
                 ..
             } => self.edit(&instance, &label, changes, cx),
             // The new window's.
-            Event::Tree { .. } => {}
+            Event::Tree { .. } | Event::Acted { .. } => {}
             Event::Control {
                 instance,
                 child,

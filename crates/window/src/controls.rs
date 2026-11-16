@@ -2,8 +2,9 @@
 //! value or state, and the actions it takes), and `--act`, which runs those actions by label or
 //! key through the same road a pointer takes.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
+use std::rc::Rc;
 
 use anyhow::{Context as _, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,7 @@ use sound_typescript::next::Drawn;
 use crate::app::State;
 use crate::card::{self, Field, Kind};
 use crate::lives::live_name;
+use crate::tree::Node;
 
 /// One control of the window, as `--tree` lists it under `controls`.
 #[derive(Serialize)]
@@ -60,7 +62,7 @@ pub(crate) fn collect(state: &State) -> Found {
         actions: vec!["press".into()],
         target: Target::Play,
     });
-    if let Some(main) = &state.main {
+    if let Some(main) = state.main() {
         found.instance(state, main);
     }
     found
@@ -79,8 +81,13 @@ impl Found {
         self.shown.insert(id.clone());
         let prefix = state.prefix_of(id);
         match state.drawn(id) {
-            Some(Drawn::View { root, memos }) => self.node(state, id, &prefix, memos, root),
+            Some(Drawn::View { root, memos }) => {
+                if let Ok(root) = Node::deserialize(&**root) {
+                    self.node(state, id, &prefix, memos, &root);
+                }
+            }
             Some(Drawn::Failed(_)) => {}
+            None if state.pending(id) => {}
             Some(Drawn::None) | None => self.fields(state, id, &prefix),
         }
     }
@@ -90,69 +97,52 @@ impl Found {
         state: &State,
         id: &InstanceId,
         prefix: &str,
-        memos: &std::collections::HashMap<String, (u64, std::rc::Rc<Value>)>,
-        node: &Value,
+        memos: &HashMap<String, ((u64, u64), Rc<Value>)>,
+        node: &Node,
     ) {
-        match node.get("t").and_then(Value::as_str) {
-            Some("memo") => {
-                let memo = node
-                    .get("key")
-                    .and_then(Value::as_str)
-                    .and_then(|key| memos.get(key));
-                if let Some((_, inner)) = memo {
-                    self.node(state, id, prefix, memos, inner);
+        let b = match node {
+            Node::Row(b) | Node::Col(b) | Node::Plain(b) => b,
+            Node::Memo { key } => {
+                let inner =
+                    (memos.get(key)).and_then(|(_, inner)| Node::deserialize(&**inner).ok());
+                if let Some(inner) = inner {
+                    self.node(state, id, prefix, memos, &inner);
                 }
                 return;
             }
-            Some("child") => {
-                let child = node
-                    .get("path")
-                    .and_then(Value::as_str)
-                    .and_then(|path| id.child(path).ok());
+            Node::Child { path } => {
+                let child = id.child(path).ok();
                 if let Some(child) = child.filter(|child| state.project.tool_of(child).is_some()) {
                     self.instance(state, &child);
                 }
                 return;
             }
-            _ => {}
+            Node::Text(_) | Node::Shapes(_) => return,
+        };
+        if let Some(level) = &b.level {
+            self.meters.insert(live_name(id, level));
         }
-        let text = |name| node.get(name).and_then(Value::as_str).map(str::to_string);
-        if let Some(level) = text("level") {
-            self.meters.insert(live_name(id, &level));
-        }
-        let mut actions: Vec<String> = (node.get("press") == Some(&Value::Bool(true)))
-            .then(|| "press".to_string())
-            .into_iter()
+        let press = b.press.then(|| "press".to_string());
+        let drag = b.drag.is_some().then(|| "drag".to_string());
+        let actions: Vec<String> = (press.into_iter())
+            .chain(b.actions.iter().cloned())
+            .chain(drag)
             .collect();
-        let named = node
-            .get("actions")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten();
-        actions.extend(named.filter_map(Value::as_str).map(str::to_string));
-        if node.get("drag").is_some_and(Value::is_object) {
-            actions.push("drag".into());
-        }
-        if let (Some(key), false) = (text("key"), actions.is_empty()) {
+        if let (Some(key), false) = (&b.key, actions.is_empty()) {
             self.controls.push(Control {
                 key: format!("{prefix}{key}"),
-                label: text("label").unwrap_or_default(),
-                role: text("role"),
-                value: node.get("value").cloned(),
-                checked: node.get("checked").and_then(Value::as_bool),
+                label: b.label.clone().unwrap_or_default(),
+                role: b.role.clone(),
+                value: b.value.clone(),
+                checked: b.checked,
                 actions,
                 target: Target::View {
                     instance: id.clone(),
-                    key,
+                    key: key.clone(),
                 },
             });
         }
-        for child in node
-            .get("children")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
+        for child in &b.children {
             self.node(state, id, prefix, memos, child);
         }
     }
@@ -262,6 +252,11 @@ impl Step {
                 self.action
             );
         }
-        state.perform(&control.target, &self.action, self.value.clone())
+        state.perform(&control.target, &self.action, self.value.clone())?;
+        state.settle();
+        match state.take_failed_action() {
+            Some(why) => bail!("{named} did not {}: {why}", self.action),
+            None => Ok(()),
+        }
     }
 }

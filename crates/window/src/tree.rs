@@ -11,9 +11,11 @@ use sound_typescript::next::Drawn;
 
 use crate::app::State;
 
+/// A node of `sdk/view.ts`. A test reads every field it sends, so the two cannot drift.
 #[derive(Deserialize)]
 #[serde(tag = "t", rename_all = "lowercase")]
-enum Node {
+#[cfg_attr(test, serde(deny_unknown_fields))]
+pub(crate) enum Node {
     Row(BoxNode),
     Col(BoxNode),
     #[serde(rename = "box")]
@@ -43,15 +45,19 @@ enum Full {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct BoxNode {
-    key: Option<String>,
-    label: Option<String>,
-    role: Option<String>,
-    checked: Option<bool>,
-    value: Option<Value>,
+#[cfg_attr(test, serde(deny_unknown_fields))]
+pub(crate) struct BoxNode {
+    pub(crate) key: Option<String>,
+    pub(crate) label: Option<String>,
+    pub(crate) role: Option<String>,
+    pub(crate) checked: Option<bool>,
+    pub(crate) value: Option<Value>,
     #[serde(default)]
-    press: bool,
-    drag: Option<DragSpec>,
+    pub(crate) press: bool,
+    /// The names of its `actions`.
+    #[serde(default)]
+    pub(crate) actions: Vec<String>,
+    pub(crate) drag: Option<DragSpec>,
     w: Option<Size>,
     h: Option<Size>,
     grow: Option<f32>,
@@ -76,12 +82,13 @@ struct BoxNode {
     shadow: Option<String>,
     opacity: Option<f32>,
     x: Option<LiveX>,
-    level: Option<String>,
+    pub(crate) level: Option<String>,
     #[serde(default)]
-    children: Vec<Node>,
+    pub(crate) children: Vec<Node>,
 }
 
 #[derive(Deserialize, Clone)]
+#[cfg_attr(test, serde(deny_unknown_fields))]
 pub(crate) struct LiveX {
     pub(crate) live: String,
     #[serde(default = "one")]
@@ -95,10 +102,23 @@ fn one() -> f32 {
 }
 
 #[derive(Deserialize, Clone, Copy)]
-struct DragSpec {
+#[cfg_attr(test, serde(deny_unknown_fields))]
+pub(crate) struct DragSpec {
     axis: Axis,
     min: f32,
     max: f32,
+}
+
+impl DragSpec {
+    /// Where a drag by `dx`, `dy` leaves the element: along its axis, within its bounds in
+    /// either order, as a view may give them swapped.
+    fn offset(self, dx: f32, dy: f32) -> [f32; 2] {
+        let (low, high) = (self.min.min(self.max), self.min.max(self.max));
+        match self.axis {
+            Axis::X => [dx.clamp(low, high), 0.0],
+            Axis::Y => [0.0, dy.clamp(low, high)],
+        }
+    }
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq)]
@@ -109,7 +129,8 @@ enum Axis {
 }
 
 #[derive(Deserialize)]
-struct TextNode {
+#[cfg_attr(test, serde(deny_unknown_fields))]
+pub(crate) struct TextNode {
     key: Option<String>,
     at: Option<[f32; 2]>,
     style: Option<String>,
@@ -122,7 +143,8 @@ struct TextNode {
 }
 
 #[derive(Deserialize)]
-struct ShapesNode {
+#[cfg_attr(test, serde(deny_unknown_fields))]
+pub(crate) struct ShapesNode {
     key: Option<String>,
     at: Option<[f32; 2]>,
     w: f32,
@@ -135,14 +157,16 @@ struct ShapesNode {
 }
 
 #[derive(Deserialize)]
-struct Lines {
+#[cfg_attr(test, serde(deny_unknown_fields))]
+pub(crate) struct Lines {
     color: String,
     width: f32,
     points: Vec<f32>,
 }
 
 #[derive(Deserialize)]
-struct Rects {
+#[cfg_attr(test, serde(deny_unknown_fields))]
+pub(crate) struct Rects {
     color: String,
     rects: Vec<f32>,
 }
@@ -154,7 +178,7 @@ struct Scope<'a> {
     /// What its element keys start with in the window: nothing for the main view, else its
     /// path from there and `:`.
     prefix: &'a str,
-    memos: &'a std::collections::HashMap<String, (u64, Rc<Value>)>,
+    memos: &'a std::collections::HashMap<String, ((u64, u64), Rc<Value>)>,
 }
 
 impl Scope<'_> {
@@ -320,13 +344,7 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
             let (instance, element) = (scope.instance.clone(), element.clone());
             e = e.live_offset(&moved).on_drag(
                 move |s: &mut State, d: &mut rune::Drag, _: &mut rune::Tx| {
-                    let along =
-                        if spec.axis == Axis::X { d.dx } else { d.dy }.clamp(spec.min, spec.max);
-                    let offset = if spec.axis == Axis::X {
-                        [along, 0.0]
-                    } else {
-                        [0.0, along]
-                    };
+                    let offset = spec.offset(d.dx, d.dy);
                     match d.phase {
                         Phase::Down => {}
                         Phase::Move => {
@@ -337,7 +355,7 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
                         }
                         Phase::Up => {
                             moved.set(offset);
-                            s.act_on_view(
+                            s.pointed(
                                 &instance,
                                 &element,
                                 "drag",
@@ -374,7 +392,7 @@ fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>) -> El {
         let (instance, element) = (scope.instance.clone(), element.clone());
         e = e
             .focusable(true)
-            .on_press(move |s: &mut State| s.act_on_view(&instance, &element, "press", None));
+            .on_press(move |s: &mut State| s.pointed(&instance, &element, "press", None));
     }
     e
 }
@@ -444,4 +462,20 @@ fn drawing(scope: &Scope, d: &ShapesNode) -> El {
         e = e.absolute(x, y);
     }
     e
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_drag_with_bounds_swapped_stays_between_them() {
+        let spec = DragSpec {
+            axis: Axis::Y,
+            min: 4.0,
+            max: -4.0,
+        };
+        assert_eq!(spec.offset(0.0, 10.0), [0.0, 4.0]);
+        assert_eq!(spec.offset(0.0, -10.0), [0.0, -4.0]);
+    }
 }

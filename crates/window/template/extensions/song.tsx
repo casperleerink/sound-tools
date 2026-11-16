@@ -136,7 +136,7 @@ export const songView = view(
         {chosen && <Panel each={chosen} title={titleOf(chosen, tracks.indexOf(chosen))} />}
         <row w="full" h={MIXER} px={3} gap={1} fill="surface" border="border-strong" borderSides={[1, 0, 0, 0]}>
           {tracks.map((each, index) => (
-            <Strip id={`${index}`} name={each.name} title={titleOf(each, index)} db={dbOf(mixOf(each)?.gain_db)} onChange={(db) => mixing(each.name, `Volume ${titleOf(each, index)}`, (mix) => (mix.gain_db = db))} />
+            <Strip id={each.name} name={each.name} title={titleOf(each, index)} db={dbOf(mixOf(each)?.gain_db)} onChange={(db) => mixing(each.name, `Volume ${titleOf(each, index)}`, (mix) => (mix.gain_db = db))} />
           ))}
           <box grow={1} />
           <Strip id="master" name="master" title="Master" db={dbOf(self.children.find((child) => child.name === "master" && child.tool === "fader")?.state.gain_db)} onChange={(db) => mixing("master", "Volume Master", (mix) => (mix.gain_db = db))} />
@@ -171,17 +171,17 @@ const TrackRow = ({ each, index, chosen, armed, soloed, onChoose, onMute, onSolo
   const title = titleOf(each, index);
   const muted = mixOf(each)?.mute ?? false;
   const header = memo(`head-${each.name}`, [title, chosen, muted, soloed, armed, each.state.colour], () => (
-    <row key={`track-${index}`} label={`Choose ${title}`} role="tab" checked={chosen} w={HEAD} h={ROW} px={3} gap={2} align="center" fill={chosen ? "selected" : "surface"} border="border-strong" borderSides={[0, 1, 0, 0]} onPress={onChoose}>
+    <row key={`track-${each.name}`} label={`Choose ${title}`} role="tab" checked={chosen} w={HEAD} h={ROW} px={3} gap={2} align="center" fill={chosen ? "selected" : "surface"} border="border-strong" borderSides={[0, 1, 0, 0]} onPress={onChoose}>
       <box w={8} h={8} radius="full" fill={colourOf(each)} />
       <col grow={1} gap={1}>
         <text style="heading" color="text" truncate>{title}</text>
         <row gap={1}>
-          <Toggle id={`mute-${index}`} label={`Mute ${title}`} letter="M" on={muted} color="peach" onToggle={onMute} />
-          <Toggle id={`solo-${index}`} label={`Solo ${title}`} letter="S" on={soloed} color="yellow" onToggle={onSolo} />
-          <Toggle id={`arm-${index}`} label={`Arm ${title}`} letter="R" on={armed} color="red" onToggle={onArm} />
+          <Toggle id={`mute-${each.name}`} label={`Mute ${title}`} letter="M" on={muted} color="peach" onToggle={onMute} />
+          <Toggle id={`solo-${each.name}`} label={`Solo ${title}`} letter="S" on={soloed} color="yellow" onToggle={onSolo} />
+          <Toggle id={`arm-${each.name}`} label={`Arm ${title}`} letter="R" on={armed} color="red" onToggle={onArm} />
         </row>
       </col>
-      <Meter id={`meter-head-${index}`} label={`Level ${title}`} live={`meter:${each.name}/mix`} w={4} h={ROW - 16} />
+      <Meter id={`meter-head-${each.name}`} label={`Level ${title}`} live={`meter:${each.name}/mix`} w={4} h={ROW - 16} />
     </row>
   ));
   const lane = memo(`lane-${each.name}`, [each.children, each.state.colour], () => (

@@ -20,11 +20,11 @@ test("mute is lit only on a muted track", () => {
 test("a press on mute mutes that track's fader, and a second unmutes it", () => {
   const first = self(false);
   render(songView, first);
-  const changes = press("mute-1");
+  const changes = press("mute-t01");
   expect(changes).toEqual([[["children", 1, "children", 0, "state", "mute"], true]]);
   render(songView, apply(first, changes));
-  expect(find("mute-1")).toMatchObject({ checked: true });
-  expect(press("mute-1")).toEqual([[["children", 1, "children", 0, "state", "mute"], false]]);
+  expect(find("mute-t01")).toMatchObject({ checked: true });
+  expect(press("mute-t01")).toEqual([[["children", 1, "children", 0, "state", "mute"], false]]);
 });
 
 test("a fader takes a volume by its label", () => {
@@ -34,6 +34,13 @@ test("a fader takes a volume by its label", () => {
 
 test("choosing a track shows its devices", () => {
   render(songView, self(false));
-  press("track-1");
-  expect(find("track-1")).toMatchObject({ checked: true });
+  press("track-t01");
+  expect(find("track-t01")).toMatchObject({ checked: true });
+});
+
+test("a press mutes the track it names, also after tracks come and go", () => {
+  const tracks = (...names: string[]) => ({ ...self(false), children: names.map((name) => track(name, `Track ${Number(name.slice(1)) + 1}`, false)) }) as unknown as Song;
+  render(songView, tracks("t00", "t01", "t02"));
+  render(songView, tracks("t00", "t02", "t03"));
+  expect(act("Mute Track 4", "toggle")).toEqual([[["children", 2, "children", 0, "state", "mute"], true]]);
 });

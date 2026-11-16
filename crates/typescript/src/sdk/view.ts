@@ -18,10 +18,11 @@ export type Radius = keyof Theme["radius"];
 export type Shadow = keyof Theme["shadow"];
 
 /**
- * Values the window moves every frame without running the view: `playhead` in ticks, `time` as
- * text, `meter:<path>` the level of the child at that path (`meter:t01/mix`) from 0 to 1.
+ * Values the window moves every frame without running the view: `playhead` in ticks and
+ * `meter:<path>` the level of the child at that path (`meter:t01/mix`) from 0 to 1, for `x` and
+ * `level`; `time` as text, for a text's `live`.
  */
-export type LiveName = "playhead" | "time" | `meter:${string}`;
+export type LiveName = "playhead" | `meter:${string}`;
 
 /** What an element is, for an agent and a screen reader. */
 export type Role = "button" | "switch" | "slider" | "tab" | "meter" | "group" | "heading";
@@ -83,7 +84,8 @@ export type BoxProps = Interactive & {
   level?: LiveName;
   children?: Child;
 };
-export type TextProps = { key?: string; at?: [number, number]; style?: TextStyle; color?: Color; w?: number; truncate?: boolean; live?: LiveName; children?: string | number | (string | number)[] };
+type TextChild = string | number | null | undefined | false | TextChild[];
+export type TextProps = { key?: string; at?: [number, number]; style?: TextStyle; color?: Color; w?: number; truncate?: boolean; live?: "time"; children?: TextChild };
 /** Line segments, `points` four numbers each (x1 y1 x2 y2), all `width` points wide. */
 export type Lines = { color: Color; width: number; points: number[] };
 /** Filled rectangles, `rects` four numbers each (x y w h). */
@@ -163,11 +165,14 @@ export function h(tag: keyof h.JSX.IntrinsicElements | ((props: any) => Node), p
   if (typeof tag === "function") return tag({ ...props, children: children.length === 1 ? children[0] : children });
   const { onPress, onDragEnd, actions, ...rest } = props ?? {};
   if (onPress || onDragEnd || actions) scope.handlers.set(rest.key, { onPress, onDragEnd, actions });
-  if (tag === "text") return { t: "text", ...rest, text: children.flat().join("") } as Node;
+  if (tag === "text") return { t: "text", ...rest, text: words(children as TextChild) } as Node;
   if (tag === "shapes" || tag === "child") return { t: tag, ...rest } as Node;
   const named = actions ? { actions: Object.keys(actions) } : {};
   return { t: tag, ...rest, ...(onPress ? { press: true } : {}), ...named, children: flat(children) } as Node;
 }
+
+/** The text of a text's children: without `false`, `null` and `undefined`, as elements leave them out. */
+const words = (c: TextChild): string => (Array.isArray(c) ? c.map(words).join("") : typeof c === "string" || typeof c === "number" ? String(c) : "");
 
 export function Fragment({ children }: { children?: Child }): Node {
   return { t: "box", children: flat(children) };
@@ -211,6 +216,10 @@ function run(id: string, made: View, self: Self<any>, change: Ctx<any, any>["cha
   scope = at.root = { handlers: new Map(), memos: [] };
   try {
     at.last = made.draw(self, { memory: at.memory, change });
+  } catch (error) {
+    // The window keeps no memo of a view that failed: the next run builds every one again.
+    at.cache.clear();
+    throw error;
   } finally {
     current = undefined;
   }
@@ -224,22 +233,22 @@ function run(id: string, made: View, self: Self<any>, change: Ctx<any, any>["cha
 
 const handlersOf = (at: Instance, key: string) => at.root.handlers.get(key) ?? [...at.cache.values()].find((e) => e.handlers.has(key))?.handlers.get(key);
 
-/** Runs an action of `key`: `press` is its `onPress`, `drag` its `onDragEnd`; false when it has none. */
-function perform(at: Instance | undefined, key: string, action: string, value: number | Moved | undefined): boolean {
+/** Runs an action of `key`: `press` is its `onPress`, `drag` its `onDragEnd`. Throws when it has none. */
+function perform(at: Instance | undefined, key: string, action: string, value: number | Moved | undefined) {
   const handlers = at && handlersOf(at, key);
-  if (action === "press" && handlers?.onPress) return handlers.onPress(), true;
-  if (action === "drag" && handlers?.onDragEnd) return handlers.onDragEnd(value as Moved), true;
+  if (action === "press" && handlers?.onPress) return handlers.onPress();
+  if (action === "drag" && handlers?.onDragEnd) return handlers.onDragEnd(value as Moved);
   const named = handlers?.actions?.[action];
-  if (!named) return false;
-  named(typeof value === "number" ? value : 0);
-  return true;
+  if (!named) throw new Error(`${key} has no ${action}`);
+  if (action === "set" && typeof value !== "number") throw new Error("set takes a number");
+  named(value as number);
 }
 
 /** What the host runs. Not for tools. */
 export const host = {
   views,
   run,
-  /** Runs `action` of `key` in the view of `id`. */
+  /** Runs `action` of `key` in the view of `id`; throws why it could not. */
   perform: (id: string, key: string, action: string, value?: number | Moved) => perform(instances.get(id), key, action, value),
   forget: (id: string) => instances.delete(id),
 };
@@ -254,7 +263,14 @@ export function render<T, M>(made: View<T, M>, self: Self<T>): Node {
   if (tested?.made !== made) instances.delete(TESTED);
   tested = { made, self, changes: [] };
   // A handler a memo kept from an earlier run changes what the last run shows, as in the window.
-  run(TESTED, made, self, (edit) => tested && edit(recording(tested.self, tested.changes)));
+  // Its draft is a copy of the records with its earlier changes, as the host's is.
+  run(TESTED, made, self, (edit) => {
+    if (!tested) return;
+    const before = apply(tested.self, tested.changes);
+    const draft = structuredClone(before);
+    edit(draft as never);
+    tested.changes.push(...diff(before, draft));
+  });
   return instances.get(TESTED)!.last;
 }
 
@@ -269,7 +285,8 @@ export function act(keyOrLabel: string, action: string, value?: number | Moved):
   const at = instances.get(TESTED);
   const found = find(keyOrLabel);
   const key = found && "key" in found ? found.key : undefined;
-  if (key === undefined || !perform(at, key, action, value)) throw new Error(`no ${keyOrLabel} with the action ${action}`);
+  if (key === undefined) throw new Error(`no ${keyOrLabel}`);
+  perform(at, key, action, value);
   const { made, self, changes } = tested;
   render(made, apply(self, changes));
   return changes;
@@ -301,22 +318,16 @@ export function apply<S>(self: S, ops: Op[]): S {
   return ops.reduce((acc, [path, value]) => set(acc, path, value), self);
 }
 
-/** A draft of `target` whose writes land in `ops`, as paths. */
-function recording(target: any, ops: Op[], path: (string | number)[] = []): any {
-  const written = new Map<string, unknown>();
-  return new Proxy(target, {
-    get(t, p) {
-      if (typeof p === "symbol") return t[p];
-      const at = [...path, /^\d+$/.test(p) ? Number(p) : p];
-      const id = JSON.stringify(at);
-      const value = written.has(id) ? written.get(id) : t[p];
-      return value !== null && typeof value === "object" ? recording(value, ops, at) : value;
-    },
-    set(_, p, value) {
-      const at = [...path, typeof p === "string" && /^\d+$/.test(p) ? Number(p) : (p as string)];
-      written.set(JSON.stringify(at), value);
-      ops.push([at, value]);
-      return true;
-    },
-  });
+/** What changed from `before` to `after`, as paths to each value that changed. */
+function diff(before: unknown, after: unknown, path: (string | number)[] = [], ops: Op[] = []): Op[] {
+  const list = Array.isArray(before);
+  const object = (value: unknown) => value !== null && typeof value === "object";
+  const alike = object(before) && object(after) && list === Array.isArray(after) && (!list || (before as unknown[]).length === (after as unknown[]).length);
+  if (!alike) {
+    if (!Object.is(before, after)) ops.push([path, after]);
+    return ops;
+  }
+  const [from, to] = [before as Record<string, unknown>, after as Record<string, unknown>];
+  for (const k of new Set([...Object.keys(from), ...Object.keys(to)])) diff(from[k], to[k], [...path, list ? Number(k) : k], ops);
+  return ops;
 }

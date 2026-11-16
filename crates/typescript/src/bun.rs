@@ -453,9 +453,15 @@ pub(crate) enum Event {
         instance: InstanceId,
         label: String,
         changes: Vec<RecordEdit>,
-        /// An action on a view of the new window made it: one step of undo at once.
+        /// An action on a view of the new window made it: one step of undo with the others of
+        /// that action, up to its [`Event::Acted`].
         #[serde(default)]
         gesture: bool,
+    },
+    /// An action on a view of the new window ran, or why it did not.
+    Acted {
+        #[serde(default)]
+        error: Option<String>,
     },
     /// A view of the new window ran: its tree, or none for a tool without one, or why it failed.
     Tree {
@@ -722,6 +728,8 @@ pub(crate) struct Bun {
     lines: mpsc::SyncSender<String>,
     busy: Arc<Mutex<Busy>>,
     events: smol::channel::Receiver<Event>,
+    /// Called once Bun said something, from the thread that hears it.
+    waker: Arc<Mutex<Option<Waker>>>,
     /// Ended by [`Bun::end`], or when the runtime lets go of it. `None` once ended. The tools
     /// it loaded hold it too, so their records keep asking it outside the window.
     child: Mutex<Option<Child>>,
@@ -747,6 +755,9 @@ struct Told {
 /// A record to tell Bun: its id, and its tool, its key (see [`record_key`]) and `state` as
 /// JSON, or `None` when it is gone.
 pub(crate) type Telling<'a> = (&'a InstanceId, Option<(&'a str, u64, &'a str)>);
+
+/// What wakes a window that waits for nothing else: Bun said something.
+pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
 /// What tells one record apart from another: its tool and its state as JSON.
 pub(crate) fn record_key(tool: &str, state: &str) -> u64 {
@@ -861,12 +872,14 @@ impl Bun {
             runs: None,
         }));
         // From here a failure drops it, which ends the process.
+        let waker: Arc<Mutex<Option<Waker>>> = Arc::default();
         let bun = Self {
             number,
             opening,
             lines,
             busy: busy.clone(),
             events: received,
+            waker: waker.clone(),
             child: Mutex::new(Some(child)),
             printed: Mutex::new(printed),
             told: Mutex::default(),
@@ -905,7 +918,15 @@ impl Bun {
                 Ok(Line::Loaded(loaded)) => {
                     std::thread::Builder::new()
                         .name("bun-events".into())
-                        .spawn(move || hear(number, &heard, &busy, &events))
+                        .spawn(move || {
+                            let wake = || {
+                                let waker = waker.lock().unwrap_or_else(PoisonError::into_inner);
+                                if let Some(wake) = waker.as_ref() {
+                                    wake();
+                                }
+                            };
+                            hear(number, &heard, &busy, &events, wake);
+                        })
                         .map_err(|error| failure(error.to_string()))?;
                     return Ok((bun, loaded));
                 }
@@ -922,17 +943,26 @@ impl Bun {
 
     /// Whether it did all it was told, and the window heard all it said.
     pub(crate) fn is_idle(&self) -> bool {
+        self.is_done() && self.events.is_empty()
+    }
+
+    /// Whether it did all it was told: what it said for it waits in [`Bun::events`].
+    pub(crate) fn is_done(&self) -> bool {
         self.busy
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .pending
             == 0
-            && self.events.is_empty()
     }
 
     /// What Bun says after its load, in order, up to [`Event::Ended`].
     pub(crate) fn events(&self) -> smol::channel::Receiver<Event> {
         self.events.clone()
+    }
+
+    /// Calls `waker` each time Bun says something from now on: an event or a behaviour's answer.
+    pub(crate) fn wake_with(&self, waker: Waker) {
+        *self.waker.lock().unwrap_or_else(PoisonError::into_inner) = Some(waker);
     }
 
     pub(crate) fn number(&self) -> u64 {
@@ -1206,6 +1236,7 @@ fn hear(
     heard: &mpsc::Receiver<Line>,
     busy: &Mutex<Busy>,
     events: &smol::channel::Sender<Event>,
+    wake: impl Fn(),
 ) {
     let lock = || busy.lock().unwrap_or_else(PoisonError::into_inner);
     let ended = |why: String| {
@@ -1218,6 +1249,7 @@ fn hear(
         drop(busy);
         // Outside the window nobody hears it.
         events.try_send(Event::Ended { blame, why }).ok();
+        wake();
     };
     loop {
         match heard.recv_timeout(HANG_TIMEOUT / 4) {
@@ -1239,6 +1271,7 @@ fn hear(
             }
             Ok(Line::Event(event)) => {
                 events.try_send(event).ok();
+                wake();
             }
             Ok(Line::Declared {
                 question,
@@ -1256,6 +1289,7 @@ fn hear(
                     })
                 });
                 behaviours::answered(question, answer, reads);
+                wake();
             }
             // Bun loads once.
             Ok(Line::Loading { .. } | Line::Loaded(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}

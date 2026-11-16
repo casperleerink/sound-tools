@@ -19,11 +19,12 @@ const TRAVEL: f32 = 120.0;
 
 #[derive(Clone)]
 pub(crate) enum Kind {
-    /// `log`: its knob travels in octaves, as a frequency's.
+    /// `log`: its knob travels in octaves, as a frequency's. `integer`: whole numbers only.
     Number {
         min: f64,
         max: f64,
         log: bool,
+        integer: bool,
     },
     Switch,
     Choice(Vec<Value>),
@@ -93,10 +94,16 @@ pub(crate) fn fields(state: &State, id: &InstanceId) -> Vec<Field> {
             number("maximum"),
         ) {
             _ if !options.is_empty() => Kind::Choice(options),
-            (Some("number" | "integer"), Some(min), Some(max)) => {
+            (Some(kind @ ("number" | "integer")), Some(min), Some(max)) => {
                 let log = property.get("x-scale").and_then(Value::as_str) == Some("logarithmic")
                     && min > 0.0;
-                Kind::Number { min, max, log }
+                let integer = kind == "integer";
+                Kind::Number {
+                    min,
+                    max,
+                    log,
+                    integer,
+                }
             }
             (Some("boolean"), ..) => Kind::Switch,
             _ => continue,
@@ -145,6 +152,24 @@ fn words(name: &str) -> String {
     })
 }
 
+impl Kind {
+    /// `value` as a field of this kind holds it: within its range, and whole for an integer.
+    pub(crate) fn fit(&self, value: f64) -> Value {
+        match *self {
+            Kind::Number {
+                min, max, integer, ..
+            } => {
+                let value = value.clamp(min.min(max), max.max(min));
+                match integer {
+                    true => json!(value.round() as i64),
+                    false => json!(value),
+                }
+            }
+            _ => json!(value),
+        }
+    }
+}
+
 /// A number as a card shows it: at most two decimals.
 pub(crate) fn number(value: f64) -> String {
     let text = format!("{value:.2}");
@@ -158,6 +183,7 @@ pub(crate) fn card(state: &State, id: &InstanceId) -> El {
         Some(drawn @ (Drawn::View { .. } | Drawn::Failed(_))) => {
             tree::view(state, id, &state.prefix_of(id), drawn)
         }
+        _ if state.pending(id) => el(),
         _ => controls(state, id),
     };
     col()
@@ -195,10 +221,10 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
             .color(theme.color("text-secondary"))
     };
     match field.kind {
-        Kind::Number { min, max, log } => {
+        Kind::Number { min, max, log, .. } => {
             let value = field.value.as_f64().unwrap_or(min);
             let at = travelled(value, min, max, log) as f32;
-            let (id, name) = (id.clone(), field.name.clone());
+            let (id, name, kind) = (id.clone(), field.name.clone(), field.kind.clone());
             let knob = canvas(arc(
                 arc(Shape::new(), 1.0, theme.color("fill-strong")),
                 at,
@@ -217,7 +243,7 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
                         s.set_field(
                             &id,
                             &name,
-                            json!(value_at(at.clamp(0.0, 1.0), min, max, log)),
+                            kind.fit(value_at(at.clamp(0.0, 1.0), min, max, log)),
                         );
                     }
                 },

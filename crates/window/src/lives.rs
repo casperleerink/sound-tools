@@ -3,7 +3,7 @@
 //! survives a new tree.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use sound_core::InstanceId;
 
@@ -21,8 +21,8 @@ pub(crate) struct Lives {
     levels: RefCell<HashMap<String, (Live<[f32; 4]>, String, [f32; 2])>>,
     drags: RefCell<HashMap<String, Live<[f32; 2]>>>,
     pub(crate) time: LiveText,
-    /// What each meter shows, in dB, by its live name.
-    meters: RefCell<HashMap<String, f32>>,
+    /// What each meter shows, in dB, by its live name: in order, as the agent's tree lists them.
+    meters: RefCell<BTreeMap<String, f32>>,
     playhead: RefCell<f32>,
 }
 

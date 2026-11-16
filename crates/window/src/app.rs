@@ -2,17 +2,18 @@
 //! view of its main instance filling the rest. In a run without a window the engine plays
 //! offline, a step per frame, and Bun answers before each frame, so a run is always the same.
 
-use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use plugin_host::{Plugins, ScanCache, ScanCommand};
 use rune::{Cx, El, KeyEvent, Tx, col, el, row, text};
 use serde_json::{Value, json};
-use sound_core::{Engine, InstanceId, OutputDevice, OutputStream, Peaks, Project, Ticks};
-use sound_typescript::next::{Drawn, Tools};
+use sound_core::{Engine, GROUPING_WINDOW, InstanceId, OutputDevice, OutputStream, Project, Ticks};
+use sound_typescript::next::{Drawn, FRAME_INTERVAL, Tools};
 
 use crate::card::Kind;
 use crate::controls::{self, Step, Target};
@@ -21,7 +22,9 @@ use crate::theme::Theme;
 use crate::tree;
 
 /// How often a playing window draws: what moves, moves at 60 frames a second.
-const FRAME: std::time::Duration = std::time::Duration::from_millis(16);
+const FRAME: Duration = Duration::from_millis(16);
+/// How often an idle window looks at what has no way to wake it: plugins, and sounds that load.
+const IDLE: Duration = Duration::from_millis(250);
 const TITLE_ROW: f32 = 44.0;
 /// The room the title row leaves at its left for the window's buttons, which macOS draws on it.
 const TITLE_LEFT: f32 = if cfg!(target_os = "macos") {
@@ -69,11 +72,17 @@ pub(crate) struct State {
     pub(crate) theme: Theme,
     /// The JSON Schema of each built-in tool's record, by tool name.
     schemas: HashMap<&'static str, Value>,
-    pub(crate) main: Option<InstanceId>,
     pub(crate) lives: Lives,
     pub(crate) playing: bool,
     playhead: Ticks,
-    peaks: RefCell<HashMap<String, Option<Peaks>>>,
+    /// Engine time in seconds, which a control loop's clock counts on.
+    engine_time: f64,
+    /// When the control loops last ran, in seconds of the window's clock.
+    looped: f64,
+    /// How many Buns loaded when the design tokens were last read.
+    theme_loads: u64,
+    /// The project's watcher heard a file: the folder is read once quiet.
+    files_heard: Arc<AtomicBool>,
     /// What went wrong last, said in the corner.
     notice: Option<String>,
     shown: BTreeSet<InstanceId>,
@@ -94,20 +103,23 @@ impl State {
             play,
             act,
         } = options;
-        let copy = match (headless, act.is_none()) {
-            (true, true) => Some(copied(&folder)?),
-            _ => None,
-        };
-        let folder = match &copy {
-            Some(copy) => copy.path().join(folder.file_name().unwrap_or_default()),
-            None => folder,
+        // Whole, so `.` and `..` have a name: a folder that is not there yet becomes a project.
+        let folder = dunce::canonicalize(&folder).or_else(|_| std::path::absolute(&folder))?;
+        let name = folder
+            .file_name()
+            .context("the project folder has no name")?
+            .to_string_lossy()
+            .into_owned();
+        let (folder, copy) = match (headless, act.is_none()) {
+            (true, true) => {
+                let (copy, folder) = copied(&folder, &name)?;
+                (folder, Some(copy))
+            }
+            _ => (folder, None),
         };
         if !folder.join(runtime::PROJECT_FILE).exists() {
             runtime::templates::write(&folder, &TEMPLATE)?;
         }
-        let name = dunce::canonicalize(&folder)?
-            .file_name()
-            .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
         let waker: Arc<Mutex<Option<rune::Waker>>> = Arc::default();
         let (plugins, sound, control) = match headless {
             true => {
@@ -136,22 +148,27 @@ impl State {
         };
         let (mut project, extensions) =
             runtime::open_with_extensions(&folder, control, plugins.clone())?;
-        if !headless {
-            project.watch()?;
-        }
         let wake = waker.clone();
         let wake: sound_typescript::next::Waker = Arc::new(move || {
             if let Some(wake) = wake.lock().unwrap_or_else(PoisonError::into_inner).as_ref() {
                 wake();
             }
         });
+        let files_heard = Arc::new(AtomicBool::new(false));
+        if !headless {
+            let (heard, wake) = (files_heard.clone(), wake.clone());
+            project.watch_waking(move || {
+                heard.store(true, Ordering::Relaxed);
+                wake();
+            })?;
+        }
         let tools =
             extensions.map(|extensions| Tools::start(extensions, &project, !headless, wake));
         let (theme, theme_problem) = Theme::of(&folder);
+        let theme_loads = tools.as_ref().map_or(0, Tools::loads);
         let schemas = (runtime::tool_schemas()?.into_iter())
             .map(|schema| (schema.tool, schema.schema))
             .collect();
-        let main = project.project_file().main.clone();
         Ok(Self {
             name,
             project,
@@ -160,11 +177,13 @@ impl State {
             tools,
             theme,
             schemas,
-            main,
             lives: Lives::new("1.1"),
             playing: false,
             playhead: Ticks(0),
-            peaks: RefCell::default(),
+            engine_time: 0.0,
+            looped: 0.0,
+            theme_loads,
+            files_heard,
             notice: theme_problem,
             shown: BTreeSet::new(),
             meters: BTreeSet::new(),
@@ -175,9 +194,24 @@ impl State {
         })
     }
 
+    /// The instance the window shows, as `project.json` names it now.
+    pub(crate) fn main(&self) -> Option<&InstanceId> {
+        self.project.project_file().main.as_ref()
+    }
+
     /// What the window shows of `id`, once Bun said.
     pub(crate) fn drawn(&self, id: &InstanceId) -> Option<&Drawn> {
         self.tools.as_ref()?.drawn(id)
+    }
+
+    /// Whether the view of `id` is still to come: the window shows nothing of it until then,
+    /// rather than a card of its fields for a moment.
+    pub(crate) fn pending(&self, id: &InstanceId) -> bool {
+        (self.tools.as_ref()).is_some_and(|tools| tools.drawn(id).is_none() && tools.drawing())
+    }
+
+    fn headless(&self) -> bool {
+        matches!(self.sound, Sound::Offline { .. })
     }
 
     /// The JSON Schema of the records of `tool`: a tool of the project's, else a built-in one's.
@@ -190,9 +224,9 @@ impl State {
     /// What the keys of the elements of `id` start with: nothing for the main view, its path
     /// from there and `:` for another.
     pub(crate) fn prefix_of(&self, id: &InstanceId) -> String {
-        let inside = (self.main.as_ref())
+        let inside = (self.main())
             .and_then(|main| id.as_str().strip_prefix(main.as_str())?.strip_prefix('/'));
-        match (Some(id) == self.main.as_ref(), inside) {
+        match (Some(id) == self.main(), inside) {
             (true, _) => String::new(),
             (false, Some(path)) => format!("{path}:"),
             (false, None) => format!("{id}:"),
@@ -206,10 +240,40 @@ impl State {
         key: &str,
         action: &str,
         value: Option<Value>,
+    ) -> Result<()> {
+        let tools = (self.tools.as_mut()).context("the project has no code to run this")?;
+        tools
+            .act(instance, key, action, value)
+            .map_err(|why| anyhow!(why))
+    }
+
+    /// [`Self::act_on_view`] by a pointer: what goes wrong is said in the corner.
+    pub(crate) fn pointed(
+        &mut self,
+        instance: &InstanceId,
+        key: &str,
+        action: &str,
+        value: Option<Value>,
     ) {
-        if let Some(tools) = &mut self.tools {
-            tools.act(instance, key, action, value);
+        if let Err(error) = self.act_on_view(instance, key, action, value) {
+            self.notice = Some(error.to_string());
         }
+        self.handled();
+    }
+
+    /// Input was handled. A run without a window answers it at once, so the frame it came in
+    /// draws it and the report says it: Rune runs input after `poll`, and the last frame has none after.
+    fn handled(&mut self) {
+        if self.headless() {
+            self.settle();
+            *REPORT.lock().unwrap_or_else(PoisonError::into_inner) = Some(self.report());
+        }
+    }
+
+    /// Why the last actions on views did nothing.
+    pub(crate) fn take_failed_action(&mut self) -> Option<String> {
+        let failed = self.tools.as_mut()?.take_failed_actions();
+        failed.into_iter().last()
     }
 
     pub(crate) fn perform(
@@ -225,7 +289,7 @@ impl State {
                     "drag" => value.or_else(|| Some(json!({ "dx": 0, "dy": 0 }))),
                     _ => value,
                 };
-                self.act_on_view(instance, key, action, value);
+                self.act_on_view(instance, key, action, value)?;
             }
             Target::Field {
                 instance,
@@ -233,11 +297,9 @@ impl State {
                 option,
             } => {
                 let now = field.value.as_f64().unwrap_or_default();
-                let (low, high, step) = match field.kind {
-                    Kind::Number { min, max, .. } => {
-                        (min.min(max), max.max(min), (max - min).abs() / 100.0)
-                    }
-                    _ => (f64::MIN, f64::MAX, 1.0),
+                let step = match field.kind {
+                    Kind::Number { min, max, .. } => (max - min).abs() / 100.0,
+                    _ => 1.0,
                 };
                 let next = match (action, option) {
                     (_, Some(option)) => option.clone(),
@@ -247,10 +309,11 @@ impl State {
                             .as_ref()
                             .and_then(Value::as_f64)
                             .ok_or_else(|| anyhow!("set takes a number"))?;
-                        json!(value.clamp(low, high))
+                        field.kind.fit(value)
                     }
-                    ("increment", None) => json!((now + step).clamp(low, high)),
-                    ("decrement", None) => json!((now - step).clamp(low, high)),
+                    // A step of an integer is one at least.
+                    ("increment", None) => field.kind.fit(now + step.max(field_unit(&field.kind))),
+                    ("decrement", None) => field.kind.fit(now - step.max(field_unit(&field.kind))),
                     (other, None) => bail!("a field takes no {other}"),
                 };
                 self.set_field(instance, &field.name, next);
@@ -270,6 +333,7 @@ impl State {
         if let Err(error) = finished {
             self.notice = Some(error.to_string());
         }
+        self.handled();
     }
 
     fn play_or_stop(&mut self) {
@@ -332,8 +396,19 @@ impl State {
             if !settle {
                 return true;
             }
-            changed |= tools.settle(&mut self.project);
+            changed |= self.settle_tools();
         }
+    }
+
+    /// Waits for Bun; a run without a window fails when it does not finish.
+    fn settle_tools(&mut self) -> bool {
+        let Some(tools) = &mut self.tools else {
+            return false;
+        };
+        tools.settle(&mut self.project).unwrap_or_else(|why| {
+            *FAILED.lock().unwrap_or_else(PoisonError::into_inner) = Some(why);
+            true
+        })
     }
 
     /// The first frame of a run without a window: the steps of `--act`, then `--play`.
@@ -343,7 +418,6 @@ impl State {
         };
         for step in steps {
             step.run(self)?;
-            self.settle();
         }
         if play.is_some() {
             self.project.engine().play();
@@ -351,11 +425,8 @@ impl State {
         Ok(())
     }
 
-    fn settle(&mut self) {
-        if let Some(tools) = &mut self.tools {
-            tools.settle(&mut self.project);
-        }
-        self.discover(true);
+    pub(crate) fn settle(&mut self) -> bool {
+        self.settle_tools() | self.discover(true)
     }
 
     /// What `--tree` adds for an agent: the controls, where the piece plays and the meters.
@@ -389,31 +460,24 @@ impl State {
         format!("{}.{}", at.bar, at.beat)
     }
 
-    /// The loudest amplitude of the meter `name` since the last frame.
+    /// The loudest amplitude of the meter `name` since the last frame. Looked up each frame: an
+    /// instance is bound to the engine later than its view names it, and again after an undo.
     fn amplitude(&self, name: &str) -> f32 {
-        let mut peaks = self.peaks.borrow_mut();
-        let peaks = peaks.entry(name.to_string()).or_insert_with(|| {
-            let id = InstanceId::new(name.trim_start_matches("meter:")).ok()?;
-            self.project.peaks(&id, "level")
-        });
-        peaks
-            .as_ref()
-            .map_or(0.0, |peaks| peaks.take().into_iter().fold(0.0, f32::max))
+        let id = InstanceId::new(name.trim_start_matches("meter:")).ok();
+        let peaks = id.and_then(|id| self.project.peaks(&id, "level"));
+        peaks.map_or(0.0, |peaks| peaks.take().into_iter().fold(0.0, f32::max))
     }
 }
 
 /// A copy of the project in `folder`, for a run without a window: opening writes into a folder.
-fn copied(folder: &Path) -> Result<tempfile::TempDir> {
+/// The scratch folder, and the copy in it, called `name`.
+fn copied(folder: &Path, name: &str) -> Result<(tempfile::TempDir, PathBuf)> {
     let scratch = tempfile::tempdir()?;
+    let copy = scratch.path().join(name);
     if folder.join(runtime::PROJECT_FILE).is_file() {
-        let name = folder
-            .canonicalize()?
-            .file_name()
-            .context("the project folder has no name")?
-            .to_owned();
-        copy_folder(folder, &scratch.path().join(name))?;
+        copy_folder(folder, &copy)?;
     }
-    Ok(scratch)
+    Ok((scratch, copy))
 }
 
 /// Copies `from` to `to`, without hidden files, such as `.git` and the lock, or links.
@@ -446,24 +510,21 @@ pub(crate) fn setup(state: &mut State, waker: rune::Waker) {
 
 /// The start of every frame: Bun, the project, the engine and what moves.
 pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
-    let (changed, moving) = frame(state, seconds);
-    if moving {
-        tx.wake_after(FRAME);
+    let (changed, next) = frame(state, seconds);
+    if let Some(next) = next {
+        tx.wake_after(next);
     }
     tx.instant();
     changed
 }
 
-/// One frame `seconds` after the start. Whether what the window shows changed, and whether
-/// something moves on, in a window, so the next frame is due soon.
-pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, bool) {
-    let headless = matches!(state.sound, Sound::Offline { .. });
+/// One frame `seconds` after the start. Whether what the window shows changed, and, in a
+/// window, when the next frame is due: Bun, the watchers and the engine wake it sooner.
+pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>) {
+    let headless = state.headless();
     let mut changed = false;
     if headless {
-        if let Some(tools) = &mut state.tools {
-            changed |= tools.settle(&mut state.project);
-        }
-        changed |= state.discover(true);
+        changed |= state.settle();
         if let Err(error) = state.first_frame() {
             *FAILED.lock().unwrap_or_else(PoisonError::into_inner) = Some(format!("{error:#}"));
         }
@@ -490,10 +551,26 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, bool) {
         }
         changed |= drawn;
     }
-    changed |= state.discover(headless);
+    // What the views name changes only with what they show.
+    if changed {
+        changed |= state.discover(headless);
+    }
     if let Ok(status) = state.project.engine().poll() {
         changed |= status.playing != state.playing;
         (state.playing, state.playhead) = (status.playing, status.playhead_tick);
+        state.engine_time = status.frames as f64 / f64::from(state.project.clock().sample_rate());
+    }
+    changed |= run_loops(state, seconds);
+    if let Some(tools) = &mut state.tools {
+        if let Some(why) = tools.take_failed_actions().pop() {
+            state.notice = Some(why);
+        }
+        if tools.loads() != state.theme_loads {
+            state.theme_loads = tools.loads();
+            let (theme, problem) = Theme::of(state.project.root());
+            (state.theme, state.notice) = (theme, problem.or(state.notice.take()));
+            changed = true;
+        }
     }
     let dt = (seconds - state.last).max(0.0) as f32;
     state.last = seconds;
@@ -505,9 +582,48 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, bool) {
         });
     if headless {
         *REPORT.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.report());
+        return (changed, None);
     }
-    let waiting = state.tools.as_ref().is_some_and(Tools::waits);
-    (changed, !headless && (state.playing || moving || waiting))
+    let tools = state.tools.as_ref();
+    let next = if state.playing || moving {
+        FRAME
+    } else if tools.is_some_and(|tools| tools.loops(&state.project)) {
+        FRAME_INTERVAL
+    } else if tools.is_some_and(Tools::waits) || state.files_heard.swap(false, Ordering::Relaxed) {
+        GROUPING_WINDOW + FRAME
+    } else {
+        IDLE
+    };
+    (changed, Some(next))
+}
+
+/// Runs the control loops when their interval passed on the window's clock, the virtual one of
+/// a run without a window, which then waits for them. Whether what the window shows changed.
+fn run_loops(state: &mut State, seconds: f64) -> bool {
+    let dt = seconds - state.looped;
+    let Some(tools) = &mut state.tools else {
+        return false;
+    };
+    if dt < FRAME_INTERVAL.as_secs_f64() {
+        return false;
+    }
+    state.looped = seconds;
+    tools.run_loops(
+        &state.project,
+        state.playing,
+        state.playhead,
+        state.engine_time,
+        dt as f32,
+    );
+    state.headless() && state.settle()
+}
+
+/// The least a step of an integer field moves.
+fn field_unit(kind: &Kind) -> f64 {
+    match kind {
+        Kind::Number { integer: true, .. } => 1.0,
+        _ => 0.0,
+    }
 }
 
 pub(crate) fn on_key(state: &mut State, key: &KeyEvent, _: &mut Tx) -> bool {
@@ -525,16 +641,18 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, _: &mut Tx) -> bool {
     if let Err(error) = done {
         state.notice = Some(error.to_string());
     }
+    state.handled();
     true
 }
 
 pub(crate) fn view(state: &State, _: &mut Cx<State>) -> El {
     let theme = &state.theme;
-    let body = match &state.main {
+    let body = match state.main() {
         Some(main) => match state.drawn(main) {
             Some(drawn @ (Drawn::View { .. } | Drawn::Failed(_))) => {
                 tree::view(state, main, "", drawn)
             }
+            _ if state.pending(main) => el(),
             _ => el()
                 .padding(theme.space(4))
                 .child(crate::card::card(state, main)),
@@ -573,7 +691,10 @@ fn title_row(state: &State) -> El {
         .items_center()
         .radius(theme.radius("md").unwrap_or(6.0))
         .fill(theme.color(if state.playing { "green" } else { "fill" }))
-        .on_press(|s: &mut State| s.play_or_stop())
+        .on_press(|s: &mut State| {
+            s.play_or_stop();
+            s.handled();
+        })
         .child(
             text(if state.playing { "■" } else { "▶" })
                 .font(theme.text("label"))
@@ -583,11 +704,8 @@ fn title_row(state: &State) -> El {
                     "text"
                 })),
         );
-    let problems = state.project.problems().len()
-        + state
-            .tools
-            .as_ref()
-            .map_or(0, |tools| tools.problems().count());
+    // The tools' problems are the project's too.
+    let problems = state.project.problems().len();
     let warning = (problems > 0).then(|| {
         text(format!("{problems} not live"))
             .font(theme.text("label"))
