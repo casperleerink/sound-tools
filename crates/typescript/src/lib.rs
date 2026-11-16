@@ -22,7 +22,7 @@ mod card;
 mod fader;
 mod feeds;
 mod lane;
-mod live;
+pub mod live;
 mod meter;
 pub mod next;
 mod path;
@@ -199,14 +199,19 @@ impl NoteMessage {
     }
 }
 
-const SDK: &str = include_str!("sdk.ts");
-/// The modules `sdk.ts` names, by their path in `extensions/`. The runtime adds
+/// The modules of the SDK of every project, by their path in `extensions/`. The runtime adds
 /// `sdk/records.ts`.
-const SDK_MODULES: [(&str, &str); 12] = [
+const SHARED_MODULES: [(&str, &str); 6] = [
     ("sdk/fields.ts", include_str!("sdk/fields.ts")),
     ("sdk/notes.ts", include_str!("sdk/notes.ts")),
     ("sdk/sound.ts", include_str!("sdk/sound.ts")),
     ("sdk/tools.ts", include_str!("sdk/tools.ts")),
+    ("sdk/clock.ts", include_str!("sdk/clock.ts")),
+    ("sdk/values.ts", include_str!("sdk/values.ts")),
+];
+/// `sdk.ts` and the modules of views of the old window.
+const SDK: [(&str, &str); 9] = [
+    ("sdk.ts", include_str!("sdk.ts")),
     ("sdk/live.ts", include_str!("sdk/live.ts")),
     ("sdk/reactivity.ts", include_str!("sdk/reactivity.ts")),
     ("sdk/nodes.ts", include_str!("sdk/nodes.ts")),
@@ -216,10 +221,13 @@ const SDK_MODULES: [(&str, &str); 12] = [
     ("sdk/card.ts", include_str!("sdk/card.ts")),
     ("sdk/host.ts", include_str!("sdk/host.ts")),
 ];
-/// The views of the new window, written only into a project of it, see [`next::THEME`].
-const VIEW_SDK: [(&str, &str); 2] = [
+/// `sdk.ts` and the modules of views of the new window, written only into a project of it, see
+/// [`next::THEME`]: one SDK, so an agent reads no view modules of the old window.
+const VIEW_SDK: [(&str, &str); 4] = [
+    ("sdk.ts", include_str!("sdk-next.ts")),
     ("sdk/view.ts", include_str!("sdk/view.ts")),
     ("sdk/test.d.ts", include_str!("sdk/test.d.ts")),
+    ("sdk/host.ts", include_str!("sdk/next-host.ts")),
 ];
 pub const HOST: &str = include_str!("host.ts");
 /// What [`HOST`] uses of Node and Bun, for a check of its types.
@@ -612,8 +620,7 @@ fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
     let records = records::sdk_records(schemas);
     std::fs::create_dir_all(extensions.join("sdk"))?;
     let files = [
-        ("sdk.ts", SDK),
-        ("sdk/records.ts", &records),
+        ("sdk/records.ts", records.as_str()),
         ("tsconfig.json", TSCONFIG),
         ("bun.d.ts", BUN_TYPES),
     ];
@@ -622,13 +629,30 @@ fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
     if !ignore.exists() {
         std::fs::write(ignore, format!("{}\n", bun::LOG_FILE))?;
     }
-    let views = extensions
-        .join(next::THEME)
-        .is_file()
-        .then_some(VIEW_SDK)
-        .into_iter()
-        .flatten();
-    for (name, text) in files.into_iter().chain(SDK_MODULES).chain(views) {
+    let sdk: &[(&str, &str)] = match extensions.join(next::THEME).is_file() {
+        true => &VIEW_SDK,
+        false => &SDK,
+    };
+    let written: Vec<(&str, &str)> = (files.into_iter())
+        .chain(SHARED_MODULES)
+        .chain(sdk.iter().copied())
+        .collect();
+    // What an SDK of the other window, or an older one, left.
+    for entry in std::fs::read_dir(extensions.join("sdk"))? {
+        let path = entry?.path();
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        let ours = name.is_some_and(|name| {
+            written
+                .iter()
+                .any(|(each, _)| *each == format!("sdk/{name}"))
+        });
+        if path.is_file() && !ours {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    for (name, text) in written {
         let path = extensions.join(name);
         if name == "bun.d.ts" && bun_types {
             match std::fs::remove_file(&path) {

@@ -1,9 +1,12 @@
-// What a tool's view is written with in the new window: a plain function of its records, run
-// again after every change. Elements, design tokens from `theme.json`, live values, `memo`,
-// changes, and the checks a test runs.
+// What a tool's `view` is written with: a plain function of its records, run again after every
+// change. Elements, design tokens from `theme.json`, live values, `memo`, changes, and the
+// checks a test runs.
 
 import type theme from "../theme.json";
-import type { ChildTools, FilledStateOfTool, OwnedChild, Part, ProjectTool } from "../sdk";
+import type { Fields, Inputs, Unit, ValuesOf } from "./fields";
+import { registry } from "./tools";
+import type { ChildTools, FilledStateOfTool, OwnedChild, Part, ProjectTool } from "./tools";
+import { Live, splitPath, type Num } from "./values";
 
 // Design tokens: every name comes from theme.json, so a misspelled one is a type error.
 type Theme = typeof theme;
@@ -11,18 +14,26 @@ export type ColorToken = keyof Theme["color"];
 /** A token, a token at a percent of opacity (`"text/50"`), or `#rrggbb` / `#rrggbbaa`. */
 export type Color = ColorToken | `${ColorToken}/${number}` | `#${string}`;
 export type TextStyle = keyof Theme["text"];
-type Num<K> = K extends `${infer N extends number}` ? N : never;
+type NumberOf<K> = K extends `${infer N extends number}` ? N : never;
 /** A step of the spacing scale: `gap={2}` is theme.space["2"]. */
-export type Space = Num<keyof Theme["space"]>;
+export type Space = NumberOf<keyof Theme["space"]>;
 export type Radius = keyof Theme["radius"];
 export type Shadow = keyof Theme["shadow"];
 
 /**
- * Values the window moves every frame without running the view: `playhead` in ticks and
- * `meter:<path>` the level of the child at that path (`meter:t01/mix`) from 0 to 1, for `x` and
- * `level`; `time` as text, for a text's `live`.
+ * Where live values start: numbers the window works out every frame without running the view.
+ * Make more with `Live`'s methods, such as `live.peak("t01/mix").hold(3).decibels()`.
  */
-export type LiveName = "playhead" | `meter:${string}`;
+export const live = {
+  /** Where the piece plays, in ticks: 960 a quarter note. */
+  playhead: new Live({ op: "tick" }),
+  /** Seconds since the window opened. */
+  elapsed: new Live({ op: "elapsed" }),
+  /** The loudest sample since the last frame, 0 to 1 and above when it clips, of the instance at `path` inside this one, such as `"t01/mix"`. */
+  peak: (path: string): Live => new Live({ op: "peak", name: path }),
+  /** A number field of the record as it plays (what a lane plays into it, else the record), or of an instance inside as `"t01/mix.gain_db"`. */
+  field: (name: string): Live => new Live({ op: "value", ...splitPath(name), fraction: false }),
+};
 
 /** What an element is, for an agent and a screen reader. */
 export type Role = "button" | "switch" | "slider" | "tab" | "meter" | "group" | "heading";
@@ -53,9 +64,9 @@ export type BoxProps = Interactive & {
   key?: string;
   label?: string;
   role?: Role;
-  /** Points. */
-  w?: number | "full";
-  h?: number | "full";
+  /** Points. A live `w` or `h` places it at `at` (0, 0 when left out), out of the flow. */
+  w?: Num | "full";
+  h?: Num | "full";
   grow?: number;
   pad?: Space;
   px?: Space;
@@ -64,7 +75,7 @@ export type BoxProps = Interactive & {
   align?: "center" | "end";
   justify?: "center" | "between" | "end";
   /** Placed at [left, top] points in its parent, out of the flow. */
-  at?: [number, number];
+  at?: [Num, Num];
   /** Pinned to its parent's edges: [left, top, right, bottom] points, `null` for free. */
   inset?: [number | null, number | null, number | null, number | null];
   clip?: boolean;
@@ -77,27 +88,33 @@ export type BoxProps = Interactive & {
   borderSides?: [number, number, number, number];
   radius?: Radius;
   shadow?: Shadow;
-  opacity?: number;
-  /** Moves it sideways by `offset + scale × live` points each frame. */
-  x?: { live: LiveName; scale?: number; offset?: number };
-  /** Fills it from the bottom by a 0..1 live value; give it a number `w` and `h`. */
-  level?: LiveName;
+  opacity?: Num;
   children?: Child;
 };
 type TextChild = string | number | null | undefined | false | TextChild[];
-export type TextProps = { key?: string; at?: [number, number]; style?: TextStyle; color?: Color; w?: number; truncate?: boolean; live?: "time"; children?: TextChild };
+type TextLook = { key?: string; at?: [Num, Num]; style?: TextStyle; color?: Color; w?: number; truncate?: boolean; opacity?: Num };
+/**
+ * Its words, or a live value it shows: in `unit`, a tick as `"position"` (`5.3`) or `"time"`
+ * (`1:07`), else a plain number with `digits` after the point.
+ */
+export type TextProps = TextLook &
+  (
+    | { children?: TextChild; live?: never; unit?: never; digits?: never }
+    | { live: Num; unit: Unit | "position" | "time"; digits?: never; children?: never }
+    | { live: Num; digits?: number; unit?: never; children?: never }
+  );
 /** Line segments, `points` four numbers each (x1 y1 x2 y2), all `width` points wide. */
 export type Lines = { color: Color; width: number; points: number[] };
 /** Filled rectangles, `rects` four numbers each (x y w h). */
 export type Rects = { color: Color; rects: number[] };
 /** `units` [across, down]: the points are in units of your own, stretched to `w` × `h`; widths stay in points. */
-export type ShapesProps = { key?: string; at?: [number, number]; w: number; h: number; units?: [number, number]; lines?: Lines[]; rects?: Rects[] };
+export type ShapesProps = { key?: string; at?: [Num, Num]; w: number; h: number; units?: [number, number]; lines?: Lines[]; rects?: Rects[]; opacity?: Num };
 /** The card of a child at `path` inside this tool, such as `t00/synth`: its own view, or one control per field. */
 export type ChildProps = { path: string };
 
 export type Node =
   | ({ t: "row" | "col" | "box"; press?: true; actions?: string[]; children: Node[] } & Omit<BoxProps, "children" | "onPress" | "onDragEnd" | "actions">)
-  | ({ t: "text"; text: string } & Omit<TextProps, "children">)
+  | ({ t: "text"; text: string } & TextLook & { live?: Num; unit?: Unit | "position" | "time"; digits?: number })
   | ({ t: "shapes" } & ShapesProps)
   | ({ t: "child" } & ChildProps)
   | { t: "memo"; key: string };
@@ -105,23 +122,28 @@ export type Child = Node | string | number | null | undefined | false | Child[];
 
 /** The tools of the children of `T`, as its `children` names them. */
 type KidsOf<T> = T extends ProjectTool<string, infer Entry> ? (Entry extends { children: infer K extends ChildTools } ? K : {}) : ChildTools;
-/** An instance as its view gets it: its record, with every field filled, and its children's. */
-export type Self<T> = { name: string; state: FilledStateOfTool<T>; children: OwnedChild<KidsOf<T>>[] };
-/** What a view gets besides its records: what it keeps while the window is open, and `change`. */
-export type Ctx<T, M> = {
-  /** Kept while the window is open, never saved: what is chosen, what is open. Change it in a handler. */
+/** An instance of the tool `T` as its view gets it, for a test or a part of a view: its record, every field filled, and its children's. */
+export type Self<T> = Drawn<FilledStateOfTool<T>, KidsOf<T>>;
+/** An instance as its view gets it: its record, every field filled, and its children's. */
+export type Drawn<State, K extends ChildTools = ChildTools> = { name: string; state: State; children: OwnedChild<K>[] };
+/** What a view gets besides its records: what its code keeps, and `change`. */
+export type Ctx<State, K extends ChildTools, M> = {
+  /** The instance's `memory`, which its `tick` gets too: what is chosen, what is open. Never saved; change it in a handler. */
   memory: M;
   /** Changes records: write to `draft` as to the records. One step of undo, named `label`. */
-  change: (edit: (draft: Part<FilledStateOfTool<T>, KidsOf<T>>) => void, label?: string) => void;
+  change: (edit: (draft: Part<State, K>) => void, label?: string) => void;
 };
-export type View<T = any, M = any> = { tool: string; draw: (self: Self<T>, ctx: Ctx<T, M>) => Node; memory: () => M };
 
-/** The view of `tool` in the new window. `memory` makes what it keeps while the window is open. */
-export function view<T extends ProjectTool, M = {}>(tool: T, draw: (self: Self<T>, ctx: Ctx<T, M>) => Node, { memory }: { memory?: () => M } = {}): View<T, M> {
-  const made: View<T, M> = { tool: String(tool), draw, memory: memory ?? (() => ({}) as M) };
-  views.set(made.tool, made);
-  return made;
+/** A tool's `view`: what the window shows of an instance, run again whenever its records change. */
+export type ToolView<S extends Fields, _I extends Inputs, M, K extends ChildTools> = (self: Drawn<ValuesOf<S>, K>, ctx: Ctx<ValuesOf<S>, K, M>) => Node;
+
+/** What all code of an instance gets of the view. */
+export interface ViewContext<_State, _I extends Inputs, M> {
+  /** What its code keeps and nothing saves, made by its tool's `memory`. */
+  memory: M;
 }
+
+type Draw = (self: Drawn<unknown>, ctx: Ctx<any, any, any>) => Node;
 
 // JSX through `h`: a file imports `h` from here.
 
@@ -146,9 +168,8 @@ type Handlers = { onPress?: () => void; onDragEnd?: (moved: Moved) => void; acti
 type Scope = { handlers: Map<string, Handlers>; memos: string[] };
 type Entry = Scope & { deps: unknown[]; v: number; node: Node };
 /** What a view of one instance keeps between its runs. */
-type Instance = { cache: Map<string, Entry>; root: Scope; last: Node; memory: unknown; builds: number };
+type Instance = { cache: Map<string, Entry>; root: Scope; last: Node; builds: number };
 
-const views = new Map<string, View>();
 const instances = new Map<string, Instance>();
 let scope: Scope = { handlers: new Map(), memos: [] };
 let current: Instance | undefined;
@@ -200,22 +221,22 @@ export type Op = [path: (string | number)[], value: unknown];
 /** The tree of one run of a view, the memos it built again, and those it no longer uses. */
 export type Tree = { root: Node; memos: Record<string, { v: number; node: Node }>; drop: string[] };
 
-function instanceOf(id: string, made: View): Instance {
+function instanceOf(id: string): Instance {
   let known = instances.get(id);
   if (!known) {
-    known = { cache: new Map(), root: { handlers: new Map(), memos: [] }, last: { t: "box", children: [] }, memory: made.memory(), builds: 0 };
+    known = { cache: new Map(), root: { handlers: new Map(), memos: [] }, last: { t: "box", children: [] }, builds: 0 };
     instances.set(id, known);
   }
   return known;
 }
 
-function run(id: string, made: View, self: Self<any>, change: Ctx<any, any>["change"]): Tree {
-  const at = instanceOf(id, made);
+function run(id: string, draw: Draw, self: Drawn<unknown>, ctx: Ctx<any, any, any>): Tree {
+  const at = instanceOf(id);
   current = at;
   fresh = {};
   scope = at.root = { handlers: new Map(), memos: [] };
   try {
-    at.last = made.draw(self, { memory: at.memory, change });
+    at.last = draw(self, ctx);
   } catch (error) {
     // The window keeps no memo of a view that failed: the next run builds every one again.
     at.cache.clear();
@@ -246,7 +267,6 @@ function perform(at: Instance | undefined, key: string, action: string, value: n
 
 /** What the host runs. Not for tools. */
 export const host = {
-  views,
   run,
   /** Runs `action` of `key` in the view of `id`; throws why it could not. */
   perform: (id: string, key: string, action: string, value?: number | Moved) => perform(instances.get(id), key, action, value),
@@ -256,21 +276,25 @@ export const host = {
 // For tests: one view at a time, with no window.
 
 const TESTED = "test";
-let tested: { made: View; self: Self<any>; changes: Op[] } | undefined;
+let tested: { tool: ProjectTool; self: Drawn<unknown>; changes: Op[]; memory: unknown } | undefined;
 
-/** Runs `made` on `self` as the window does, and keeps it for `find`, `press` and `act`. Memory lasts across runs. */
-export function render<T, M>(made: View<T, M>, self: Self<T>): Node {
-  if (tested?.made !== made) instances.delete(TESTED);
-  tested = { made, self, changes: [] };
+/** Runs the view of `tool` on `self` as the window does, and keeps it for `find`, `press` and `act`. Its memory lasts while the tool is the same. */
+export function render<T extends ProjectTool>(tool: T, self: Self<T>): Node {
+  const spec = registry.tools.get(String(tool));
+  if (!spec?.view) throw new Error(`${String(tool)} has no view`);
+  const memory = tested?.tool === tool ? tested.memory : (spec.memory?.() ?? {});
+  if (tested?.tool !== tool) instances.delete(TESTED);
+  tested = { tool, self: self as Drawn<unknown>, changes: [], memory };
   // A handler a memo kept from an earlier run changes what the last run shows, as in the window.
   // Its draft is a copy of the records with its earlier changes, as the host's is.
-  run(TESTED, made, self, (edit) => {
+  const change = (edit: (draft: never) => void) => {
     if (!tested) return;
     const before = apply(tested.self, tested.changes);
     const draft = structuredClone(before);
     edit(draft as never);
     tested.changes.push(...diff(before, draft));
-  });
+  };
+  run(TESTED, spec.view as unknown as Draw, tested.self, { memory, change });
   return instances.get(TESTED)!.last;
 }
 
@@ -287,8 +311,8 @@ export function act(keyOrLabel: string, action: string, value?: number | Moved):
   const key = found && "key" in found ? found.key : undefined;
   if (key === undefined) throw new Error(`no ${keyOrLabel}`);
   perform(at, key, action, value);
-  const { made, self, changes } = tested;
-  render(made, apply(self, changes));
+  const { tool, self, changes } = tested;
+  render(tool, apply(self, changes) as Self<ProjectTool>);
   return changes;
 }
 

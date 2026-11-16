@@ -6,18 +6,13 @@ use std::rc::Rc;
 
 use gpui::{FontWeight, Hsla, SharedString};
 use sound_ui::LiveNotes;
-use sound_ui::components::knob::{
-    decibels_readout, hertz_readout, milliseconds_readout, pan_readout, percent_readout,
-    seconds_readout, semitones_readout, short,
-};
 use sound_ui::theme::Theme;
 
-use crate::live::{DragNumbers, Sources, SpaceView};
+use crate::live::{DragNumbers, Sources, SpaceView, text_of};
 use crate::tokens::{TextVariant, Tone, tone_of};
-use crate::tools::Unit;
 use crate::tree::{
-    self, Align, Cursor, Drag, List, NodeTable, Paint, PathPoint, Props, Reach, Readout, ShapeKind,
-    TickReadout, Weight, Words,
+    self, Align, Cursor, Drag, List, NodeTable, Paint, PathPoint, Props, Reach, ShapeKind, Weight,
+    Words,
 };
 
 use super::input::Hears;
@@ -987,76 +982,9 @@ impl Placing<'_> {
     }
 }
 
-/// A number as a readout of `unit`.
-fn readout(value: f32, unit: Option<Unit>) -> String {
-    match unit {
-        Some(Unit::Hz) => hertz_readout(value),
-        Some(Unit::Ms) => milliseconds_readout(value),
-        Some(Unit::Seconds) => seconds_readout(value),
-        Some(Unit::Db) => decibels_readout(value),
-        Some(Unit::Percent) => percent_readout(value),
-        Some(Unit::Semitones) => semitones_readout(value),
-        Some(Unit::Cents) => format!("{} ct", short(value)),
-        Some(Unit::Octaves) => format!("{} oct", short(value)),
-        Some(Unit::Pitch) => pitch_readout(f64::from(value)),
-        Some(Unit::Pan) => pan_readout(value),
-        None => short(value),
-    }
-}
-
-/// A live number as text shows it: in its unit, or a tick as a place in the piece (`5.3`), as
-/// minutes and seconds (`1:07`), or as the time signature there (`7/8`).
-fn text_of(value: f64, shown: Option<Readout>, clock: Option<&sound_core::Clock>) -> String {
-    let shown = match shown {
-        None => return readout(value as f32, None),
-        // A pitch keeps its cents, which an `f32` of a high note would round.
-        Some(Readout::Unit(Unit::Pitch)) => return pitch_readout(value),
-        Some(Readout::Unit(unit)) => return readout(value as f32, Some(unit)),
-        Some(Readout::Tick(shown)) => shown,
-    };
-    let tick = sound_core::Ticks(value.max(0.0) as u64);
-    let Some(clock) = clock else {
-        return String::new();
-    };
-    let signatures = clock.tempo_map().time_signatures();
-    match shown {
-        TickReadout::Position => {
-            let position = signatures.bar_beat_of(tick);
-            format!("{}.{}", position.bar, position.beat)
-        }
-        TickReadout::Time => {
-            let seconds = clock.seconds_of(tick).max(0.0) as u64;
-            format!("{}:{:02}", seconds / 60, seconds % 60)
-        }
-        TickReadout::Signature => signatures.bar_at(tick).signature.to_string(),
-        TickReadout::Beats => signatures.bar_at(tick).signature.numerator().to_string(),
-        TickReadout::Note => signatures.bar_at(tick).signature.denominator().to_string(),
-    }
-}
-
-/// A pitch as its note, `C2` for 36, and how many cents off it is where it is not whole:
-/// `D2 +30`, so two pitches tuned apart do not read the same.
-fn pitch_readout(value: f64) -> String {
-    let note = value.round();
-    let cents = ((value - note) * 100.0).round() as i64;
-    match sound_notes::Pitch::try_from(note as i64) {
-        Ok(pitch) if cents == 0 => pitch.name(),
-        Ok(pitch) => format!("{} {cents:+}", pitch.name()),
-        Err(_) => readout(value as f32, None),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_pitch_that_is_not_whole_reads_its_note_and_its_cents() {
-        assert_eq!(pitch_readout(36.0), "C2");
-        assert_eq!(pitch_readout(38.3), "D2 +30");
-        assert_eq!(pitch_readout(37.6), "D2 -40");
-        assert_eq!(pitch_readout(36.004), "C2");
-    }
 
     #[test]
     fn a_scope_is_as_tall_as_a_quiet_sound_and_flat_for_silence() {

@@ -19,6 +19,14 @@ fn opened(folder: &Path) -> State {
     state
 }
 
+/// Builds the window's view as Rune does, which binds what moves every frame.
+fn build(state: &State) {
+    let main = state.main().unwrap();
+    if let Some(drawn) = state.drawn(main) {
+        tree::view(state, main, "", drawn);
+    }
+}
+
 fn new_project() -> tempfile::TempDir {
     let scratch = tempfile::tempdir().unwrap();
     runtime::templates::write(&scratch.path().join("song"), &TEMPLATE).unwrap();
@@ -53,6 +61,7 @@ fn playing_moves_the_playhead_and_the_meters_and_runs_no_view() {
     let mut state = opened(&scratch.path().join("song"));
     let runs = state.tools.as_ref().unwrap().view_runs();
     assert!(runs > 0);
+    build(&state);
     state.project.engine().play();
     for step in 1..=60 {
         frame(&mut state, f64::from(step) / 60.0);
@@ -62,7 +71,7 @@ fn playing_moves_the_playhead_and_the_meters_and_runs_no_view() {
     assert!(
         levels
             .iter()
-            .any(|(name, level)| name == "meter:song/t01/mix" && *level > 0.0),
+            .any(|(name, db)| name == "song/t01/mix" && *db > -60.0),
         "{levels:?}"
     );
     assert_eq!(state.tools.as_ref().unwrap().view_runs(), runs);
@@ -110,32 +119,31 @@ fn a_changed_tool_file_starts_a_new_bun_and_the_view_follows() {
 }
 
 /// A step sequencer an agent writes with a view, and an effect it writes without one.
-const STEPS: &str = r#"import { boolean, input, list, tool } from "./sdk";
-import { h, view } from "./sdk/view";
+const STEPS: &str = r#"import { boolean, h, input, list, tool } from "./sdk";
 
-export const steps = tool({ name: "steps", title: "Steps", when: "Never", doc: "Sixteen steps.", state: { on: list(boolean({ default: false }), { max: 16 }) }, sound: () => input });
-
-export const stepsView = view(steps, (self, { change }) => (
-  <row gap={1}>
-    {Array.from({ length: 16 }, (_, i) => {
-      const on = self.state.on[i] ?? false;
-      const flip = () => change((draft) => void (draft.state.on = Array.from({ length: 16 }, (_, j) => (j === i ? !on : (self.state.on[j] ?? false)))));
-      return <box key={`step-${i}`} label={`Step ${i + 1}`} role="switch" checked={on} w={16} h={24} radius="sm" fill={on ? "text" : "fill"} onPress={flip} actions={{ toggle: flip }} />;
-    })}
-  </row>
-));
+export const steps = tool({
+  name: "steps", title: "Steps", when: "Never", doc: "Sixteen steps.", state: { on: list(boolean({ default: false }), { max: 16 }) }, sound: () => input,
+  view: (self, { change }) => (
+    <row gap={1}>
+      {Array.from({ length: 16 }, (_, i) => {
+        const on = self.state.on[i] ?? false;
+        const flip = () => change((draft) => void (draft.state.on = Array.from({ length: 16 }, (_, j) => (j === i ? !on : (self.state.on[j] ?? false)))));
+        return <box key={`step-${i}`} label={`Step ${i + 1}`} role="switch" checked={on} w={16} h={24} radius="sm" fill={on ? "text" : "fill"} onPress={flip} actions={{ toggle: flip }} />;
+      })}
+    </row>
+  ),
+});
 "#;
 const AMP: &str = r#"import { input, number, tool } from "./sdk";
 export const amp = tool({ name: "amp", title: "Amp", when: "Never", doc: "A gain.", state: { gain: number({ min: 0, max: 1, default: 0.5 }), stages: number({ min: 1, max: 8, integer: true, default: 1 }) }, sound: ({ gain }) => input.times(gain) });
 "#;
 
 /// A tool whose actions change twice, fail, or break its view, which a memo keeps a part of.
-const COUNTER: &str = r#"import { boolean, input, number, tool } from "./sdk";
-import { h, memo, view } from "./sdk/view";
+const COUNTER: &str = r#"import { boolean, h, input, memo, number, tool } from "./sdk";
 
-export const counter = tool({ name: "counter", title: "Counter", when: "Never", doc: "Counts.", state: { count: number({ min: 0, max: 100, integer: true, default: 0 }), broken: boolean({ default: false }) }, sound: () => input });
-
-export const counterView = view(counter, (self, { change }) => {
+export const counter = tool({
+  name: "counter", title: "Counter", when: "Never", doc: "Counts.", state: { count: number({ min: 0, max: 100, integer: true, default: 0 }), broken: boolean({ default: false }) }, sound: () => input,
+  view: (self, { change }) => {
   const pad = memo("pad", [], () => <box key="break" label="Break" onPress={() => change((draft) => void (draft.state.broken = true))} />);
   if (self.state.broken) throw new Error("broken");
   const twice = () => {
@@ -151,12 +159,12 @@ export const counterView = view(counter, (self, { change }) => {
       <box key="fail" label="Fail" onPress={() => { throw new Error("it broke"); }} />
     </row>
   );
+  },
 });
 "#;
 
 /// Sixteen steps whose control loop follows where the piece plays.
-const SEQUENCE: &str = r#"import { input, number, tool } from "./sdk";
-import { h, view } from "./sdk/view";
+const SEQUENCE: &str = r#"import { h, input, number, tool } from "./sdk";
 
 export const sequence = tool({
   name: "sequence", title: "Sequence", when: "Never", doc: "Sixteen steps.",
@@ -166,13 +174,12 @@ export const sequence = tool({
     const at = Math.floor(clock.tick / 240) % 16;
     if (at !== state.at) update("Step", (part) => void (part.state.at = at));
   },
+  view: (self) => (
+    <row gap={1}>
+      {Array.from({ length: 16 }, (_, i) => <box key={`step-${i}`} label={`Step ${i + 1}`} role="switch" checked={i === self.state.at} w={16} h={24} fill={i === self.state.at ? "text" : "fill"} onPress={() => {}} />)}
+    </row>
+  ),
 });
-
-export const sequenceView = view(sequence, (self) => (
-  <row gap={1}>
-    {Array.from({ length: 16 }, (_, i) => <box key={`step-${i}`} label={`Step ${i + 1}`} role="switch" checked={i === self.state.at} w={16} h={24} fill={i === self.state.at ? "text" : "fill"} onPress={() => {}} />)}
-  </row>
-));
 "#;
 
 /// A new project whose first track has `tools` of the project as its effects, by name and code.
@@ -418,6 +425,7 @@ fn a_changed_theme_shows_once_the_code_starts_again() {
 
 /// Plays `seconds` from `from`, a frame each 60th of a second.
 fn play(state: &mut State, from: f64, seconds: f64) {
+    build(state);
     state.project.engine().play();
     for step in 1..=(seconds * 60.0) as u32 {
         frame(state, from + f64::from(step) / 60.0);
@@ -452,7 +460,7 @@ fn the_meter_of_a_track_taken_away_and_brought_back_moves() {
     assert!(
         levels
             .iter()
-            .any(|(name, level)| name == "meter:song/t01/mix" && *level > 0.0),
+            .any(|(name, db)| name == "song/t01/mix" && *db > -60.0),
         "{levels:?}"
     );
     let names: Vec<&String> = levels.iter().map(|(name, _)| name).collect();
@@ -481,25 +489,26 @@ fn every_node_the_template_draws_is_one_the_window_reads() {
 
 /// What the test helpers of `sdk/view.ts` do, as the window does it.
 const VIEW_CHECKS: &str = r#"import { expect, test } from "bun:test";
-import { input, number, tool } from "./sdk";
-import { find, h, press, render, view } from "./sdk/view";
+import { find, h, input, number, press, render, tool } from "./sdk";
 
-const counter = tool({ name: "counter", title: "Counter", when: "Never", doc: "Counts.", state: { count: number({ min: 0, max: 100, default: 0 }) }, sound: () => input });
-const counterView = view(counter, (self, { change }) => (
-  <row>
-    <text key="said">{self.state.count > 5 && "Many "}{self.state.count}</text>
-    <box key="twice" label="Twice" onPress={() => change((draft) => { draft.state.count++; draft.state.count++; })} />
-  </row>
-));
+const counter = tool({
+  name: "counter", title: "Counter", when: "Never", doc: "Counts.", state: { count: number({ min: 0, max: 100, default: 0 }) }, sound: () => input,
+  view: (self, { change }) => (
+    <row>
+      <text key="said">{self.state.count > 5 && "Many "}{self.state.count}</text>
+      <box key="twice" label="Twice" onPress={() => change((draft) => { draft.state.count++; draft.state.count++; })} />
+    </row>
+  ),
+});
 const self = { name: "counter", state: { count: 0 }, children: [] } as never;
 
 test("two writes to one field in one change add up", () => {
-  render(counterView, self);
+  render(counter, self);
   expect(press("twice")).toEqual([[["state", "count"], 2]]);
 });
 
 test("a text leaves out what is false", () => {
-  render(counterView, self);
+  render(counter, self);
   expect(find("said")).toMatchObject({ text: "0" });
 });
 "#;
@@ -577,7 +586,7 @@ fn a_control_loop_plays_its_input_and_stops_the_piece() {
     assert!(
         levels
             .iter()
-            .any(|(name, level)| name == "meter:song/t00/mix" && *level > 0.0),
+            .any(|(name, db)| name == "song/t00/mix" && *db > -60.0),
         "{levels:?}"
     );
 }
@@ -658,4 +667,28 @@ fn a_press_that_fails_tells_the_composer_in_plain_words() {
         !notice.is_empty() && !notice.contains("it broke"),
         "{notice}"
     );
+}
+
+#[test]
+fn a_peak_held_three_seconds_shows_in_decibels_then_drops() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    let song = folder.join("extensions/song.tsx");
+    let loudest = r#"<Ruler /><text key="loudest" live={live.peak("t00/mix").hold(3).decibels()} digits={1} />"#;
+    let code = std::fs::read_to_string(&song).unwrap();
+    std::fs::write(&song, code.replace("<Ruler />", loudest)).unwrap();
+    let mut state = opened(&folder);
+    play(&mut state, 0.0, 1.0);
+    state.project.engine().stop();
+    let shown = |state: &State| state.lives.texts().concat();
+    let held = shown(&state);
+    assert!(held.parse::<f64>().is_ok_and(|db| db > -60.0), "{held}");
+    for step in 1..=30 {
+        frame(&mut state, 1.0 + f64::from(step) / 60.0);
+    }
+    assert_eq!(shown(&state), held);
+    for step in 31..=240 {
+        frame(&mut state, 1.0 + f64::from(step) / 60.0);
+    }
+    assert_eq!(shown(&state), "-120.0");
 }

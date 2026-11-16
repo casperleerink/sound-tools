@@ -1,5 +1,5 @@
 //! A view's tree as `sdk/view.ts` sends it, drawn with Rune. What moves every frame is bound
-//! here to a [`Live`] value by name; a press or the end of a drag goes to the tool's code.
+//! here to a live value of [`crate::lives`]; a press or the end of a drag goes to the tool's code.
 
 use std::rc::Rc;
 
@@ -7,6 +7,7 @@ use rune::{El, LineCap, Phase, ScrollSpec, Shape, canvas, col, el, memo, row, te
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sound_core::InstanceId;
+use sound_typescript::live::{Num, Readout};
 use sound_typescript::next::Drawn;
 
 use crate::app::State;
@@ -30,11 +31,20 @@ pub(crate) enum Node {
     },
 }
 
-#[derive(Deserialize, Clone, Copy)]
+#[derive(Deserialize, Clone)]
 #[serde(untagged)]
 enum Size {
-    Points(f32),
+    Points(Num),
     Full(Full),
+}
+
+impl Size {
+    fn points(&self) -> Option<&Num> {
+        match self {
+            Self::Points(points) => Some(points),
+            Self::Full(_) => None,
+        }
+    }
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -67,7 +77,7 @@ pub(crate) struct BoxNode {
     gap: Option<u32>,
     align: Option<String>,
     justify: Option<String>,
-    at: Option<[f32; 2]>,
+    at: Option<[Num; 2]>,
     inset: Option<[Option<f32>; 4]>,
     #[serde(default)]
     clip: bool,
@@ -80,25 +90,9 @@ pub(crate) struct BoxNode {
     border_sides: Option<[f32; 4]>,
     radius: Option<String>,
     shadow: Option<String>,
-    opacity: Option<f32>,
-    x: Option<LiveX>,
-    pub(crate) level: Option<String>,
+    opacity: Option<Num>,
     #[serde(default)]
     pub(crate) children: Vec<Node>,
-}
-
-#[derive(Deserialize, Clone)]
-#[cfg_attr(test, serde(deny_unknown_fields))]
-pub(crate) struct LiveX {
-    pub(crate) live: String,
-    #[serde(default = "one")]
-    pub(crate) scale: f32,
-    #[serde(default)]
-    pub(crate) offset: f32,
-}
-
-fn one() -> f32 {
-    1.0
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -132,13 +126,17 @@ enum Axis {
 #[cfg_attr(test, serde(deny_unknown_fields))]
 pub(crate) struct TextNode {
     key: Option<String>,
-    at: Option<[f32; 2]>,
+    at: Option<[Num; 2]>,
     style: Option<String>,
     color: Option<String>,
     w: Option<f32>,
     #[serde(default)]
     truncate: bool,
-    live: Option<String>,
+    opacity: Option<Num>,
+    /// A live value it shows in place of `text`, in `unit` or with `digits`.
+    live: Option<Num>,
+    unit: Option<Readout>,
+    digits: Option<usize>,
     text: String,
 }
 
@@ -146,7 +144,8 @@ pub(crate) struct TextNode {
 #[cfg_attr(test, serde(deny_unknown_fields))]
 pub(crate) struct ShapesNode {
     key: Option<String>,
-    at: Option<[f32; 2]>,
+    at: Option<[Num; 2]>,
+    opacity: Option<Num>,
     w: f32,
     h: f32,
     units: Option<[f32; 2]>,
@@ -186,8 +185,37 @@ impl Scope<'_> {
         format!("{}{key}", self.prefix)
     }
 
-    fn live(&self, name: &str) -> String {
-        crate::lives::live_name(self.instance, name)
+    /// Places `e` at `at`, sized `w` × `h`, at `opacity`: where any is live, the window moves it
+    /// every frame, out of the flow.
+    fn placed(
+        &self,
+        mut e: El,
+        at: Option<&[Num; 2]>,
+        (w, h): (Option<&Num>, Option<&Num>),
+        opacity: Option<&Num>,
+    ) -> El {
+        let lives = &self.state.lives;
+        let (project, instance) = (&self.state.project, self.instance);
+        let live = |num: Option<&Num>| num.is_some_and(|num| num.fixed().is_none());
+        let [x, y] = at.cloned().unwrap_or([Num::Fixed(0.0), Num::Fixed(0.0)]);
+        if let (true, Some(w), Some(h)) = (live(w) || live(h), w, h) {
+            let rect = [x, y, w.clone(), h.clone()];
+            e = e
+                .absolute(0.0, 0.0)
+                .live_rect(&lives.rect(project, instance, rect));
+        } else if let Some(at) = at {
+            e = match (at[0].fixed(), at[1].fixed()) {
+                (Some(x), Some(y)) => e.absolute(x, y),
+                _ => {
+                    (e.absolute(0.0, 0.0)).live_offset(&lives.offset(project, instance, at.clone()))
+                }
+            };
+        }
+        match opacity {
+            Some(Num::Fixed(opacity)) => e.opacity(*opacity),
+            Some(opacity) => e.live_opacity(&lives.opacity(project, instance, opacity)),
+            None => e,
+        }
     }
 }
 
@@ -252,15 +280,15 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
     if let Some(key) = &key {
         e = e.key(key.clone());
     }
-    e = match b.w {
-        Some(Size::Points(w)) => e.w(w),
+    e = match &b.w {
+        Some(Size::Points(Num::Fixed(w))) => e.w(*w),
         Some(Size::Full(_)) => e.w_full(),
-        None => e,
+        _ => e,
     };
-    e = match b.h {
-        Some(Size::Points(h)) => e.h(h),
+    e = match &b.h {
+        Some(Size::Points(Num::Fixed(h))) => e.h(*h),
         Some(Size::Full(_)) => e.h_full(),
-        None => e,
+        _ => e,
     };
     if let Some(grow) = b.grow {
         e = e.grow(grow);
@@ -288,9 +316,12 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
         Some("end") => e = e.justify_end(),
         _ => {}
     }
-    if let Some([x, y]) = b.at {
-        e = e.absolute(x, y);
-    }
+    // Before `inset`, which pins it to more edges than `at` does.
+    let size = (
+        b.w.as_ref().and_then(Size::points),
+        b.h.as_ref().and_then(Size::points),
+    );
+    e = scope.placed(e, b.at.as_ref(), size, b.opacity.as_ref());
     if let Some([left, top, right, bottom]) = b.inset {
         e = e.pin(left, top, right, bottom);
     }
@@ -320,25 +351,9 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
     if let Some(shadow) = b.shadow.as_deref().and_then(|name| theme.shadow(name)) {
         e = e.shadow(shadow.y, shadow.blur, theme.color(&shadow.color));
     }
-    if let Some(opacity) = b.opacity {
-        e = e.opacity(opacity);
-    }
     e = semantics(scope, e, b, key.as_deref());
     if let Some(key) = &key {
         let lives = &scope.state.lives;
-        if let Some(spec) = &b.x {
-            e = e.live_offset(&lives.offset(
-                key,
-                LiveX {
-                    live: scope.live(&spec.live),
-                    ..spec.clone()
-                },
-            ));
-        }
-        if let (Some(name), Some(Size::Points(w)), Some(Size::Points(h))) = (&b.level, b.w, b.h) {
-            let level = lives.level(key, scope.live(name), [w, h]);
-            e = e.pin(Some(0.0), Some(0.0), None, None).live_rect(&level);
-        }
         if let (Some(spec), Some(element)) = (b.drag, &b.key) {
             let moved = lives.dragged(key);
             let (instance, element) = (scope.instance.clone(), element.clone());
@@ -420,13 +435,11 @@ fn label(scope: &Scope, t: &TextNode) -> El {
     if t.truncate {
         e = e.truncate();
     }
-    if let Some([x, y]) = t.at {
-        e = e.absolute(x, y);
+    if let Some(value) = &t.live {
+        let (state, instance) = (scope.state, scope.instance);
+        e = e.live_text(&(state.lives).text(&state.project, instance, value, t.unit, t.digits));
     }
-    if t.live.as_deref() == Some("time") {
-        e = e.live_text(&scope.state.lives.time);
-    }
-    e
+    scope.placed(e, t.at.as_ref(), (None, None), t.opacity.as_ref())
 }
 
 fn drawing(scope: &Scope, d: &ShapesNode) -> El {
@@ -458,10 +471,7 @@ fn drawing(scope: &Scope, d: &ShapesNode) -> El {
     if let Some(key) = &d.key {
         e = e.key(scope.key(key));
     }
-    if let Some([x, y]) = d.at {
-        e = e.absolute(x, y);
-    }
-    e
+    scope.placed(e, d.at.as_ref(), (None, None), d.opacity.as_ref())
 }
 
 #[cfg(test)]

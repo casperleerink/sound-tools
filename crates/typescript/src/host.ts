@@ -15,16 +15,14 @@ const stackPaths = files.map((file) => [file, `${realpathSync(join(folder, file)
 // So the stack `tool` keeps reaches its file through any number of helpers.
 Error.stackTraceLimit = Infinity;
 const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
-/** What the host uses of `sdk/view.ts`, which only a project of the new window has. */
+/** What the host uses of `sdk/view.ts`, which only a project of the new window has: there a tool's `view` is one of it. */
 type Next = {
   host: {
-    views: Map<string, unknown>;
-    run(instance: string, made: unknown, self: unknown, change: unknown): unknown;
+    run(instance: string, draw: unknown, self: unknown, ctx: { memory: unknown; change: unknown }): unknown;
     perform(instance: string, key: string, action: string, value?: unknown): void;
     forget(instance: string): void;
   };
 };
-/** The views of the new window: loaded before the tools, which register theirs. */
 const next: Next | undefined = existsSync(join(folder, "sdk/view.ts")) ? await import(join(folder, "sdk/view.ts")) : undefined;
 
 for (const name of ["log", "info", "debug", "warn"] as const) {
@@ -686,8 +684,7 @@ const shown = new Set<string>();
 function drawNext(instance: string) {
   const record = recordOf(instance);
   const spec = sdk.host.tools.get(record?.tool ?? "");
-  const made = record && next?.host.views.get(record.tool);
-  if (!record || !spec || !made) {
+  if (!next || !record || !spec?.view) {
     say({ type: "tree", instance, none: true });
     return;
   }
@@ -695,7 +692,7 @@ function drawNext(instance: string) {
   const change = (edit: (draft: Part<State>) => void, label = "Change") => updater(instance)(label, edit);
   runs(spec.name, "view");
   try {
-    say({ type: "tree", instance, tree: next!.host.run(instance, made, self, change) });
+    say({ type: "tree", instance, tree: next.host.run(instance, spec.view, self, { memory: memoryOf(instance, spec), change }) });
   } catch (error) {
     say({ type: "tree", instance, error: String(error) });
   }
@@ -1381,6 +1378,12 @@ function draw(spec: Spec): unknown {
     spec.tick?.({ ...context, dt: 1 / 30 } as never);
   } catch (error) {
     throw new Error(`its tick fails: ${error}`);
+  }
+  if (next) {
+    const checked = `check ${spec.name}`;
+    if (spec.view) next.host.run(checked, spec.view, { name: spec.name, state, children: [] }, { memory, change() {} });
+    next.host.forget(checked);
+    return [];
   }
   const known: Stores = { tool: spec.name, state: structuredClone(state), children: [], watches: {} };
   const drawn = { ...context, state: sdk.host.store(known.state, false), size: sdk.host.store({ ...CHECKED_ROOM }, false) };

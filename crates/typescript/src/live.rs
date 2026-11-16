@@ -1,14 +1,192 @@
 //! Live values: numbers of a tree the window works out again on every frame, so what moves on
-//! a card or a page moves without Bun.
+//! a card or a page moves without Bun. Both windows work them out here, each from sources of
+//! its own, see [`Leaves`].
 
 use std::collections::{BTreeMap, HashMap};
 
 use serde_json::Value;
-use sound_core::ValueRange;
+use sound_core::{Clock, InstanceId, Project, Ticks, ValueRange};
+use sound_ui::components::knob::{
+    decibels_readout, hertz_readout, milliseconds_readout, pan_readout, percent_readout,
+    seconds_readout, semitones_readout, short,
+};
 
 use crate::feeds::Feeds;
+pub use crate::tools::Unit;
 use crate::tools::{Input, ToolInfo};
-use crate::tree::{DragPart, Live, Num, SpacePart, named};
+use crate::tree::named;
+pub use crate::tree::{DragPart, Ease, Live, Num, Readout, SpacePart, TickReadout};
+
+/// How close an ease comes before it is there, or a smooth one would move for a minute.
+const SETTLED: f64 = 1e-6;
+
+/// What a live value reads: the values that read no other, and what eases keep.
+pub trait Leaves {
+    /// The number of a live value that reads no other, such as the playhead or a peak.
+    fn leaf(&self, live: &Live) -> f64;
+    /// `value` eased as `ease` says, under `key`: once a frame, the same wherever it is drawn.
+    fn ease(&self, key: &str, ease: Ease, value: f64) -> f64;
+}
+
+/// The number `number` is now.
+pub fn number(number: &Num, leaves: &(impl Leaves + ?Sized)) -> f64 {
+    match number {
+        Num::Fixed(value) => f64::from(*value),
+        Num::Live(live) => evaluate(live, leaves),
+    }
+}
+
+/// The number `live` is now.
+pub fn evaluate(live: &Live, leaves: &(impl Leaves + ?Sized)) -> f64 {
+    let both = |a: &Num, b: &Num| (number(a, leaves), number(b, leaves));
+    let truth = |holds: bool| f64::from(u8::from(holds));
+    match live {
+        Live::Plus { a, b } => number(a, leaves) + number(b, leaves),
+        Live::Minus { a, b } => number(a, leaves) - number(b, leaves),
+        Live::Times { a, b } => number(a, leaves) * number(b, leaves),
+        Live::Over { a, b } => {
+            let (a, b) = both(a, b);
+            if b == 0.0 { 0.0 } else { a / b }
+        }
+        Live::Min { a, b } => {
+            let (a, b) = both(a, b);
+            a.min(b)
+        }
+        Live::Max { a, b } => {
+            let (a, b) = both(a, b);
+            a.max(b)
+        }
+        Live::Lt { a, b } => {
+            let (a, b) = both(a, b);
+            truth(a < b)
+        }
+        Live::Gt { a, b } => {
+            let (a, b) = both(a, b);
+            truth(a > b)
+        }
+        Live::Le { a, b } => {
+            let (a, b) = both(a, b);
+            truth(a <= b)
+        }
+        Live::Ge { a, b } => {
+            let (a, b) = both(a, b);
+            truth(a >= b)
+        }
+        Live::Eq { a, b } => {
+            let (a, b) = both(a, b);
+            truth(a == b)
+        }
+        Live::Ne { a, b } => {
+            let (a, b) = both(a, b);
+            truth(a != b)
+        }
+        Live::Mod { a, b } => {
+            let (a, b) = both(a, b);
+            if b == 0.0 { 0.0 } else { a.rem_euclid(b) }
+        }
+        Live::Pow { a, b } => {
+            let (a, b) = both(a, b);
+            let power = a.powf(b);
+            if power.is_finite() { power } else { 0.0 }
+        }
+        Live::Snap { a, b } => {
+            let (value, step) = both(a, b);
+            snap(value, step)
+        }
+        Live::Negate { x } => -number(x, leaves),
+        Live::Abs { x } => number(x, leaves).abs(),
+        Live::Floor { x } => number(x, leaves).floor(),
+        Live::Round { x } => number(x, leaves).round(),
+        Live::Sin { x } => number(x, leaves).sin(),
+        Live::Cos { x } => number(x, leaves).cos(),
+        Live::Decibels { x } => (20.0 * number(x, leaves).abs().log10()).max(-120.0),
+        Live::Ease { x, ease, key } => leaves.ease(key, *ease, number(x, leaves)),
+        Live::Tick
+        | Live::Bpm
+        | Live::Elapsed
+        | Live::Value { .. }
+        | Live::Held { .. }
+        | Live::Peak { .. }
+        | Live::DevicePeak { .. }
+        | Live::Input { .. }
+        | Live::Drag { .. }
+        | Live::Space { .. }
+        | Live::Hover { .. }
+        | Live::Touched { .. } => leaves.leaf(live),
+    }
+}
+
+/// What an ease keeps from frame to frame.
+#[derive(Clone, Copy, Debug)]
+pub struct Eased {
+    /// The frame it last moved in.
+    pub frame: u64,
+    pub value: f64,
+    /// How long a hold has held.
+    held: f64,
+}
+
+impl Eased {
+    pub fn new(frame: u64, value: f64) -> Self {
+        Self {
+            frame,
+            value,
+            held: 0.0,
+        }
+    }
+
+    /// One frame `dt` seconds after the last, toward `value`. Whether it still moves.
+    pub fn step(&mut self, ease: Ease, value: f64, dt: f64) -> bool {
+        let before = self.value;
+        match ease {
+            Ease::Smooth { ms } => {
+                let seconds = f64::from(ms.max(1.0)) / 1000.0;
+                self.value += (value - self.value) * (1.0 - (-dt / seconds).exp());
+            }
+            Ease::Fall { per_second } => {
+                self.value = value.max(self.value - f64::from(per_second) * dt);
+            }
+            Ease::Hold { seconds } => {
+                self.held += dt;
+                if value >= self.value || self.held > f64::from(seconds) {
+                    self.value = value;
+                    self.held = 0.0;
+                }
+            }
+        }
+        if !self.value.is_finite() || (value - self.value).abs() < SETTLED {
+            self.value = value;
+        }
+        self.value != before || self.value != value
+    }
+}
+
+/// A field of `instance` as it plays, by its name as `now.value` gives it (of an instance
+/// inside it, `path.field`): what a lane plays into it at `tick`, else its record.
+pub fn field_now(
+    project: &Project,
+    instance: &InstanceId,
+    child: Option<&str>,
+    name: &str,
+    tick: Ticks,
+) -> f64 {
+    let id = match child {
+        Some(path) => instance.child(path).ok(),
+        None => Some(instance.clone()),
+    };
+    let Some(id) = id else {
+        return 0.0;
+    };
+    let at = crate::feeds::Moment::at(tick);
+    if let Some((value, _)) = crate::feeds::lane_value(project, &id, name, at) {
+        return f64::from(value);
+    }
+    let state = project.state_json(&id);
+    let state = state.and_then(|state| serde_json::from_str::<Value>(&state).ok());
+    let value =
+        state.and_then(|state| crate::path::at(&state, name).and_then(crate::tree::number_of));
+    value.map_or(0.0, f64::from)
+}
 
 /// Where a drag is, in the units of its space, as `now.drag(id)` reads it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -108,11 +286,8 @@ pub(crate) struct Sources<'a> {
 }
 
 impl Sources<'_> {
-    pub(crate) fn number(&self, number: &Num) -> f64 {
-        match number {
-            Num::Fixed(value) => f64::from(*value),
-            Num::Live(live) => self.live(live),
-        }
+    pub(crate) fn number(&self, value: &Num) -> f64 {
+        number(value, self)
     }
 
     /// What a field of the record holds now.
@@ -148,9 +323,10 @@ impl Sources<'_> {
         let output = self.feeds.played.get(name);
         output.map_or(0.0, |(value, _)| f64::from(*value))
     }
+}
 
-    fn live(&self, live: &Live) -> f64 {
-        let both = |a: &Num, b: &Num| (self.number(a), self.number(b));
+impl Leaves for Sources<'_> {
+    fn leaf(&self, live: &Live) -> f64 {
         let truth = |holds: bool| f64::from(u8::from(holds));
         let along = |(value, range): (f32, Option<ValueRange>), fraction: bool| {
             let range = range.filter(|_| fraction);
@@ -222,67 +398,12 @@ impl Sources<'_> {
                 );
                 truth(touched)
             }
-            Live::Plus { a, b } => self.number(a) + self.number(b),
-            Live::Minus { a, b } => self.number(a) - self.number(b),
-            Live::Times { a, b } => self.number(a) * self.number(b),
-            Live::Over { a, b } => {
-                let (a, b) = both(a, b);
-                if b == 0.0 { 0.0 } else { a / b }
-            }
-            Live::Min { a, b } => {
-                let (a, b) = both(a, b);
-                a.min(b)
-            }
-            Live::Max { a, b } => {
-                let (a, b) = both(a, b);
-                a.max(b)
-            }
-            Live::Lt { a, b } => {
-                let (a, b) = both(a, b);
-                truth(a < b)
-            }
-            Live::Gt { a, b } => {
-                let (a, b) = both(a, b);
-                truth(a > b)
-            }
-            Live::Le { a, b } => {
-                let (a, b) = both(a, b);
-                truth(a <= b)
-            }
-            Live::Ge { a, b } => {
-                let (a, b) = both(a, b);
-                truth(a >= b)
-            }
-            Live::Eq { a, b } => {
-                let (a, b) = both(a, b);
-                truth(a == b)
-            }
-            Live::Ne { a, b } => {
-                let (a, b) = both(a, b);
-                truth(a != b)
-            }
-            Live::Mod { a, b } => {
-                let (a, b) = both(a, b);
-                if b == 0.0 { 0.0 } else { a.rem_euclid(b) }
-            }
-            Live::Pow { a, b } => {
-                let (a, b) = both(a, b);
-                let power = a.powf(b);
-                if power.is_finite() { power } else { 0.0 }
-            }
-            Live::Snap { a, b } => {
-                let (value, step) = both(a, b);
-                snap(value, step)
-            }
-            Live::Negate { x } => -self.number(x),
-            Live::Abs { x } => self.number(x).abs(),
-            Live::Floor { x } => self.number(x).floor(),
-            Live::Round { x } => self.number(x).round(),
-            Live::Sin { x } => self.number(x).sin(),
-            Live::Cos { x } => self.number(x).cos(),
-            Live::Decibels { x } => (20.0 * self.number(x).abs().log10()).max(-120.0),
-            Live::Ease { x, ease, key } => self.feeds.ease(key, *ease, self.number(x)),
+            _ => 0.0,
         }
+    }
+
+    fn ease(&self, key: &str, ease: Ease, value: f64) -> f64 {
+        self.feeds.ease(key, ease, value)
     }
 }
 
@@ -310,9 +431,76 @@ pub(crate) fn snap(value: f64, step: f64) -> f64 {
     }
 }
 
+/// A number as a readout of `unit`.
+fn readout(value: f32, unit: Option<Unit>) -> String {
+    match unit {
+        Some(Unit::Hz) => hertz_readout(value),
+        Some(Unit::Ms) => milliseconds_readout(value),
+        Some(Unit::Seconds) => seconds_readout(value),
+        Some(Unit::Db) => decibels_readout(value),
+        Some(Unit::Percent) => percent_readout(value),
+        Some(Unit::Semitones) => semitones_readout(value),
+        Some(Unit::Cents) => format!("{} ct", short(value)),
+        Some(Unit::Octaves) => format!("{} oct", short(value)),
+        Some(Unit::Pitch) => pitch_readout(f64::from(value)),
+        Some(Unit::Pan) => pan_readout(value),
+        None => short(value),
+    }
+}
+
+/// A live number as text shows it: in its unit, or a tick as a place in the piece (`5.3`), as
+/// minutes and seconds (`1:07`), or as the time signature there (`7/8`).
+pub fn text_of(value: f64, shown: Option<Readout>, clock: Option<&Clock>) -> String {
+    let shown = match shown {
+        None => return readout(value as f32, None),
+        // A pitch keeps its cents, which an `f32` of a high note would round.
+        Some(Readout::Unit(Unit::Pitch)) => return pitch_readout(value),
+        Some(Readout::Unit(unit)) => return readout(value as f32, Some(unit)),
+        Some(Readout::Tick(shown)) => shown,
+    };
+    let tick = sound_core::Ticks(value.max(0.0) as u64);
+    let Some(clock) = clock else {
+        return String::new();
+    };
+    let signatures = clock.tempo_map().time_signatures();
+    match shown {
+        TickReadout::Position => {
+            let position = signatures.bar_beat_of(tick);
+            format!("{}.{}", position.bar, position.beat)
+        }
+        TickReadout::Time => {
+            let seconds = clock.seconds_of(tick).max(0.0) as u64;
+            format!("{}:{:02}", seconds / 60, seconds % 60)
+        }
+        TickReadout::Signature => signatures.bar_at(tick).signature.to_string(),
+        TickReadout::Beats => signatures.bar_at(tick).signature.numerator().to_string(),
+        TickReadout::Note => signatures.bar_at(tick).signature.denominator().to_string(),
+    }
+}
+
+/// A pitch as its note, `C2` for 36, and how many cents off it is where it is not whole:
+/// `D2 +30`, so two pitches tuned apart do not read the same.
+fn pitch_readout(value: f64) -> String {
+    let note = value.round();
+    let cents = ((value - note) * 100.0).round() as i64;
+    match sound_notes::Pitch::try_from(note as i64) {
+        Ok(pitch) if cents == 0 => pitch.name(),
+        Ok(pitch) => format!("{} {cents:+}", pitch.name()),
+        Err(_) => readout(value as f32, None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pitch_that_is_not_whole_reads_its_note_and_its_cents() {
+        assert_eq!(pitch_readout(36.0), "C2");
+        assert_eq!(pitch_readout(38.3), "D2 +30");
+        assert_eq!(pitch_readout(37.6), "D2 -40");
+        assert_eq!(pitch_readout(36.004), "C2");
+    }
 
     fn live(json: serde_json::Value) -> Num {
         serde_json::from_value(json).unwrap()

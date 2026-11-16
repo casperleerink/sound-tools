@@ -1567,7 +1567,7 @@ pub(crate) struct Clip {
 /// A number, or a live value the window works out on every frame. Read by hand: serde's
 /// untagged enums buffer every number of a tree.
 #[derive(Clone, Debug)]
-pub(crate) enum Num {
+pub enum Num {
     Fixed(f32),
     Live(Box<Live>),
 }
@@ -1617,7 +1617,7 @@ impl Num {
     }
 
     /// Its number, when it is one and not a live value.
-    pub(crate) fn fixed(&self) -> Option<f32> {
+    pub fn fixed(&self) -> Option<f32> {
         match self {
             Self::Fixed(number) => Some(*number),
             Self::Live(_) => None,
@@ -1634,7 +1634,7 @@ impl Num {
 /// A live value, as `sdk.ts`'s `Live` sends it.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum Live {
+pub enum Live {
     Tick,
     /// The tempo at the playhead.
     Bpm,
@@ -1781,7 +1781,7 @@ pub(crate) enum Live {
 /// How a live value follows another over time.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum Ease {
+pub enum Ease {
     /// Glides toward it, about two thirds of the way in `ms`.
     Smooth { ms: f32 },
     /// Rises with it at once and falls at most `per_second`.
@@ -1887,7 +1887,7 @@ impl Live {
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) enum DragPart {
+pub enum DragPart {
     StartX,
     StartY,
     Dx,
@@ -1900,7 +1900,7 @@ pub(crate) enum DragPart {
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) enum SpacePart {
+pub enum SpacePart {
     Left,
     Top,
     Right,
@@ -1960,7 +1960,7 @@ pub(crate) enum Axis {
 /// How text shows a live number: in a unit, or a tick of the clock.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(untagged)]
-pub(crate) enum Readout {
+pub enum Readout {
     Unit(Unit),
     Tick(TickReadout),
 }
@@ -1969,7 +1969,7 @@ pub(crate) enum Readout {
 /// signature there.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum TickReadout {
+pub enum TickReadout {
     Position,
     Time,
     Signature,

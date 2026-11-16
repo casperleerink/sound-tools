@@ -1,4 +1,4 @@
-import { h } from "../sdk/view";
+import { h } from "../sdk";
 
 export const [MIN_DB, MAX_DB] = [-60, 6];
 const THUMB = 12;

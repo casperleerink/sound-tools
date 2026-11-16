@@ -1,4 +1,4 @@
-import { h } from "../sdk/view";
+import { h } from "../sdk";
 
 const SIZE = 32;
 const TRAVEL = 120;

@@ -14,7 +14,6 @@ use sound_typescript::next::Drawn;
 
 use crate::app::State;
 use crate::card::{self, Field, Kind};
-use crate::lives::live_name;
 use crate::tree::Node;
 
 /// One control of the window, as `--tree` lists it under `controls`.
@@ -50,7 +49,7 @@ pub(crate) enum Target {
     Play,
 }
 
-/// Every control the window shows now, the instances whose views it shows, and the meters.
+/// Every control the window shows now, and the instances whose views it shows.
 pub(crate) fn collect(state: &State) -> Found {
     let mut found = Found::default();
     found.controls.push(Control {
@@ -72,8 +71,6 @@ pub(crate) fn collect(state: &State) -> Found {
 pub(crate) struct Found {
     pub(crate) controls: Vec<Control>,
     pub(crate) shown: BTreeSet<InstanceId>,
-    /// The meters the views bind, by live name, such as `meter:song/t01/mix`.
-    pub(crate) meters: BTreeSet<String>,
 }
 
 impl Found {
@@ -119,9 +116,6 @@ impl Found {
             }
             Node::Text(_) | Node::Shapes(_) => return,
         };
-        if let Some(level) = &b.level {
-            self.meters.insert(live_name(id, level));
-        }
         let press = b.press.then(|| "press".to_string());
         let drag = b.drag.is_some().then(|| "drag".to_string());
         let actions: Vec<String> = (press.into_iter())

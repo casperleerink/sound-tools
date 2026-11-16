@@ -270,19 +270,8 @@ export const DeviceCard = ({ path, sidechain, ...props }: DeviceCardProps): UiNo
   return element("card", { instance: path, ...props, sidechain: shown, onSidechain }, []);
 };
 
-export type IconName =
-  | "arrow-left" | "arrow-right" | "arrow-up" | "audio-lines" | "automation" | "bot" | "check"
-  | "chevron-down" | "chevron-left" | "chevron-right" | "chevron-up" | "circle" | "circle-alert"
-  | "circle-check" | "claude" | "copy" | "device-analyzer" | "device-compressor" | "device-delay"
-  | "device-drum-pad" | "device-eq" | "device-filter" | "device-gate" | "device-limiter"
-  | "device-modulation" | "device-plugin" | "device-reverb" | "device-sampler" | "device-saturator"
-  | "device-synth" | "device-utility" | "device-wavetable" | "ellipsis" | "eq-bell" | "eq-high-cut"
-  | "eq-high-shelf" | "eq-low-cut" | "eq-low-shelf" | "eq-notch" | "eye" | "eye-off" | "folder" | "info"
-  | "keyboard-music" | "loader-circle" | "lock" | "lock-open" | "metronome" | "mic" | "minus" | "music"
-  | "panel-left" | "pause" | "pencil" | "piano" | "play" | "plus" | "power" | "redo-2" | "search" | "section"
-  | "send" | "settings" | "shield" | "skip-back" | "skip-forward" | "sliders-horizontal" | "sparkles"
-  | "square" | "tempo-change" | "time-signature" | "trash-2" | "triangle-alert" | "undo-2" | "volume-2"
-  | "volume-x" | "x" | "zap";
+import type { IconName } from "./clock";
+export type { IconName };
 
 /** An icon of the app, 16 points when `size` is left out, in the text's colour unless `color` says. */
 export const Icon = (props: { name: Bind<IconName>; size?: number; color?: Bind<Color> }): UiNode => element("icon", { ...props }, []);

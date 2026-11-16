@@ -1,10 +1,8 @@
 // Tools
 
+import { ActionKey, AppKey, Clock, KeyName, MenuItem, MenuOptions, Modifiers, MovedNumber, Offers, PLAIN_KEYS, PlainKey, SHIFTED_KEYS, SYMBOL_KEYS } from "./clock";
 import { BangInput, Fields, InputNames, Inputs, NumberField, Outputs, SoundOf, StateOf, ValuesOf } from "./fields";
-import { host } from "./host";
-import { ActionKey, AppKey, Clock, KeyName, MenuItem, MenuOptions, Modifiers, MovedNumber, Now, Offers, PlainKey, View } from "./live";
-import { Child } from "./nodes";
-import { Memory } from "./reactivity";
+import type { ToolView, ViewContext } from "./host";
 import { Tools } from "./records";
 import { Operand, Stereo } from "./sound";
 
@@ -62,11 +60,8 @@ export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends Child
    * plays the sound with `send`, as a performer would, and keeps what it needs in `memory`.
    */
   tick?: (tool: Tick<ValuesOf<S>, I, M, K>) => void;
-  /**
-   * Its view, drawn in the room the window gives it: a card in a rack, or the whole window for
-   * an instance at the top of a project. Without one it gets `defaultView`.
-   */
-  view?: (view: View<ValuesOf<S>, I, M, K>) => Child;
+  /** Its view, wherever the window shows it. Without one it gets a card of its fields. */
+  view?: ToolView<S, I, M, K>;
   /**
    * What it does on a key, by name: lowercase letters, digits, `_`. The composer sees them
    * in the list of shortcuts and gives each the keys they want, which then replace `keys`. A key
@@ -174,7 +169,7 @@ export function takes<Port extends "notes" | "audio">(port: Port): Takes<Port> {
  * step sequencer: its sound reads no `note`, and it has no `onNotes` and no behaviour to pass
  * them on. A parent then shows what it sends that child as not played.
  */
-export const hearsNotes = (name: string): boolean => host.hearsNotes(name);
+export const hearsNotes = (name: string): boolean => registry.hearsNotes(name);
 
 declare const filled: unique symbol;
 /**
@@ -407,11 +402,11 @@ export function tool<
   const K extends ChildTools = ChildTools,
   const O extends Outputs = {},
 >(spec: ToolSpec<S, I, M, K, O> & { name: Name }): ProjectTool<Name, ProjectEntry<S, I, K, O>> {
-  if (host.tools.has(spec.name)) {
+  if (registry.tools.has(spec.name)) {
     throw new Error(`a tool named ${spec.name} is already defined`);
   }
-  host.tools.set(spec.name, spec as unknown as ToolSpec<Fields, Inputs, unknown>);
-  host.stacks.set(spec.name, new Error().stack ?? "");
+  registry.tools.set(spec.name, spec as unknown as ToolSpec<Fields, Inputs, unknown>);
+  registry.stacks.set(spec.name, new Error().stack ?? "");
   return spec.name as ProjectTool<Name, ProjectEntry<S, I, K, O>>;
 }
 
@@ -479,7 +474,7 @@ export type Frozen<T> = T extends string | number | boolean | null | undefined
 
 /** What all code of an instance gets: its view, `tick`, its `actions`, `onKey` and `onNotes`. */
 export interface Context<State, I extends Inputs = Inputs, M = unknown, K extends ChildTools = ChildTools>
-  extends Performer<I, K> {
+  extends Performer<I, K>, ViewContext<State, I, M> {
   /** The record as it is now, every field at its default where the record leaves it out. */
   state: Frozen<State>;
   /** The records of its children, as its behaviour gets them. */
@@ -536,8 +531,6 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
   addOffer(key: string, path: string, label: string): void;
   /** Opens the window of its own of the child at `path`, such as a plugin's, or brings it forward. A child with none is a problem in `problems.txt`. */
   openWindow(path: string): void;
-  /** What its code keeps and nothing saves. A binding that read a field of it runs again when code sets that field. */
-  memory: Memory<M>;
   /**
    * The last value of each number `output` of its sound, and of its children's as `<child>.<name>`.
    * A binding that read one runs again as it moves.
@@ -547,8 +540,6 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
   time: number;
   /** Where the piece plays, its tempo and its sections, and what plays, stops and moves it. */
   clock: Clock;
-  /** The sources of live values: what a view shows moving without drawing again. */
-  now: Now<State, I>;
 }
 
 /** What the control loop of an instance gets each time it runs. */
@@ -557,3 +548,23 @@ export interface Tick<State, I extends Inputs = Inputs, M = unknown, K extends C
   /** Seconds since the last tick. */
   dt: number;
 }
+
+/** The tools the project's files defined, and what the host says of them. Not for tools. */
+export const registry = {
+  /** Whether `name` names a key as `KeyName` does. */
+  isKeyName: (name: string) => PLAIN_KEYS.includes(name.replace(/^(cmd-)?(ctrl-)?(alt-)?/, "") as never),
+  /** Whether `name` names a key as `ActionKey` does. */
+  isActionKey: (name: string) => {
+    const key = name.replace(/^(cmd-)?(alt-)?/, "");
+    const shifted = key.startsWith("shift-") ? key.slice(6) : null;
+    if (shifted === null) return [...PLAIN_KEYS, ...SHIFTED_KEYS].includes(key as never);
+    return PLAIN_KEYS.includes(shifted as never) && !SYMBOL_KEYS.includes(shifted as never);
+  },
+  tools: new Map<string, ToolSpec<Fields, Inputs, unknown>>(),
+  /** Whether the sound of the tool `name` reads `beat` or `bpm`. The host says. */
+  readsBeat: (_name: string): boolean => false,
+  /** See `hearsNotes`. The host says. */
+  hearsNotes: (_name: string): boolean => true,
+  /** The call stack of each tool's `tool`, which tells the file that made it. */
+  stacks: new Map<string, string>(),
+};

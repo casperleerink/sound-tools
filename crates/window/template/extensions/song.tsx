@@ -1,5 +1,4 @@
-import { boolean, choice, list, text, tool, type Connection, type Declaration } from "./sdk";
-import { h, memo, view, type Color, type Lines, type Self } from "./sdk/view";
+import { boolean, choice, h, list, live, memo, text, tool, type Color, type Connection, type Declaration, type Drawn, type Lines, type ValuesOf } from "./sdk";
 import { bus } from "./bus";
 import { tape } from "./tape";
 import { track } from "./track";
@@ -64,38 +63,8 @@ export const song = tool({
     }
     return { connections };
   },
-});
-
-/** `children` in the order `order` names them, then the others by name. */
-function ordered<T extends { name: string }>(children: readonly T[], order: readonly string[]): T[] {
-  const rank = (name: string) => (order.includes(name) ? order.indexOf(name) : order.length);
-  return [...children].sort((a, b) => rank(a.name) - rank(b.name) || (a.name < b.name ? -1 : 1));
-}
-
-type Song = Self<typeof song>;
-type Child = Song["children"][number];
-type Track = Extract<Child, { tool: typeof track }>;
-type Memory = { chosen: string | null; armed: string[] };
-
-const [BAR, BEAT] = [3840, 960];
-/** Points per tick, and the bars the timeline shows. */
-const [ZOOM, BARS] = [0.03, 32];
-const [HEAD, ROW, RULER, LEAD, PANEL, MIXER, FADER] = [208, 56, 24, 8, 168, 208, 120];
-const [LOW, HIGH] = [36, 96];
-const COLOURS = ["blue", "green", "yellow", "peach", "red", "lavender", "sky", "teal", "mauve", "pink"];
-
-const colourOf = (each: Track): Color => (COLOURS.includes(each.state.colour) ? (each.state.colour as Color) : "blue");
-const titleOf = (each: Track, index: number) => each.state.title || `Track ${index + 1}`;
-/** A fader's gain, which may be `"-inf"`, as a number of dB. */
-const dbOf = (gain: number | "-inf" | undefined) => (gain === "-inf" ? MIN_DB : (gain ?? 0));
-const mixOf = (each: Track) => {
-  const mix = each.children.find((child) => child.name === "mix");
-  return mix?.tool === "fader" ? mix.state : undefined;
-};
-
-export const songView = view(
-  song,
-  (self, { memory, change }) => {
+  memory: (): Memory => ({ chosen: null, armed: [] }),
+  view: (self, { memory, change }) => {
     const tracks = ordered(self.children.filter((child): child is Track => child.tool === "track"), self.state.order);
     const chosen = tracks.find((each) => each.name === memory.chosen) ?? tracks[0];
     /** Changes the fader of `name`, a track or the master. */
@@ -130,7 +99,7 @@ export const songView = view(
             ))}
           </col>
           <box inset={[HEAD, 0, 0, 0]} clip inert>
-            <box key="playhead" inset={[0, 0, null, 0]} w={1} fill="text" x={{ live: "playhead", scale: ZOOM, offset: LEAD }} />
+            <box key="playhead" inset={[0, 0, null, 0]} w={1} fill="text" at={[live.playhead.times(ZOOM).plus(LEAD), 0]} />
           </box>
         </box>
         {chosen && <Panel each={chosen} title={titleOf(chosen, tracks.indexOf(chosen))} />}
@@ -144,8 +113,35 @@ export const songView = view(
       </col>
     );
   },
-  { memory: (): Memory => ({ chosen: null, armed: [] }) },
-);
+});
+
+/** `children` in the order `order` names them, then the others by name. */
+function ordered<T extends { name: string }>(children: readonly T[], order: readonly string[]): T[] {
+  const rank = (name: string) => (order.includes(name) ? order.indexOf(name) : order.length);
+  return [...children].sort((a, b) => rank(a.name) - rank(b.name) || (a.name < b.name ? -1 : 1));
+}
+
+type Song = Drawn<ValuesOf<typeof fields>, typeof parts>;
+type Child = Song["children"][number];
+type Track = Extract<Child, { tool: typeof track }>;
+type Memory = { chosen: string | null; armed: string[] };
+
+const [BAR, BEAT] = [3840, 960];
+/** Points per tick, and the bars the timeline shows. */
+const [ZOOM, BARS] = [0.03, 32];
+const [HEAD, ROW, RULER, LEAD, PANEL, MIXER, FADER] = [208, 56, 24, 8, 168, 208, 120];
+const [LOW, HIGH] = [36, 96];
+const COLOURS = ["blue", "green", "yellow", "peach", "red", "lavender", "sky", "teal", "mauve", "pink"];
+
+const colourOf = (each: Track): Color => (COLOURS.includes(each.state.colour) ? (each.state.colour as Color) : "blue");
+const titleOf = (each: Track, index: number) => each.state.title || `Track ${index + 1}`;
+/** A fader's gain, which may be `"-inf"`, as a number of dB. */
+const dbOf = (gain: number | "-inf" | undefined) => (gain === "-inf" ? MIN_DB : (gain ?? 0));
+const mixOf = (each: Track) => {
+  const mix = each.children.find((child) => child.name === "mix");
+  return mix?.tool === "fader" ? mix.state : undefined;
+};
+
 
 const Ruler = () =>
   memo("ruler", [], () => {
@@ -181,7 +177,7 @@ const TrackRow = ({ each, index, chosen, armed, soloed, onChoose, onMute, onSolo
           <Toggle id={`arm-${each.name}`} label={`Arm ${title}`} letter="R" on={armed} color="red" onToggle={onArm} />
         </row>
       </col>
-      <Meter id={`meter-head-${each.name}`} label={`Level ${title}`} live={`meter:${each.name}/mix`} w={4} h={ROW - 16} />
+      <Meter id={`meter-head-${each.name}`} label={`Level ${title}`} path={`${each.name}/mix`} w={4} h={ROW - 16} />
     </row>
   ));
   const lane = memo(`lane-${each.name}`, [each.children, each.state.colour], () => (
@@ -237,7 +233,7 @@ const Strip = ({ id, name, title, db, onChange }: { id: string; name: string; ti
     <text style="label" color="text-secondary" truncate>{title}</text>
     <row gap={1}>
       <Fader id={`fader-${id}`} label={`Volume ${title}`} db={db} height={FADER} onChange={onChange} />
-      <Meter id={`meter-${id}`} label={`Level ${title}`} live={name === "master" ? "meter:master" : `meter:${name}/mix`} w={4} h={FADER} />
+      <Meter id={`meter-${id}`} label={`Level ${title}`} path={name === "master" ? "master" : `${name}/mix`} w={4} h={FADER} />
     </row>
     <text style="number" color="text-muted">{`${db.toFixed(1)} dB`}</text>
   </col>

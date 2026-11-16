@@ -1,10 +1,21 @@
 // For the host.
 
-import { Fields, Inputs } from "./fields";
-import { PLAIN_KEYS, Press, SHIFTED_KEYS, SYMBOL_KEYS, Turn } from "./live";
+import { Fields, Inputs, ValuesOf } from "./fields";
+import { Now, Press, Turn, View } from "./live";
 import { CardRoot, Child, forget, homeInControls, insert, Made, makeNode, materialize, nodes, Op, send, UiNode } from "./nodes";
-import { adopted, batch, isRead, listener, Owner, readFields, reconcile, root, runIn, settingUp, setup, store } from "./reactivity";
-import { Context, Key, ToolSpec } from "./tools";
+import { adopted, batch, isRead, listener, Memory, Owner, readFields, reconcile, root, runIn, settingUp, setup, store } from "./reactivity";
+import { ChildTools, Context, Key, registry } from "./tools";
+
+/** A tool's `view`: drawn in the room the window gives it, a card in a rack or the whole window for an instance at the top of a project. Without one it gets `defaultView`. */
+export type ToolView<S extends Fields, I extends Inputs, M, K extends ChildTools> = (view: View<ValuesOf<S>, I, M, K>) => Child;
+
+/** What all code of an instance gets of the view. */
+export interface ViewContext<State, I extends Inputs, M> {
+  /** What its code keeps and nothing saves. A binding that read a field of it runs again when code sets that field. */
+  memory: Memory<M>;
+  /** The sources of live values: what a view shows moving without drawing again. */
+  now: Now<State, I>;
+}
 
 /** What the components of a card read while it is made. */
 export type Drawing = { fields: Fields; /** The name of its tool. */ tool: string } & Pick<Context<Record<string, unknown>>, "state" | "children" | "update" | "openMenu" | "clock">;
@@ -108,23 +119,7 @@ function handle(made: Made, kind: Exclude<Parameters<typeof nodeEvent>[1], "rele
 }
 
 /** What the host reads. Not for tools. */
-export const host = {
-  /** Whether `name` names a key as `KeyName` does. */
-  isKeyName: (name: string) => PLAIN_KEYS.includes(name.replace(/^(cmd-)?(ctrl-)?(alt-)?/, "") as never),
-  /** Whether `name` names a key as `ActionKey` does. */
-  isActionKey: (name: string) => {
-    const key = name.replace(/^(cmd-)?(alt-)?/, "");
-    const shifted = key.startsWith("shift-") ? key.slice(6) : null;
-    if (shifted === null) return [...PLAIN_KEYS, ...SHIFTED_KEYS].includes(key as never);
-    return PLAIN_KEYS.includes(shifted as never) && !SYMBOL_KEYS.includes(shifted as never);
-  },
-  tools: new Map<string, ToolSpec<Fields, Inputs, unknown>>(),
-  /** Whether the sound of the tool `name` reads `beat` or `bpm`. The host says. */
-  readsBeat: (_name: string): boolean => false,
-  /** See `hearsNotes` in `tools.ts`. The host says. */
-  hearsNotes: (_name: string): boolean => true,
-  /** The call stack of each tool's `tool`, which tells the file that made it. */
-  stacks: new Map<string, string>(),
+export const host = Object.assign(registry, {
   mount,
   takeOps,
   nodeEvent,
@@ -138,4 +133,4 @@ export const host = {
   changed: () => {},
   /** Whether a binding runs now, or a component is made: what reads there is followed. */
   binding: () => listener !== null || settingUp > 0,
-};
+});

@@ -13,6 +13,7 @@ use sound_core::{Clock, InstanceId, Peaks, Project, RecordStamp, Scope, Ticks, V
 use sound_media::Overview;
 use sound_ui::{LiveNotes, PeaksReader, Playhead, Session, SharedPeaks};
 
+use crate::live::Eased;
 use crate::meter;
 use crate::tree::{Ease, Uses};
 
@@ -55,8 +56,6 @@ const WAVE_COLUMNS: usize = 4096;
 const SAME_FRAME: Duration = Duration::from_millis(4);
 /// A frame after a pause eases as one of this long, so a meter does not jump.
 const LONGEST_FRAME: f64 = 0.1;
-/// An eased number this close to where it goes is there.
-const SETTLED: f64 = 1e-6;
 
 /// A part of a card that draws on its own, from the same feeds.
 #[derive(Clone, Copy)]
@@ -140,15 +139,6 @@ impl Records {
         }
         self.now.get(id).map(|(_, record)| record)
     }
-}
-
-/// What an easing keeps from frame to frame.
-#[derive(Clone, Copy, Default)]
-pub(crate) struct Eased {
-    frame: u64,
-    value: f64,
-    /// How long a hold has held.
-    held: f64,
 }
 
 impl Feeds {
@@ -338,42 +328,14 @@ impl Feeds {
     pub(crate) fn ease(&self, key: &str, ease: Ease, value: f64) -> f64 {
         let mut eased = self.eased.borrow_mut();
         let Some(kept) = eased.get_mut(key) else {
-            eased.insert(
-                key.to_string(),
-                Eased {
-                    frame: self.frame,
-                    value,
-                    held: 0.0,
-                },
-            );
+            eased.insert(key.to_string(), Eased::new(self.frame, value));
             return value;
         };
         if kept.frame == self.frame {
             return kept.value;
         }
         kept.frame = self.frame;
-        let (dt, before) = (self.dt, kept.value);
-        match ease {
-            Ease::Smooth { ms } => {
-                let seconds = f64::from(ms.max(1.0)) / 1000.0;
-                kept.value += (value - kept.value) * (1.0 - (-dt / seconds).exp());
-            }
-            Ease::Fall { per_second } => {
-                kept.value = value.max(kept.value - f64::from(per_second) * dt);
-            }
-            Ease::Hold { seconds } => {
-                kept.held += dt;
-                if value >= kept.value || kept.held > f64::from(seconds) {
-                    kept.value = value;
-                    kept.held = 0.0;
-                }
-            }
-        }
-        // Close enough to stop, or a smooth ease would draw for a minute.
-        if !kept.value.is_finite() || (value - kept.value).abs() < SETTLED {
-            kept.value = value;
-        }
-        if kept.value != before || kept.value != value {
+        if kept.step(ease, value, self.dt) {
             self.moving.set(true);
         }
         kept.value
@@ -467,6 +429,14 @@ pub(crate) struct Moment {
 }
 
 impl Moment {
+    /// At `tick`, where a hand writes into no lane.
+    pub(crate) fn at(tick: Ticks) -> Self {
+        Self {
+            tick,
+            writes: false,
+        }
+    }
+
     pub(crate) fn of(session: &Session, playhead: Playhead) -> Self {
         Self {
             tick: playhead.tick,

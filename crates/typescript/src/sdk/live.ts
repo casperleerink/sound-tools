@@ -1,66 +1,14 @@
 // Views: nodes the code makes once, which the window keeps. What moves on them (a drag, a
 // playhead, a meter, a knob turned) moves in the window, without running code: a live value.
 
-import { IconName } from "./drawing";
 import { InputNames, Inputs, Unit } from "./fields";
 import { ChildTools, Context, Frozen, StateOfTool } from "./tools";
+import type { Modifiers } from "./clock";
+import { Live, liveKey, Num, splitPath } from "./values";
+import type { Channel, LiveNode } from "./values";
 
-/**
- * The clock of the project, one for all tools: where the piece plays and how fast. A binding
- * that reads `playing`, `repeat`, `click`, `computerKeys`, `tempo_map` or `sections` runs
- * again when it changes. `tick`, `bar`, `beat` and `bpm` move on every frame: read them in a
- * handler, `tick` or `onKey`, and show them with `now.tick` and `now.bpm`.
- */
-export interface Clock {
-  readonly playing: boolean;
-  /** The position in ticks, 960 to a quarter note, as the code runs. */
-  readonly tick: number;
-  /** The bar and the beat of `tick`, from 1. */
-  readonly bar: number;
-  readonly beat: number;
-  /** The tempo at `tick`, in beats per minute. */
-  readonly bpm: number;
-  /** The ticks playback goes back from the end to the start of, while it repeats. */
-  readonly repeat: { readonly from: number; readonly to: number } | null;
-  /** Whether the click sounds the beats. Not saved. */
-  readonly click: boolean;
-  /** Whether the computer keys play notes, as a MIDI keyboard does. A switch of this machine, not saved; cmd-K turns it too. */
-  readonly computerKeys: boolean;
-  /** Whether a drag of a knob or a fader that a lane moves writes into the lane while the piece plays, from where it is grabbed to where it is let go. Not saved. */
-  readonly writeAutomation: boolean;
-  /** As `project.json` holds them: the time signatures and the tempo changes. */
-  readonly tempo_map: Frozen<TempoMap>;
-  /** As `project.json` holds them: the named parts of the piece, sorted by bar. */
-  readonly sections: Frozen<Section[]>;
-  play(): void;
-  pause(): void;
-  /** Pauses and goes back to the start. */
-  stop(): void;
-  /** Playback goes on from `to`: at once, or with `atTick` once it reaches that tick, on its frame. */
-  jump(to: number, options?: { atTick?: number }): void;
-  /** Playback goes back from `to` to `from` while it is set; `null` plays on. Not saved. */
-  setRepeat(range: { from: number; to: number } | null): void;
-  setClick(on: boolean): void;
-  setComputerKeys(on: boolean): void;
-  setWriteAutomation(on: boolean): void;
-  /**
-   * Changes the tempo map and the sections: `change` gets a copy to edit, and what `project.json`
-   * does not accept is refused whole. Updates of one `label` in a row are one undo step.
-   */
-  update(label: string, change: (song: { tempo_map: TempoMap; sections: Section[] }) => void): void;
-}
-
-/** The time signatures, as runs of bars, and the tempo from a tick on, as steps. */
-export interface TempoMap {
-  time_signatures: { signature: string; bars: number }[];
-  tempo_changes: { tick: number; bpm: number }[];
-}
-
-/** A part of the piece from the start of `bar`, counted from 1, up to the next section. */
-export interface Section {
-  bar: number;
-  name: string;
-}
+export * from "./clock";
+export * from "./values";
 
 /** What a view gets: what all code gets, and the room the window gives it. */
 export interface View<State, I extends Inputs = Inputs, M = unknown, K extends ChildTools = ChildTools>
@@ -71,88 +19,6 @@ export interface View<State, I extends Inputs = Inputs, M = unknown, K extends C
    */
   size: { width: number; height: number };
 }
-
-// Live values
-
-/** What a live value is made of, as the window gets it. */
-type LiveNode =
-  | { op: "tick" | "elapsed" | "bpm" }
-  | { op: "value" | "held"; name: string; child?: string; fraction?: boolean }
-  | { op: "peak"; name: string; channel?: Channel }
-  | { op: "device_peak"; channel?: Channel }
-  | { op: "input"; channel: number }
-  | { op: "drag"; id: string; part: keyof DragValues }
-  | { op: "space"; key: string; part: keyof SpaceValues }
-  | { op: "hover"; key: string }
-  | { op: "touched"; name: string }
-  | { op: "plus" | "minus" | "times" | "over" | "mod" | "pow" | "min" | "max" | "lt" | "gt" | "le" | "ge" | "eq" | "ne" | "snap"; a: Num; b: Num }
-  | { op: "negate" | "abs" | "floor" | "round" | "sin" | "cos" | "decibels"; x: Num }
-  | { op: "ease"; x: Num; ease: EaseNode; key: string };
-
-type EaseNode = { kind: "smooth"; ms: number } | { kind: "fall"; per_second: number } | { kind: "hold"; seconds: number };
-
-/** 0 the left channel, 1 the right. */
-export type Channel = 0 | 1;
-
-/** A short name of what a live value is made of: the same value drawn twice keeps one memory. */
-function liveKey(value: unknown): string {
-  const text = JSON.stringify(value);
-  let hash = 2166136261;
-  for (let index = 0; index < text.length; index++) {
-    hash = Math.imul(hash ^ text.charCodeAt(index), 16777619);
-  }
-  return (hash >>> 0).toString(36) + text.length.toString(36);
-}
-
-/**
- * A number the window works out on every frame, without running code. Combine it with the
- * methods, which take a live value or a number. Code cannot read one: `if (now.tick > 960)` is a
- * type error.
- */
-export class Live {
-  constructor(readonly node: LiveNode) {}
-  /** A number as a live value, to start from: `Live.of(2).pow(octaves)`. */
-  static of(value: Num): Live { return typeof value === "number" ? new Live({ op: "plus", a: value, b: 0 }) : value; }
-  toJSON(): LiveNode { return this.node; }
-  plus(other: Num): Live { return new Live({ op: "plus", a: this, b: other }); }
-  minus(other: Num): Live { return new Live({ op: "minus", a: this, b: other }); }
-  times(other: Num): Live { return new Live({ op: "times", a: this, b: other }); }
-  over(other: Num): Live { return new Live({ op: "over", a: this, b: other }); }
-  min(other: Num): Live { return new Live({ op: "min", a: this, b: other }); }
-  max(other: Num): Live { return new Live({ op: "max", a: this, b: other }); }
-  clamp(low: Num, high: Num): Live { return this.max(low).min(high); }
-  /** 1 where the comparison holds, else 0. */
-  lt(other: Num): Live { return new Live({ op: "lt", a: this, b: other }); }
-  gt(other: Num): Live { return new Live({ op: "gt", a: this, b: other }); }
-  le(other: Num): Live { return new Live({ op: "le", a: this, b: other }); }
-  ge(other: Num): Live { return new Live({ op: "ge", a: this, b: other }); }
-  eq(other: Num): Live { return new Live({ op: "eq", a: this, b: other }); }
-  ne(other: Num): Live { return new Live({ op: "ne", a: this, b: other }); }
-  /** The nearest whole number of `step`s: `dx.snap(240)` moves by sixteenths. */
-  snap(step: Num): Live { return new Live({ op: "snap", a: this, b: step }); }
-  negate(): Live { return new Live({ op: "negate", x: this }); }
-  abs(): Live { return new Live({ op: "abs", x: this }); }
-  floor(): Live { return new Live({ op: "floor", x: this }); }
-  round(): Live { return new Live({ op: "round", x: this }); }
-  /** Of an angle in radians. */
-  sin(): Live { return new Live({ op: "sin", x: this }); }
-  cos(): Live { return new Live({ op: "cos", x: this }); }
-  /** What is left over after whole `other`s, from 0 up: `now.elapsed.mod(1)` goes 0 to 1 every second. */
-  mod(other: Num): Live { return new Live({ op: "mod", a: this, b: other }); }
-  pow(exponent: Num): Live { return new Live({ op: "pow", a: this, b: exponent }); }
-  /** An amplitude in decibels: 1 is 0 dB; -120 at the lowest. */
-  decibels(): Live { return new Live({ op: "decibels", x: this }); }
-  /** Glides to it, about two thirds of the way in `ms`. */
-  smooth(ms: number): Live { return this.ease({ kind: "smooth", ms }); }
-  /** Rises with it at once and falls at most `perSecond` a second: a meter's bar. */
-  fall(perSecond: number): Live { return this.ease({ kind: "fall", per_second: perSecond }); }
-  /** Rises with it at once and stays `seconds` before it follows it: a meter's peak line, `level.hold(1.5).fall(0.5)`. */
-  hold(seconds: number): Live { return this.ease({ kind: "hold", seconds }); }
-  private ease(ease: EaseNode): Live { return new Live({ op: "ease", x: this, ease, key: liveKey([this, ease]) }); }
-}
-
-/** A number, or a live value the window works out on every frame. */
-export type Num = number | Live;
 
 /** What a drag gives while the pointer holds it, in the units of its space. All 0 when no drag of its `id` is held. */
 export interface DragValues {
@@ -263,16 +129,6 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
   hover(key: string): Live;
 }
 
-/**
- * `"bass/synth.cutoff_hz"` as the child `bass/synth` and its number `cutoff_hz`: the first dot
- * ends the child, and what follows is where its record holds the number, `pads.36.volume_db`.
- * A name of a child holds no `[`, so `"voices[2].detune"` is a number of the record itself.
- */
-export function splitPath(path: string): { child?: string; name: string } {
-  const dot = path.indexOf(".");
-  return dot < 0 || path.slice(0, dot).includes("[") ? { name: path } : { child: path.slice(0, dot), name: path.slice(dot + 1) };
-}
-
 /** 1 while the pointer is over a control, the keys are on it or a drag holds it: the control of the key `name`, or any that turns the field `name`. */
 export const touched = (name: string): Live => new Live({ op: "touched", name });
 
@@ -306,117 +162,7 @@ function sources(): Now<Record<string, number>> {
 /** The sources of live values, for components of a view, which name fields by strings. */
 export const now: Now<Record<string, number>> = sources();
 
-/** The keys that type a character other than a letter. */
-export const SYMBOL_KEYS = [
-  "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "-", "=", "[", "]", ";", "'", ",", ".", "/", "`", "\\"
-] as const;
-/** What the symbol keys type with shift. */
-export const SHIFTED_KEYS = [
-  "!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "_", "+", "{", "}", ":", '"', "<", ">", "?", "~", "|"
-] as const;
-/** The keys of the computer keyboard, as the window names them. */
-export const PLAIN_KEYS = [
-  "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
-  "t", "u", "v", "w", "x", "y", "z", ...SYMBOL_KEYS, "space", "enter", "escape", "backspace", "delete",
-  "tab", "up", "down", "left", "right", "home", "end", "pageup", "pagedown", "f1", "f2", "f3",
-  "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"
-] as const;
-/** A key of the computer keyboard by its name. */
-export type PlainKey = (typeof PLAIN_KEYS)[number];
-type SymbolKey = (typeof SYMBOL_KEYS)[number];
-type Held = `${"" | "cmd-"}${"" | "ctrl-"}${"" | "alt-"}`;
-/** A key by name, with cmd, ctrl and alt held first and in that order: `"space"`, `"cmd-c"`, `"cmd-alt-left"`. */
-export type KeyName = `${Held}${PlainKey}`;
-type ActionHeld = `${"" | "cmd-"}${"" | "alt-"}`;
-/**
- * A key an action has, with cmd, alt and shift held first and in that order: `"space"`,
- * `"shift-up"`, `"cmd-shift-z"`. `cmd` is ctrl on Windows and Linux, so there is no `ctrl-`: a
- * key named here works on every system. A symbol key with shift is named by what it then
- * types, with no shift: `"?"`, `"cmd-+"`. The app's own keys are none of an action's.
- */
-export type ActionKey = Exclude<`${ActionHeld}${"" | "shift-"}${Exclude<PlainKey, SymbolKey>}` | `${ActionHeld}${SymbolKey | (typeof SHIFTED_KEYS)[number]}`, AppKey>;
-/** An action by its tool and its name: `"song.record"`. The app's own are `"app.undo"`, `"app.redo"` and `"app.computer_keys"`. */
-export type ActionId = `${string}.${string}`;
-/** What a `shortcut` draws: a key, or an action, whose first key it then draws as the composer has it now, and nothing while it has none. */
-export type Shortcut = KeyName | ActionId;
-/** The keys the app keeps: undo, redo, new, open, quit, settings, the panel, the computer keys, and tab. */
-export type AppKey = `${"cmd" | "ctrl"}-${"z" | "n" | "o" | "q" | "l" | "b" | "k"}` | "cmd-shift-z" | "cmd-alt-z" | "cmd-," | "tab" | "shift-tab";
-
-/** An item of `openMenu`. */
-export interface MenuItem {
-  label: string;
-  disabled?: boolean;
-  /** A tick beside it. */
-  checked?: boolean;
-  icon?: IconName;
-  /** A quiet second line, such as who made a plugin. */
-  detail?: string;
-  /** The heading it is under, with the items next to it of the same group. */
-  group?: string;
-  /** A line above it, between it and the items before. */
-  separator?: boolean;
-  /** The keys that do it too, drawn at the end of its row. */
-  shortcut?: Shortcut;
-}
-
-/** A device `offers` gives. */
-export interface Offer {
-  /** What `addOffer` names it by. */
-  key: string;
-  name: string;
-  detail: string | null;
-  /** The group a picker lists it under, such as "Built-in" or "Plugins". */
-  group: string;
-  /** The icon a picker shows beside it. */
-  icon: IconName;
-  /** Why it cannot be added here, or `null` when it can. */
-  unavailable: string | null;
-}
-
-/** What `offers` gives: the devices, and what the window's pickers say under them, such as whose trademark a plugin format is. */
-export interface Offers {
-  offers: Offer[];
-  notes: string[];
-  /** The key of the offer at the child `offers` was asked `at`, which a picker ticks. */
-  here: string | null;
-}
-
-/** How a menu of `openMenu` shows. */
-export interface MenuOptions {
-  /** Quiet lines under the items. */
-  notes?: readonly string[];
-  /** In points; 320 when left out. */
-  width?: number;
-  /** Past this many points the items scroll; 420 when left out. */
-  maxHeight?: number;
-  /** A field above the items that keeps those whose label holds what is typed. */
-  search?: boolean;
-}
-
-/** A number `numbers` gives: what a lane or a cable moves, from `min` to `max`, as its knob travels them. */
-export interface MovedNumber {
-  name: string;
-  /** What a person reads for it: as its device names it, such as a plugin's parameter, or its name in plain words, `Osc 1 position`. */
-  label: string;
-  min: number;
-  max: number;
-  /** `"log"` for a frequency or a time, `"fader"` for a volume in dB (`-inf` at the bottom). */
-  scale: "linear" | "log" | "fader";
-  /** How a value of it reads: by the unit its name ends in, `pan` for a pan, `percent` for a share of 0 to 1; none for a plugin's. */
-  unit?: "hz" | "db" | "ms" | "seconds" | "percent" | "pan";
-  /** What its record holds now; `null` for a number that has none, such as one of a plugin that is not loaded. */
-  value: number | null;
-}
-
 // Pointer
-
-/** Which modifier keys were held. */
-export interface Modifiers {
-  shift: boolean;
-  alt: boolean;
-  cmd: boolean;
-  ctrl: boolean;
-}
 
 /** A press of the pointer: where in the units of its space (0 on a `div`), which button, and how many clicks in a row. */
 export interface Press extends Modifiers {

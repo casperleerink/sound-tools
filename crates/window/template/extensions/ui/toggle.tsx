@@ -1,4 +1,4 @@
-import { h, type Color } from "../sdk/view";
+import { h, type Color } from "../sdk";
 
 /** A small switch that says its name, such as M for mute: tinted with `color` while on, hollow while off. */
 export const Toggle = ({ id, label, letter, on, color, onToggle }: { id: string; label: string; letter: string; on: boolean; color: Color; onToggle: () => void }) => (

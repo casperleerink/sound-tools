@@ -203,7 +203,7 @@ impl Input {
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Unit {
+pub enum Unit {
     Hz,
     Ms,
     Seconds,

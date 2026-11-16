@@ -1,4 +1,4 @@
-import { h, type Color } from "../sdk/view";
+import { h, type Color } from "../sdk";
 
 /** A button with a glyph or a word, lit with `color` while `on`. */
 export const Button = ({ id, label, glyph, on = false, color = "green", onPress }: { id: string; label: string; glyph: string; on?: boolean; color?: Color; onPress: () => void }) => (

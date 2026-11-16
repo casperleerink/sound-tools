@@ -85,7 +85,6 @@ pub(crate) struct State {
     /// What went wrong last, said in the corner.
     notice: Option<String>,
     shown: BTreeSet<InstanceId>,
-    meters: BTreeSet<String>,
     waker: Arc<Mutex<Option<rune::Waker>>>,
     /// The steps of `--act` and the seconds of `--play`, for the first frame of a run without a window.
     first: Option<(Vec<Step>, Option<f64>)>,
@@ -179,7 +178,6 @@ impl State {
             theme_loads,
             notice: theme_problem,
             shown: BTreeSet::new(),
-            meters: BTreeSet::new(),
             waker,
             first: headless.then(|| (act.unwrap_or_default(), play)),
             last: 0.0,
@@ -375,12 +373,11 @@ impl State {
     fn discover(&mut self, settle: bool) -> bool {
         let mut changed = false;
         loop {
-            let found = controls::collect(self);
-            self.meters = found.meters;
-            let shown = found.shown;
+            let shown = controls::collect(self).shown;
             if shown == self.shown {
                 return changed;
             }
+            self.lives.keep(&shown);
             self.shown = shown.clone();
             let Some(tools) = &mut self.tools else {
                 return changed;
@@ -436,7 +433,7 @@ impl State {
             "playing": self.playing,
             "playhead": self.playhead.0,
             "time": self.time(),
-            "meters": self.lives.levels().into_iter().map(|(name, level)| (name.trim_start_matches("meter:").to_string(), json!(level))).collect::<serde_json::Map<_, _>>(),
+            "meters": self.lives.levels().into_iter().map(|(name, db)| (name, json!(db))).collect::<serde_json::Map<_, _>>(),
             "view_runs": self.tools.as_ref().map_or(0, Tools::view_runs),
             "problems": problems,
             "notice": self.notice,
@@ -451,14 +448,6 @@ impl State {
             .time_signatures()
             .bar_beat_of(self.playhead);
         format!("{}.{}", at.bar, at.beat)
-    }
-
-    /// The loudest amplitude of the meter `name` since the last frame. Looked up each frame: an
-    /// instance is bound to the engine later than its view names it, and again after an undo.
-    fn amplitude(&self, name: &str) -> f32 {
-        let id = InstanceId::new(name.trim_start_matches("meter:")).ok();
-        let peaks = id.and_then(|id| self.project.peaks(&id, "level"));
-        peaks.map_or(0.0, |peaks| peaks.take().into_iter().fold(0.0, f32::max))
     }
 }
 
@@ -569,14 +558,9 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
             changed = true;
         }
     }
-    let dt = (seconds - state.last).max(0.0) as f32;
+    let dt = (seconds - state.last).max(0.0);
     state.last = seconds;
-    let time = state.time();
-    let moving = state
-        .lives
-        .update(&state.meters, state.playhead.0 as f32, time, dt, |name| {
-            state.amplitude(name)
-        });
+    let moving = state.lives.update(&state.project, state.playhead, dt);
     if headless {
         *REPORT.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.report());
         return (changed, None);
