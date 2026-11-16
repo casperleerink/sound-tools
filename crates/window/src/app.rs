@@ -69,13 +69,13 @@ pub(crate) struct State {
     pub(crate) project: Project,
     sound: Sound,
     plugins: Plugins,
-    tools: Option<Tools>,
+    pub(crate) tools: Option<Tools>,
     pub(crate) theme: Theme,
     /// The JSON Schema of each built-in tool's record, by tool name.
     schemas: HashMap<&'static str, Value>,
     pub(crate) lives: Lives,
     pub(crate) playing: bool,
-    playhead: Ticks,
+    pub(crate) playhead: Ticks,
     /// Engine time in seconds, which a control loop's clock counts on.
     engine_time: f64,
     /// When the control loops last ran, in seconds of the window's clock.
@@ -560,7 +560,7 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
     }
     let dt = (seconds - state.last).max(0.0);
     state.last = seconds;
-    let moving = state.lives.update(&state.project, state.playhead, dt);
+    let moving = state.lives.update(state, dt);
     if headless {
         *REPORT.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.report());
         return (changed, None);

@@ -189,31 +189,27 @@ impl Scope<'_> {
     /// every frame, out of the flow.
     fn placed(
         &self,
-        mut e: El,
+        (mut e, key): (El, Option<&str>),
         at: Option<&[Num; 2]>,
         (w, h): (Option<&Num>, Option<&Num>),
         opacity: Option<&Num>,
     ) -> El {
         let lives = &self.state.lives;
-        let (project, instance) = (&self.state.project, self.instance);
+        let element = (self.state, self.instance, key);
         let live = |num: Option<&Num>| num.is_some_and(|num| num.fixed().is_none());
         let [x, y] = at.cloned().unwrap_or([Num::Fixed(0.0), Num::Fixed(0.0)]);
         if let (true, Some(w), Some(h)) = (live(w) || live(h), w, h) {
             let rect = [x, y, w.clone(), h.clone()];
-            e = e
-                .absolute(0.0, 0.0)
-                .live_rect(&lives.rect(project, instance, rect));
+            e = e.absolute(0.0, 0.0).live_rect(&lives.rect(element, rect));
         } else if let Some(at) = at {
             e = match (at[0].fixed(), at[1].fixed()) {
                 (Some(x), Some(y)) => e.absolute(x, y),
-                _ => {
-                    (e.absolute(0.0, 0.0)).live_offset(&lives.offset(project, instance, at.clone()))
-                }
+                _ => (e.absolute(0.0, 0.0)).live_offset(&lives.offset(element, at.clone())),
             };
         }
         match opacity {
             Some(Num::Fixed(opacity)) => e.opacity(*opacity),
-            Some(opacity) => e.live_opacity(&lives.opacity(project, instance, opacity)),
+            Some(opacity) => e.live_opacity(&lives.opacity(element, opacity)),
             None => e,
         }
     }
@@ -321,7 +317,8 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
         b.w.as_ref().and_then(Size::points),
         b.h.as_ref().and_then(Size::points),
     );
-    e = scope.placed(e, b.at.as_ref(), size, b.opacity.as_ref());
+    let element = (e, b.key.as_deref());
+    e = scope.placed(element, b.at.as_ref(), size, b.opacity.as_ref());
     if let Some([left, top, right, bottom]) = b.inset {
         e = e.pin(left, top, right, bottom);
     }
@@ -435,11 +432,12 @@ fn label(scope: &Scope, t: &TextNode) -> El {
     if t.truncate {
         e = e.truncate();
     }
+    let key = t.key.as_deref();
     if let Some(value) = &t.live {
-        let (state, instance) = (scope.state, scope.instance);
-        e = e.live_text(&(state.lives).text(&state.project, instance, value, t.unit, t.digits));
+        let element = (scope.state, scope.instance, key);
+        e = e.live_text(&(scope.state.lives).text(element, value, t.unit, t.digits));
     }
-    scope.placed(e, t.at.as_ref(), (None, None), t.opacity.as_ref())
+    scope.placed((e, key), t.at.as_ref(), (None, None), t.opacity.as_ref())
 }
 
 fn drawing(scope: &Scope, d: &ShapesNode) -> El {
@@ -471,7 +469,12 @@ fn drawing(scope: &Scope, d: &ShapesNode) -> El {
     if let Some(key) = &d.key {
         e = e.key(scope.key(key));
     }
-    scope.placed(e, d.at.as_ref(), (None, None), d.opacity.as_ref())
+    scope.placed(
+        (e, d.key.as_deref()),
+        d.at.as_ref(),
+        (None, None),
+        d.opacity.as_ref(),
+    )
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use serde_json::Value;
-use sound_core::{Clock, InstanceId, Project, Ticks, ValueRange};
+use sound_core::{Clock, ValueRange};
 use sound_ui::components::knob::{
     decibels_readout, hertz_readout, milliseconds_readout, pan_readout, percent_readout,
     seconds_readout, semitones_readout, short,
@@ -159,33 +159,6 @@ impl Eased {
         }
         self.value != before || self.value != value
     }
-}
-
-/// A field of `instance` as it plays, by its name as `now.value` gives it (of an instance
-/// inside it, `path.field`): what a lane plays into it at `tick`, else its record.
-pub fn field_now(
-    project: &Project,
-    instance: &InstanceId,
-    child: Option<&str>,
-    name: &str,
-    tick: Ticks,
-) -> f64 {
-    let id = match child {
-        Some(path) => instance.child(path).ok(),
-        None => Some(instance.clone()),
-    };
-    let Some(id) = id else {
-        return 0.0;
-    };
-    let at = crate::feeds::Moment::at(tick);
-    if let Some((value, _)) = crate::feeds::lane_value(project, &id, name, at) {
-        return f64::from(value);
-    }
-    let state = project.state_json(&id);
-    let state = state.and_then(|state| serde_json::from_str::<Value>(&state).ok());
-    let value =
-        state.and_then(|state| crate::path::at(&state, name).and_then(crate::tree::number_of));
-    value.map_or(0.0, f64::from)
 }
 
 /// Where a drag is, in the units of its space, as `now.drag(id)` reads it.

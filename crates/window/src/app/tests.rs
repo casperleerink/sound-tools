@@ -253,23 +253,49 @@ fn a_tool_with_a_view_shows_in_the_panel_and_one_without_shows_its_fields() {
     );
 }
 
+/// Runs Bun with `arguments` in `extensions/` of `state`'s project, which must succeed.
+fn run_bun(state: &State, arguments: &[&str]) {
+    let bun = sound_typescript::bun_program().expect("Bun is installed, see tooling/fetch-bun.sh");
+    let ran = sound_core::process::background_command(&bun)
+        .args(arguments)
+        .current_dir(state.project.root().join("extensions"))
+        .output()
+        .unwrap();
+    let said =
+        String::from_utf8_lossy(&ran.stdout).to_string() + &String::from_utf8_lossy(&ran.stderr);
+    assert!(ran.status.success(), "bun {arguments:?}: {said}");
+}
+
 /// What the agent doc tells an agent to run in a new project: the type check, and its tests.
 #[test]
 fn a_new_project_type_checks_and_its_tests_pass() {
     let scratch = new_project();
     let state = opened(&scratch.path().join("song"));
-    let bun = sound_typescript::bun_program().expect("Bun is installed, see tooling/fetch-bun.sh");
-    let extensions = state.project.root().join("extensions");
-    for check in [&["check", "-p", "."][..], &["test"]] {
-        let ran = sound_core::process::background_command(&bun)
-            .args(check)
-            .current_dir(&extensions)
-            .output()
-            .unwrap();
-        let said = String::from_utf8_lossy(&ran.stdout).to_string()
-            + &String::from_utf8_lossy(&ran.stderr);
-        assert!(ran.status.success(), "bun {check:?}: {said}");
-    }
+    run_bun(&state, &["check", "-p", "."]);
+    run_bun(&state, &["test"]);
+}
+
+/// Rune moves a live size only with both: the other in points, never `"full"` or left out.
+#[test]
+fn a_live_width_or_height_needs_the_other_in_points() {
+    let scratch = new_project();
+    let state = opened(&scratch.path().join("song"));
+    let sizes = r#"import { h, live } from "./sdk";
+const grows = live.elapsed;
+export const sizes = [
+  <box w={grows} h={4} />,
+  <box w={4} h={grows} />,
+  <box w="full" h={4} />,
+  // @ts-expect-error
+  <box w={grows} h="full" />,
+  // @ts-expect-error
+  <box w="full" h={grows} />,
+  // @ts-expect-error
+  <box w={grows} />,
+];
+"#;
+    std::fs::write(state.project.root().join("extensions/sizes.tsx"), sizes).unwrap();
+    run_bun(&state, &["check", "-p", "."]);
 }
 
 #[test]
@@ -549,7 +575,8 @@ fn an_action_whose_change_is_refused_fails_the_steps() {
         &mut state,
         json!({ "label": "Count", "action": "set", "value": 500 }),
     );
-    assert!(refused.is_err());
+    let refused = refused.unwrap_err().to_string();
+    assert!(refused.contains("was refused"), "{refused}");
 }
 
 #[test]
@@ -794,4 +821,59 @@ fn the_first_step_of_a_new_control_loop_is_one_interval_long() {
     let held: Value = serde_json::from_str(&state.project.state_json(&id).unwrap()).unwrap();
     let first = held["dt"].as_f64().unwrap();
     assert!(first > 0.0 && first < 0.1, "{first}");
+}
+
+/// A gauge of its field `level`, a bar left of it as long as the playhead is past `start`, and
+/// a slider of `start`.
+const GAUGE: &str = r#"import { h, input, live, number, tool } from "./sdk";
+export const gauge = tool({
+  name: "gauge", title: "Gauge", when: "Never", doc: "A gauge.",
+  state: { level: number({ min: 0, max: 1, default: 0.75 }), start: number({ min: 0, max: 100, integer: true, default: 0 }) },
+  sound: () => input,
+  view: (self, { change }) => (
+    <box>
+      <text key="level" live={live.field("level")} digits={2} />
+      <box key="bar" at={[-10, 0]} w={live.playhead.minus(self.state.start).plus(5)} h={4} />
+      <box key="start" label="Start" role="slider" value={self.state.start} actions={{ set: (start) => change((draft) => void (draft.state.start = start)) }} />
+    </box>
+  ),
+});
+"#;
+
+/// A project that shows the view of [`GAUGE`], whose record leaves every field out.
+fn gauge() -> (tempfile::TempDir, State) {
+    let (scratch, folder) = with_tools(&[("gauge", GAUGE)]);
+    let file = folder.join(runtime::PROJECT_FILE);
+    let code = std::fs::read_to_string(&file).unwrap();
+    let main = r#""main": "song/t00/chain/gauge""#;
+    std::fs::write(&file, code.replace(r#""main": "song""#, main)).unwrap();
+    let state = opened(&folder);
+    build(&state);
+    (scratch, state)
+}
+
+#[test]
+fn a_live_field_the_record_leaves_out_shows_its_default() {
+    let (_scratch, state) = gauge();
+    assert_eq!(state.lives.texts(), ["0.75"]);
+}
+
+#[test]
+fn a_live_place_left_of_its_parent_stays_there() {
+    let (_scratch, state) = gauge();
+    assert_eq!(state.lives.rects(), [[-10.0, 0.0, 5.0, 4.0]]);
+}
+
+#[test]
+fn a_live_value_made_anew_in_every_build_keeps_one_binding() {
+    let (_scratch, mut state) = gauge();
+    let bindings = state.lives.bindings();
+    for start in 1..=5 {
+        act(
+            &mut state,
+            json!({ "label": "Start", "action": "set", "value": start }),
+        );
+        build(&state);
+    }
+    assert_eq!(state.lives.bindings(), bindings);
 }

@@ -654,6 +654,38 @@ impl Tools {
         }
     }
 
+    /// A number field of `instance`, or of its child at the path `child`, as it plays at `tick`:
+    /// what a lane plays into it, else its record, at its default where the record leaves it out.
+    pub fn field_now(
+        &self,
+        project: &Project,
+        instance: &InstanceId,
+        child: Option<&str>,
+        name: &str,
+        tick: Ticks,
+    ) -> f64 {
+        let id = match child {
+            Some(path) => instance.child(path).ok(),
+            None => Some(instance.clone()),
+        };
+        let Some(id) = id else {
+            return 0.0;
+        };
+        let at = crate::feeds::Moment::at(tick);
+        if let Some((value, _)) = crate::feeds::lane_value(project, &id, name, at) {
+            return f64::from(value);
+        }
+        let state = project.state_json(&id);
+        let state = state.and_then(|state| serde_json::from_str::<Value>(&state).ok());
+        let state = match (state, self.info_of(project, &id)) {
+            (Some(state), Some(info)) => Some(info.with_defaults(state)),
+            (state, _) => state,
+        };
+        let value = (state.as_ref())
+            .and_then(|state| crate::path::at(state, name).and_then(crate::tree::number_of));
+        value.map_or(0.0, f64::from)
+    }
+
     fn info_of(&self, project: &Project, id: &InstanceId) -> Option<Rc<ToolInfo>> {
         (project.tool_of(id))
             .and_then(|tool| find(&self.tools, tool))

@@ -60,13 +60,13 @@ type Interactive =
       onDragEnd?: (moved: Moved) => void;
     };
 
-export type BoxProps = Interactive & {
+/** Points, or its parent's. A live `w` or `h` places it at `at` (0, 0 when left out), out of the flow, and needs the other in points. */
+type Size = { w?: number | "full"; h?: number | "full" } | { w: Num; h: Num };
+
+export type BoxProps = Interactive & Size & {
   key?: string;
   label?: string;
   role?: Role;
-  /** Points. A live `w` or `h` places it at `at` (0, 0 when left out), out of the flow. */
-  w?: Num | "full";
-  h?: Num | "full";
   grow?: number;
   pad?: Space;
   px?: Space;
