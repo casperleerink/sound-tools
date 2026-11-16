@@ -87,6 +87,9 @@ def environment() -> dict:
     found = {key: value for key, value in os.environ.items()
              if key != "CLAUDECODE" and not key.startswith("CLAUDE_CODE_")}
     found["PATH"] = sound_tools_on_path()
+    # Codex runs commands in a login shell, whose profile may put an installed `sound-tools`
+    # first: an empty zsh config folder keeps the one under test first.
+    found["ZDOTDIR"] = str(BIN)
     return found
 
 
