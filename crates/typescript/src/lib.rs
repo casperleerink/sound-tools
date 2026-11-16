@@ -637,19 +637,13 @@ fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
         .chain(SHARED_MODULES)
         .chain(sdk.iter().copied())
         .collect();
-    // What an SDK of the other window, or an older one, left.
-    for entry in std::fs::read_dir(extensions.join("sdk"))? {
-        let path = entry?.path();
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned());
-        let ours = name.is_some_and(|name| {
-            written
-                .iter()
-                .any(|(each, _)| *each == format!("sdk/{name}"))
-        });
-        if path.is_file() && !ours {
-            std::fs::remove_file(&path)?;
+    // What the SDK of the other window wrote. Other files in `sdk/` are the project's.
+    let stale = (SDK.iter().chain(&VIEW_SDK))
+        .filter(|(name, _)| !written.iter().any(|(each, _)| each == name));
+    for (name, _) in stale {
+        match std::fs::remove_file(extensions.join(name)) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
         }
     }
     for (name, text) in written {
@@ -749,6 +743,31 @@ mod tests {
         std::fs::create_dir_all(extensions.path().join("node_modules/bun-types")).unwrap();
         write_sdk(extensions.path(), &[]).unwrap();
         assert!(!extensions.path().join("bun.d.ts").exists());
+    }
+
+    #[test]
+    fn switching_the_window_removes_the_other_sdk_and_keeps_the_projects_own_files() {
+        let extensions = tempfile::tempdir().unwrap();
+        let folder = extensions.path();
+        std::fs::create_dir_all(folder.join("sdk")).unwrap();
+        std::fs::write(folder.join("sdk/my-helper.ts"), "export {}").unwrap();
+        let has = |name: &str| folder.join(name).is_file();
+        write_sdk(folder, &[]).unwrap();
+        assert!(has("sdk/live.ts") && !has("sdk/view.ts"));
+        std::fs::write(folder.join(next::THEME), "{}").unwrap();
+        write_sdk(folder, &[]).unwrap();
+        assert!(has("sdk/view.ts"));
+        for (name, _) in SDK
+            .iter()
+            .filter(|(name, _)| !VIEW_SDK.iter().any(|(each, _)| each == name))
+        {
+            assert!(!has(name), "{name} is left from the old window");
+        }
+        assert!(has("sdk/my-helper.ts"));
+        std::fs::remove_file(folder.join(next::THEME)).unwrap();
+        write_sdk(folder, &[]).unwrap();
+        assert!(has("sdk/live.ts") && !has("sdk/view.ts") && !has("sdk/test.d.ts"));
+        assert!(has("sdk/my-helper.ts"));
     }
 
     #[test]
