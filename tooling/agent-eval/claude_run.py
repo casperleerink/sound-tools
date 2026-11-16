@@ -49,6 +49,16 @@ class Run:
                     found.append(name)
         return found
 
+    def checks_run(self) -> dict:
+        """How the agent checked its work: each way, and how often."""
+        ways = {"screenshot": "--screenshot", "click": "--click", "play": "--play",
+                "inspect": "--inspect", "analyze": "--analyze", "types": "bun check"}
+        counts = {way: sum(flag in argument for tool, argument in self.calls if tool == "Bash")
+                  for way, flag in ways.items()}
+        counts["looked"] = sum(tool == "Read" and argument.endswith(".png")
+                               for tool, argument in self.calls)
+        return {way: count for way, count in counts.items() if count}
+
     def summary(self) -> dict:
         return {
             "turns": self.turns,
@@ -57,6 +67,8 @@ class Run:
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "error": self.is_error,
+            "tool_calls": len(self.calls),
+            "checked": self.checks_run(),
             "docs": self.docs_opened(),
         }
 
@@ -68,7 +80,8 @@ def short(tool: str, arguments: dict) -> str:
     return json.dumps(arguments)[:400]
 
 
-def run(folder: Path, prompt: str, timeout: int = 1800, log: Path | None = None) -> Run:
+def run(folder: Path, prompt: str, timeout: int = 1800, log: Path | None = None,
+        model: str | None = None, tools: str = APP_TOOLS) -> Run:
     """One headless run of Claude Code in `folder`, with the app's flags."""
     environment = {
         key: value
@@ -80,11 +93,12 @@ def run(folder: Path, prompt: str, timeout: int = 1800, log: Path | None = None)
         "claude", "-p", prompt,
         "--output-format", "stream-json", "--verbose",
         "--permission-mode", "bypassPermissions",
-        "--tools", APP_TOOLS,
+        "--tools", tools,
         "--strict-mcp-config",
         "--setting-sources", "",
         "--disable-slash-commands",
         "--add-dir", str(folder),
+        *(["--model", model] if model else []),
     ]
     started = time.monotonic()
     process = subprocess.run(arguments, cwd=folder, env=environment, capture_output=True,

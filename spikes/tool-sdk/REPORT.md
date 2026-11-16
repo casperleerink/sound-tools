@@ -78,3 +78,23 @@ What the spike says a tool's view should be:
 
 Not tested: the sound side (unchanged), tool memory such as a selection, menus, text input,
 plugin windows.
+
+## Baseline: today's SDK, scored by `tooling/agent-eval/eval.py ui`
+
+Opus 5.5 builds each task on today's GPUI SDK; a fresh Opus 5.5 QA agent then checks hidden
+criteria through the app's own tools and scores the looks against DESIGN.md. One run each.
+
+| Task | Build | QA criteria | Looks | QA cost |
+| --- | --- | --- | --- | --- |
+| sequencer card | 90 s, 16 calls, $0.73 | 4 pass | 4 | 109 s, $0.66 |
+| piano card | 86 s, 25 calls, $0.79 | 3 pass, 1 unverifiable | 4 | 127 s, $0.75 |
+| Game of Life page | 201 s, 25 calls, $1.35 | 4 pass, 1 unverifiable | 4 | 100 s, $0.57 |
+| clip launcher page | 213 s, 25 calls, $1.47 | 5 pass | 3 | 200 s, $1.12 |
+| DAW: duplicate a track | 88 s, 16 calls, $0.84 | 1 pass, 3 unverifiable | 4 | 89 s, $0.66 |
+
+- Nothing failed, but 5 of 22 criteria could not be checked: no way to right-click or press a
+  key in a screenshot run, and no way to hear what a click or a page's own loop plays.
+- The builder checked unevenly: the duplicate agent only ran `--inspect` and hid the feature
+  in a right-click menu nobody sees; the Life agent never clicked.
+- Looks lose points on layout and rules, not taste: a knob block floating beside a grid,
+  labels running together, colours used against their meaning, corners off the scale.

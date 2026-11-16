@@ -1,11 +1,14 @@
 """Gives the app's agent a task in a fresh project and checks what it did.
 
-    python3 tooling/agent-eval/eval.py <scenario> [--runs n]
+    python3 tooling/agent-eval/eval.py <scenario>... [--runs n] [--model claude-opus-5-5]
+    python3 tooling/agent-eval/eval.py ui      # the scenarios with QA criteria
 
 Each run starts from a new project made by the runtime (as the app makes one), with the files of
 the scenario, then runs Claude Code with the app's flags (`claude_run.py`), then checks the
-project. It prints one JSON line per run: whether the check passed, what it cost, how many
-turns, and which docs the agent opened. Logs go to /tmp/sound-tools-eval/.
+project. A scenario in `CRITERIA` then gets a QA agent: a fresh agent on a copy of the project
+that checks each criterion through the app as the builder could, and scores the looks against
+DESIGN.md. It prints one JSON line per run: the checks, the QA's verdicts, what the builder and
+the QA cost, and how the builder checked its work. Logs go to /tmp/sound-tools-eval/.
 
 `examples/` holds tools agents built in these runs, from one prompt each: a gravity harp view,
 a storm drone played from its display, a generative part in D dorian, and a grain cloud of a sample. Copy one into the
@@ -373,6 +376,10 @@ def check_grid(parts: int, effects: set, patterns: int):
     return check
 
 
+def check_daw_intact(folder: Path) -> dict:
+    return {"no problems": no_problems(folder)}
+
+
 SCENARIOS = {
     "builtin": (setup_builtin, check_builtin,
                 "Put a dotted-eighth echo on the lead, quieter than the dry sound, and make the "
@@ -407,6 +414,9 @@ SCENARIOS = {
                         "On Track 1, put an arpeggiator before its synth: it turns the chords I "
                         "hold into notes going up one at a time with the tempo, with a choice of "
                         "eighths or sixteenths and a knob for how many octaves it climbs."),
+    "daw-duplicate": (setup_daw_chords, check_daw_intact,
+                      "Let me duplicate a track from its row in the timeline: the copy, with the "
+                      "same instrument, effects, mix and clips, lands right under it."),
     "daw-return": (setup_daw, check_daw_return,
                    "Add a return track with a long reverb, and send Track 1 into it, fairly "
                    "quietly."),
@@ -506,7 +516,80 @@ SCENARIOS = {
 }
 
 
-def evaluate(scenario: str, number: int) -> dict:
+# What the composer asked for, as a QA agent checks it by using the result. Hidden from the
+# builder. Each scenario here is in the `ui` set.
+CRITERIA = {
+    "sequencer-builder": {
+        "steps": "Clicking a step on the bass's card turns it on, clicking it again turns it off, and the record changes with it.",
+        "playing step": "While the piece plays, the playing step is lit and moves with the tempo.",
+        "knobs": "The card has labelled controls for the filter cutoff, the resonance and the note it plays.",
+        "groove": "Before any click, the pattern has steps on and the bass plays notes.",
+    },
+    "ui-piano": {
+        "keyboard": "The lead's card shows a small piano keyboard, white and black keys in the right pattern.",
+        "click plays": "Clicking a key plays that note on the lead.",
+        "pressed": "A key shows that it is down while it is pressed or sounding.",
+        "lead plays": "The lead's clips still play through the new instrument.",
+    },
+    "life-builder": {
+        "one screen": "The window is one screen with a grid of cells and no timeline.",
+        "click cells": "Clicking a dead cell brings it to life; clicking a living cell kills it.",
+        "steps": "While it plays, the grid steps on by itself by the rules of the Game of Life.",
+        "cursor": "A cursor sweeps across the grid column by column while it plays.",
+        "chord": "The living cells of the cursor's column sound, lower rows lower notes.",
+    },
+    "launcher-builder": {
+        "grid": "One screen with three lanes (bass, chords, lead) of four patterns each, and no timeline.",
+        "launch": "Clicking a pattern shows it waiting, then playing from the next bar.",
+        "scenes": "A scene button launches a whole row of patterns at once.",
+        "transport": "There is play and stop, and pressing play starts the first scene.",
+        "sounds": "The lanes play through a filter, a reverb and a delay, and the patterns groove together in A minor.",
+    },
+    "daw-duplicate": {
+        "way": "Each track's row in the timeline has a visible way to duplicate it: a button or a menu item.",
+        "copy": "Using it adds a track right under the original with the same instrument, effects, mix and clips.",
+        "name": "The copy is named after the original, such as 'Track 1 copy'.",
+        "intact": "The other tracks, their clips and the mixer still work and look as before.",
+    },
+}
+
+DESIGN = Path(__file__).resolve().parents[2] / "DESIGN.md"
+QA_TOOLS = "Bash,Read,Glob,Grep"
+
+
+def qa(folder: Path, scenario: str, model: str | None) -> dict:
+    """A fresh agent checks each criterion on a copy of the project, and scores the looks."""
+    copy = folder.with_name(folder.name + "-qa")
+    shutil.rmtree(copy, ignore_errors=True)
+    shutil.copytree(folder, copy, symlinks=True, ignore=shutil.ignore_patterns(".sound-tools.lock"))
+    criteria = "\n".join(f"- {name}: {text}" for name, text in CRITERIA[scenario].items())
+    prompt = (
+        f"An agent just built this for a composer, who asked: \"{SCENARIOS[scenario][2]}\"\n\n"
+        "Test the result as a strict QA tester. Change no code under extensions/. Check each "
+        "criterion by using the project the way the app lets an agent: `sound-tools --help`, "
+        "AGENTS.md and agent-docs/, screenshots with clicks and play, inspect, analyze and the "
+        f"records under state/. Keep scratch files in /tmp/{copy.name}.\n\n"
+        f"Criteria:\n{criteria}\n\n"
+        "For each, give pass, fail, or unverifiable when you found no way to check it, with the "
+        "evidence. Then score the looks of what was built from 1 to 5 against the sections "
+        f"\"Principles\" of {DESIGN}, as a demanding designer: 5 calm and polished, 3 works "
+        "but crowded, misaligned or inconsistent, 1 broken or unreadable.\n\n"
+        "End with one line of JSON and nothing after it: {\"criteria\": {\"<name>\": "
+        "{\"verdict\": \"pass|fail|unverifiable\", \"evidence\": \"...\"}}, \"looks\": n, "
+        "\"looks_why\": \"...\", \"screenshot\": \"<path of your best screenshot>\"}"
+    )
+    run = claude_run.run(copy, prompt, log=LOGS / f"{copy.name}.log", model=model, tools=QA_TOOLS)
+    verdict = {}
+    for line in reversed(run.result.strip().splitlines()):
+        try:
+            verdict = json.loads(line[line.index("{"):])
+            break
+        except ValueError:
+            continue
+    return {"verdict": verdict, "cost": run.summary()}
+
+
+def evaluate(scenario: str, number: int, model: str | None) -> dict:
     setup, check, prompt = SCENARIOS[scenario]
     folder = LOGS / f"{scenario}-{number}"
     shutil.rmtree(folder, ignore_errors=True)
@@ -517,25 +600,31 @@ def evaluate(scenario: str, number: int) -> dict:
     # The window makes this folder for every project it opens.
     (folder / "extensions").mkdir(exist_ok=True)
     runtime(folder, "--headless", stdin="quit\n")
-    run = claude_run.run(folder, prompt, log=LOGS / f"{folder.name}.log")
+    run = claude_run.run(folder, prompt, log=LOGS / f"{folder.name}.log", model=model)
     checks = check(folder)
-    return {"scenario": scenario, "run": number,
-            "passed": all(checks.values()), "checks": checks, **run.summary()}
+    result = {"scenario": scenario, "run": number, "model": model,
+              "passed": all(checks.values()), "checks": checks, **run.summary()}
+    if scenario in CRITERIA:
+        result["qa"] = qa(folder, scenario, model)
+    return result
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenario", choices=SCENARIOS)
+    parser.add_argument("scenarios", nargs="+", choices=[*SCENARIOS, "ui"])
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--first", type=int, default=1, help="the number of the first run, so "
                         "evals of one scenario can run side by side")
+    parser.add_argument("--model", default="claude-opus-5-5")
     arguments = parser.parse_args()
     LOGS.mkdir(exist_ok=True)
-    for number in range(arguments.first, arguments.first + arguments.runs):
-        result = evaluate(arguments.scenario, number)
-        print(json.dumps(result), flush=True)
-        with open(LOGS / "results.jsonl", "a") as results:
-            results.write(json.dumps(result) + "\n")
+    scenarios = [one for name in arguments.scenarios for one in (CRITERIA if name == "ui" else [name])]
+    for scenario in scenarios:
+        for number in range(arguments.first, arguments.first + arguments.runs):
+            result = evaluate(scenario, number, arguments.model)
+            print(json.dumps(result), flush=True)
+            with open(LOGS / "results.jsonl", "a") as results:
+                results.write(json.dumps(result) + "\n")
 
 
 if __name__ == "__main__":
