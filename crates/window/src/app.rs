@@ -84,7 +84,7 @@ pub(crate) struct State {
     theme_loads: u64,
     /// What went wrong last, said in the corner.
     notice: Option<String>,
-    shown: BTreeSet<InstanceId>,
+    pub(crate) shown: BTreeSet<InstanceId>,
     waker: Arc<Mutex<Option<rune::Waker>>>,
     /// The steps of `--act` and the seconds of `--play`, for the first frame of a run without a window.
     first: Option<(Vec<Step>, Option<f64>)>,
@@ -369,15 +369,21 @@ impl State {
         Ok(())
     }
 
-    /// Shows what the views name, and waits for their trees in a run without a window.
+    /// Shows what the views name, and waits for their trees in a run without a window. Only
+    /// what the trees bind now stays bound.
     fn discover(&mut self, settle: bool) -> bool {
+        let changed = self.show_named(settle);
+        self.lives.keep(&tree::bound(self));
+        changed
+    }
+
+    fn show_named(&mut self, settle: bool) -> bool {
         let mut changed = false;
         loop {
             let shown = controls::collect(self).shown;
             if shown == self.shown {
                 return changed;
             }
-            self.lives.keep(&shown);
             self.shown = shown.clone();
             let Some(tools) = &mut self.tools else {
                 return changed;

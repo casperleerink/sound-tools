@@ -1,6 +1,7 @@
 //! A view's tree as `sdk/view.ts` sends it, drawn with Rune. What moves every frame is bound
 //! here to a live value of [`crate::lives`]; a press or the end of a drag goes to the tool's code.
 
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use rune::{El, LineCap, Phase, ScrollSpec, Shape, canvas, col, el, memo, row, text};
@@ -11,6 +12,7 @@ use sound_typescript::live::{Num, Readout};
 use sound_typescript::next::Drawn;
 
 use crate::app::State;
+use crate::lives::{Lives, Shows};
 
 /// A node of `sdk/view.ts`. A test reads every field it sends, so the two cannot drift.
 #[derive(Deserialize)]
@@ -95,6 +97,26 @@ pub(crate) struct BoxNode {
     pub(crate) children: Vec<Node>,
 }
 
+impl BoxNode {
+    /// Its width and height in points, live or not.
+    fn size(&self) -> (Option<&Num>, Option<&Num>) {
+        (
+            self.w.as_ref().and_then(Size::points),
+            self.h.as_ref().and_then(Size::points),
+        )
+    }
+}
+
+impl TextNode {
+    fn shows(&self, value: &Num) -> Shows {
+        Shows::Text {
+            value: value.clone(),
+            unit: self.unit,
+            digits: self.digits,
+        }
+    }
+}
+
 #[derive(Deserialize, Clone, Copy)]
 #[cfg_attr(test, serde(deny_unknown_fields))]
 pub(crate) struct DragSpec {
@@ -177,42 +199,111 @@ struct Scope<'a> {
     /// What its element keys start with in the window: nothing for the main view, else its
     /// path from there and `:`.
     prefix: &'a str,
-    memos: &'a std::collections::HashMap<String, ((u64, u64), Rc<Value>)>,
+    memos: &'a Memos,
 }
+
+type Memos = HashMap<String, ((u64, u64), Rc<Value>)>;
 
 impl Scope<'_> {
     fn key(&self, key: &str) -> String {
         format!("{}{key}", self.prefix)
     }
 
-    /// Places `e` at `at`, sized `w` × `h`, at `opacity`: where any is live, the window moves it
-    /// every frame, out of the flow.
+    /// Places `e` at `at`, sized `w` × `h`, at `opacity`, binding what is live.
     fn placed(
         &self,
-        (mut e, key): (El, Option<&str>),
+        mut e: El,
         at: Option<&[Num; 2]>,
-        (w, h): (Option<&Num>, Option<&Num>),
+        size: (Option<&Num>, Option<&Num>),
         opacity: Option<&Num>,
     ) -> El {
-        let lives = &self.state.lives;
-        let element = (self.state, self.instance, key);
-        let live = |num: Option<&Num>| num.is_some_and(|num| num.fixed().is_none());
-        let [x, y] = at.cloned().unwrap_or([Num::Fixed(0.0), Num::Fixed(0.0)]);
-        if let (true, Some(w), Some(h)) = (live(w) || live(h), w, h) {
-            let rect = [x, y, w.clone(), h.clone()];
-            e = e.absolute(0.0, 0.0).live_rect(&lives.rect(element, rect));
-        } else if let Some(at) = at {
-            e = match (at[0].fixed(), at[1].fixed()) {
-                (Some(x), Some(y)) => e.absolute(x, y),
-                _ => (e.absolute(0.0, 0.0)).live_offset(&lives.offset(element, at.clone())),
-            };
+        let live = live_place(at, size, opacity);
+        let moved = (live.iter()).any(|shows| matches!(shows, Shows::Rect(_) | Shows::Offset(_)));
+        if let (false, Some([x, y])) = (moved, at) {
+            e = e.absolute(x.fixed().unwrap_or(0.0), y.fixed().unwrap_or(0.0));
         }
-        match opacity {
-            Some(Num::Fixed(opacity)) => e.opacity(*opacity),
-            Some(opacity) => e.live_opacity(&lives.opacity(element, opacity)),
-            None => e,
+        if let Some(Num::Fixed(opacity)) = opacity {
+            e = e.opacity(*opacity);
+        }
+        live.into_iter().fold(e, |e, shows| self.bind(e, shows))
+    }
+
+    fn bind(&self, e: El, shows: Shows) -> El {
+        let lives = &self.state.lives;
+        lives.bind(self.state, self.instance, shows).apply(e)
+    }
+}
+
+/// What an element at `at`, sized `w` × `h`, at `opacity`, binds: where any is live, the window
+/// moves it every frame, out of the flow.
+fn live_place(
+    at: Option<&[Num; 2]>,
+    (w, h): (Option<&Num>, Option<&Num>),
+    opacity: Option<&Num>,
+) -> Vec<Shows> {
+    let live = |num: &Num| num.fixed().is_none();
+    let mut shows = Vec::new();
+    let [x, y] = at.cloned().unwrap_or([Num::Fixed(0.0), Num::Fixed(0.0)]);
+    if let (Some(w), Some(h)) = (w, h)
+        && (live(w) || live(h))
+    {
+        shows.push(Shows::Rect([x, y, w.clone(), h.clone()]));
+    } else if let Some(at) = at.filter(|at| at.iter().any(live)) {
+        shows.push(Shows::Offset(at.clone()));
+    }
+    shows.extend(
+        opacity
+            .filter(|opacity| live(opacity))
+            .cloned()
+            .map(Shows::Opacity),
+    );
+    shows
+}
+
+/// The name of every binding the views shown now make, of their memos too, whether Rune builds
+/// them again or not: what [`crate::lives::Lives::keep`] keeps.
+pub(crate) fn bound(state: &State) -> HashSet<String> {
+    let mut named = HashSet::new();
+    for id in &state.shown {
+        if let Some(Drawn::View { root, memos }) = state.drawn(id)
+            && let Ok(node) = Node::deserialize(&**root)
+        {
+            walk(&node, memos, &mut |shows| {
+                named.insert(Lives::name(id, &shows));
+            });
         }
     }
+    named
+}
+
+/// Gives `bind` everything `node` binds, and its memos.
+fn walk(node: &Node, memos: &Memos, bind: &mut impl FnMut(Shows)) {
+    let live = match node {
+        Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
+            for child in &b.children {
+                walk(child, memos, bind);
+            }
+            live_place(b.at.as_ref(), b.size(), b.opacity.as_ref())
+        }
+        Node::Text(t) => {
+            if let Some(value) = &t.live {
+                bind(t.shows(value));
+            }
+            live_place(t.at.as_ref(), (None, None), t.opacity.as_ref())
+        }
+        Node::Shapes(d) => live_place(d.at.as_ref(), (None, None), d.opacity.as_ref()),
+        Node::Memo { key } => {
+            let inner = memos
+                .get(key)
+                .and_then(|(_, inner)| Node::deserialize(&**inner).ok());
+            if let Some(inner) = inner {
+                walk(&inner, memos, bind);
+            }
+            return;
+        }
+        Node::Child { .. } => return,
+    };
+    live.into_iter().for_each(bind);
 }
 
 /// The view `drawn` of `instance`, with its keys after `prefix`.
@@ -313,12 +404,7 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
         _ => {}
     }
     // Before `inset`, which pins it to more edges than `at` does.
-    let size = (
-        b.w.as_ref().and_then(Size::points),
-        b.h.as_ref().and_then(Size::points),
-    );
-    let element = (e, b.key.as_deref());
-    e = scope.placed(element, b.at.as_ref(), size, b.opacity.as_ref());
+    e = scope.placed(e, b.at.as_ref(), b.size(), b.opacity.as_ref());
     if let Some([left, top, right, bottom]) = b.inset {
         e = e.pin(left, top, right, bottom);
     }
@@ -432,12 +518,10 @@ fn label(scope: &Scope, t: &TextNode) -> El {
     if t.truncate {
         e = e.truncate();
     }
-    let key = t.key.as_deref();
     if let Some(value) = &t.live {
-        let element = (scope.state, scope.instance, key);
-        e = e.live_text(&(scope.state.lives).text(element, value, t.unit, t.digits));
+        e = scope.bind(e, t.shows(value));
     }
-    scope.placed((e, key), t.at.as_ref(), (None, None), t.opacity.as_ref())
+    scope.placed(e, t.at.as_ref(), (None, None), t.opacity.as_ref())
 }
 
 fn drawing(scope: &Scope, d: &ShapesNode) -> El {
@@ -469,12 +553,7 @@ fn drawing(scope: &Scope, d: &ShapesNode) -> El {
     if let Some(key) = &d.key {
         e = e.key(scope.key(key));
     }
-    scope.placed(
-        (e, d.key.as_deref()),
-        d.at.as_ref(),
-        (None, None),
-        d.opacity.as_ref(),
-    )
+    scope.placed(e, d.at.as_ref(), (None, None), d.opacity.as_ref())
 }
 
 #[cfg(test)]

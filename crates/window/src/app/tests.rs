@@ -481,6 +481,8 @@ fn the_meter_of_a_track_taken_away_and_brought_back_moves() {
     play(&mut state, 0.5, 0.5);
     copy_folder(&kept, &track).unwrap();
     state.project.apply_outside_changes(&paths).unwrap();
+    // Rune builds the view again once the tree that has the track comes.
+    state.settle();
     play(&mut state, 1.0, 1.0);
     let levels = state.lives.levels();
     assert!(
@@ -720,24 +722,36 @@ fn a_peak_held_three_seconds_shows_in_decibels_then_drops() {
     assert_eq!(shown(&state), "-120.0");
 }
 
-/// A tool whose control loop holds a note on its child `synth` once, or that has no loop.
-fn holder(holds: bool) -> String {
+/// A tool whose control loop holds a note once, or that has no loop: on its child `synth`, or
+/// on its own voices.
+fn holder(holds: bool, own: bool) -> String {
+    let (child, sound) = match own {
+        true => (
+            "",
+            r#"voices: 2,
+  sound: () => sine(note.freq).times(note.gate),"#,
+        ),
+        false => (
+            r#"child: "synth", "#,
+            r#"behaviour: () => ({ connections: [{ from: { child: "synth" }, to: { port: "audio" } }] }),"#,
+        ),
+    };
     let tick = match holds {
-        true => {
-            r#"memory: () => ({ held: false }),
-  tick: ({ memory, play }) => {
+        true => format!(
+            r#"memory: () => ({{ held: false }}),
+  tick: ({{ memory, play }}) => {{
     if (memory.held) return;
     memory.held = true;
-    play(60, { child: "synth", hold: true });
-  },"#
-        }
-        false => "",
+    play(60, {{ {child}hold: true }});
+  }},"#
+        ),
+        false => String::new(),
     };
     format!(
-        r#"import {{ tool }} from "./sdk";
+        r#"import {{ note, sine, tool }} from "./sdk";
 export const holder = tool({{
   name: "holder", title: "Holder", when: "Never", doc: "Holds a note.", state: {{}},
-  behaviour: () => ({{ connections: [{{ from: {{ child: "synth" }}, to: {{ port: "audio" }} }}] }}),
+  {sound}
   {tick}
 }});
 "#
@@ -745,39 +759,43 @@ export const holder = tool({{
 }
 
 #[test]
-fn a_note_a_control_loop_held_on_a_child_ends_with_its_bun() {
-    let (_scratch, folder) = with_tools(&[("holder", &holder(true))]);
-    let chain = folder.join("state/song/t00/chain");
-    std::fs::remove_file(chain.join("holder.json")).unwrap();
-    std::fs::create_dir(chain.join("holder")).unwrap();
-    let files = [
-        ("instance.json", r#"{"tool": "holder", "state": {}}"#),
-        (
-            "synth.json",
-            r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#,
-        ),
-    ];
-    for (name, text) in files {
-        std::fs::write(chain.join("holder").join(name), text).unwrap();
+fn a_note_a_control_loop_held_on_a_child_or_its_own_voices_ends_with_its_bun() {
+    for own in [false, true] {
+        let (_scratch, folder) = with_tools(&[("holder", &holder(true, own))]);
+        if !own {
+            let chain = folder.join("state/song/t00/chain");
+            std::fs::remove_file(chain.join("holder.json")).unwrap();
+            std::fs::create_dir(chain.join("holder")).unwrap();
+            let files = [
+                ("instance.json", r#"{"tool": "holder", "state": {}}"#),
+                (
+                    "synth.json",
+                    r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#,
+                ),
+            ];
+            for (name, text) in files {
+                std::fs::write(chain.join("holder").join(name), text).unwrap();
+            }
+        }
+        let mut state = opened(&folder);
+        build(&state);
+        let level = |state: &State| {
+            let levels = state.lives.levels();
+            let mix = levels.iter().find(|(name, _)| name == "song/t00/mix");
+            mix.map_or(-120.0, |(_, db)| *db)
+        };
+        for step in 1..=30 {
+            frame(&mut state, f64::from(step) / 60.0);
+        }
+        assert!(level(&state) > -60.0, "own {own}: {}", level(&state));
+        let file = state.project.root().join("extensions/holder.tsx");
+        std::fs::write(file, holder(false, own)).unwrap();
+        state.tools.as_mut().unwrap().code_changed();
+        for step in 31..=90 {
+            frame(&mut state, f64::from(step) / 60.0);
+        }
+        assert!(level(&state) < -60.0, "own {own}: {}", level(&state));
     }
-    let mut state = opened(&folder);
-    build(&state);
-    let level = |state: &State| {
-        let levels = state.lives.levels();
-        let mix = levels.iter().find(|(name, _)| name == "song/t00/mix");
-        mix.map_or(-120.0, |(_, db)| *db)
-    };
-    for step in 1..=30 {
-        frame(&mut state, f64::from(step) / 60.0);
-    }
-    assert!(level(&state) > -60.0, "{}", level(&state));
-    let file = state.project.root().join("extensions/holder.tsx");
-    std::fs::write(file, holder(false)).unwrap();
-    state.tools.as_mut().unwrap().code_changed();
-    for step in 31..=90 {
-        frame(&mut state, f64::from(step) / 60.0);
-    }
-    assert!(level(&state) < -60.0, "{}", level(&state));
 }
 
 /// A control loop that keeps the `dt` of its first step, once its code has one.
@@ -833,7 +851,7 @@ export const gauge = tool({
   view: (self, { update }) => (
     <box>
       <text key="level" live={live.field("level")} digits={2} />
-      <box key="bar" at={[-10, 0]} w={live.playhead.minus(self.state.start).plus(5)} h={4} />
+      <box key="bar" at={[-10, 0]} w={live.playhead.minus(self.state.start).plus(5).smooth(100)} h={4} />
       <box key="start" label="Start" role="slider" value={self.state.start} actions={{ set: (start) => update("Change", (draft) => void (draft.state.start = start)) }} />
     </box>
   ),
@@ -865,16 +883,32 @@ fn a_live_place_left_of_its_parent_stays_there() {
 }
 
 #[test]
-fn a_live_value_made_anew_in_every_build_keeps_one_binding() {
+fn a_live_value_made_anew_in_every_build_keeps_one_binding_and_one_ease() {
     let (_scratch, mut state) = gauge();
     let bindings = state.lives.bindings();
-    for start in 1..=5 {
+    for start in (0..=100).step_by(10) {
         act(
             &mut state,
             json!({ "label": "Start", "action": "set", "value": start }),
         );
         build(&state);
     }
+    frame(&mut state, 0.1);
+    assert_eq!(state.lives.bindings(), bindings);
+    assert_eq!(state.lives.eased(), 1);
+}
+
+#[test]
+fn a_part_a_memo_kept_keeps_its_live_values() {
+    let scratch = new_project();
+    let mut state = opened(&scratch.path().join("song"));
+    build(&state);
+    let bindings = state.lives.bindings();
+    // The head of Track 1, with its meter, is a memo this change does not build again.
+    act(
+        &mut state,
+        json!({ "label": "Mute Track 2", "action": "toggle" }),
+    );
     assert_eq!(state.lives.bindings(), bindings);
 }
 
@@ -910,7 +944,10 @@ fn a_press_plays_an_input_and_the_piece_as_a_control_loop_does() {
             .any(|(name, db)| name == "song/t00/mix" && *db > -60.0),
         "{levels:?}"
     );
-    act(&mut state, json!({ "label": "Stop all", "action": "press" }));
+    act(
+        &mut state,
+        json!({ "label": "Stop all", "action": "press" }),
+    );
     frame(&mut state, 0.6);
     assert!(!state.playing);
 }
@@ -940,7 +977,9 @@ fn a_menu_this_window_cannot_show_answers_none_and_says_so() {
     assert_eq!(held["answered"], 1);
     let problems = state.project.problems();
     assert!(
-        problems.iter().any(|problem| problem.message.contains("a menu")),
+        problems
+            .iter()
+            .any(|problem| problem.message.contains("a menu")),
         "{problems:?}"
     );
 }

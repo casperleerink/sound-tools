@@ -21,8 +21,8 @@ use sound_signals::{Signals, SignalsUpdate};
 
 pub use crate::bun::Waker;
 use crate::bun::{
-    Answer, Bun, Clock, Event, Played, RecordEdit, Request, Runs, Skipped, Telling, Transport, TransportOp,
-    record_key,
+    Answer, Bun, Clock, Event, Played, RecordEdit, Request, Runs, Skipped, Telling, Transport,
+    TransportOp, record_key,
 };
 use crate::tools::{Choice, Field, ToolInfo, feed_child, feed_processor};
 use crate::window::{changes_of, control_update, every_instance, find, played, told_to_bun, watch};

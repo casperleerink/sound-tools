@@ -1,10 +1,10 @@
 //! What moves every frame without a view running again: the live values of the views, a drag,
 //! and the time of the title row, each bound to a Rune live value. A view's live value is a
 //! small expression (`sound_typescript::live`) worked out here, from the playhead, the time, the
-//! meters and the fields as they play. Kept across builds, so a binding survives a new tree.
+//! meters and the fields as they play. Kept while a tree that is shown binds it.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use rune::LiveText;
 use sound_core::{InstanceId, Ticks};
@@ -14,35 +14,47 @@ use sound_typescript::live::{
 
 use crate::app::State;
 
-/// A live value bound to an element, and the instance whose view it is of.
-struct Binding {
-    instance: InstanceId,
-    /// What it shows, as text: another in its place binds again.
-    shows: String,
-    bound: Bound,
-}
-
-#[derive(Clone)]
-enum Bound {
+/// What a live value of a view shows: also its name, so the same shown twice binds once, and a
+/// new expression in its place, such as `live.playhead.minus(start)` after a drag, is another.
+#[derive(Debug, Clone)]
+pub(crate) enum Shows {
     Text {
-        shown: LiveText,
         value: Num,
         unit: Option<Readout>,
         digits: Option<usize>,
     },
     /// Where an element is, and how big: [x, y, w, h].
-    Rect {
-        shown: rune::Live<[f32; 4]>,
-        rect: [Num; 4],
-    },
-    Offset {
-        shown: rune::Live<[f32; 2]>,
-        at: [Num; 2],
-    },
-    Opacity {
-        shown: rune::Live<f32>,
-        value: Num,
-    },
+    Rect([Num; 4]),
+    Offset([Num; 2]),
+    Opacity(Num),
+}
+
+/// What Rune draws of a [`Shows`] every frame.
+#[derive(Clone)]
+pub(crate) enum Shown {
+    Text(LiveText),
+    Rect(rune::Live<[f32; 4]>),
+    Offset(rune::Live<[f32; 2]>),
+    Opacity(rune::Live<f32>),
+}
+
+impl Shown {
+    /// Binds `e` to it: a live place takes the element out of the flow.
+    pub(crate) fn apply(&self, e: rune::El) -> rune::El {
+        match self {
+            Self::Text(text) => e.live_text(text),
+            Self::Rect(rect) => e.absolute(0.0, 0.0).live_rect(rect),
+            Self::Offset(offset) => e.absolute(0.0, 0.0).live_offset(offset),
+            Self::Opacity(opacity) => e.live_opacity(opacity),
+        }
+    }
+}
+
+/// A live value bound to an element, and the instance whose view it is of.
+struct Binding {
+    instance: InstanceId,
+    shows: Shows,
+    shown: Shown,
 }
 
 pub(crate) struct Lives {
@@ -78,102 +90,32 @@ impl Lives {
         }
     }
 
-    /// The text of `value` of the element `key` of the view of `instance`, in `unit` or with
-    /// `digits`.
-    pub(crate) fn text(
-        &self,
-        (state, instance, key): (&State, &InstanceId, Option<&str>),
-        value: &Num,
-        unit: Option<Readout>,
-        digits: Option<usize>,
-    ) -> LiveText {
-        let shows = format!("text {value:?} {unit:?} {digits:?}");
-        let bound = || Bound::Text {
-            shown: LiveText::new(""),
-            value: value.clone(),
-            unit,
-            digits,
-        };
-        match self.bind((state, instance, key), shows, bound) {
-            Bound::Text { shown, .. } => shown,
-            _ => LiveText::new(""),
-        }
+    /// The name of the binding of `shows` in the view of `instance`.
+    pub(crate) fn name(instance: &InstanceId, shows: &Shows) -> String {
+        format!("{instance} {shows:?}")
     }
 
-    /// Where an element of the view of `instance` is and how big, `[x, y, w, h]`.
-    pub(crate) fn rect(
-        &self,
-        element: (&State, &InstanceId, Option<&str>),
-        rect: [Num; 4],
-    ) -> rune::Live<[f32; 4]> {
-        let shows = format!("rect {rect:?}");
-        match self.bind(element, shows, || Bound::Rect {
-            shown: rune::Live::new([0.0; 4]),
-            rect,
-        }) {
-            Bound::Rect { shown, .. } => shown,
-            _ => rune::Live::new([0.0; 4]),
-        }
-    }
-
-    pub(crate) fn offset(
-        &self,
-        element: (&State, &InstanceId, Option<&str>),
-        at: [Num; 2],
-    ) -> rune::Live<[f32; 2]> {
-        let shows = format!("offset {at:?}");
-        match self.bind(element, shows, || Bound::Offset {
-            shown: rune::Live::new([0.0; 2]),
-            at,
-        }) {
-            Bound::Offset { shown, .. } => shown,
-            _ => rune::Live::new([0.0; 2]),
-        }
-    }
-
-    pub(crate) fn opacity(
-        &self,
-        element: (&State, &InstanceId, Option<&str>),
-        value: &Num,
-    ) -> rune::Live<f32> {
-        let shows = format!("opacity {value:?}");
-        match self.bind(element, shows, || Bound::Opacity {
-            shown: rune::Live::new(1.0),
-            value: value.clone(),
-        }) {
-            Bound::Opacity { shown, .. } => shown,
-            _ => rune::Live::new(1.0),
-        }
-    }
-
-    /// The binding that `shows` of the element `key` of the view of `instance`, made by `bound`
-    /// when it showed nothing or something else, showing what it is now. Bound by its element,
-    /// or by `shows` for one with no key: a view that makes a new expression in every build, as
-    /// `live.playhead.minus(start)` does, keeps one binding.
-    fn bind(
-        &self,
-        (state, instance, key): (&State, &InstanceId, Option<&str>),
-        shows: String,
-        bound: impl FnOnce() -> Bound,
-    ) -> Bound {
-        let kind = shows.split(' ').next().unwrap_or_default();
-        let name = match key {
-            Some(key) => format!("{instance} {kind} key {key}"),
-            None => format!("{instance} {shows}"),
-        };
+    /// What Rune draws of `shows` in the view of `instance`, showing what it is now.
+    pub(crate) fn bind(&self, state: &State, instance: &InstanceId, shows: Shows) -> Shown {
+        let name = Self::name(instance, &shows);
         let mut bindings = self.bindings.borrow_mut();
-        if let Some(binding) = bindings.get(&name).filter(|binding| binding.shows == shows) {
-            return binding.bound.clone();
+        if let Some(binding) = bindings.get(&name) {
+            return binding.shown.clone();
         }
+        let shown = match &shows {
+            Shows::Text { .. } => Shown::Text(LiveText::new("")),
+            Shows::Rect(_) => Shown::Rect(rune::Live::new([0.0; 4])),
+            Shows::Offset(_) => Shown::Offset(rune::Live::new([0.0; 2])),
+            Shows::Opacity(_) => Shown::Opacity(rune::Live::new(1.0)),
+        };
         let binding = Binding {
             instance: instance.clone(),
             shows,
-            bound: bound(),
+            shown: shown.clone(),
         };
         self.show(state, &binding);
-        let bound = binding.bound.clone();
         bindings.insert(name, binding);
-        bound
+        shown
     }
 
     /// How far the element `key` is dragged.
@@ -192,11 +134,10 @@ impl Lives {
         }
     }
 
-    /// The window shows only the views of `shown` now.
-    pub(crate) fn keep(&self, shown: &BTreeSet<InstanceId>) {
-        (self.bindings.borrow_mut()).retain(|_, binding| shown.contains(&binding.instance));
-        let scoped = |key: &str| shown.iter().any(|id| key.starts_with(&format!("{id} ")));
-        self.eased.borrow_mut().retain(|key, _| scoped(key));
+    /// The views show only the bindings `named` now, see [`Lives::name`]: the others go, also
+    /// those of a part of a view that Rune kept.
+    pub(crate) fn keep(&self, named: &HashSet<String>) {
+        (self.bindings.borrow_mut()).retain(|name, _| named.contains(name));
     }
 
     /// One frame `dt` seconds after the last. Whether a value still moves with no new sound,
@@ -215,6 +156,11 @@ impl Lives {
         for binding in self.bindings.borrow().values() {
             self.show(state, binding);
         }
+        // What no binding read this frame eases nothing any more.
+        let frame = self.frame.get();
+        self.eased
+            .borrow_mut()
+            .retain(|_, eased| eased.frame == frame);
         self.moving.get()
     }
 
@@ -226,13 +172,15 @@ impl Lives {
             instance: &binding.instance,
         };
         let of = |value: &Num| number(value, &sources) as f32;
-        match &binding.bound {
-            Bound::Text {
-                shown,
-                value,
-                unit,
-                digits,
-            } => {
+        match (&binding.shows, &binding.shown) {
+            (
+                Shows::Text {
+                    value,
+                    unit,
+                    digits,
+                },
+                Shown::Text(shown),
+            ) => {
                 let value = number(value, &sources);
                 let text = match digits {
                     Some(digits) => format!("{value:.digits$}"),
@@ -240,15 +188,16 @@ impl Lives {
                 };
                 shown.set(text);
             }
-            Bound::Rect { shown, rect } => {
+            (Shows::Rect(rect), Shown::Rect(shown)) => {
                 shown.set(rect.each_ref().map(of));
             }
-            Bound::Offset { shown, at } => {
+            (Shows::Offset(at), Shown::Offset(shown)) => {
                 shown.set(at.each_ref().map(of));
             }
-            Bound::Opacity { shown, value } => {
+            (Shows::Opacity(value), Shown::Opacity(shown)) => {
                 shown.set(of(value).clamp(0.0, 1.0));
             }
+            _ => {}
         }
     }
 
@@ -301,12 +250,16 @@ impl Lives {
         self.bindings.borrow().len()
     }
 
+    pub(crate) fn eased(&self) -> usize {
+        self.eased.borrow().len()
+    }
+
     /// Where each live rect is now.
     pub(crate) fn rects(&self) -> Vec<[f32; 4]> {
         let bindings = self.bindings.borrow();
         (bindings.values())
-            .filter_map(|binding| match &binding.bound {
-                Bound::Rect { shown, .. } => Some(shown.get()),
+            .filter_map(|binding| match &binding.shown {
+                Shown::Rect(shown) => Some(shown.get()),
                 _ => None,
             })
             .collect()
@@ -316,8 +269,8 @@ impl Lives {
     pub(crate) fn texts(&self) -> Vec<String> {
         let bindings = self.bindings.borrow();
         (bindings.values())
-            .filter_map(|binding| match &binding.bound {
-                Bound::Text { shown, .. } => Some(shown.get().to_string()),
+            .filter_map(|binding| match &binding.shown {
+                Shown::Text(shown) => Some(shown.get().to_string()),
                 _ => None,
             })
             .collect()
