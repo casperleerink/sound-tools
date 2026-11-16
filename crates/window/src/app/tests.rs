@@ -1154,3 +1154,47 @@ fn a_drag_across_cells_paints_each_it_enters_once_as_one_step() {
     act(&mut window.state, json!({ "action": "undo" }));
     assert_eq!(alive(&window.state), Value::Null);
 }
+
+/// Track 1's instrument: how many of its keys from C2 sound, and a key a press plays.
+const PIANO: &str = r#"import { h, live, Live, note, sine, tool } from "./sdk";
+export const piano = tool({
+  name: "piano", title: "Piano", when: "Never", doc: "Keys.", state: {}, voices: 4,
+  sound: () => sine(note.freq).times(note.gate),
+  view: (_, { play }) => (
+    <row>
+      <text key="down" live={Array.from({ length: 24 }, (_, at) => live.sounding(36 + at)).reduce((all: Live, one) => all.plus(one), Live.of(0))} digits={0} />
+      <box key="c3" label="C3" w={20} h={20} opacity={live.sounding(48)} onPress={() => play(48, { seconds: 0.25 })} />
+    </row>
+  ),
+});
+"#;
+
+#[test]
+fn a_key_sounds_while_a_press_or_a_clip_plays_it() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    std::fs::write(folder.join("extensions/piano.tsx"), PIANO).unwrap();
+    std::fs::write(
+        folder.join("state/song/t00/synth.json"),
+        r#"{"tool": "piano", "state": {}}"#,
+    )
+    .unwrap();
+    let mut state = opened(&folder);
+    build(&state);
+    let down = |state: &State| state.lives.texts().concat();
+    assert_eq!(down(&state), "0");
+    act(&mut state, json!({ "label": "C3", "action": "press" }));
+    frame(&mut state, 0.1);
+    assert_eq!(down(&state), "1");
+    for step in 1..=30 {
+        frame(&mut state, 0.1 + f64::from(step) / 60.0);
+    }
+    assert_eq!(down(&state), "0");
+    let mut sounded = false;
+    state.project.engine().play();
+    for step in 1..=120 {
+        frame(&mut state, 1.0 + f64::from(step) / 60.0);
+        sounded |= down(&state) != "0";
+    }
+    assert!(sounded);
+}

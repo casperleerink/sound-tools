@@ -15,8 +15,9 @@ use std::time::{Duration, Instant};
 
 use notify::RecommendedWatcher;
 use serde_json::{Map, Value, json};
+use sound_core::EventTap;
 use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEdit, ProjectEvent, Ticks};
-use sound_notes::{NOTES_INPUT, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
+use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
 
 pub use crate::bun::Waker;
@@ -24,7 +25,7 @@ use crate::bun::{
     Answer, Bun, Clock, Event, Played, RecordEdit, Request, Runs, Skipped, Telling, Transport,
     TransportOp, record_key,
 };
-use crate::tools::{Choice, Field, ToolInfo, feed_child, feed_processor};
+use crate::tools::{Choice, Field, SOUNDING_TAP, ToolInfo, feed_child, feed_processor};
 use crate::window::{changes_of, control_update, every_instance, find, played, told_to_bun, watch};
 use crate::{Extensions, FOLDER, Launched};
 
@@ -995,6 +996,41 @@ impl Tools {
             let instances = self.shown.iter().collect();
             self.told_shown = bun.send(&Request::Show { instances });
         }
+    }
+}
+
+/// The keys down on the sound of a tool of the project, followed from what its keys did.
+#[derive(Default)]
+pub struct Keys {
+    tap: Option<EventTap<NoteEvent>>,
+    next: u64,
+    down: u128,
+}
+
+impl Keys {
+    /// The keys down now on the sound of `id`, a bit for each pitch.
+    pub fn follow(&mut self, project: &Project, id: &InstanceId) -> u128 {
+        let Some(tap) = project.tap::<NoteEvent>(id, SOUNDING_TAP) else {
+            *self = Self::default();
+            return 0;
+        };
+        if !(self.tap.as_ref()).is_some_and(|kept| kept.is(&tap)) {
+            *self = Self {
+                tap: Some(tap.clone()),
+                ..Self::default()
+            };
+        }
+        let mut events = Vec::new();
+        self.next = tap.read(self.next, &mut events).next;
+        for (_, event) in events {
+            match event {
+                NoteEvent::On { pitch, .. } => self.down |= 1 << pitch.number(),
+                NoteEvent::Off { pitch } => self.down &= !(1 << pitch.number()),
+                NoteEvent::AllOff => self.down = 0,
+                _ => {}
+            }
+        }
+        self.down
     }
 }
 

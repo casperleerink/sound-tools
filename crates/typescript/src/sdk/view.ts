@@ -32,6 +32,8 @@ export const live = {
   elapsed: new Live({ op: "elapsed" }),
   /** The loudest sample since the last frame, 0 to 1 and above when it clips, of the instance at `path` inside this one, such as `"t01/mix"`. */
   peak: (path: string): Live => new Live({ op: "peak", name: path }),
+  /** 1 while the key `pitch` (60 is middle C) is down on this tool's sound, or on that of the tool of the project at `path` inside it: what a clip, a key or its code plays. For a key that lights: `opacity={live.sounding(60)}`. */
+  sounding: (pitch: number, path?: string): Live => new Live({ op: "sounding", pitch, ...(path === undefined ? {} : { child: path }) }),
   /** A number field of the record as it plays (what a lane plays into it, else the record), or of an instance inside as `"t01/mix.gain_db"`. */
   field: (name: string): Live => new Live({ op: "value", ...splitPath(name), fraction: false }),
 };

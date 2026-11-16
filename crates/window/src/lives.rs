@@ -12,6 +12,7 @@ use sound_core::{InstanceId, Ticks};
 use sound_typescript::live::{
     Ease, Eased, Leaves, Live, Num, Readout, TickReadout, number, text_of,
 };
+use sound_typescript::next::Keys;
 
 use crate::app::State;
 
@@ -74,6 +75,8 @@ pub(crate) struct Lives {
     /// Whether a live text showed wider than it was built for since the last look.
     wider: Cell<bool>,
     drags: RefCell<HashMap<String, rune::Live<[f32; 2]>>>,
+    /// The keys down on the sounds the views read, and the frame they were last read in.
+    keys: RefCell<HashMap<InstanceId, (Option<u64>, Keys, u128)>>,
     /// Where the piece plays, as the title row shows it.
     pub(crate) time: LiveText,
 }
@@ -91,6 +94,7 @@ impl Lives {
             moving: Cell::new(false),
             wider: Cell::new(false),
             drags: RefCell::default(),
+            keys: RefCell::default(),
             time: LiveText::new(time.to_string()),
         }
     }
@@ -166,6 +170,7 @@ impl Lives {
         self.eased
             .borrow_mut()
             .retain(|_, eased| eased.frame == frame);
+        (self.keys.borrow_mut()).retain(|_, (read, ..)| *read == Some(frame));
         self.moving.get()
     }
 
@@ -238,6 +243,18 @@ struct Sources<'a> {
 }
 
 impl Sources<'_> {
+    /// The keys down on the sound of `id`, read once a frame.
+    fn keys_down(&self, id: InstanceId) -> u128 {
+        let frame = self.lives.frame.get();
+        let project = &self.state.project;
+        let mut keys = self.lives.keys.borrow_mut();
+        let (read, keys, down) = keys.entry(id.clone()).or_default();
+        if *read != Some(frame) {
+            (*read, *down) = (Some(frame), keys.follow(project, &id));
+        }
+        *down
+    }
+
     /// The loudest sample of the meter at `path` inside the instance since the last frame, or
     /// of the peaks it keeps as `path.name`.
     fn peak(&self, path: &str, channel: Option<u8>) -> f64 {
@@ -310,6 +327,14 @@ impl Leaves for Sources<'_> {
                 let tick = Ticks(playhead as u64);
                 tools.field_now(project, self.instance, child.as_deref(), name, tick)
             }),
+            Live::Sounding { pitch, child } => {
+                let id = match child {
+                    Some(path) => self.instance.child(path).ok(),
+                    None => Some(self.instance.clone()),
+                };
+                let down = id.map_or(0, |id| self.keys_down(id));
+                f64::from(u8::from(down & (1 << pitch.min(&127)) != 0))
+            }
             // The new window has no drags, spaces or pointer of these yet.
             _ => 0.0,
         }

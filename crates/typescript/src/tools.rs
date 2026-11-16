@@ -1084,6 +1084,7 @@ impl Sounds {
             .collect();
         // Only a tool that hears them writes what reaches its notes.
         let tap = (self.info.notes).then(|| context.tap::<NoteEvent>(NOTES_TAP));
+        let sounding = context.tap::<NoteEvent>(SOUNDING_TAP);
         let new_tap = context.changed("tap", u64::from(tap.is_some()));
         let sample_rate = context.prepare_config().sample_rate as f32;
         // A sound that reads no file in stereo runs a sample read once for both channels.
@@ -1117,6 +1118,9 @@ impl Sounds {
         })?;
         if created || new_tap {
             context.update(signals, SignalsUpdate::Tap(tap))?;
+        }
+        if created {
+            context.update(signals, SignalsUpdate::Sounding(Some(sounding)))?;
         }
         // A new processor already plays this code with these values.
         if !created {
@@ -1420,6 +1424,8 @@ fn kept_children<'a>(
 
 /// The name of the tap of what reaches the `notes` of a tool that hears them.
 pub(crate) const NOTES_TAP: &str = "notes";
+/// The tap of what the keys of a tool's sound do, whoever plays them.
+pub(crate) const SOUNDING_TAP: &str = "sounding";
 
 /// The name of the [`NoteFeed`] of the child `name` of an owner, which a performer plays it
 /// through.

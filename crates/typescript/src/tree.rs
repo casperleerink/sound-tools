@@ -1681,6 +1681,12 @@ pub enum Live {
     Hover {
         key: String,
     },
+    /// 1 while the key `pitch` is down on the sound of a tool of the project, or of its child
+    /// at the path `child`: what a clip, a key or its code plays. Only the new window has it.
+    Sounding {
+        pitch: u8,
+        child: Option<String>,
+    },
     /// 1 while the pointer is over a control, the keys are on it or a drag holds it: the space
     /// of the key `name`, or one whose drag turns the field `name`, so a fader shows the
     /// number beside it.
@@ -1809,6 +1815,7 @@ impl Live {
             | Self::Touched { .. }
             | Self::Value { .. }
             | Self::Held { .. }
+            | Self::Sounding { .. }
             | Self::Peak { .. }
             | Self::DevicePeak { .. }
             | Self::Input { .. }
@@ -1854,7 +1861,8 @@ impl Live {
             }
             Self::Held { name, child } => _ = uses.played.insert(named(child.as_deref(), name)),
             Self::Touched { .. } => uses.touched = true,
-            Self::Drag { .. } | Self::Space { .. } | Self::Hover { .. } => {}
+            Self::Drag { .. } | Self::Space { .. } | Self::Hover { .. } | Self::Sounding { .. } => {
+            }
             Self::Plus { a, b }
             | Self::Minus { a, b }
             | Self::Times { a, b }

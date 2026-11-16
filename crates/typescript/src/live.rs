@@ -106,6 +106,7 @@ pub fn evaluate(live: &Live, leaves: &(impl Leaves + ?Sized)) -> f64 {
         | Live::Elapsed
         | Live::Value { .. }
         | Live::Held { .. }
+        | Live::Sounding { .. }
         | Live::Peak { .. }
         | Live::DevicePeak { .. }
         | Live::Input { .. }
