@@ -1106,3 +1106,51 @@ fn a_card_of_fields_shows_a_few_and_grows_wider_not_taller_when_expanded() {
     assert!(open[2] > closed[2], "{open:?} {closed:?}");
     assert_eq!(open[3], closed[3]);
 }
+
+/// Eight cells a drag across brings to life.
+const CELLS: &str = r#"import { boolean, h, input, list, tool } from "./sdk";
+export const cells = tool({
+  name: "cells", title: "Cells", when: "Never", doc: "Cells.", state: { alive: list(boolean({ default: false }), { max: 8 }) }, sound: () => input,
+  view: (self, { update }) => (
+    <row gap={2}>
+      {Array.from({ length: 8 }, (_, i) => (
+        <box key={`cell-${i}`} label={`Cell ${i + 1}`} w={20} h={20} fill={self.state.alive[i] ? "text" : "fill"}
+          onEnter={() => update("Paint", (draft) => void (draft.state.alive = Array.from({ length: 8 }, (_, j) => j === i || (draft.state.alive[j] ?? false))))}>
+          <box w={10} h={10} />
+        </box>
+      ))}
+    </row>
+  ),
+});
+"#;
+
+#[test]
+fn a_drag_across_cells_paints_each_it_enters_once_as_one_step() {
+    let (_scratch, folder) = with_tools(&[("cells", CELLS)]);
+    let mut window = laid_out(opened(&folder));
+    let centre = |window: &rune::Runtime<State>, cell: usize| {
+        window
+            .find(&format!("t00/chain/cells:cell-{cell}"))
+            .unwrap()
+    };
+    let ((x, y), (to, _)) = (centre(&window, 0), centre(&window, 5));
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    for step in 1..=20 {
+        window.pointer_move(x + (to - x) * step as f32 / 20.0, y);
+        window.frame(1.0 / 60.0);
+    }
+    window.pointer_up(to, y);
+    window.frame(1.0 / 60.0);
+    let alive = |state: &State| {
+        let id = InstanceId::new("song/t00/chain/cells").unwrap();
+        let record: Value = serde_json::from_str(&state.project.state_json(&id).unwrap()).unwrap();
+        record["alive"].clone()
+    };
+    assert_eq!(
+        alive(&window.state),
+        json!([true, true, true, true, true, true, false, false])
+    );
+    act(&mut window.state, json!({ "action": "undo" }));
+    assert_eq!(alive(&window.state), Value::Null);
+}

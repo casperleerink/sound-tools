@@ -66,6 +66,9 @@ pub(crate) struct BoxNode {
     pub(crate) value: Option<Value>,
     #[serde(default)]
     pub(crate) press: bool,
+    /// It has `onEnter`: a press held over it paints it.
+    #[serde(default)]
+    pub(crate) enter: bool,
     /// The names of its `actions`.
     #[serde(default)]
     pub(crate) actions: Vec<String>,
@@ -210,7 +213,7 @@ struct Scope<'a> {
     memos: &'a Memos,
 }
 
-type Memos = HashMap<String, ((u64, u64), Rc<Value>)>;
+pub(crate) type Memos = HashMap<String, ((u64, u64), Rc<Value>)>;
 
 impl Scope<'_> {
     fn key(&self, key: &str) -> String {
@@ -282,6 +285,27 @@ pub(crate) fn bound(state: &State) -> HashSet<String> {
         }
     }
     named
+}
+
+/// The keys of the elements of `node` and its memos that a paint enters, see [`BoxNode::enter`].
+pub(crate) fn enterable(node: &Node, memos: &Memos, keys: &mut Vec<String>) {
+    match node {
+        Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
+            keys.extend(b.key.clone().filter(|_| b.enter));
+            for child in &b.children {
+                enterable(child, memos, keys);
+            }
+        }
+        Node::Memo { key } => {
+            let inner = memos
+                .get(key)
+                .and_then(|(_, inner)| Node::deserialize(&**inner).ok());
+            if let Some(inner) = inner {
+                enterable(&inner, memos, keys);
+            }
+        }
+        Node::Text(_) | Node::Shapes(_) | Node::Child { .. } => {}
+    }
 }
 
 /// Gives `bind` everything `node` binds, and its memos.
@@ -508,6 +532,23 @@ fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>) -> El {
             value
                 .as_str()
                 .map_or_else(|| value.to_string(), str::to_string),
+        );
+    }
+    if let (true, Some(element)) = (b.enter && key.is_some(), &b.key) {
+        let (instance, element) = (scope.instance.clone(), element.clone());
+        e = e.on_drag(
+            move |s: &mut State, d: &mut rune::Drag, tx: &mut rune::Tx| match d.phase {
+                Phase::Down => s.paint(&instance, &element),
+                Phase::Move => {
+                    let [x, y] = d.window_point();
+                    tx.element_at(x, y, |s: &mut State, picked, _: &mut rune::Tx| {
+                        if let Some(picked) = picked {
+                            s.paint_over(picked.path());
+                        }
+                    });
+                }
+                Phase::Up => s.painted(),
+            },
         );
     }
     if let (true, Some(element)) = (b.press && key.is_some(), &b.key) {

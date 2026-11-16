@@ -10,6 +10,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow, bail};
 use plugin_host::{Plugins, ScanCache, ScanCommand};
 use rune::{Cx, El, KeyEvent, Tx, col, el, row, text};
+use serde::Deserialize as _;
 use serde_json::{Value, json};
 use sound_core::{Engine, GROUPING_WINDOW, InstanceId, OutputDevice, OutputStream, Project, Ticks};
 use sound_typescript::next::{Drawn, FRAME_INTERVAL, Looped, Tools};
@@ -89,6 +90,8 @@ pub(crate) struct State {
     pub(crate) expanded: BTreeSet<InstanceId>,
     /// The knob a drag turns now, by key, and where it is.
     pub(crate) turning: Option<(String, f64)>,
+    /// The view a held press paints, and the keys of the elements it entered.
+    painting: Option<(InstanceId, BTreeSet<String>)>,
     waker: Arc<Mutex<Option<rune::Waker>>>,
     /// The steps of `--act` and the seconds of `--play`, for the first frame of a run without a window.
     first: Option<(Vec<Step>, Option<f64>)>,
@@ -184,6 +187,7 @@ impl State {
             shown: BTreeSet::new(),
             expanded: BTreeSet::new(),
             turning: None,
+            painting: None,
             waker,
             first: headless.then(|| (act.unwrap_or_default(), play)),
             last: 0.0,
@@ -318,6 +322,53 @@ impl State {
             }
         }
         Ok(())
+    }
+
+    /// A press on the element `key` of the view of `instance`, which has `onEnter`, paints it
+    /// and what it enters until let go: one step of undo.
+    pub(crate) fn paint(&mut self, instance: &InstanceId, key: &str) {
+        self.painting = Some((instance.clone(), BTreeSet::from([key.to_string()])));
+        if let Some(tools) = &mut self.tools {
+            tools.hold(&mut self.project, true);
+        }
+        self.pointed(instance, key, "enter", None);
+    }
+
+    /// The pointer of a paint is over the element at `path`, Rune's path of keys: the first
+    /// time it is over one that has `onEnter`, or is inside one, that one is painted.
+    pub(crate) fn paint_over(&mut self, path: &str) {
+        let Some((instance, entered)) = &self.painting else {
+            return;
+        };
+        let Some(Drawn::View { root, memos }) = self.drawn(instance) else {
+            return;
+        };
+        let Ok(root) = tree::Node::deserialize(&**root) else {
+            return;
+        };
+        let mut keys = Vec::new();
+        tree::enterable(&root, memos, &mut keys);
+        let (prefix, path) = (self.prefix_of(instance), format!("/{path}/"));
+        let found = (keys.into_iter())
+            .filter(|key| !entered.contains(key))
+            .find(|key| path.contains(&format!("/{prefix}{key}/")));
+        let Some(key) = found else {
+            return;
+        };
+        let instance = instance.clone();
+        if let Some((_, entered)) = &mut self.painting {
+            entered.insert(key.clone());
+        }
+        self.pointed(&instance, &key, "enter", None);
+    }
+
+    /// The press of a paint is let go.
+    pub(crate) fn painted(&mut self) {
+        self.painting = None;
+        if let Some(tools) = &mut self.tools {
+            tools.hold(&mut self.project, false);
+        }
+        self.handled();
     }
 
     /// Shows all the controls of the card of `id`, or the first few again.

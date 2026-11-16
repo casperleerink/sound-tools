@@ -93,6 +93,9 @@ pub struct Tools {
     acting: Option<ProjectEdit>,
     /// How many actions went to Bun that it did not say it ran.
     acts: usize,
+    /// Whether a gesture over several elements is held, such as a paint: its actions are one
+    /// step of undo, which ends once it is let go and they ran.
+    held: bool,
     /// Why actions on views did nothing, oldest first, for whoever asked: `--act`, or a notice.
     failed_actions: Vec<String>,
     /// Whether Bun runs a frame of the control loops now.
@@ -144,6 +147,7 @@ impl Tools {
             view_problems: BTreeMap::new(),
             acting: None,
             acts: 0,
+            held: false,
             failed_actions: Vec::new(),
             ticking: false,
             told_transport: None,
@@ -223,6 +227,24 @@ impl Tools {
                 Ok(())
             }
             _ => Err(NOT_RUNNING.to_string()),
+        }
+    }
+
+    /// Holds a gesture over several elements, such as a paint, or lets it go: the actions while
+    /// it is held are one step of undo.
+    pub fn hold(&mut self, project: &mut Project, held: bool) {
+        self.held = held;
+        if !held && self.acts == 0 {
+            self.finish_action(project);
+        }
+    }
+
+    /// The step of undo of the actions that ran ends.
+    fn finish_action(&mut self, project: &mut Project) {
+        if let Some(edit) = self.acting.take()
+            && let Err(error) = project.finish(edit)
+        {
+            self.failed_actions.push(error.to_string());
         }
     }
 
@@ -493,11 +515,7 @@ impl Tools {
     /// The Bun that ran the actions sent is gone: what they changed is one step, and those it
     /// did not say it ran did nothing.
     fn end_actions(&mut self, project: &mut Project, why: &str) {
-        if let Some(edit) = self.acting.take()
-            && let Err(error) = project.finish(edit)
-        {
-            self.failed_actions.push(error.to_string());
-        }
+        self.finish_action(project);
         let unanswered = std::mem::take(&mut self.acts);
         self.failed_actions
             .extend(std::iter::repeat_n(why.to_string(), unanswered));
@@ -554,10 +572,8 @@ impl Tools {
             }
             Event::Acted { error } => {
                 self.acts = self.acts.saturating_sub(1);
-                if let Some(edit) = self.acting.take()
-                    && let Err(error) = project.finish(edit)
-                {
-                    self.failed_actions.push(error.to_string());
+                if !self.held {
+                    self.finish_action(project);
                 }
                 self.failed_actions.extend(error);
                 false

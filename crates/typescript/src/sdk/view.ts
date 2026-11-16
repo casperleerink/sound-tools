@@ -44,7 +44,7 @@ export type Moved = { dx: number; dy: number };
 
 /** An element a pointer or an agent uses: its `key` is unique in the view, its `label` says what it is. */
 type Interactive =
-  | { onPress?: never; actions?: never; drag?: never; onDragEnd?: never }
+  | { onPress?: never; actions?: never; drag?: never; onDragEnd?: never; onEnter?: never }
   | {
       key: string;
       /** What it is called, such as "Mute Track 2": an agent acts on it by this name. */
@@ -59,6 +59,8 @@ type Interactive =
       /** The window moves it along `axis` within [min, max] points while dragged; `onDragEnd` hears where it stopped. */
       drag?: { axis: "x" | "y"; min: number; max: number };
       onDragEnd?: (moved: Moved) => void;
+      /** A paint: while a press that began on an element with `onEnter` is held, once for it and once for each other one the pointer enters, such as the cells of a grid. All it changes is one step of undo. */
+      onEnter?: () => void;
     };
 
 /** Points, or its parent's. A live `w` or `h` places it at `at` (0, 0 when left out), out of the flow, and needs the other in points. */
@@ -117,7 +119,7 @@ export type ShapesProps = { key?: string; at?: [Num, Num]; w: number; h: number;
 export type ChildProps = { path: string };
 
 export type Node =
-  | ({ t: "row" | "col" | "box"; press?: true; actions?: string[]; children: Node[] } & Omit<BoxProps, "children" | "onPress" | "onDragEnd" | "actions">)
+  | ({ t: "row" | "col" | "box"; press?: true; enter?: true; actions?: string[]; children: Node[] } & Omit<BoxProps, "children" | "onPress" | "onDragEnd" | "onEnter" | "actions">)
   | ({ t: "text"; text: string } & TextLook & { live?: Num; unit?: Unit | "position" | "time"; digits?: number })
   | ({ t: "shapes" } & ShapesProps)
   | ({ t: "child" } & ChildProps)
@@ -160,7 +162,7 @@ export declare namespace h {
   }
 }
 
-type Handlers = { onPress?: () => void; onDragEnd?: (moved: Moved) => void; actions?: Actions };
+type Handlers = { onPress?: () => void; onDragEnd?: (moved: Moved) => void; onEnter?: () => void; actions?: Actions };
 type Scope = { handlers: Map<string, Handlers>; memos: string[] };
 type Entry = Scope & { deps: unknown[]; v: number; node: Node };
 /** What a view of one instance keeps between its runs. */
@@ -180,12 +182,12 @@ const flat = (c: Child, out: Node[] = []): Node[] => {
 
 export function h(tag: keyof h.JSX.IntrinsicElements | ((props: any) => Node), props: Record<string, any> | null, ...children: Child[]): Node {
   if (typeof tag === "function") return tag({ ...props, children: children.length === 1 ? children[0] : children });
-  const { onPress, onDragEnd, actions, ...rest } = props ?? {};
-  if (onPress || onDragEnd || actions) scope.handlers.set(rest.key, { onPress, onDragEnd, actions });
+  const { onPress, onDragEnd, onEnter, actions, ...rest } = props ?? {};
+  if (onPress || onDragEnd || onEnter || actions) scope.handlers.set(rest.key, { onPress, onDragEnd, onEnter, actions });
   if (tag === "text") return { t: "text", ...rest, text: words(children as TextChild) } as Node;
   if (tag === "shapes" || tag === "child") return { t: tag, ...rest } as Node;
   const named = actions ? { actions: Object.keys(actions) } : {};
-  return { t: tag, ...rest, ...(onPress ? { press: true } : {}), ...named, children: flat(children) } as Node;
+  return { t: tag, ...rest, ...(onPress ? { press: true } : {}), ...(onEnter ? { enter: true } : {}), ...named, children: flat(children) } as Node;
 }
 
 /** The text of a text's children: without `false`, `null` and `undefined`, as elements leave them out. */
@@ -250,11 +252,12 @@ function run(id: string, draw: Draw, self: Drawn<unknown>, ctx: Context<any>): T
 
 const handlersOf = (at: Instance, key: string) => at.root.handlers.get(key) ?? [...at.cache.values()].find((e) => e.handlers.has(key))?.handlers.get(key);
 
-/** Runs an action of `key`: `press` is its `onPress`, `drag` its `onDragEnd`. Throws when it has none. */
+/** Runs an action of `key`: `press` is its `onPress`, `drag` its `onDragEnd`, `enter` its `onEnter`. Throws when it has none. */
 function perform(at: Instance | undefined, key: string, action: string, value: number | Moved | undefined) {
   const handlers = at && handlersOf(at, key);
   if (action === "press" && handlers?.onPress) return handlers.onPress();
   if (action === "drag" && handlers?.onDragEnd) return handlers.onDragEnd(value as Moved);
+  if (action === "enter" && handlers?.onEnter) return handlers.onEnter();
   const named = handlers?.actions?.[action];
   if (!named) throw new Error(`${key} has no ${action}`);
   if (action === "set" && typeof value !== "number") throw new Error("set takes a number");

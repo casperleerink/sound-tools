@@ -120,9 +120,11 @@ impl Found {
         };
         let press = b.press.then(|| "press".to_string());
         let drag = b.drag.is_some().then(|| "drag".to_string());
+        let enter = b.enter.then(|| "enter".to_string());
         let actions: Vec<String> = (press.into_iter())
             .chain(b.actions.iter().cloned())
             .chain(drag)
+            .chain(enter)
             .collect();
         if let (Some(key), false) = (&b.key, actions.is_empty()) {
             self.controls.push(Control {
