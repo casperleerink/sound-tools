@@ -53,7 +53,7 @@ export {
   act, apply, find, Fragment, h, live, memo, press, render
 } from "./sdk/view";
 export type {
-  Actions, BoxProps, Child, ChildProps, Color, ColorToken, Ctx, Drawn, Lines, Moved, Node, Op,
+  Actions, BoxProps, Child, ChildProps, Color, ColorToken, Drawn, Lines, Moved, Node, Op,
   Radius, Rects, Role, Self, Shadow, ShapesProps, Space, TextProps, TextStyle, Tree
 } from "./sdk/view";
 // what the runtime calls

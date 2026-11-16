@@ -18,7 +18,7 @@ const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
 /** What the host uses of `sdk/view.ts`, which only a project of the new window has: there a tool's `view` is one of it. */
 type Next = {
   host: {
-    run(instance: string, draw: unknown, self: unknown, ctx: { memory: unknown; change: unknown }): unknown;
+    run(instance: string, draw: unknown, self: unknown, ctx: unknown): unknown;
     perform(instance: string, key: string, action: string, value?: unknown): void;
     forget(instance: string): void;
   };
@@ -689,10 +689,11 @@ function drawNext(instance: string) {
     return;
   }
   const self = { name: instance.slice(instance.lastIndexOf("/") + 1), state: filledState(spec, record), children: childrenOf(instance) };
-  const change = (edit: (draft: Part<State>) => void, label = "Change") => updater(instance)(label, edit);
   runs(spec.name, "view");
   try {
-    say({ type: "tree", instance, tree: next.host.run(instance, spec.view, self, { memory: memoryOf(instance, spec), change }) });
+    // Its handlers get what `tick` gets.
+    const context = contextOf(instance, spec, record, {}, { time: now, transport }, {});
+    say({ type: "tree", instance, tree: next.host.run(instance, spec.view, self, context) });
   } catch (error) {
     say({ type: "tree", instance, error: String(error) });
   }
@@ -1381,7 +1382,7 @@ function draw(spec: Spec): unknown {
   }
   if (next) {
     const checked = `check ${spec.name}`;
-    if (spec.view) next.host.run(checked, spec.view, { name: spec.name, state, children: [] }, { memory, change() {} });
+    if (spec.view) next.host.run(checked, spec.view, { name: spec.name, state, children: [] }, context);
     next.host.forget(checked);
     return [];
   }

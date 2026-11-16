@@ -5,7 +5,8 @@
 import type theme from "../theme.json";
 import type { Fields, Inputs, Unit, ValuesOf } from "./fields";
 import { registry } from "./tools";
-import type { ChildTools, FilledStateOfTool, OwnedChild, Part, ProjectTool } from "./tools";
+import type { Clock } from "./clock";
+import type { ChildTools, Context, FilledStateOfTool, OwnedChild, ProjectTool } from "./tools";
 import { Live, splitPath, type Num } from "./values";
 
 // Design tokens: every name comes from theme.json, so a misspelled one is a type error.
@@ -126,24 +127,16 @@ type KidsOf<T> = T extends ProjectTool<string, infer Entry> ? (Entry extends { c
 export type Self<T> = Drawn<FilledStateOfTool<T>, KidsOf<T>>;
 /** An instance as its view gets it: its record, every field filled, and its children's. */
 export type Drawn<State, K extends ChildTools = ChildTools> = { name: string; state: State; children: OwnedChild<K>[] };
-/** What a view gets besides its records: what its code keeps, and `change`. */
-export type Ctx<State, K extends ChildTools, M> = {
-  /** The instance's `memory`, which its `tick` gets too: what is chosen, what is open. Never saved; change it in a handler. */
-  memory: M;
-  /** Changes records: write to `draft` as to the records. One step of undo, named `label`. */
-  change: (edit: (draft: Part<State, K>) => void, label?: string) => void;
-};
-
-/** A tool's `view`: what the window shows of an instance, run again whenever its records change. */
-export type ToolView<S extends Fields, _I extends Inputs, M, K extends ChildTools> = (self: Drawn<ValuesOf<S>, K>, ctx: Ctx<ValuesOf<S>, K, M>) => Node;
+/** A tool's `view`: what the window shows of an instance, run again whenever its records change. Its handlers use `ctx` as `tick` does: `update`, `send`, `play`, `clock`. */
+export type ToolView<S extends Fields, I extends Inputs, M, K extends ChildTools> = (self: Drawn<ValuesOf<S>, K>, ctx: Context<ValuesOf<S>, I, M, K>) => Node;
 
 /** What all code of an instance gets of the view. */
 export interface ViewContext<_State, _I extends Inputs, M> {
-  /** What its code keeps and nothing saves, made by its tool's `memory`. */
+  /** What its code keeps and nothing saves, made by its tool's `memory`. Changed in a handler, the view runs again. */
   memory: M;
 }
 
-type Draw = (self: Drawn<unknown>, ctx: Ctx<any, any, any>) => Node;
+type Draw = (self: Drawn<unknown>, ctx: Context<any>) => Node;
 
 // JSX through `h`: a file imports `h` from here.
 
@@ -230,7 +223,7 @@ function instanceOf(id: string): Instance {
   return known;
 }
 
-function run(id: string, draw: Draw, self: Drawn<unknown>, ctx: Ctx<any, any, any>): Tree {
+function run(id: string, draw: Draw, self: Drawn<unknown>, ctx: Context<any>): Tree {
   const at = instanceOf(id);
   current = at;
   fresh = {};
@@ -287,15 +280,23 @@ export function render<T extends ProjectTool>(tool: T, self: Self<T>): Node {
   tested = { tool, self: self as Drawn<unknown>, changes: [], memory };
   // A handler a memo kept from an earlier run changes what the last run shows, as in the window.
   // Its draft is a copy of the records with its earlier changes, as the host's is.
-  const change = (edit: (draft: never) => void) => {
+  const update = (_label: string, edit: (draft: never) => void) => {
     if (!tested) return;
     const before = apply(tested.self, tested.changes);
     const draft = structuredClone(before);
     edit(draft as never);
     tested.changes.push(...diff(before, draft));
   };
-  run(TESTED, spec.view as unknown as Draw, tested.self, { memory, change });
+  run(TESTED, spec.view as unknown as Draw, tested.self, quiet(tested.self, memory, update));
   return instances.get(TESTED)!.last;
+}
+
+/** What code gets in a test: its records and `update`; what it plays and asks goes nowhere. */
+function quiet(self: Drawn<unknown>, memory: unknown, update: Context<unknown>["update"]): Context<any> {
+  const nothing = () => {};
+  const clock = { playing: false, repeat: null, click: false, computerKeys: false, writeAutomation: false, tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] }, sections: [], tick: 0, bar: 1, beat: 1, bpm: 120, play: nothing, pause: nothing, stop: nothing, jump: nothing, setRepeat: nothing, setClick: nothing, setComputerKeys: nothing, setWriteAutomation: nothing, update: nothing } as unknown as Clock;
+  const asked = async () => null;
+  return { state: self.state, children: self.children, memory, update, clock, time: 0, outputs: {}, send: nothing, play: nothing, select: nothing, addOffer: nothing, openWindow: nothing, openFile: asked, render: asked, openMenu: asked, exportNotes: async () => false, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [] } as unknown as Context<any>;
 }
 
 /** Presses `key` as a pointer does; the changes it asked for. The view runs again, as in the window. */

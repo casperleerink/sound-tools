@@ -123,11 +123,11 @@ const STEPS: &str = r#"import { boolean, h, input, list, tool } from "./sdk";
 
 export const steps = tool({
   name: "steps", title: "Steps", when: "Never", doc: "Sixteen steps.", state: { on: list(boolean({ default: false }), { max: 16 }) }, sound: () => input,
-  view: (self, { change }) => (
+  view: (self, { update }) => (
     <row gap={1}>
       {Array.from({ length: 16 }, (_, i) => {
         const on = self.state.on[i] ?? false;
-        const flip = () => change((draft) => void (draft.state.on = Array.from({ length: 16 }, (_, j) => (j === i ? !on : (self.state.on[j] ?? false)))));
+        const flip = () => update("Change", (draft) => void (draft.state.on = Array.from({ length: 16 }, (_, j) => (j === i ? !on : (self.state.on[j] ?? false)))));
         return <box key={`step-${i}`} label={`Step ${i + 1}`} role="switch" checked={on} w={16} h={24} radius="sm" fill={on ? "text" : "fill"} onPress={flip} actions={{ toggle: flip }} />;
       })}
     </row>
@@ -143,14 +143,14 @@ const COUNTER: &str = r#"import { boolean, h, input, memo, number, tool } from "
 
 export const counter = tool({
   name: "counter", title: "Counter", when: "Never", doc: "Counts.", state: { count: number({ min: 0, max: 100, integer: true, default: 0 }), broken: boolean({ default: false }) }, sound: () => input,
-  view: (self, { change }) => {
-  const pad = memo("pad", [], () => <box key="break" label="Break" onPress={() => change((draft) => void (draft.state.broken = true))} />);
+  view: (self, { update }) => {
+  const pad = memo("pad", [], () => <box key="break" label="Break" onPress={() => update("Change", (draft) => void (draft.state.broken = true))} />);
   if (self.state.broken) throw new Error("broken");
   const twice = () => {
-    change((draft) => void (draft.state.count += 1));
-    change((draft) => void (draft.state.count += 1));
+    update("Change", (draft) => void (draft.state.count += 1));
+    update("Change", (draft) => void (draft.state.count += 1));
   };
-  const set = (count: number) => change((draft) => void (draft.state.count = count));
+  const set = (count: number) => update("Change", (draft) => void (draft.state.count = count));
   return (
     <row>
       {pad}
@@ -519,10 +519,10 @@ import { find, h, input, number, press, render, tool } from "./sdk";
 
 const counter = tool({
   name: "counter", title: "Counter", when: "Never", doc: "Counts.", state: { count: number({ min: 0, max: 100, default: 0 }) }, sound: () => input,
-  view: (self, { change }) => (
+  view: (self, { update }) => (
     <row>
       <text key="said">{self.state.count > 5 && "Many "}{self.state.count}</text>
-      <box key="twice" label="Twice" onPress={() => change((draft) => { draft.state.count++; draft.state.count++; })} />
+      <box key="twice" label="Twice" onPress={() => update("Change", (draft) => { draft.state.count++; draft.state.count++; })} />
     </row>
   ),
 });
@@ -830,11 +830,11 @@ export const gauge = tool({
   name: "gauge", title: "Gauge", when: "Never", doc: "A gauge.",
   state: { level: number({ min: 0, max: 1, default: 0.75 }), start: number({ min: 0, max: 100, integer: true, default: 0 }) },
   sound: () => input,
-  view: (self, { change }) => (
+  view: (self, { update }) => (
     <box>
       <text key="level" live={live.field("level")} digits={2} />
       <box key="bar" at={[-10, 0]} w={live.playhead.minus(self.state.start).plus(5)} h={4} />
-      <box key="start" label="Start" role="slider" value={self.state.start} actions={{ set: (start) => change((draft) => void (draft.state.start = start)) }} />
+      <box key="start" label="Start" role="slider" value={self.state.start} actions={{ set: (start) => update("Change", (draft) => void (draft.state.start = start)) }} />
     </box>
   ),
 });
@@ -876,4 +876,71 @@ fn a_live_value_made_anew_in_every_build_keeps_one_binding() {
         build(&state);
     }
     assert_eq!(state.lives.bindings(), bindings);
+}
+
+/// A beep whose view's buttons play it and the piece, as its control loop could.
+const LAUNCHER: &str = r#"import { h, number, sine, tool } from "./sdk";
+export const launcher = tool({
+  name: "launcher", title: "Launcher", when: "Never", doc: "Launches.", state: {},
+  inputs: { gain: number({ min: 0, max: 1, default: 0 }) },
+  sound: ({ gain }) => sine(440).times(gain),
+  view: (_, { send, clock }) => (
+    <row>
+      <box key="launch" label="Launch" onPress={() => { send("gain", 1); clock.play(); }} />
+      <box key="stop" label="Stop all" onPress={() => clock.stop()} />
+    </row>
+  ),
+});
+"#;
+
+#[test]
+fn a_press_plays_an_input_and_the_piece_as_a_control_loop_does() {
+    let (_scratch, folder) = with_tools(&[("launcher", LAUNCHER)]);
+    let mut state = opened(&folder);
+    build(&state);
+    act(&mut state, json!({ "label": "Launch", "action": "press" }));
+    for step in 1..=30 {
+        frame(&mut state, f64::from(step) / 60.0);
+    }
+    assert!(state.playing);
+    let levels = state.lives.levels();
+    assert!(
+        levels
+            .iter()
+            .any(|(name, db)| name == "song/t00/mix" && *db > -60.0),
+        "{levels:?}"
+    );
+    act(&mut state, json!({ "label": "Stop all", "action": "press" }));
+    frame(&mut state, 0.6);
+    assert!(!state.playing);
+}
+
+/// A press that asks for a menu, and keeps whether it got an answer.
+const ASKER: &str = r#"import { h, input, number, tool } from "./sdk";
+export const asker = tool({
+  name: "asker", title: "Asker", when: "Never", doc: "Asks.", state: { answered: number({ min: 0, max: 1, default: 0 }) },
+  sound: () => input,
+  view: (_, { openMenu, update }) => (
+    <box key="ask" label="Ask" onPress={async () => {
+      if ((await openMenu([{ label: "One" }])) === null) update("Answered", (draft) => void (draft.state.answered = 1));
+    }} />
+  ),
+});
+"#;
+
+#[test]
+fn a_menu_this_window_cannot_show_answers_none_and_says_so() {
+    let (_scratch, folder) = with_tools(&[("asker", ASKER)]);
+    let mut state = opened(&folder);
+    act(&mut state, json!({ "label": "Ask", "action": "press" }));
+    frame(&mut state, 0.1);
+    state.settle();
+    let id = InstanceId::new("song/t00/chain/asker").unwrap();
+    let held: Value = serde_json::from_str(&state.project.state_json(&id).unwrap()).unwrap();
+    assert_eq!(held["answered"], 1);
+    let problems = state.project.problems();
+    assert!(
+        problems.iter().any(|problem| problem.message.contains("a menu")),
+        "{problems:?}"
+    );
 }

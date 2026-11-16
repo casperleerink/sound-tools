@@ -16,16 +16,16 @@ export const chop = tool({
   doc: "Lets the sound through on the steps that are on, `depth` how far it cuts the others.",
   state: { steps: list(boolean({ default: true }), { max: 16 }), depth: number({ min: 0, max: 1, default: 1 }) },
   sound: ({ depth }) => input.times(depth.negate().plus(1)),
-  view: (self, { change }) => (
+  view: (self, { update }) => (
     <col gap={2}>
       <row gap={1}>
         {Array.from({ length: 16 }, (_, i) => {
           const on = self.state.steps[i] ?? true;
-          const flip = () => change((draft) => void (draft.state.steps = Array.from({ length: 16 }, (_, j) => (j === i ? !on : (self.state.steps[j] ?? true)))), `Step ${i + 1}`);
+          const flip = () => update(`Step ${i + 1}`, (draft) => void (draft.state.steps = Array.from({ length: 16 }, (_, j) => (j === i ? !on : (self.state.steps[j] ?? true)))));
           return <Toggle id={`step-${i}`} label={`Step ${i + 1}`} letter={`${i + 1}`} on={on} color="green" onToggle={flip} />;
         })}
       </row>
-      <Knob id="depth" label="Depth" value={self.state.depth} min={0} max={1} onChange={(depth) => change((draft) => void (draft.state.depth = depth))} />
+      <Knob id="depth" label="Depth" value={self.state.depth} min={0} max={1} onChange={(depth) => update("Depth", (draft) => void (draft.state.depth = depth))} />
     </col>
   ),
 });
@@ -40,7 +40,7 @@ export const chop = tool({
 `view: (self, ctx) => …` is a plain function of the records, `self.state` and `self.children`, run again after every change and action: no hooks, no signals. `sdk/view.ts` documents every element and prop. Never name a variable `h`: JSX calls `h`. A part of a view in its own function types its records with `Drawn<ValuesOf<typeof fields>, typeof children>`, never `typeof` its own tool.
 
 - `memo(key, deps, () => …)` builds a part again only when a dep changes: `deps` lists all it shows. Build its keys from what is in `deps`, such as a track's name, never its index.
-- `ctx.memory` is the tool's `memory`, which `tick` gets too: never saved, such as the chosen track. Changed in `tick` it does not draw the view again: change it in a handler or a `change`.
+- `ctx.memory` is the tool's `memory`, which `tick` gets too: never saved, such as the chosen track. Changed in `tick` it does not draw the view again: change it in a handler or an `update`.
 
 ## Look
 
@@ -56,7 +56,7 @@ The view never runs for what moves: a live value is a small expression the windo
 
 ## Changes and actions
 
-- `ctx.change((draft) => …, label)` changes records: write to `draft` as to the records. All the changes of one press, action or drag are one step of undo. A change the records refuse fails the action.
+- `ctx` is what `tick` gets: `update(label, (draft) => …)` changes records (write to `draft` as to the records), `send`, `play` and `clock` play. All the changes of one press, action or drag are one step of undo. A change the records refuse fails the action.
 - An element a pointer or an agent uses has a unique `key`, a `label` that says what it is ("Mute Track 2"), its handlers (`onPress`, `onDragEnd`, `actions` such as `toggle` or `set`) and its state (`checked`, `value`).
 - A `drag` moves the element in the window; your code hears only where it stopped.
 - `tick` runs about 30 times a second while the window is open, also in `--play`. What it `send`s plays, and `clock.stop()` and the like move the piece.

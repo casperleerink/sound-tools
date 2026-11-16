@@ -21,7 +21,7 @@ use sound_signals::{Signals, SignalsUpdate};
 
 pub use crate::bun::Waker;
 use crate::bun::{
-    Bun, Clock, Event, Played, RecordEdit, Request, Runs, Skipped, Telling, Transport, TransportOp,
+    Answer, Bun, Clock, Event, Played, RecordEdit, Request, Runs, Skipped, Telling, Transport, TransportOp,
     record_key,
 };
 use crate::tools::{Choice, Field, ToolInfo, feed_child, feed_processor};
@@ -650,6 +650,29 @@ impl Tools {
                 self.transport(project, op);
                 false
             }
+            Event::OpenMenu { question, .. } => {
+                self.unanswered(project, question, Answer::Item(None), "a menu")
+            }
+            Event::Confirm { question, .. } => {
+                self.unanswered(project, question, Answer::Confirmed(false), "a question")
+            }
+            Event::OpenFile { question, .. } | Event::Render { question, .. } => {
+                self.unanswered(project, question, Answer::Asset(None), "a file")
+            }
+            Event::ExportNotes { question, .. } => {
+                self.unanswered(project, question, Answer::Confirmed(false), "an export")
+            }
+            Event::Offers { question, .. } => {
+                let answer = Answer::Offers {
+                    offers: Vec::new(),
+                    notes: Vec::new(),
+                    here: None,
+                };
+                self.unanswered(project, question, answer, "the devices")
+            }
+            Event::Numbers { question, .. } => {
+                self.unanswered(project, question, Answer::Numbers(Vec::new()), "numbers")
+            }
             _ => false,
         }
     }
@@ -808,6 +831,28 @@ impl Tools {
                 }
             }
         }
+    }
+
+    /// Code asked for `what`, which this window has no way to ask yet: it gets nothing, as when
+    /// the composer says no, so its code does not wait for ever.
+    fn unanswered(
+        &mut self,
+        project: &mut Project,
+        question: u64,
+        answer: Answer,
+        what: &str,
+    ) -> bool {
+        if let Some(bun) = &self.bun {
+            bun.send(&Request::Answer { question, answer });
+        }
+        let problem = crate::folder_problem(format!(
+            "code asks for {what}, which this window does not have yet, so it got none"
+        ));
+        if !self.problems.contains(&problem) {
+            self.problems.push(problem);
+            self.report(project);
+        }
+        false
     }
 
     /// A problem of the tool of `instance`, if it is one of the project's.

@@ -64,16 +64,16 @@ export const song = tool({
     return { connections };
   },
   memory: (): Memory => ({ chosen: null, armed: [] }),
-  view: (self, { memory, change }) => {
+  view: (self, { memory, update }) => {
     const tracks = ordered(self.children.filter((child): child is Track => child.tool === "track"), self.state.order);
     const chosen = tracks.find((each) => each.name === memory.chosen) ?? tracks[0];
     /** Changes the fader of `name`, a track or the master. */
     const mixing = (name: string, label: string, edit: (mix: { gain_db: number | "-inf"; mute: boolean }) => void) =>
-      change((draft) => {
+      update(label, (draft) => {
         const owner = draft.children.find((child) => child.name === name);
         const mix = name === "master" ? owner : owner?.children.find((child) => child.name === "mix");
         if (mix?.tool === "fader") edit(mix.state);
-      }, label);
+      });
     return (
       <col w="full" h="full" fill="background">
         <Ruler />
@@ -89,10 +89,10 @@ export const song = tool({
                 onChoose={() => (memory.chosen = each.name)}
                 onMute={() => mixing(each.name, `Mute ${titleOf(each, index)}`, (mix) => (mix.mute = !mix.mute))}
                 onSolo={() =>
-                  change((draft) => {
+                  update(`Solo ${titleOf(each, index)}`, (draft) => {
                     const solo = draft.state.solo;
                     draft.state.solo = solo.includes(each.name) ? solo.filter((name) => name !== each.name) : [...solo, each.name];
-                  }, `Solo ${titleOf(each, index)}`)
+                  })
                 }
                 onArm={() => (memory.armed = memory.armed.includes(each.name) ? memory.armed.filter((name) => name !== each.name) : [...memory.armed, each.name])}
               />
