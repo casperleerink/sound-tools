@@ -193,7 +193,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - Settings covers the whole window; audio devices are picked there. Rejected: a window of its own; a dialog, which blocks.
 - The window moves to Rune (`sound-tools-next`) beside the GPUI app, the release until parity. Plan: `spikes/tool-sdk/PORT-MAP.md`.
 - There a tool's `view` (v2) is a plain function of its records, run again on every change, with `memo`; what moves is a live value v1's evaluator works out. Rejected: signals, a runtime to own; Luau, worse for agents.
-- A project with `extensions/theme.json` opens only in the new window: one `./sdk` without v1's view modules, its own tokens and components (`extensions/ui/`).
+- A project with `extensions/theme.json` is made for the new window, not the old: one `./sdk` without v1's views, its own tokens and components.
 - Every control declares its meaning once (role, label, state, actions), so an agent lists and runs it as a click would. A run without a window waits for Bun each frame, so it repeats.
 - Windows installs per user with Inno Setup. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
 
