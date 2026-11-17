@@ -3,7 +3,7 @@
 
 The flags are the app's (`crates/agent/src/provider/claude/mod.rs`): the same tools, no setting
 sources, no MCP, no slash commands, and the project as an added folder so its CLAUDE.md loads.
-`sound-tools` on the PATH is this checkout's debug build, or `$SOUND_TOOLS_RUNTIME`.
+`sound-tools` on the PATH is this checkout's debug build, or `$SOUND_TOOLS_PROGRAM`.
 """
 
 import hashlib
@@ -16,10 +16,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-RUNTIME = Path(os.environ.get("SOUND_TOOLS_RUNTIME", REPO / "target" / "debug" / "runtime"))
+PROGRAM = Path(os.environ.get("SOUND_TOOLS_PROGRAM", REPO / "target" / "debug" / "sound-tools"))
 LOGS = Path.home() / ".cache" / "sound-tools-eval"
 # One folder per program under test, so two evals running at once keep their own.
-BIN = LOGS / "bin" / hashlib.sha1(str(RUNTIME).encode()).hexdigest()[:8]
+BIN = LOGS / "bin" / hashlib.sha1(str(PROGRAM).encode()).hexdigest()[:8]
 APP_TOOLS = "Bash,Read,Edit,Write,Glob,Grep"
 
 
@@ -27,7 +27,7 @@ def sound_tools_on_path() -> str:
     """A folder with `sound-tools` in it, as the app links it, for the agent's PATH."""
     BIN.mkdir(parents=True, exist_ok=True)
     program = BIN / "sound-tools"
-    program.write_text(f'#!/bin/sh\nexec "{RUNTIME}" "$@"\n')
+    program.write_text(f'#!/bin/sh\nexec "{PROGRAM}" "$@"\n')
     program.chmod(0o755)
     return f"{BIN}:{os.environ['PATH']}"
 
@@ -57,9 +57,9 @@ class Run:
 
     def checks_run(self) -> dict:
         """How the agent checked its work: each way, and how often."""
-        ways = {"screenshot": "--screenshot", "click": "--click", "play": "--play",
-                "inspect": "--inspect", "analyze": "--analyze", "types": "bun check",
-                "snap": "--snap", "tree": "--tree", "act": "--act"}
+        ways = {"snap": "--snap", "tree": "--tree", "act": "--act", "script": "--script",
+                "play": "--play", "inspect": "--inspect", "analyze": "--analyze",
+                "types": "bun check"}
         counts = {way: sum(flag in argument for tool, argument in self.calls if tool == "Bash")
                   for way, flag in ways.items()}
         counts["looked"] = sum(tool == "Read" and argument.endswith(".png")

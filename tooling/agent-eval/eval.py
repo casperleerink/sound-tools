@@ -3,14 +3,14 @@
     python3 tooling/agent-eval/eval.py <scenario>... [--runs n] [--model claude-opus-5-5]
     python3 tooling/agent-eval/eval.py ui      # the scenarios with criteria for the council
 
-Each run starts from a new project made by the runtime (as the app makes one), with the files of
+Each run starts from a new project made by `sound-tools` (as the app makes one), with the files of
 the scenario, then runs Claude Code with the app's flags (`claude_run.py`), one message after
 another in one conversation, then checks the project. A scenario in `CRITERIA` then goes to the
 council: Opus and GPT, each on a copy of its own, check each criterion by using the result
 through the app, score its UI and UX against DESIGN.md, and keep the screenshots that show it.
 It prints one JSON line per run: the checks, each message's cost and how the builder checked its
 work, and the council's verdicts. `report.py` puts runs side by side by `--label`. Logs go to
-~/.cache/sound-tools-eval/, which a restart keeps. `$SOUND_TOOLS_RUNTIME` and
+~/.cache/sound-tools-eval/, which a restart keeps. `$SOUND_TOOLS_PROGRAM` and
 `$SOUND_TOOLS_TEMPLATE` (the DAW template's folder) pick another program and template to compare.
 
 `examples/` holds tools agents built in these runs, from one prompt each: a gravity harp view,
@@ -32,8 +32,8 @@ LOGS = claude_run.LOGS
 HERE = Path(__file__).resolve().parent
 
 
-def runtime(folder: Path, *arguments: str, stdin: str | None = None) -> str:
-    process = subprocess.run([str(claude_run.RUNTIME), str(folder), *arguments], input=stdin,
+def sound_tools(folder: Path, *arguments: str, stdin: str | None = None) -> str:
+    process = subprocess.run([str(claude_run.PROGRAM), str(folder), *arguments], input=stdin,
                              capture_output=True, text=True, timeout=300)
     return process.stdout + process.stderr
 
@@ -86,7 +86,7 @@ def track_effects(folder: Path, track: str) -> list:
 
 
 def no_problems(folder: Path) -> bool:
-    return "problems: 0" in runtime(folder, "--inspect")
+    return "problems: 0" in sound_tools(folder, "--inspect")
 
 
 # Each scenario: what is in the project before, what the composer asks, and the check.
@@ -171,7 +171,7 @@ def instruments(folder: Path) -> dict:
 
 def sounds(folder: Path, only: str | None = None) -> bool:
     """Whether the project, or the instance `only`, plays anything in the first eight seconds."""
-    report = runtime(folder, "--analyze", "--seconds", "8", *(["--only", only] if only else []))
+    report = sound_tools(folder, "--analyze", "--seconds", "8", *(["--only", only] if only else []))
     match = re.search(r"loudness (-?[0-9.]+) LUFS", report)
     return bool(match) and float(match.group(1)) > -60
 
@@ -324,8 +324,8 @@ SONG = "state/song"
 
 
 def setup_daw(folder: Path) -> None:
-    """The folder as a new DAW project: the files of the template in the project the runtime made,
-    which enables every extension."""
+    """The folder as a new DAW project: the files of the template in the project `sound-tools`
+    made, which enables every extension."""
     project = json.loads((folder / "project.json").read_text())
     template = json.loads((DAW / "project.json").read_text())
     shutil.copytree(DAW, folder, dirs_exist_ok=True,
@@ -628,9 +628,10 @@ def review(folder: Path, scenario: str, member: str) -> dict:
         f"message:\n{asked}\n\n"
         "Test the result as a strict QA tester and a demanding product designer. Change no code "
         "under extensions/. Check everything by using the project the way the app lets an agent: "
-        "`sound-tools --help`, AGENTS.md and agent-docs/, screenshots with clicks and play, "
-        f"inspect, analyze and the records under state/. Keep screenshots and scratch files in "
-        f"{scratch}, and look at every screenshot you take.\n\n"
+        "`sound-tools --help`, AGENTS.md and agent-docs/: screenshots (`--snap`), what is on "
+        "screen with its labels (`--tree`), clicks, drags and keys (`--act`, `--script`), playing "
+        "(`--play`), `--inspect`, `--analyze` and the records under state/. Keep screenshots and "
+        f"scratch files in {scratch}, and look at every screenshot you take.\n\n"
         f"Criteria:\n{criteria}\n\n"
         "For each criterion give pass, fail, or unverifiable when you found no way to check it, "
         "with the evidence. Then score from 1 to 5, as a demanding designer:\n"
@@ -660,11 +661,11 @@ def evaluate(scenario: str, number: int, model: str | None, label: str) -> dict:
     shutil.rmtree(folder, ignore_errors=True)
     folder.mkdir(parents=True)
     # As the app makes a project, and writes its docs while it has it open.
-    runtime(folder, "--headless", stdin="quit\n")
+    sound_tools(folder, "--headless", stdin="quit\n")
     setup(folder)
     # The window makes this folder for every project it opens.
     (folder / "extensions").mkdir(exist_ok=True)
-    runtime(folder, "--headless", stdin="quit\n")
+    sound_tools(folder, "--headless", stdin="quit\n")
     messages, session = [], ""
     for turn, prompt in enumerate(prompts(scenario), start=1):
         run = claude_run.run(folder, prompt, log=LOGS / f"{folder.name}-{turn}.log", model=model,
@@ -687,7 +688,7 @@ def main() -> None:
     parser.add_argument("--first", type=int, default=1, help="the number of the first run, so "
                         "evals of one scenario can run side by side")
     parser.add_argument("--model", default="claude-opus-5-5")
-    parser.add_argument("--label", default="gpui", help="what is being compared, such as the "
+    parser.add_argument("--label", default="rune", help="what is being compared, such as the "
                         "SDK: results and folders carry it, and report.py puts labels side by side")
     arguments = parser.parse_args()
     LOGS.mkdir(parents=True, exist_ok=True)
