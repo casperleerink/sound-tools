@@ -1,5 +1,5 @@
-//! The card of a device: its own view when its tool has one, else a control per field of its
-//! record, made from the record's schema: a knob for a number, a switch for a yes or no, and
+//! The card of a device: its own view when its tool has one, which draws the whole card, else a
+//! control per field of its record, made from the record's schema: a knob for a number, a switch for a yes or no, and
 //! segments for a choice. So every device shows, a built-in one, a plugin and a tool an agent
 //! wrote without a view. Its controls sit in whole columns of two cells, the first few shown
 //! and the rest behind expand, so a card grows wider, never taller. It looks as the template's
@@ -197,9 +197,9 @@ pub(crate) fn card(state: &State, id: &InstanceId) -> El {
     let theme = &state.theme;
     let prefix = state.prefix_of(id);
     let (body, more) = match state.drawn(id) {
-        Some(drawn @ (Drawn::View { .. } | Drawn::Failed(_))) => {
-            (tree::view(state, id, &prefix, drawn), false)
-        }
+        // A view draws its whole card.
+        Some(drawn @ Drawn::View { .. }) => return tree::view(state, id, &prefix, drawn),
+        Some(drawn @ Drawn::Failed(_)) => (tree::view(state, id, &prefix, drawn), false),
         _ if state.pending(id) => (el(), false),
         _ => controls(state, id),
     };

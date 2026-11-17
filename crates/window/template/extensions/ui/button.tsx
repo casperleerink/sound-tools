@@ -21,7 +21,7 @@ export const Button = ({ id, label, text, glyph, variant = "subtle", size = "md"
   const words = size === "sm" ? "control" : "heading";
   return (
     <row key={id} label={label} role="button" h={height(size)} {...(square ? { w: height(size) } : { px: size === "sm" ? 2 : 3 })} gap={1} align="center" justify="center" radius={corner(size)} fill={look.fill} hover={look.hover} onPress={onPress}>
-      {glyph !== undefined && <text style="control" color={look.ink}>{glyph}</text>}
+      {glyph !== undefined && <text style={words} color={look.ink}>{glyph}</text>}
       {text !== undefined && <text style={words} color={look.ink}>{text}</text>}
       {tip !== undefined && <Tooltip text={tip} />}
       {children}
