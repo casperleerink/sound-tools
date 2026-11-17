@@ -347,11 +347,8 @@ Sizes: S < 1k lines, M 1–3k, L 3–8k, XL > 8k (written lines, new or ported).
   must shrink, not grow, per `tooling/workspace-rules`.
 
 **Open questions (owner: Casper).**
-1. **Built-in device cards: Rust or TS?** Option: Rust extensions export only record +
-   parameters (+ an optional display), and the project's `ui/` draws every card in TS, so agents
-   restyle devices too. Simpler window crate; costs one Bun round trip per card build (drags
-   stay window-side). Recommendation: generic card from schema in Rust for the switch; decide
-   TS cards after C.
+1. **Built-in device cards: Rust or TS?** Decided: TS, layer 4 of SPEC's layers. Rust
+   extensions export record + parameters (+ an optional display); the project draws the card.
 2. **Keep v1 views working in the new window?** Recommendation: no; generic card fallback.
 3. **Binary during the transition:** separate `sound-tools-next` (recommended, no conflicts
    with `runtime`) or `sound-tools --next`.

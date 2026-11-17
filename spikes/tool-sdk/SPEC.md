@@ -27,6 +27,10 @@ Same for both: Rune at the rev of `../rune-vs-gpui/rune-daw`, the song and scena
 - What moves every frame (playhead x, meters, the time) is bound by name to a value the host
   sets (`Live`), never through tool code each frame.
 - Keep the SDK small. Every concept in it must earn its place. No reactivity runtime.
+- Four layers, each built only from those below: (1) theme tokens; (2) primitives, behaviours
+  and live values, the only part that is SDK; (3) components (button, slider, knob, list,
+  menu); (4) blocks (device cards, track rows, the generic card, page layouts). 3 and 4 are
+  project source. Growth goes there, never into SDK exports.
 
 ## The tool (`song`), in the project's folder
 
