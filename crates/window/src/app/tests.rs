@@ -1827,7 +1827,7 @@ fn a_view_runs_once_as_the_project_opens() {
     assert_eq!(runs as usize, state.shown.len());
 }
 
-fn card_file(contents: &str) -> State {
+fn card_file(contents: &str) -> (tempfile::TempDir, State) {
     let scratch = new_project();
     let folder = scratch.path().join("song");
     std::fs::write(
@@ -1836,13 +1836,12 @@ fn card_file(contents: &str) -> State {
     )
     .unwrap();
     let state = opened(&folder);
-    std::mem::forget(scratch);
-    state
+    (scratch, state)
 }
 
 #[test]
 fn a_generic_card_that_does_not_load_says_its_own_mistake() {
-    let state = card_file("export const card = (;\n");
+    let (_scratch, state) = card_file("export const card = (;\n");
     let said = card_problems(&state);
     assert!(
         said.iter()
@@ -1850,7 +1849,7 @@ fn a_generic_card_that_does_not_load_says_its_own_mistake() {
         "{said:?}"
     );
     assert!(!said.is_empty());
-    let state = card_file("export const cards = () => null;\n");
+    let (_scratch, state) = card_file("export const cards = () => null;\n");
     let said = card_problems(&state);
     assert!(
         said.iter()

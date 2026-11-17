@@ -55,7 +55,7 @@ export const gallery = tool({
     toggles: { mute: true, solo: false, arm: true, freeze: true, sync: false },
     wave: "saw",
     shape: "low",
-    values: { deep: 0, cutoff: 2000, resonance: 0.3, pan: -0.25, drive: 0.6, mix: 0.75, fader: -6, slider: 0.4 },
+    values: { note: 60, deep: 0, cutoff: 2000, resonance: 0.3, pan: -0.25, drive: 0.6, mix: 0.75, fader: -6, slider: 0.4 },
     name: "Bass",
     expanded: false,
     chosen: true,
@@ -117,6 +117,7 @@ export const gallery = tool({
                   {knob("cutoff", "Cutoff", { min: 20, max: 20000, scale: "log", unit: "hz", initial: 2000 })}
                   {knob("resonance", "Resonance", { min: 0, max: 1, unit: "percent" })}
                   {knob("pan", "Pan", { min: -1, max: 1, unit: "pan", bipolar: true, initial: 0 })}
+                  <Knob id="note" label="Note" min={36} max={96} step={1} unit="pitch" {...value("note")} />
                 </row>
                 <Fader id="fader" label="Volume" db={memory.values.fader ?? 0} height={120} onChange={(db) => (memory.values.fader = db)} />
                 <Meter id="meter" label="Level" path="nothing" w={4} h={120} />
