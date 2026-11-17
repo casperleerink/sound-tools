@@ -170,6 +170,9 @@ pub(crate) enum Request<'a> {
     /// again when a record of it or inside it changes.
     Show {
         instances: Vec<&'a InstanceId>,
+        /// The card of each shown instance whose tool has no view: what `GenericCard` of
+        /// `sdk/view.ts` gets.
+        cards: &'a BTreeMap<InstanceId, Value>,
     },
     /// An action on the element `key` of the view of `instance`: `press`, `drag` with `{dx, dy}`,
     /// or one the element names, such as `toggle` or `set` with a number.

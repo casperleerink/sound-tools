@@ -13,7 +13,6 @@ use sound_core::InstanceId;
 use sound_typescript::next::Drawn;
 
 use crate::app::State;
-use crate::card::{self, Field, Kind};
 use crate::tree::{Node, Opens, Press, Within};
 
 /// One control of the window, as `--tree` lists it under `controls`.
@@ -40,14 +39,6 @@ pub(crate) struct Control {
 pub(crate) enum Target {
     /// The tool's code, for an element of its view, as a press on it goes.
     View(Press),
-    /// The window, for a field of a card without a view: `option` is the choice a segment sets.
-    Field {
-        instance: InstanceId,
-        field: Field,
-        option: Option<Value>,
-    },
-    /// The switch that shows all the controls of a card, or the first few.
-    Expand(InstanceId),
     Play,
 }
 
@@ -86,9 +77,7 @@ impl Found {
                     self.node(state, id, &prefix, memos, &root, None);
                 }
             }
-            Some(Drawn::Failed(_)) => {}
-            None if state.pending(id) => {}
-            Some(Drawn::None) | None => self.fields(state, id, &prefix),
+            Some(Drawn::Failed(_) | Drawn::None) | None => {}
         }
     }
 
@@ -185,71 +174,6 @@ impl Found {
                     }
                 }
                 _ => self.node(state, id, prefix, memos, child, within),
-            }
-        }
-    }
-
-    fn fields(&mut self, state: &State, id: &InstanceId, prefix: &str) {
-        let title = card::title(state, id);
-        let (fields, more) = card::shown(state, id);
-        if more {
-            self.controls.push(Control {
-                key: format!("{prefix}expand"),
-                label: format!("Expand {title}"),
-                role: Some("switch".into()),
-                value: None,
-                checked: Some(state.expanded.contains(id)),
-                expanded: None,
-                actions: ["press", "toggle"].map(String::from).to_vec(),
-                target: Target::Expand(id.clone()),
-            });
-        }
-        for field in fields {
-            let key = format!("{prefix}{}", field.name);
-            let label = format!("{title} {}", field.label);
-            let target = |option| Target::Field {
-                instance: id.clone(),
-                field: field.clone(),
-                option,
-            };
-            match &field.kind {
-                Kind::Number { .. } => self.controls.push(Control {
-                    key,
-                    label,
-                    role: Some("slider".into()),
-                    value: Some(field.value.clone()),
-                    checked: None,
-                    expanded: None,
-                    actions: ["set", "increment", "decrement"].map(String::from).to_vec(),
-                    target: target(None),
-                }),
-                Kind::Switch => self.controls.push(Control {
-                    key,
-                    label,
-                    role: Some("switch".into()),
-                    value: None,
-                    checked: field.value.as_bool(),
-                    expanded: None,
-                    actions: ["press", "toggle"].map(String::from).to_vec(),
-                    target: target(None),
-                }),
-                Kind::Choice(options) => {
-                    for option in options.clone() {
-                        let word = option
-                            .as_str()
-                            .map_or_else(|| option.to_string(), str::to_string);
-                        self.controls.push(Control {
-                            key: format!("{key}={word}"),
-                            label: format!("{label} {word}"),
-                            role: Some("button".into()),
-                            value: None,
-                            checked: Some(option == field.value),
-                            expanded: None,
-                            actions: vec!["press".into()],
-                            target: target(Some(option)),
-                        });
-                    }
-                }
             }
         }
     }

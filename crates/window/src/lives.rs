@@ -345,6 +345,7 @@ impl Leaves for Sources<'_> {
         let playhead = self.lives.playhead.get();
         match live {
             Live::Tick => playhead,
+            Live::Playing => f64::from(u8::from(self.state.playing)),
             Live::Elapsed => self.lives.elapsed.get(),
             Live::Bpm => {
                 let tempo_map = self.state.project.clock().tempo_map();

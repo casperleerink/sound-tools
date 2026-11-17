@@ -71,7 +71,7 @@ type Request =
   /** The answer to a question of `ask`. */
   | { type: "answer"; question: number; answer: unknown }
   /** The instances whose views the new window shows: each sends its tree now, and again when its records change. */
-  | { type: "show"; instances: string[] }
+  | { type: "show"; instances: string[]; cards: Record<string, { title: string; fields: { name: string; default: unknown }[] }> }
   /** An action on an element of a shown view, by its key: `press`, `drag` with `{ dx, dy }`, or one it names. */
   | { type: "act"; instance: string; key: string; action: string; value?: number | string | { dx: number; dy: number } };
 
@@ -237,6 +237,13 @@ async function load() {
       if (problems.length === 0) {
         tools.push(described(spec, defined));
       }
+    }
+  }
+  if (next && existsSync(join(folder, GENERIC_CARD))) {
+    try {
+      genericCard = (await import(join(folder, GENERIC_CARD))).card;
+    } catch (error) {
+      errors.push({ file: GENERIC_CARD, message: String(error) });
     }
   }
   say({ type: "loaded", tools, errors });
@@ -684,6 +691,11 @@ const shown = new Set<string>();
 function drawNext(instance: string) {
   const record = recordOf(instance);
   const spec = sdk.host.tools.get(record?.tool ?? "");
+  const card = fieldCards[instance];
+  if (next && record && !spec?.view && genericCard && card) {
+    drawCard(instance, record, card);
+    return;
+  }
   if (!next || !record || !spec?.view) {
     say({ type: "tree", instance, none: true });
     return;
@@ -694,6 +706,24 @@ function drawNext(instance: string) {
     // Its handlers get what `tick` gets.
     const context = contextOf(instance, spec, record, {}, { time: now, transport }, {});
     say({ type: "tree", instance, tree: next.host.run(instance, spec.view, self, context) });
+  } catch (error) {
+    say({ type: "tree", instance, error: String(error) });
+  }
+}
+
+/** The cards of the shown instances whose tools may have no view, and the project's view of such a card. */
+let fieldCards: Extract<Request, { type: "show" }>["cards"] = {};
+let genericCard: unknown;
+const GENERIC_CARD = "ui/blocks/generic-card.tsx";
+
+/** The card of an instance whose tool has no view, drawn by the project's generic card from the fields of its record. */
+function drawCard(instance: string, record: Entry, card: (typeof fieldCards)[string]) {
+  const defaults = Object.fromEntries(card.fields.map((field) => [field.name, field.default]));
+  const self = { name: instance.slice(instance.lastIndexOf("/") + 1), state: { ...defaults, ...(record.state as object) }, card };
+  const key = `${instance} card`;
+  if (!memories.has(key)) memories.set(key, {});
+  try {
+    say({ type: "tree", instance, tree: next!.host.run(instance, genericCard, self, { update: updater(instance, defaults), memory: memories.get(key) }) });
   } catch (error) {
     say({ type: "tree", instance, error: String(error) });
   }
@@ -990,17 +1020,18 @@ function created(id: string, child: OwnedChild, changes: Change[]) {
  * What changes the record of an instance and those of its children, each time on the latest the
  * code knows: also after an `await`, while the instance is there.
  */
-function updater(instance: string) {
+function updater(instance: string, defaults?: Record<string, unknown>) {
   return (label: string, change: (part: Part<State>) => void) => {
     if (typeof label !== "string") {
       throw new TypeError(`the label of an update is ${JSON.stringify(label)}: give text, such as "Save the take"`);
     }
     const own = recordOf(instance);
     const spec = sdk.host.tools.get(own?.tool ?? "");
-    if (!own || !spec) {
+    if (!own || (!spec && !defaults)) {
       return;
     }
-    const state = filledState(spec, own);
+    // A tool with no code here, such as a built-in one, has its defaults from its generic card.
+    const state = spec ? filledState(spec, own) : (frozen({ ...defaults, ...(own.state as object) }) as State);
     // The children only when the change reads them: an update of a parent of a thousand takes
     // that edits its own fields costs nothing for them.
     let children: [OwnedChild[], unknown] | [] = [];
@@ -1515,6 +1546,7 @@ function handle(request: Request) {
       declare(request);
       break;
     case "show":
+      fieldCards = request.cards;
       show(request.instances);
       break;
     case "act":

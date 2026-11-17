@@ -86,6 +86,7 @@ pub struct Tools {
     changed_at: Option<Instant>,
     changed_records: BTreeSet<InstanceId>,
     shown: BTreeSet<InstanceId>,
+    cards: BTreeMap<InstanceId, Value>,
     told_shown: bool,
     drawn: HashMap<InstanceId, Drawn>,
     /// Why a view does not draw, by instance, until it draws again.
@@ -143,6 +144,7 @@ impl Tools {
             changed_at: None,
             changed_records: every_instance(project),
             shown: BTreeSet::new(),
+            cards: BTreeMap::new(),
             told_shown: true,
             drawn: HashMap::new(),
             view_problems: BTreeMap::new(),
@@ -197,11 +199,12 @@ impl Tools {
             .chain(self.view_problems.values())
     }
 
-    /// The instances whose views the window shows now.
-    pub fn show(&mut self, instances: BTreeSet<InstanceId>) {
-        if instances != self.shown {
+    /// The instances whose views the window shows now, and the card of each whose tool may
+    /// have no view, which the project's generic card draws.
+    pub fn show(&mut self, instances: BTreeSet<InstanceId>, cards: BTreeMap<InstanceId, Value>) {
+        if instances != self.shown || cards != self.cards {
             self.drawn.retain(|id, _| instances.contains(id));
-            self.shown = instances;
+            (self.shown, self.cards) = (instances, cards);
             self.told_shown = false;
         }
     }
@@ -994,7 +997,8 @@ impl Tools {
         }
         if !self.told_shown {
             let instances = self.shown.iter().collect();
-            self.told_shown = bun.send(&Request::Show { instances });
+            let cards = &self.cards;
+            self.told_shown = bun.send(&Request::Show { instances, cards });
         }
     }
 }

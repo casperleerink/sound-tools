@@ -6,11 +6,12 @@ use serde::Deserialize;
 
 use super::*;
 
-/// What the live texts of the views show, but the values of the template's faders.
+/// What the live texts of the views show, but the values of the controls a drag turns, such
+/// as the template's faders and knobs.
 fn shown_texts(state: &State) -> Vec<String> {
     let texts = state.lives.texts().into_iter();
     texts
-        .filter(|(shows, _)| !shows.contains("fader-"))
+        .filter(|(shows, _)| !shows.contains("Drag"))
         .map(|(_, text)| text)
         .collect()
 }
@@ -1107,7 +1108,7 @@ fn a_card_of_fields_shows_a_few_and_grows_wider_not_taller_when_expanded() {
     assert_eq!(few, 4);
     act(
         &mut window.state,
-        json!({ "label": "Expand Compressor", "action": "press" }),
+        json!({ "label": "More of Compressor", "action": "press" }),
     );
     window.invalidate();
     window.frame(0.1);
@@ -1236,6 +1237,13 @@ export const kit = tool({
         </col>
       </box>
       <field key="name" label="Name" value={self.state.name} w={80} onCommit={(name) => update("Name", (draft) => void (draft.state.name = name))} />
+      <row key="item" label="Item" w={48} h={24} fill="fill" onPress={() => update("Item", (draft) => void (draft.state.name = "item"))}>
+        <box key="item-menu" label="Item menu" w={24} h={24}>
+          <col overlay={{ open: "press" }} role="menu" group w={80} fill="raised">
+            <box key="item-pick" label="Item pick" w={80} h={24} onPress={() => {}} />
+          </col>
+        </box>
+      </row>
       <col key="level" label="Level" w={24} h={48} fill="fill" justify="end" actions={{
         increment: (by) => update("Level", (draft) => void (draft.state.level += by)),
         decrement: (by) => update("Level", (draft) => void (draft.state.level -= by)),
@@ -1342,19 +1350,7 @@ fn a_field_keeps_what_was_typed_on_enter() {
 fn the_arrows_step_a_control_with_steps_that_tab_reaches() {
     let (_scratch, mut window) = kit();
     let level = "t00/chain/kit:level";
-    let focused = |window: &rune::Runtime<State>| {
-        let elements = window.elements();
-        elements
-            .into_iter()
-            .find(|element| element.focused)
-            .and_then(|element| element.key)
-    };
-    for _ in 0..60 {
-        if focused(&window).as_deref() == Some(level) {
-            break;
-        }
-        key(&mut window, rune::Key::Tab);
-    }
+    tab_to(&mut window, level);
     assert_eq!(focused(&window).as_deref(), Some(level));
     key(&mut window, rune::Key::Up);
     assert_eq!(kit_record(&window.state)["level"], 6);
@@ -1399,14 +1395,7 @@ fn after_a_drag_let_go_outside_its_element_the_keys_press_it() {
     window.pointer_up(out.0, out.1);
     redraw(&mut window);
     assert_eq!(kit_record(&window.state)["velocity"], 0.0);
-    let focused = window
-        .elements()
-        .into_iter()
-        .find(|element| element.focused);
-    assert_eq!(
-        focused.and_then(|element| element.key).as_deref(),
-        Some("t00/chain/kit:step")
-    );
+    assert_eq!(focused(&window).as_deref(), Some("t00/chain/kit:step"));
     key(&mut window, rune::Key::Text(" ".into()));
     assert_eq!(kit_record(&window.state)["on"], true);
 }
@@ -1429,6 +1418,89 @@ fn a_double_click_sets_what_reset_sets_and_enter_types_a_value() {
     key(&mut window, rune::Key::Enter);
     assert_eq!(kit_record(&window.state)["level"], 7);
     assert!(window.state.open.is_empty());
+    assert_eq!(focused(&window).as_deref(), Some("t00/chain/kit:level"));
+    key(&mut window, rune::Key::Up);
+    assert_eq!(kit_record(&window.state)["level"], 8);
+}
+
+/// The key of the element that has the keys.
+fn focused(window: &rune::Runtime<State>) -> Option<String> {
+    let elements = window.elements();
+    elements
+        .into_iter()
+        .find(|element| element.focused)
+        .and_then(|element| element.key)
+}
+
+/// Tab until the element `key` has the keys.
+fn tab_to(window: &mut rune::Runtime<State>, key: &str) {
+    for _ in 0..80 {
+        if focused(window).as_deref() == Some(key) {
+            return;
+        }
+        self::key(window, rune::Key::Tab);
+    }
+    panic!("Tab never reaches {key}");
+}
+
+#[test]
+fn a_row_with_a_menu_in_it_keeps_its_keys_and_tab_reaches_the_menu() {
+    let (_scratch, mut window) = kit();
+    tab_to(&mut window, "t00/chain/kit:item");
+    key(&mut window, rune::Key::Enter);
+    assert!(window.state.open.is_empty());
+    key(&mut window, rune::Key::Text(" ".into()));
+    assert_eq!(kit_record(&window.state)["name"], "item");
+    key(&mut window, rune::Key::Tab);
+    assert_eq!(focused(&window).as_deref(), Some("t00/chain/kit:item-menu"));
+}
+
+#[test]
+fn a_drag_with_shift_held_moves_a_tenth_as_far() {
+    let (_scratch, mut window) = kit();
+    let start = window.find("t00/chain/kit:step").unwrap();
+    window.physical_input(rune::PhysicalInput::Modifiers(rune::Mods {
+        shift: true,
+        ..rune::Mods::default()
+    }));
+    window.pointer_down(start.0, start.1);
+    window.frame(1.0 / 60.0);
+    let end = travel(&mut window, start, (0.0, -2.0), 10);
+    window.pointer_up(end.0, end.1);
+    redraw(&mut window);
+    let velocity = kit_record(&window.state)["velocity"].as_f64().unwrap();
+    assert!((velocity - 0.525).abs() < 1e-6, "{velocity}");
+}
+
+#[test]
+fn a_device_without_a_view_has_knobs_that_take_keys_a_double_click_and_a_typed_value() {
+    let (_scratch, folder) = with_tools(&[("amp", AMP)]);
+    let mut window = laid_out(opened(&folder));
+    let gain = || {
+        let id = InstanceId::new("song/t00/chain/amp").unwrap();
+        move |state: &State| -> Value {
+            serde_json::from_str::<Value>(&state.project.state_json(&id).unwrap()).unwrap()["gain"]
+                .clone()
+        }
+    };
+    let gain = gain();
+    tab_to(&mut window, "t00/chain/amp:gain");
+    key(&mut window, rune::Key::Up);
+    assert_eq!(gain(&window.state), 0.52);
+    let (x, y) = window.find("t00/chain/amp:gain").unwrap();
+    for _ in 0..2 {
+        window.pointer_down(x, y - 16.0);
+        window.pointer_up(x, y - 16.0);
+        window.frame(0.05);
+    }
+    redraw(&mut window);
+    assert_eq!(gain(&window.state), 0.5);
+    key(&mut window, rune::Key::Enter);
+    for typed in ["2", "5", "%"] {
+        key(&mut window, rune::Key::Text(typed.into()));
+    }
+    key(&mut window, rune::Key::Enter);
+    assert_eq!(gain(&window.state), 0.25);
 }
 
 #[test]

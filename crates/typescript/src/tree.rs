@@ -1636,6 +1636,8 @@ impl Num {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Live {
     Tick,
+    /// 1 while the piece plays, else 0.
+    Playing,
     /// The tempo at the playhead.
     Bpm,
     /// Seconds since the view opened.
@@ -1810,6 +1812,7 @@ impl Live {
         match self {
             Self::Drag { .. } | Self::Space { .. } | Self::Hover { .. } => true,
             Self::Tick
+            | Self::Playing
             | Self::Bpm
             | Self::Elapsed
             | Self::Touched { .. }
@@ -1847,7 +1850,7 @@ impl Live {
 
     fn add_uses(&self, uses: &mut Uses) {
         match self {
-            Self::Tick | Self::Bpm => uses.tick = true,
+            Self::Tick | Self::Playing | Self::Bpm => uses.tick = true,
             Self::Elapsed => uses.animates = true,
             Self::Peak { name, .. } => _ = uses.peaks.insert(name.clone()),
             Self::DevicePeak { .. } => uses.output = true,

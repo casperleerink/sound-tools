@@ -8,8 +8,8 @@
 //! and `--main <instance>` (shows that instance in place of the project's main one).
 
 mod app;
-mod card;
 mod controls;
+mod fields;
 mod lives;
 mod theme;
 mod tree;

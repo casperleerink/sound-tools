@@ -28,6 +28,8 @@ export type Shadow = keyof Theme["shadow"];
 export const live = {
   /** Where the piece plays, in ticks: 960 a quarter note. */
   playhead: new Live({ op: "tick" }),
+  /** 1 while the piece plays, else 0: green is sound that moves. */
+  playing: new Live({ op: "playing" }),
   /** Seconds since the window opened. */
   elapsed: new Live({ op: "elapsed" }),
   /** The loudest sample since the last frame, 0 to 1 and above when it clips, of the instance at `path` inside this one, such as `"t01/mix"`. */
@@ -184,6 +186,21 @@ export type Self<T> = Drawn<FilledStateOfTool<T>, KidsOf<T>>;
 export type Drawn<State, K extends ChildTools = ChildTools> = { name: string; state: State; children: OwnedChild<K>[] };
 /** A tool's `view`: what the window shows of an instance, run again whenever its records change. Its handlers use `ctx` as `tick` does: `update`, `send`, `play`, `clock`. */
 export type ToolView<S extends Fields, I extends Inputs, M, K extends ChildTools> = (self: Drawn<ValuesOf<S>, K>, ctx: Context<ValuesOf<S>, I, M, K>) => Node;
+
+/** A field of a record as the card of a device without a view shows it. */
+export type CardField = { name: string; label: string } & (
+  | { kind: "number"; min: number; max: number; log: boolean; integer: boolean; unit: Unit | null; default: number }
+  | { kind: "switch"; default: boolean }
+  | { kind: "choice"; options: { value: string | number; text: string }[]; default: string | number }
+);
+/**
+ * The view of the card of every device whose tool has none, such as a built-in one: the project
+ * exports it as `card` from `ui/blocks/generic-card.tsx`. Its `update` changes the record.
+ */
+export type GenericCard = (
+  self: { name: string; state: Record<string, unknown>; card: { title: string; fields: CardField[] } },
+  ctx: { update: (label: string, change: (draft: { state: Record<string, unknown> }) => void) => void; memory: Record<string, unknown> },
+) => Node;
 
 /** What all code of an instance gets of the view. */
 export interface ViewContext<_State, _I extends Inputs, M> {

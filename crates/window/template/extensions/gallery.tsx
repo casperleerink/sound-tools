@@ -16,6 +16,7 @@ import { Select } from "./ui/select";
 import { Slider } from "./ui/slider";
 import { TextField } from "./ui/text-field";
 import { Toggle } from "./ui/toggle";
+import { shown } from "./ui/value";
 import { DeviceCard } from "./ui/blocks/device-card";
 import { EmptyState } from "./ui/blocks/empty-state";
 import { Keyboard } from "./ui/blocks/keyboard";
@@ -142,7 +143,7 @@ export const gallery = tool({
             <DeviceCard
               id="card"
               title="Filter"
-              display={<Display caption="Low pass  2.00 kHz"><Curve /></Display>}
+              display={<Display caption={shown(memory.values.cutoff ?? 0, "hz")}><Curve /></Display>}
               cells={[
                 knob("drive", "Drive", { min: 0, max: 1, unit: "percent" }),
                 knob("mix", "Mix", { min: 0, max: 1, unit: "percent", initial: 1 }),

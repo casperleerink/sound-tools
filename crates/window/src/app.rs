@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow};
 use plugin_host::{Plugins, ScanCache, ScanCommand};
 use rune::{Cx, El, KeyEvent, Tx, col, el, row, text};
 use serde::Deserialize as _;
@@ -16,7 +16,6 @@ use serde_json::{Value, json};
 use sound_core::{Engine, GROUPING_WINDOW, InstanceId, OutputDevice, OutputStream, Project, Ticks};
 use sound_typescript::next::{Drawn, FRAME_INTERVAL, Looped, Tools};
 
-use crate::card::Kind;
 use crate::controls::{self, Step, Target};
 use crate::lives::Lives;
 use crate::theme::Theme;
@@ -89,14 +88,10 @@ pub(crate) struct State {
     /// What went wrong last, said in the corner.
     notice: Option<String>,
     pub(crate) shown: BTreeSet<InstanceId>,
-    /// The cards that show all their controls. How the composer works, so never saved.
-    pub(crate) expanded: BTreeSet<InstanceId>,
-    /// The knob a drag turns now, by key, and where it is.
-    pub(crate) turning: Option<(String, f64)>,
     /// The view a held press paints, and the keys of the elements it entered.
     painting: Option<(InstanceId, BTreeSet<String>)>,
-    /// The element whose press is a drag now, once it went past the slop.
-    pub(crate) gesture: Option<String>,
+    /// The press that may become a drag now.
+    pub(crate) gesture: Option<tree::Gesture>,
     /// The element a drag ended on in this frame: the release that ends a drag is no press.
     pub(crate) dragged: Option<String>,
     /// The overlays open now, each inside the one before, by the key of what opened it. How the
@@ -200,8 +195,6 @@ impl State {
             theme_loads,
             notice: theme_problem,
             shown: BTreeSet::new(),
-            expanded: BTreeSet::new(),
-            turning: None,
             painting: None,
             gesture: None,
             dragged: None,
@@ -223,12 +216,6 @@ impl State {
     /// What the window shows of `id`, once Bun said.
     pub(crate) fn drawn(&self, id: &InstanceId) -> Option<&Drawn> {
         self.tools.as_ref()?.drawn(id)
-    }
-
-    /// Whether the view of `id` is still to come: the window shows nothing of it until then,
-    /// rather than a card of its fields for a moment.
-    pub(crate) fn pending(&self, id: &InstanceId) -> bool {
-        (self.tools.as_ref()).is_some_and(|tools| tools.drawn(id).is_none() && tools.drawing())
     }
 
     fn headless(&self) -> bool {
@@ -305,40 +292,12 @@ impl State {
     ) -> Result<()> {
         match target {
             Target::Play => self.play_or_stop(),
-            Target::Expand(instance) => self.expand(instance),
             Target::View(press) => {
                 let value = match action {
                     "drag" => value.or_else(|| Some(json!({ "dx": 0, "dy": 0 }))),
                     _ => value,
                 };
                 self.try_press(press, action, value)?;
-            }
-            Target::Field {
-                instance,
-                field,
-                option,
-            } => {
-                let now = field.value.as_f64().unwrap_or_default();
-                let step = match field.kind {
-                    Kind::Number { min, max, .. } => (max - min).abs() / 100.0,
-                    _ => 1.0,
-                };
-                let next = match (action, option) {
-                    (_, Some(option)) => option.clone(),
-                    ("press" | "toggle", None) => json!(!field.value.as_bool().unwrap_or(false)),
-                    ("set", None) => {
-                        let value = value
-                            .as_ref()
-                            .and_then(Value::as_f64)
-                            .ok_or_else(|| anyhow!("set takes a number"))?;
-                        field.kind.fit(value)
-                    }
-                    // A step of an integer is one at least.
-                    ("increment", None) => field.kind.fit(now + step.max(field_unit(&field.kind))),
-                    ("decrement", None) => field.kind.fit(now - step.max(field_unit(&field.kind))),
-                    (other, None) => bail!("a field takes no {other}"),
-                };
-                self.set_field(instance, &field.name, next);
             }
         }
         Ok(())
@@ -469,28 +428,6 @@ impl State {
         &mut entry.0
     }
 
-    /// Shows all the controls of the card of `id`, or the first few again.
-    pub(crate) fn expand(&mut self, id: &InstanceId) {
-        if !self.expanded.remove(id) {
-            self.expanded.insert(id.clone());
-        }
-        self.handled();
-    }
-
-    /// Changes one field of the record of `id`: one step of undo.
-    pub(crate) fn set_field(&mut self, id: &InstanceId, field: &str, value: Value) {
-        let label = format!("Change {}", field.replace('_', " "));
-        let mut edit = self.project.begin(&label);
-        let published = self
-            .project
-            .update_json(&mut edit, id, |state| state[field] = value);
-        let finished = published.and_then(|()| self.project.finish(edit));
-        if let Err(error) = finished {
-            self.notice = Some(error.to_string());
-        }
-        self.handled();
-    }
-
     fn play_or_stop(&mut self) {
         match self.playing {
             true => self.project.engine().stop(),
@@ -549,10 +486,13 @@ impl State {
                 return changed;
             }
             self.shown = shown.clone();
+            let cards = (shown.iter())
+                .filter_map(|id| Some((id.clone(), crate::fields::card_of(self, id)?)))
+                .collect();
             let Some(tools) = &mut self.tools else {
                 return changed;
             };
-            tools.show(shown);
+            tools.show(shown, cards);
             if !settle {
                 return true;
             }
@@ -775,14 +715,6 @@ fn run_loops(state: &mut State, seconds: f64) -> bool {
     looped == Looped::Sent
 }
 
-/// The least a step of an integer field moves.
-fn field_unit(kind: &Kind) -> f64 {
-    match kind {
-        Kind::Number { integer: true, .. } => 1.0,
-        _ => 0.0,
-    }
-}
-
 pub(crate) fn on_key(state: &mut State, key: &KeyEvent, _: &mut Tx) -> bool {
     let done = if key.is_command('z') {
         match key.mods.shift {
@@ -806,13 +738,8 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
     let theme = &state.theme;
     let body = match state.main() {
         Some(main) => match state.drawn(main) {
-            Some(drawn @ (Drawn::View { .. } | Drawn::Failed(_))) => {
-                tree::view(state, main, "", drawn)
-            }
-            _ if state.pending(main) => el(),
-            _ => el()
-                .padding(theme.space(4))
-                .child(crate::card::card(state, main)),
+            Some(drawn) => tree::view(state, main, "", drawn),
+            None => el(),
         },
         None => text("This project has no main tool.")
             .font(theme.text("body"))

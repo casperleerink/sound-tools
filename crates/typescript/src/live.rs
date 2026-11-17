@@ -102,6 +102,7 @@ pub fn evaluate(live: &Live, leaves: &(impl Leaves + ?Sized)) -> f64 {
         Live::Decibels { x } => (20.0 * number(x, leaves).abs().log10()).max(-120.0),
         Live::Ease { x, ease, key } => leaves.ease(key, *ease, number(x, leaves)),
         Live::Tick
+        | Live::Playing
         | Live::Bpm
         | Live::Elapsed
         | Live::Value { .. }
@@ -422,12 +423,10 @@ fn readout(value: f32, unit: Option<Unit>) -> String {
     }
 }
 
-/// How the number `field` of a record from `min` to `max` reads: in the unit its name ends in, as
-/// a pan, or as a share of 0 to 1.
-pub fn field_readout(field: &str, min: f64, max: f64) -> Option<Readout> {
-    let range = ValueRange::linear(min as f32, max as f32);
-    let unit = crate::window::unit_of(field, &range)?;
-    serde_json::from_value(Value::from(unit)).ok()
+/// The unit the number `field` of a record from `min` to `max` reads in, as `sdk/fields.ts`
+/// names it: the unit its name ends in, a pan, or a share of 0 to 1 as a percent.
+pub fn field_unit(field: &str, min: f64, max: f64) -> Option<&'static str> {
+    crate::window::unit_of(field, &ValueRange::linear(min as f32, max as f32))
 }
 
 /// A live number as text shows it: in its unit, or a tick as a place in the piece (`5.3`), as

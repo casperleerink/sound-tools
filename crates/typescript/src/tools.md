@@ -46,13 +46,13 @@ export const chop = tool({
 
 - `when` and `doc` are what the next agent reads. In `sound` a number field is a `Signal`.
 - To put a device on a track, add `state/song/<track>/chain/<name>.json` as `{"tool": "chop", "state": {}}`, and its name to `order` in the chain's `instance.json`.
-- A tool without `view` gets a card with a control per field.
+- A tool without `view` gets the card of `ui/blocks/generic-card.tsx`.
 
 ## Views
 
 `view: (self, ctx) => …` is a plain function of `self.state` and `self.children`, run again after every change and action. Never name a variable `h`. A part of a view types its records with `Drawn<ValuesOf<typeof fields>, typeof children>`.
 
-- `ctx` is what `tick` gets: `update`, `send`, `play`, `clock`, `memory`. Use them in handlers.
+- `ctx` is what `tick` gets: `update`, `send`, `play`, `clock`, `memory`, for handlers.
 - `memo(key, deps, () => …)` builds a part again only when one of `deps`, all it shows, changes. Build its keys from `deps`, never an index.
 - `memory` is never saved, such as the chosen track. Change it in a handler, not in `tick`, to draw again.
 - What does not fit is cut off: give a box `scroll` and `maxH`.
@@ -63,8 +63,8 @@ Use the top layer that fits; each uses only those under it.
 
 1. Theme, `extensions/theme.json`: colours, text, spacing, radius, shadows, sizes. Props name them (`fill="surface"`, `gap={2}`, `"sound/25"` at 25%); code that needs a number imports the file. `sound` (green) is sound that moves; what is chosen takes `selected`.
 2. Primitives, each prop in `sdk/view.ts`: `box`, `row`, `col`, `text`, `shapes`, `field`, `child`, `live`; `hoverGroup` and `reveal` (shown on hover: the quiet rule), `overlay` (menus, lists, tips), `group` (one Tab stop).
-3. Components, `extensions/ui/`: Button, Toggle, Segmented, Select, Menu, Popover, Tooltip, Knob, Slider, Fader, Meter, Pad, TextField, Cell, Display, Kbd, Notice, Dot.
-4. Blocks, `extensions/ui/blocks/`: DeviceCard, Panel, Section, StepRow, StepGrid, Keyboard, PaintGrid, EmptyState.
+3. Components, `extensions/ui/`: Button, Toggle, Segmented, Select, Menu, Popover, Tooltip, Knob, Slider, Fader, TypeIn, Meter, Pad, TextField, Cell, Display, Kbd, Notice, Dot; `value.ts` steps, clamps and reads typed values.
+4. Blocks, `extensions/ui/blocks/`: DeviceCard, GenericCard, Panel, Section, StepRow, StepGrid, Keyboard, PaintGrid, EmptyState.
 
 Change them, add yours. `--main gallery --snap g.png --size 1470x1500` shows them all.
 
@@ -75,7 +75,7 @@ Change them, add yours. `--main gallery --snap g.png --size 1470x1500` shows the
 
 ## What moves every frame
 
-A live value is an expression the window works out every frame, without the view. Start from `live` (`playhead`, `elapsed`, `peak(path)`, `field(name)`, `sounding(pitch)`, `drag(key)`) and combine with `Live`'s methods in `sdk/values.ts`: arithmetic, comparisons, `decibels`, `hold`, `fall`, `smooth`.
+A live value is an expression the window works out every frame, without the view. Start from `live` (`playhead`, `playing`, `elapsed`, `peak(path)`, `field(name)`, `sounding(pitch)`, `drag(key)`) and combine with `Live`'s methods in `sdk/values.ts`: arithmetic, comparisons, `decibels`, `hold`, `fall`, `smooth`.
 
 - `<text live={live.peak("t01/mix").hold(3).decibels()} unit="db" />` shows one, with `unit` or `digits`.
 - `at`, `w`, `h`, `opacity` and a `shapes`'s `trim` take one, as `ui/meter.tsx` and `ui/knob.tsx` do.
@@ -85,5 +85,5 @@ A live value is an expression the window works out every frame, without the view
 
 - `update(label, (draft) => …)` changes records: write to `draft`. All the changes of one press, action, drag or paint are one step of undo.
 - An element a pointer or an agent uses has a unique `key`, a `label` ("Mute Track 2") and its state (`checked`, `value`). Handlers: `onPress`, `onDragEnd`, `onEnter` (a paint: each element a held press enters), `onCommit` of a `field`, `actions`.
-- `live.drag(key)` follows a `drag`, such as a thumb's `at`; `onDragEnd` hears where it stopped. A drag never also presses.
+- `live.drag(key)` follows a `drag`, such as a thumb's `at`; `onDragEnd` hears where it stopped.
 - `tick` runs about 30 times a second, also in `--play`.

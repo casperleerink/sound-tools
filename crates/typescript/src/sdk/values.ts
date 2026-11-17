@@ -2,7 +2,7 @@
 
 /** What a live value is made of, as the window gets it. */
 export type LiveNode =
-  | { op: "tick" | "elapsed" | "bpm" }
+  | { op: "tick" | "playing" | "elapsed" | "bpm" }
   | { op: "value" | "held"; name: string; child?: string; fraction?: boolean }
   | { op: "peak"; name: string; channel?: Channel }
   | { op: "device_peak"; channel?: Channel }

@@ -7,6 +7,10 @@ export type Scale = "linear" | "log";
 export type Range = { min: number; max: number; scale?: Scale; step?: number };
 
 const clamp = (at: number) => Math.min(Math.max(at, 0), 1);
+/** What an arrow key moves of the travel when there is no `step`. */
+const KEY_STEP = 0.02;
+/** The digits after the point of `step`, so 0.1 * 3 is 0.3. */
+const digits = (step: number) => (String(step).split(".")[1] ?? "").length;
 
 /** Where `value` is on the travel, 0 to 1. */
 export const travelled = (value: number, { min, max, scale }: Range): number =>
@@ -15,12 +19,16 @@ export const travelled = (value: number, { min, max, scale }: Range): number =>
 /** The highest whole step from `min` that is not past `max`. */
 const top = ({ min, max, step }: Range) => (step ? min + Math.floor((max - min) / step + 1e-9) * step : max);
 
-/** `value` in whole `step`s from `min`, within the range. */
+/** `value` in whole `step`s from `min`, within the range: what every `set`, key and typed value goes through. */
 export const fitted = (value: number, range: Range): number => {
   const { min, step } = range;
-  const stepped = step ? min + Math.round((value - min) / step) * step : value;
+  const stepped = step ? Number((min + Math.round((value - min) / step) * step).toFixed(digits(step))) : value;
   return Math.min(Math.max(stepped, min), top(range));
 };
+
+/** `value` moved `by` arrow keys: a `step` each, else a fiftieth of the travel. */
+export const stepped = (value: number, by: number, range: Range): number =>
+  range.step ? fitted(value + by * range.step, range) : valueAt(travelled(value, range) + by * KEY_STEP, range);
 
 /** The value at `at` on the travel. */
 export const valueAt = (at: number, range: Range): number => {
@@ -51,28 +59,43 @@ export const shown = (value: number, unit?: Unit): string => {
     case "db": return `${short(value)} dB`;
     case "percent": return `${short(value * 100)}%`;
     case "semitones": return `${short(value)} st`;
+    case "cents": return `${short(value)} ct`;
+    case "octaves": return `${short(value)} oct`;
     case "pan": return value === 0 ? "C" : `${short(Math.abs(value) * 100)}${value < 0 ? "L" : "R"}`;
     default: return short(value);
   }
 };
 
+/** The words a typed value may end in, in `unit`, and what each multiplies it by. */
+const WORDS: Record<Unit | "none", Record<string, number>> = {
+  hz: { "": 1, hz: 1, k: 1000, khz: 1000 },
+  ms: { "": 1, ms: 1, s: 1000 },
+  seconds: { "": 1, s: 1, ms: 0.001 },
+  db: { "": 1, db: 1 },
+  percent: { "": 0.01, "%": 0.01 },
+  semitones: { "": 1, st: 1 },
+  cents: { "": 1, ct: 1 },
+  octaves: { "": 1, oct: 1 },
+  pitch: { "": 1 },
+  pan: { "": 0.01, r: 0.01, l: -0.01 },
+  none: { "": 1 },
+};
+
 /**
- * What was typed in `unit`, read as {@link shown} writes it: `2k`, `2 kHz` and `440 Hz`, `1.5 s`,
- * `30%`, `25L`, `C`. A bare number is in the unit itself, a share in percent. Undefined when it is
- * no number.
+ * What was typed in `unit`, read as {@link shown} writes it: `2k`, `2 kHz`, `440 Hz`, `1.5 s`,
+ * `30%`, `25L`, `C`, `+3`. Undefined when it is no value of `unit`.
  */
 export const typedValue = (text: string, unit?: Unit): number | undefined => {
   const typed = text.trim().toLowerCase().replace("−", "-");
   if (unit === "pan" && typed === "c") return 0;
-  const match = /^(-?\d*\.?\d+)\s*([a-z%]*)$/.exec(typed);
-  if (!match) return undefined;
-  const [number, word] = [Number(match[1]), match[2] ?? ""];
-  switch (unit) {
-    case "hz": return word.startsWith("k") ? number * 1000 : number;
-    case "ms": return word === "s" ? number * 1000 : number;
-    case "seconds": return word === "ms" ? number / 1000 : number;
-    case "percent": return number / 100;
-    case "pan": return word === "l" ? -number / 100 : number / 100;
-    default: return number;
-  }
+  const match = /^([+-]?(?:\d+\.?\d*|\.\d+))\s*([a-z%]*)$/.exec(typed);
+  const times = match ? WORDS[unit ?? "none"][match[2] ?? ""] : undefined;
+  return match && times !== undefined ? Number(match[1]) * times : undefined;
+};
+
+/** The value typed over `value`, within the range; undefined when it says what was shown, or no value. */
+export const typedOver = (text: string, value: number, range: Range, unit?: Unit): number | undefined => {
+  if (text.trim() === shown(value, unit)) return undefined;
+  const typed = typedValue(text, unit);
+  return typed === undefined ? undefined : fitted(typed, range);
 };

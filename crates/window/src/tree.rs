@@ -479,7 +479,10 @@ fn build(scope: &Scope, node: &Node) -> El {
         Node::Shapes(shapes) => drawing(scope, shapes),
         Node::Field(field) => typed(scope, field),
         Node::Child { path } => match scope.instance.child(path) {
-            Ok(child) => crate::card::card(scope.state, &child),
+            Ok(child) => match scope.state.drawn(&child) {
+                Some(drawn) => view(scope.state, &child, &scope.state.prefix_of(&child), drawn),
+                None => el(),
+            },
             Err(error) => failed(scope.state, &error.to_string()),
         },
         Node::Memo { key } => match scope.memos.get(key) {
@@ -592,45 +595,54 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
         if let (Some(spec), Some(element)) = (b.drag, &b.key) {
             let moved = lives.dragged(key);
             let (instance, element, key) = (scope.instance.clone(), element.clone(), key.clone());
-            e = e.on_drag(move |s: &mut State, d: &mut rune::Drag, _: &mut rune::Tx| {
-                let offset = spec.offset(d.dx, d.dy);
-                match d.phase {
-                    Phase::Down => s.gesture = None,
-                    Phase::Move => {
-                        if far(d) {
-                            s.gesture = Some(key.clone());
-                        }
-                        let dragging = s.gesture.as_deref() == Some(key.as_str());
-                        moved.set(if dragging { offset } else { [0.0; 2] });
-                        s.lives.held(&key, dragging);
-                        s.lives.refresh(s);
+            e = e.on_drag(
+                move |s: &mut State, d: &mut rune::Drag, tx: &mut rune::Tx| {
+                    if d.phase == Phase::Down {
+                        s.gesture = Some(Gesture::of(&key));
+                        return;
                     }
-                    Phase::Up => {
-                        s.lives.held(&key, false);
-                        // A gesture that once went past the slop is a drag, also when
-                        // it comes back: it never presses.
-                        if s.gesture.take().as_deref() != Some(key.as_str()) {
-                            return;
+                    let Some(gesture) = s.gesture.as_mut().filter(|gesture| gesture.key == key)
+                    else {
+                        return;
+                    };
+                    gesture.follow(d, tx.mods().shift);
+                    let (far, offset) =
+                        (gesture.far, spec.offset(gesture.moved[0], gesture.moved[1]));
+                    match d.phase {
+                        Phase::Down => {}
+                        Phase::Move => {
+                            moved.set(if far { offset } else { [0.0; 2] });
+                            s.lives.held(&key, far);
+                            s.lives.refresh(s);
                         }
-                        s.dragged = Some(key.clone());
-                        if d.cancelled() {
-                            moved.set([0.0; 2]);
-                            return;
+                        Phase::Up => {
+                            s.lives.held(&key, false);
+                            s.gesture = None;
+                            // A gesture that once went past the slop is a drag, also when it comes
+                            // back: it never presses.
+                            if !far {
+                                return;
+                            }
+                            s.dragged = Some(key.clone());
+                            if d.cancelled() {
+                                moved.set([0.0; 2]);
+                                return;
+                            }
+                            moved.set(offset);
+                            s.pointed(
+                                &instance,
+                                &element,
+                                "drag",
+                                Some(json!({ "dx": offset[0], "dy": offset[1] })),
+                            );
                         }
-                        moved.set(offset);
-                        s.pointed(
-                            &instance,
-                            &element,
-                            "drag",
-                            Some(json!({ "dx": offset[0], "dy": offset[1] })),
-                        );
                     }
-                }
-            });
+                },
+            );
         }
     }
     let inside = Scope {
-        in_control: scope.in_control || b.press || b.drag.is_some() || !b.actions.is_empty(),
+        in_control: scope.in_control || delegates_enter(b),
         within: scope.within.clone(),
         ..*scope
     };
@@ -640,6 +652,38 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
 
 /// How far the pointer travels before a press is a drag, in points: a drag never also presses.
 const DRAG_SLOP: f32 = 3.0;
+/// How much of the pointer's travel a drag moves with Shift held.
+const FINE: f32 = 0.1;
+
+/// A press on an element that may become a drag.
+pub(crate) struct Gesture {
+    key: String,
+    /// Where the pointer was from the press, and how far it moved the element: with Shift held,
+    /// a tenth as far.
+    last: [f32; 2],
+    moved: [f32; 2],
+    /// It went past the slop: a drag, and no press.
+    far: bool,
+}
+
+impl Gesture {
+    fn of(key: &str) -> Self {
+        Self {
+            key: key.to_string(),
+            last: [0.0; 2],
+            moved: [0.0; 2],
+            far: false,
+        }
+    }
+
+    fn follow(&mut self, d: &rune::Drag, fine: bool) {
+        let by = if fine { FINE } else { 1.0 };
+        self.moved[0] += (d.dx - self.last[0]) * by;
+        self.moved[1] += (d.dy - self.last[1]) * by;
+        self.last = [d.dx, d.dy];
+        self.far |= far(d);
+    }
+}
 
 fn far(d: &rune::Drag) -> bool {
     d.dx.abs().max(d.dy.abs()) > DRAG_SLOP
@@ -749,12 +793,15 @@ fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>) -> El {
     // Enter opens what it opens, or what a part of it opens, such as a knob's typed value.
     let enter = match opens {
         true => Some(press),
-        false => opener_inside(b).map(|inner| Press {
-            element: inner.to_string(),
-            pressed: false,
-            opens: true,
-            ..press
-        }),
+        false => delegates_enter(b)
+            .then(|| opener_inside(b))
+            .flatten()
+            .map(|inner| Press {
+                element: inner.to_string(),
+                pressed: false,
+                opens: true,
+                ..press
+            }),
     };
     if reset || enter.is_some() {
         e = e.on_key(move |s: &mut State, pressed: &KeyEvent, _: &mut rune::Tx| {
@@ -786,6 +833,12 @@ pub(crate) struct Press {
     /// It opens an overlay.
     pub(crate) opens: bool,
     pub(crate) within: Option<Within>,
+}
+
+/// Whether Enter on `b` opens what a part of it opens, such as a knob's typed value: a control
+/// with no press of its own. That part is then no stop of Tab.
+fn delegates_enter(b: &BoxNode) -> bool {
+    !b.press && (b.drag.is_some() || !b.actions.is_empty())
 }
 
 /// The key of the first element inside `b` that opens an overlay, not in an overlay itself.
@@ -822,31 +875,37 @@ pub(crate) fn overlays(state: &State) -> Vec<El> {
             within: None,
             in_control: false,
         };
-        overlays_in(&scope, &node, &mut layer);
+        overlays_in(&scope, &node, None, &mut layer);
     }
     layer
 }
 
-fn overlays_in(scope: &Scope, node: &Node, layer: &mut Vec<El>) {
+/// The overlays inside `node`. `owner` is the control whose Enter opens what a part of it opens:
+/// the keys go back to it when that closes.
+fn overlays_in(scope: &Scope, node: &Node, owner: Option<&str>, layer: &mut Vec<El>) {
     let b = match node {
         Node::Row(b) | Node::Col(b) | Node::Plain(b) => b,
         Node::Memo { key } => {
             let inner =
                 (scope.memos.get(key)).and_then(|(_, inner)| Node::deserialize(&**inner).ok());
             if let Some(inner) = inner {
-                overlays_in(scope, &inner, layer);
+                overlays_in(scope, &inner, owner, layer);
             }
             return;
         }
         _ => return,
     };
+    let own = (b.key.as_ref())
+        .filter(|_| delegates_enter(b))
+        .map(|key| scope.key(key));
+    let owner = own.as_deref().or(owner);
     for child in &b.children {
         let (Node::Row(o) | Node::Col(o) | Node::Plain(o), Some(opener)) = (child, &b.key) else {
-            overlays_in(scope, child, layer);
+            overlays_in(scope, child, owner, layer);
             continue;
         };
         let Some(spec) = o.overlay else {
-            overlays_in(scope, child, layer);
+            overlays_in(scope, child, owner, layer);
             continue;
         };
         let opener = scope.key(opener);
@@ -866,9 +925,9 @@ fn overlays_in(scope: &Scope, node: &Node, layer: &mut Vec<El>) {
                     build(&inside, child)
                         .anchored(&opener, side, align, spec.gap)
                         .modal(true, move |s: &mut State| s.close_overlay(&close))
-                        .focus_return(&opener),
+                        .focus_return(owner.unwrap_or(&opener)),
                 );
-                overlays_in(&inside, child, layer);
+                overlays_in(&inside, child, None, layer);
             }
             Opens::Press => {}
             Opens::Hover => layer.push(
