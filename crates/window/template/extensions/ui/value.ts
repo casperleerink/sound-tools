@@ -36,6 +36,10 @@ export const valueAt = (at: number, range: Range): number => {
   return fitted(scale === "log" ? min * (max / min) ** clamp(at) : min + clamp(at) * (max - min), range);
 };
 
+/** {@link travelled} of a live value, such as what a lane plays. */
+export const liveTravelled = (value: Live, { min, max, scale }: Range): Live =>
+  (scale === "log" ? value.over(min).ln().over(Math.log(max / min)) : value.minus(min).over(max - min || 1)).clamp(0, 1);
+
 /** {@link valueAt} as a live value, for what shows while a drag goes on: exactly what a release there sets. */
 export const liveValueAt = (at: Live, range: Range): Live => {
   const { min, max, scale, step } = range;
@@ -56,9 +60,29 @@ const short = (value: number): string => {
   return String(Number(value.toFixed(decimals))).replace("-", "−");
 };
 
-/** `value` as the window shows it in `unit`, such as `2 kHz` or `25L`. */
+const NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+/** A MIDI pitch as its note, `C4` for 60, with its cents where it is not whole: `D2 +30`. */
+const note = (pitch: number): string => {
+  const whole = Math.round(pitch);
+  const cents = Math.round((pitch - whole) * 100);
+  const name = `${NOTES[((whole % 12) + 12) % 12]}${Math.floor(whole / 12) - 1}`;
+  return cents === 0 ? name : `${name} ${cents > 0 ? "+" : "−"}${Math.abs(cents)}`;
+};
+
+/** A note as typed, `C4`, `c#3`, `Bb2`: its MIDI pitch, or undefined. */
+const pitchOf = (typed: string): number | undefined => {
+  const match = /^([a-g])(#|b)?(-?\d+)$/.exec(typed);
+  if (!match) return undefined;
+  const base = NOTES.indexOf(match[1]!.toUpperCase());
+  const shift = match[2] === "#" ? 1 : match[2] === "b" ? -1 : 0;
+  return (Number(match[3]) + 1) * 12 + base + shift;
+};
+
+/** `value` as the window shows it in `unit`, such as `2 kHz`, `25L` or `C4`. */
 export const shown = (value: number, unit?: Unit): string => {
   switch (unit) {
+    case "pitch": return note(value);
     case "hz": return value < 1000 ? `${short(value)} Hz` : `${short(value / 1000)} kHz`;
     case "ms": return value < 1000 ? `${short(value)} ms` : `${short(value / 1000)} s`;
     case "seconds": return value < 1 ? `${short(value * 1000)} ms` : `${short(value)} s`;
@@ -76,7 +100,7 @@ export const shown = (value: number, unit?: Unit): string => {
 const WORDS: Record<Unit | "none", Record<string, number>> = {
   hz: { "": 1, hz: 1, k: 1000, khz: 1000 },
   ms: { "": 1, ms: 1, s: 1000 },
-  seconds: { "": 0.001, s: 1, ms: 0.001 },
+  seconds: { "": 1, s: 1, ms: 0.001 },
   db: { "": 1, db: 1 },
   percent: { "": 0.01, "%": 0.01 },
   semitones: { "": 1, st: 1 },
@@ -91,15 +115,20 @@ const NUMBER = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)\s*([a-z%]*)$/;
 
 /**
  * What was typed in `unit`, read as {@link shown} writes it: `2k`, `2 kHz`, `440 Hz`, `1.5 s`,
- * `30%`, `25L`, `C`, `+3`. A bare number is in one unit per kind, whatever shows: Hz, ms, dB,
- * percent, and right of centre for a pan. Undefined when it is no value of `unit`.
+ * `30%`, `25L`, `C`, `C4`, `+3`. A bare number is in the field's own unit, whatever prefix shows:
+ * Hz for `2 kHz`, seconds for `1.5 s`. A pan's side gives its direction, with no sign. Undefined
+ * when it is no value of `unit`.
  */
 export const typedValue = (text: string, unit?: Unit): number | undefined => {
   const typed = text.trim().toLowerCase().replace("−", "-");
   if (unit === "pan" && typed === "c") return 0;
+  if (unit === "pitch" && /^[a-g]/.test(typed)) return pitchOf(typed);
   const match = NUMBER.exec(typed);
-  const times = match ? WORDS[unit ?? "none"][match[2] ?? ""] : undefined;
-  return match && times !== undefined ? Number(match[1]) * times : undefined;
+  if (!match) return undefined;
+  const [number, word = ""] = [match[1]!, match[2]];
+  if (unit === "pan" && word !== "" && /^[+-]/.test(number)) return undefined;
+  const times = WORDS[unit ?? "none"][word];
+  return times === undefined ? undefined : Number(number) * times;
 };
 
 /** The value typed over `value`, within the range; undefined when it says what was shown, or no value. */

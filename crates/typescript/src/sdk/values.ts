@@ -13,7 +13,7 @@ export type LiveNode =
   | { op: "sounding"; pitch: number; child?: string }
   | { op: "touched"; name: string }
   | { op: "plus" | "minus" | "times" | "over" | "mod" | "pow" | "min" | "max" | "lt" | "gt" | "le" | "ge" | "eq" | "ne" | "snap"; a: Num; b: Num }
-  | { op: "negate" | "abs" | "floor" | "round" | "sin" | "cos" | "decibels"; x: Num }
+  | { op: "negate" | "abs" | "floor" | "round" | "sin" | "cos" | "decibels" | "ln"; x: Num }
   | { op: "ease"; x: Num; ease: EaseNode; key: string };
 
 type EaseNode = { kind: "smooth"; ms: number } | { kind: "fall"; per_second: number } | { kind: "hold"; seconds: number };
@@ -67,6 +67,8 @@ export class Live {
   /** What is left over after whole `other`s, from 0 up: `now.elapsed.mod(1)` goes 0 to 1 every second. */
   mod(other: Num): Live { return new Live({ op: "mod", a: this, b: other }); }
   pow(exponent: Num): Live { return new Live({ op: "pow", a: this, b: exponent }); }
+  /** The natural logarithm, as a log scale needs. */
+  ln(): Live { return new Live({ op: "ln", x: this }); }
   /** An amplitude in decibels: 1 is 0 dB; -120 at the lowest. */
   decibels(): Live { return new Live({ op: "decibels", x: this }); }
   /** Glides to it, about two thirds of the way in `ms`. */

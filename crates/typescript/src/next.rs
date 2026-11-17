@@ -42,6 +42,9 @@ pub fn has_views(folder: &Path) -> bool {
     folder.join(FOLDER).join(THEME).is_file()
 }
 
+/// What a device shows whose card has a mistake.
+const MISTAKE: &str = "This device's card has a mistake, so it shows nothing until it is mended.";
+
 /// How long [`Tools::settle`] waits for Bun at most, so a view in an endless loop cannot stop
 /// a run without a window. Bun calls code hung after 2 s itself.
 const SETTLE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -72,6 +75,8 @@ pub enum Drawn {
     /// Its tool has no view of `sdk/view.ts`, or is no tool of the project.
     None,
     Failed(String),
+    /// The generic card does not draw it: why, in plain words.
+    NoCard(String),
 }
 
 pub struct Tools {
@@ -91,8 +96,6 @@ pub struct Tools {
     changed_records: BTreeSet<InstanceId>,
     shown: BTreeSet<InstanceId>,
     cards: BTreeMap<InstanceId, Value>,
-    /// The shown instances the generic card draws.
-    carded: BTreeSet<InstanceId>,
     told_shown: bool,
     drawn: HashMap<InstanceId, Drawn>,
     /// Why a view does not draw, by instance, until it draws again.
@@ -151,7 +154,6 @@ impl Tools {
             changed_records: every_instance(project),
             shown: BTreeSet::new(),
             cards: BTreeMap::new(),
-            carded: BTreeSet::new(),
             told_shown: true,
             drawn: HashMap::new(),
             view_problems: BTreeMap::new(),
@@ -216,6 +218,12 @@ impl Tools {
         if instances == self.shown && cards == self.cards {
             return false;
         }
+        // A built-in device a card shows is told to Bun, as one inside a tool of the project is.
+        let new: Vec<InstanceId> = (cards.keys())
+            .filter(|id| !self.cards.contains_key(*id))
+            .cloned()
+            .collect();
+        self.changed_records.extend(new);
         self.drawn.retain(|id, _| instances.contains(id));
         (self.shown, self.cards) = (instances, cards);
         self.told_shown = false;
@@ -557,19 +565,14 @@ impl Tools {
                 instance,
                 tree,
                 error,
-                card,
             } => {
                 if !self.shown.contains(&instance) {
                     return false;
                 }
-                match card {
-                    true => self.carded.insert(instance.clone()),
-                    false => self.carded.remove(&instance),
-                };
+                // Bun draws a card for an instance it got one for, with the generic card.
+                let card = self.cards.contains_key(&instance);
                 let before = self.drawn.remove(&instance);
                 let problem = (error.as_ref()).and_then(|error| match card {
-                    // Stopped, or missing: the problems say so already.
-                    true if self.skipped.contains_key(GENERIC_CARD) || !self.has_card() => None,
                     true => Some(Problem {
                         path: format!("{FOLDER}/{GENERIC_CARD}"),
                         message: format!("it fails to draw the card of {instance}: {error}"),
@@ -589,7 +592,9 @@ impl Tools {
                     self.report(project);
                 }
                 let drawn = match (tree, error) {
-                    (_, Some(_)) if card => Drawn::Failed(self.card_failed()),
+                    (_, Some(_)) if card => Drawn::NoCard(MISTAKE.to_string()),
+                    // Its file is stopped, missing or did not load: the problems say why.
+                    (None, None) if card => Drawn::NoCard(self.no_card().to_string()),
                     (_, Some(error)) => Drawn::Failed(error),
                     (Some(tree), None) => {
                         self.view_runs += 1;
@@ -902,23 +907,30 @@ impl Tools {
         false
     }
 
-    /// Why a device shows no card, in plain words.
-    fn card_failed(&self) -> String {
-        let why = match (self.skipped.contains_key(GENERIC_CARD), self.has_card()) {
-            (true, _) => "the card of devices was stopped, as its code did not finish",
-            (false, false) => "the project has no card for a device without a view of its own",
-            (false, true) => "the card of devices does not draw",
-        };
-        why.to_string()
+    /// Why a device shows no card though its file is fine to draw it, in plain words.
+    fn no_card(&self) -> &'static str {
+        match (
+            self.skipped.contains_key(GENERIC_CARD),
+            self.folder.join(GENERIC_CARD).is_file(),
+        ) {
+            (true, _) => {
+                "This device's card stopped working, so it shows nothing until it is mended."
+            }
+            (false, false) => "This project has no card for this device.",
+            (false, true) => MISTAKE,
+        }
     }
 
-    fn has_card(&self) -> bool {
-        self.folder.join(GENERIC_CARD).is_file()
+    /// Whether a lane moves the number `name` of `instance`: its control shows what plays, and
+    /// is not the composer's to change.
+    pub fn automated(project: &Project, instance: &InstanceId, name: &str) -> bool {
+        let at = crate::feeds::Moment::at(Ticks(0));
+        crate::feeds::lane_value(project, instance, name, at).is_some()
     }
 
-    /// Whether the generic card drew the view of `id` last.
-    pub fn carded(&self, id: &InstanceId) -> bool {
-        self.carded.contains(id)
+    /// Whether the tool `tool` draws a view of its own; without one, the generic card draws it.
+    pub fn has_view(&self, tool: &str) -> bool {
+        find(&self.tools, tool).is_some_and(|info| info.view)
     }
 
     /// A problem of the tool of `instance`, if it is one of the project's.
@@ -1032,9 +1044,9 @@ impl Tools {
         let ids = std::mem::take(&mut self.changed_records);
         let records: Vec<(&InstanceId, Option<(&str, String)>)> = (ids.iter())
             .map(|id| {
-                let tool = project
-                    .tool_of(id)
-                    .filter(|_| told_to_bun(project, &self.tools, id));
+                let tool = project.tool_of(id).filter(|_| {
+                    told_to_bun(project, &self.tools, id) || self.cards.contains_key(id)
+                });
                 (
                     id,
                     tool.and_then(|tool| Some((tool, project.state_json(id)?))),
@@ -1149,8 +1161,12 @@ fn field_schema(field: &Field) -> Option<Value> {
             unit,
         } => {
             let kind = if *integer { "integer" } else { "number" };
+            let scale = match crate::tools::knob_range(*min as f32, *max as f32, *unit).scale {
+                sound_core::Scale::Logarithmic => "logarithmic",
+                _ => "linear",
+            };
             // Its unit as declared, none for a plain number: a card reads it as it is.
-            json!({ "type": kind, "minimum": min, "maximum": max, "default": default.unwrap_or(*min), "title": label, "x-unit": unit })
+            json!({ "type": kind, "minimum": min, "maximum": max, "default": default.unwrap_or(*min), "title": label, "x-unit": unit, "x-scale": scale })
         }
         Field::Boolean { default, label } => {
             json!({ "type": "boolean", "default": default, "title": label })

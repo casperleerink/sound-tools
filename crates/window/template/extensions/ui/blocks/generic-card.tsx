@@ -1,4 +1,4 @@
-import { h, type GenericCard } from "../../sdk";
+import { h, live, type GenericCard } from "../../sdk";
 import theme from "../../theme.json";
 import { Cell } from "../cell";
 import { Knob } from "../knob";
@@ -26,7 +26,7 @@ export const card: GenericCard = ({ state, card: { title, fields } }, { update, 
     switch (field.kind) {
       case "number": {
         const value = typeof state[field.name] === "number" ? (state[field.name] as number) : field.default;
-        return <Knob id={field.name} label={label} text={field.label} value={value} min={field.min} max={field.max} scale={field.log ? "log" : "linear"} step={field.integer ? 1 : undefined} unit={field.unit ?? undefined} initial={field.default} onChange={(to) => set(field, to)} />;
+        return <Knob id={field.name} label={label} text={field.label} value={value} min={field.min} max={field.max} scale={field.log ? "log" : "linear"} step={field.integer ? 1 : undefined} unit={field.unit ?? undefined} initial={field.default} held={field.automated ? live.field(field.name) : undefined} onChange={(to) => set(field, to)} />;
       }
       case "switch":
         return <Cell><Toggle id={field.name} label={label} text={field.label} on={state[field.name] === true} w={theme.size.cell - 8} onToggle={() => set(field, state[field.name] !== true)} /></Cell>;

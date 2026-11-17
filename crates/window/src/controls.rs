@@ -77,7 +77,7 @@ impl Found {
                     self.node(state, id, &prefix, memos, &root, None);
                 }
             }
-            Some(Drawn::Failed(_) | Drawn::None) | None => {}
+            Some(Drawn::Failed(_) | Drawn::None | Drawn::NoCard(_)) | None => {}
         }
     }
 
@@ -142,7 +142,9 @@ impl Found {
             .chain(drag)
             .chain(enter)
             .collect();
-        if let (Some(key), false) = (&b.key, actions.is_empty()) {
+        // A slider a lane moves takes no action, but an agent reads what it plays.
+        let listed = !actions.is_empty() || b.role.as_deref() == Some("slider");
+        if let (Some(key), true) = (&b.key, listed) {
             let window_key = format!("{prefix}{key}");
             let target = press(key, b.press, opens);
             self.controls.push(Control {

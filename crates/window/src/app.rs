@@ -489,6 +489,7 @@ impl State {
             let cards = (shown.iter())
                 .filter_map(|id| Some((id.clone(), self.card(id)?)))
                 .collect();
+            self.cards.retain(|id, _| shown.contains(id));
             let more = shown != self.shown;
             self.shown = shown.clone();
             let Some(tools) = &mut self.tools else {
@@ -507,26 +508,28 @@ impl State {
         }
     }
 
-    /// The card of `id` for the generic card, unless its own view draws it. A card follows its
-    /// instance's tool and that tool's fields: made again only when either may have changed.
+    /// The card of `id` for the generic card, unless its tool draws a view of its own. Its
+    /// fields follow its instance's tool and that tool's code: made again only when either
+    /// changed. Which a lane moves follows the lanes.
     fn card(&mut self, id: &InstanceId) -> Option<Value> {
-        let own_view = matches!(self.drawn(id), Some(Drawn::View { .. }))
-            && !self.tools.as_ref().is_some_and(|tools| tools.carded(id));
-        if own_view {
+        let tool = self.project.tool_of(id)?.to_string();
+        let tools = self.tools.as_ref();
+        if tools.is_some_and(|tools| tools.has_view(&tool)) {
             return None;
         }
-        let tool = self.project.tool_of(id)?.to_string();
-        let loads = self.tools.as_ref().map_or(0, Tools::loads);
-        match self.cards.get(id) {
-            Some((made_for, made_at, card)) if *made_for == tool && *made_at == loads => {
-                Some(card.clone())
-            }
-            _ => {
-                let card = crate::fields::card_of(self, id)?;
-                self.cards.insert(id.clone(), (tool, loads, card.clone()));
-                Some(card)
-            }
+        let loads = tools.map_or(0, Tools::loads);
+        let fresh = !matches!(self.cards.get(id), Some((made_for, made_at, _)) if *made_for == tool && *made_at == loads);
+        if fresh {
+            let card = crate::fields::card_of(self, id)?;
+            self.cards.insert(id.clone(), (tool, loads, card));
         }
+        let mut card = self.cards.get(id)?.2.clone();
+        for field in card["fields"].as_array_mut()?.iter_mut() {
+            let name = field["name"].as_str().unwrap_or_default().to_string();
+            let automated = Tools::automated(&self.project, id, &name);
+            field["automated"] = json!(automated);
+        }
+        Some(card)
     }
 
     /// Waits for Bun; a run without a window fails when it does not finish.
@@ -545,7 +548,7 @@ impl State {
     }
 
     /// New trees came: what drags moved is where the records say now, but a drag that goes on.
-    pub(crate) fn trees_came(&self) {
+    fn trees_came(&self) {
         let held = self.gesture.as_ref().and_then(tree::Gesture::dragging);
         self.lives.drop_drags(held);
     }

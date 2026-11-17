@@ -200,7 +200,7 @@ export type GenericCard = (
     card: {
       title: string;
       fields: ({ name: string; label: string } & (
-        | { kind: "number"; min: number; max: number; log: boolean; integer: boolean; unit: Unit | null; default: number }
+        | { kind: "number"; min: number; max: number; log: boolean; integer: boolean; unit: Unit | null; default: number; automated: boolean }
         | { kind: "switch"; default: boolean }
         | { kind: "choice"; options: { value: string | number; text: string }[]; default: string | number }
       ))[];

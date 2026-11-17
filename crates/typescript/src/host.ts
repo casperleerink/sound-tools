@@ -690,12 +690,11 @@ function drawNext(instance: string) {
   const spec = sdk.host.tools.get(record?.tool ?? "");
   const card = fieldCards[instance];
   if (next && record && !spec?.view && card) {
-    carded.add(instance);
+    // Without a generic card that loaded, the runtime says why in its problems.
     if (genericCard) drawCard(instance, record, card);
-    else say({ type: "tree", instance, card: true, error: "no generic card" });
+    else say({ type: "tree", instance, none: true });
     return;
   }
-  carded.delete(instance);
   if (!next || !record || !spec?.view) {
     say({ type: "tree", instance, none: true });
     return;
@@ -714,8 +713,8 @@ function drawNext(instance: string) {
 /** The cards of the shown instances whose tools may have no view, and the project's view of such a card. */
 let fieldCards: Extract<Request, { type: "show" }>["cards"] = {};
 let genericCard: unknown;
-/** The shown instances the generic card draws: its file runs their code, and is blamed for it. */
-const carded = new Set<string>();
+/** Whether the generic card draws `instance`: its file runs that code, and is blamed for it. */
+const carded = (instance: string) => fieldCards[instance] !== undefined && !sdk.host.tools.get(recordOf(instance)?.tool ?? "")?.view;
 /** As `GENERIC_CARD` of the runtime names it, which loads it with the tools. */
 const GENERIC_CARD = "ui/blocks/generic-card.tsx";
 
@@ -727,9 +726,9 @@ function drawCard(instance: string, record: Entry, card: (typeof fieldCards)[str
   if (!memories.has(key)) memories.set(key, {});
   runs(GENERIC_CARD, "card");
   try {
-    say({ type: "tree", instance, card: true, tree: next!.host.run(instance, genericCard, self, { update: updater(instance, defaults), memory: memories.get(key) }) });
+    say({ type: "tree", instance, tree: next!.host.run(instance, genericCard, self, { update: updater(instance, defaults), memory: memories.get(key) }) });
   } catch (error) {
-    say({ type: "tree", instance, card: true, error: String(error) });
+    say({ type: "tree", instance, error: String(error) });
   }
 }
 
@@ -754,7 +753,7 @@ let acting: string | undefined;
 
 /** An action on a shown view; it runs again after, also when nothing changed, as its memory may have. */
 function act({ instance, key, action, value }: Extract<Request, { type: "act" }>) {
-  runs(carded.has(instance) ? GENERIC_CARD : (recordOf(instance)?.tool ?? ""), `${action} on ${key}`);
+  runs(carded(instance) ? GENERIC_CARD : (recordOf(instance)?.tool ?? ""), `${action} on ${key}`);
   let error: string | undefined;
   acting = instance;
   try {

@@ -100,6 +100,7 @@ pub fn evaluate(live: &Live, leaves: &(impl Leaves + ?Sized)) -> f64 {
         Live::Sin { x } => number(x, leaves).sin(),
         Live::Cos { x } => number(x, leaves).cos(),
         Live::Decibels { x } => (20.0 * number(x, leaves).abs().log10()).max(-120.0),
+        Live::Ln { x } => number(x, leaves).max(f64::MIN_POSITIVE).ln(),
         Live::Ease { x, ease, key } => leaves.ease(key, *ease, number(x, leaves)),
         Live::Tick
         | Live::Playing

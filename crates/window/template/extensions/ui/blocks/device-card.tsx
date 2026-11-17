@@ -2,7 +2,7 @@ import { h, type Node } from "../../sdk";
 import theme from "../../theme.json";
 import { Toggle } from "../toggle";
 
-const [ROW, PAD, HEADER] = [theme.size.row, 16, 32];
+const [ROW, PAD, HEADER] = [theme.size.row, theme.space[4], theme.size.lg];
 /** Every card is this tall, so a rack has a straight bottom. */
 export const CARD_HEIGHT = HEADER + 2 * ROW + theme.space[1] + PAD;
 

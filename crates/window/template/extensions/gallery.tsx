@@ -119,8 +119,8 @@ export const gallery = tool({
                   {knob("pan", "Pan", { min: -1, max: 1, unit: "pan", bipolar: true, initial: 0 })}
                 </row>
                 <Fader id="fader" label="Volume" db={memory.values.fader ?? 0} height={120} onChange={(db) => (memory.values.fader = db)} />
-                <Fader id="deep" label="Deep volume" db={memory.values.deep ?? 0} height={120} min={-96} onChange={(db) => (memory.values.deep = db)} />
                 <Meter id="meter" label="Level" path="nothing" w={4} h={120} />
+                <Fader id="deep" label="Deep volume" db={memory.values.deep ?? 0} height={120} min={-96} onChange={(db) => (memory.values.deep = db)} />
                 <Slider id="slider" label="Amount" w={160} min={0} max={1} {...value("slider")} />
               </row>
             </Section>

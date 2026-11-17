@@ -1625,7 +1625,7 @@ fn a_project_without_its_generic_card_says_so_in_plain_words() {
         "{problems:?}"
     );
     let synth = InstanceId::new("song/t00/synth").unwrap();
-    assert!(matches!(state.drawn(&synth), Some(Drawn::Failed(why)) if why.contains("no card")));
+    assert!(matches!(state.drawn(&synth), Some(Drawn::NoCard(why)) if why.contains("no card")));
 }
 
 #[test]
@@ -1710,7 +1710,7 @@ fn a_generic_card_that_hangs_in_a_handler_is_stopped_alone_and_says_so() {
     control(&controls::collect(&state).controls, "Mute Track 2");
     let synth = InstanceId::new("song/t00/synth").unwrap();
     assert!(
-        matches!(state.drawn(&synth), Some(Drawn::Failed(why)) if why.contains("stopped")),
+        matches!(state.drawn(&synth), Some(Drawn::NoCard(why)) if why.contains("stopped")),
         "the card says why it shows nothing"
     );
 }
@@ -1725,7 +1725,7 @@ fn a_generic_card_that_fails_to_draw_is_a_problem_of_its_file() {
         state.project.problems()
     );
     let synth = InstanceId::new("song/t00/synth").unwrap();
-    assert!(matches!(state.drawn(&synth), Some(Drawn::Failed(why)) if !why.contains("Error")));
+    assert!(matches!(state.drawn(&synth), Some(Drawn::NoCard(why)) if why.contains("mistake")));
 }
 
 /// A device of the project with no view, with a declared unit and a plain number.
@@ -1740,6 +1740,7 @@ fn a_card_keeps_the_unit_a_tool_declares() {
     let id = InstanceId::new("song/t00/chain/rate").unwrap();
     let card = crate::fields::card_of(&state, &id).unwrap();
     assert_eq!(card["fields"][0]["unit"], "hz");
+    assert_eq!(card["fields"][0]["log"], true);
     assert_eq!(card["fields"][1]["unit"], Value::Null);
 }
 
@@ -1753,11 +1754,149 @@ fn a_tree_that_comes_during_a_drag_leaves_the_drag_where_it_is() {
     travel(&mut window, start, (0.0, -2.0), 10);
     let moved = window.state.lives.dragged(key).get();
     assert!(moved[1] < -10.0, "{moved:?}");
-    // A run without a window settles each tree as it comes, so one comes here as in a window,
-    // where another tool's tick draws it.
-    window.state.trees_came();
+    // Another control's change draws the view again while the drag goes on.
+    let runs = window.state.tools.as_ref().unwrap().view_runs();
+    act(
+        &mut window.state,
+        json!({ "label": "Item", "action": "press" }),
+    );
+    assert!(window.state.tools.as_ref().unwrap().view_runs() > runs);
     assert_eq!(window.state.lives.dragged(key).get(), moved);
     window.pointer_up(start.0, start.1 - 20.0);
     redraw(&mut window);
     assert_eq!(window.state.lives.dragged(key).get(), [0.0; 2]);
+}
+
+/// A new project whose first track's lane plays 8 kHz into its synth's cutoff.
+fn automated_cutoff() -> tempfile::TempDir {
+    let scratch = new_project();
+    let track = scratch.path().join("song/state/song/t00");
+    std::fs::write(
+        track.join("instance.json"),
+        json!({ "tool": "track", "state": { "title": "Track 1", "colour": "blue", "automation": [{ "lane": "lane-cutoff", "target": "synth.cutoff_hz" }] } }).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        track.join("lane-cutoff.json"),
+        json!({ "tool": "lane", "state": { "points": [{ "tick": 0, "value": 8000 }] } })
+            .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        track.join("synth.json"),
+        json!({ "tool": "instrument.synth", "state": { "cutoff_hz": 500 } }).to_string(),
+    )
+    .unwrap();
+    scratch
+}
+
+#[test]
+fn a_knob_a_lane_moves_shows_what_plays_and_takes_no_change() {
+    let scratch = automated_cutoff();
+    let mut state = opened(&scratch.path().join("song"));
+    frame(&mut state, 0.1);
+    build(&state);
+    frame(&mut state, 0.2);
+    let controls = controls::collect(&state).controls;
+    let cutoff = control(&controls, "Synth Cutoff");
+    assert!(cutoff.actions.is_empty(), "{:?}", cutoff.actions);
+    assert!(
+        state.lives.texts().iter().any(|(_, text)| text == "8 kHz"),
+        "{:?}",
+        state.lives.texts()
+    );
+    assert!(
+        try_act(
+            &mut state,
+            json!({ "label": "Synth Cutoff", "action": "set", "value": 1000 })
+        )
+        .is_err()
+    );
+    assert_eq!(synth(&state)["cutoff_hz"], 500);
+}
+
+#[test]
+fn a_view_runs_once_as_the_project_opens() {
+    let scratch = new_project();
+    let mut state = opened(&scratch.path().join("song"));
+    for step in 1..=4 {
+        frame(&mut state, f64::from(step) * 0.1);
+        state.settle();
+    }
+    let runs = state.tools.as_ref().unwrap().view_runs();
+    assert_eq!(runs as usize, state.shown.len());
+}
+
+fn card_file(contents: &str) -> State {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    std::fs::write(
+        folder.join("extensions/ui/blocks/generic-card.tsx"),
+        contents,
+    )
+    .unwrap();
+    let state = opened(&folder);
+    std::mem::forget(scratch);
+    state
+}
+
+#[test]
+fn a_generic_card_that_does_not_load_says_its_own_mistake() {
+    let state = card_file("export const card = (;\n");
+    let said = card_problems(&state);
+    assert!(
+        said.iter()
+            .all(|problem| !problem.contains("fails to draw")),
+        "{said:?}"
+    );
+    assert!(!said.is_empty());
+    let state = card_file("export const cards = () => null;\n");
+    let said = card_problems(&state);
+    assert!(
+        said.iter()
+            .any(|problem| problem.contains("exports no `card`")),
+        "{said:?}"
+    );
+    let synth = InstanceId::new("song/t00/synth").unwrap();
+    assert!(matches!(state.drawn(&synth), Some(Drawn::NoCard(why)) if why.contains("mistake")));
+}
+
+#[test]
+fn a_project_of_only_built_in_devices_shows_their_cards() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    for file in [
+        "song.tsx",
+        "song.test.tsx",
+        "gallery.tsx",
+        "track.ts",
+        "chain.ts",
+        "bus.ts",
+        "tape.ts",
+        "lfo.ts",
+    ] {
+        std::fs::remove_file(folder.join("extensions").join(file)).unwrap();
+    }
+    std::fs::remove_dir_all(folder.join("state")).unwrap();
+    std::fs::create_dir_all(folder.join("state")).unwrap();
+    std::fs::write(
+        folder.join("state/comp.json"),
+        r#"{"tool": "compressor", "state": {}}"#,
+    )
+    .unwrap();
+    let project = folder.join("project.json");
+    let mut file: Value =
+        serde_json::from_str(&std::fs::read_to_string(&project).unwrap()).unwrap();
+    file["main"] = json!("comp");
+    file["connections"] = json!([]);
+    std::fs::write(&project, file.to_string()).unwrap();
+    let state = opened(&folder);
+    assert!(
+        labels(&state)
+            .iter()
+            .any(|label| label.starts_with("Compressor ")),
+        "{:?} {:?}",
+        labels(&state),
+        state.project.problems()
+    );
 }

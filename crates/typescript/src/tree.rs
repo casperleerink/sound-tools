@@ -1777,6 +1777,10 @@ pub enum Live {
     Decibels {
         x: Num,
     },
+    /// The natural logarithm, of a number above 0.
+    Ln {
+        x: Num,
+    },
     /// What moves from frame to frame: `key` is its live value as `sdk.ts` writes it, so the
     /// same one drawn twice is one, as a signal used twice is.
     Ease {
@@ -1844,7 +1848,8 @@ impl Live {
             | Self::Round { x }
             | Self::Sin { x }
             | Self::Cos { x }
-            | Self::Decibels { x } => x.steady(),
+            | Self::Decibels { x }
+            | Self::Ln { x } => x.steady(),
         }
     }
 
@@ -1890,7 +1895,8 @@ impl Live {
             | Self::Round { x }
             | Self::Sin { x }
             | Self::Cos { x }
-            | Self::Decibels { x } => x.add_uses(uses),
+            | Self::Decibels { x }
+            | Self::Ln { x } => x.add_uses(uses),
             Self::Ease { x, .. } => x.add_uses(uses),
         }
     }

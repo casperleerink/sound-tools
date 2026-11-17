@@ -18,7 +18,7 @@ pub(crate) fn card_of(state: &State, id: &InstanceId) -> Option<Value> {
         str::to_string,
     );
     let reader = RecordSchema::new(&schema);
-    let properties = schema.get("properties").and_then(Value::as_object)?;
+    let properties = (reader.resolved(&schema).get("properties")).and_then(Value::as_object)?;
     let fields: Vec<Value> = (properties.iter())
         .filter_map(|(name, property)| field(name, reader.resolved(property)))
         .collect();

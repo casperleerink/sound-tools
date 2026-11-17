@@ -461,6 +461,10 @@ pub(crate) fn view(state: &State, instance: &InstanceId, prefix: &str, drawn: &D
         }
         Drawn::Failed(error) => failed(state, error),
         Drawn::None => el(),
+        Drawn::NoCard(why) => text(why.clone())
+            .font(state.theme.text("label"))
+            .color(state.theme.color("text-secondary"))
+            .wrap(),
     }
 }
 
@@ -757,8 +761,9 @@ fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>) -> El {
             },
         );
     }
+    // What a tip says is for the keys too.
     if b.overlay_of(Opens::Hover).is_some() {
-        e = e.hover_group_shared(key.clone());
+        e = e.hover_group_shared(key.clone()).focusable(true);
     }
     let opens = b.overlay_of(Opens::Press).is_some();
     let press = Press {
