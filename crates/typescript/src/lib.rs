@@ -551,10 +551,11 @@ fn launch(
     logs: bool,
 ) -> Result<Option<Launched>, String> {
     let mut files = tool_files(extensions);
-    if files.is_empty() {
+    // A project of the new window runs Bun for its generic card too, or says it has none.
+    let views = extensions.join(next::THEME).is_file();
+    if files.is_empty() && !views {
         return Ok(None);
     }
-    let views = extensions.join(next::THEME).is_file();
     let card = views && extensions.join(next::GENERIC_CARD).is_file();
     if card {
         files.push(next::GENERIC_CARD.to_string());

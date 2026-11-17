@@ -56,7 +56,11 @@ fn field(name: &str, property: &Value) -> Option<Value> {
         (Some(kind @ ("number" | "integer")), Some(min), Some(max)) => {
             let log =
                 property.get("x-scale").and_then(Value::as_str) == Some("logarithmic") && min > 0.0;
-            let unit = sound_typescript::live::field_unit(name, min, max);
+            // A tool of the project declares its unit; a built-in one's is read from its name.
+            let unit = match property.get("x-unit") {
+                Some(declared) => declared.clone(),
+                None => json!(sound_typescript::live::field_unit(name, min, max)),
+            };
             json!({
                 "kind": "number", "min": min, "max": max, "log": log,
                 "integer": kind == "integer", "unit": unit, "default": default.unwrap_or(json!(min)),

@@ -19,8 +19,10 @@ test("typed text is read as the value shows, and what was shown changes nothing"
   expect(typedValue("2 kHz", "hz")).toBe(2000);
   expect(typedValue("+3", "db")).toBe(3);
   expect(typedValue("5 x", "db")).toBeUndefined();
-  expect(typedOver("20", 5, { min: 1, max: 5000 }, "ms")).toBe(20);
-  expect(typedOver("3", 2000, { min: 20, max: 20000, scale: "log" }, "hz")).toBe(3000);
+  // A bare number is in one unit per kind, whatever shows.
+  expect(typedOver("800", 2000, { min: 20, max: 20000, scale: "log" }, "hz")).toBe(800);
+  expect(typedOver("20", 1.5, { min: 0.001, max: 10 }, "seconds")).toBe(0.02);
+  expect(typedOver("3k", 2000, { min: 20, max: 20000, scale: "log" }, "hz")).toBe(3000);
   const range = { min: 20, max: 20000, scale: "log" as const };
   expect(typedOver(shown(2345.6, "hz"), 2345.6, range, "hz")).toBeUndefined();
 });

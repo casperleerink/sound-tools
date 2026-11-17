@@ -239,7 +239,7 @@ const Panel = ({ each, title }: { each: Track; title: string }) => {
 const Strip = ({ id, name, title, db, onChange }: { id: string; name: string; title: string; db: number; onChange: (db: number) => void }) => (
   <col key={`strip-${id}`} w={72} h="full" py={3} gap={2} align="center">
     <text style="label" color="text-secondary" truncate>{title}</text>
-    <row gap={1} align="start">
+    <row gap={2} align="start">
       <Fader id={`fader-${id}`} label={`Volume ${title}`} db={db} height={FADER} onChange={onChange} />
       <Meter id={`meter-${id}`} label={`Level ${title}`} path={name === "master" ? "master" : `${name}/mix`} w={4} h={FADER} />
     </row>

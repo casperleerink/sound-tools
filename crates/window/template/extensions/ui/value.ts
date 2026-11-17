@@ -36,11 +36,17 @@ export const valueAt = (at: number, range: Range): number => {
   return fitted(scale === "log" ? min * (max / min) ** clamp(at) : min + clamp(at) * (max - min), range);
 };
 
-/** {@link valueAt} as a live value, for what shows while a drag goes on. */
+/** {@link valueAt} as a live value, for what shows while a drag goes on: exactly what a release there sets. */
 export const liveValueAt = (at: Live, range: Range): Live => {
   const { min, max, scale, step } = range;
   const value = scale === "log" ? Live.of(max / min).pow(at).times(min) : at.times(max - min).plus(min);
-  return step ? value.minus(min).over(step).round().times(step).plus(min).clamp(min, top(range)) : value;
+  if (!step) return value;
+  // A live value's numbers are 32-bit: a step below 1 as a whole number of them per unit, so
+  // -96 + 960 / 10 is 0, where 960 * 0.1 would leave a millionth.
+  const per = Math.round(1 / step);
+  const whole = step < 1 && Math.abs(per * step - 1) < 1e-9;
+  const steps = value.minus(min).over(step).round();
+  return (whole ? steps.over(per) : steps.times(step)).plus(min).clamp(min, top(range));
 };
 
 /** Three significant digits, no zeros at the end, and a minus sign: as the window shows a number. */
@@ -70,7 +76,7 @@ export const shown = (value: number, unit?: Unit): string => {
 const WORDS: Record<Unit | "none", Record<string, number>> = {
   hz: { "": 1, hz: 1, k: 1000, khz: 1000 },
   ms: { "": 1, ms: 1, s: 1000 },
-  seconds: { "": 1, s: 1, ms: 0.001 },
+  seconds: { "": 0.001, s: 1, ms: 0.001 },
   db: { "": 1, db: 1 },
   percent: { "": 0.01, "%": 0.01 },
   semitones: { "": 1, st: 1 },
@@ -85,22 +91,20 @@ const NUMBER = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)\s*([a-z%]*)$/;
 
 /**
  * What was typed in `unit`, read as {@link shown} writes it: `2k`, `2 kHz`, `440 Hz`, `1.5 s`,
- * `30%`, `25L`, `C`, `+3`. A bare number is in the word of `shownAs`, such as ms in `5 ms`.
- * Undefined when it is no value of `unit`.
+ * `30%`, `25L`, `C`, `+3`. A bare number is in one unit per kind, whatever shows: Hz, ms, dB,
+ * percent, and right of centre for a pan. Undefined when it is no value of `unit`.
  */
-export const typedValue = (text: string, unit?: Unit, shownAs?: string): number | undefined => {
+export const typedValue = (text: string, unit?: Unit): number | undefined => {
   const typed = text.trim().toLowerCase().replace("−", "-");
   if (unit === "pan" && typed === "c") return 0;
   const match = NUMBER.exec(typed);
-  const shownWord = unit === "pan" ? "" : (NUMBER.exec(shownAs?.toLowerCase().replace("−", "-") ?? "")?.[2] ?? "");
-  const times = match ? WORDS[unit ?? "none"][match[2] || shownWord] : undefined;
+  const times = match ? WORDS[unit ?? "none"][match[2] ?? ""] : undefined;
   return match && times !== undefined ? Number(match[1]) * times : undefined;
 };
 
 /** The value typed over `value`, within the range; undefined when it says what was shown, or no value. */
 export const typedOver = (text: string, value: number, range: Range, unit?: Unit): number | undefined => {
-  const was = shown(value, unit);
-  if (text.trim() === was) return undefined;
-  const typed = typedValue(text, unit, was);
+  if (text.trim() === shown(value, unit)) return undefined;
+  const typed = typedValue(text, unit);
   return typed === undefined ? undefined : fitted(typed, range);
 };

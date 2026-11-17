@@ -1671,3 +1671,93 @@ fn enter_on_a_fader_types_its_value_and_the_keys_stay_with_it() {
     key(&mut window, rune::Key::Tab);
     assert_ne!(focused(&window).as_deref(), Some("fader-t00-value"));
 }
+
+/// A generic card whose `body` draws for every device without a view.
+fn with_card(body: &str) -> (tempfile::TempDir, State) {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    std::fs::write(
+        folder.join("extensions/ui/blocks/generic-card.tsx"),
+        format!("import {{ h, type GenericCard }} from \"../../sdk\";\nexport const card: GenericCard = () => {body};\n"),
+    )
+    .unwrap();
+    let state = opened(&folder);
+    (scratch, state)
+}
+
+fn card_problems(state: &State) -> Vec<String> {
+    let problems = state.project.problems();
+    (problems.iter())
+        .filter(|problem| problem.path.ends_with("generic-card.tsx"))
+        .map(|problem| problem.message.clone())
+        .collect()
+}
+
+#[test]
+fn a_generic_card_that_hangs_in_a_handler_is_stopped_alone_and_says_so() {
+    let (_scratch, mut state) =
+        with_card(r#"<box key="hang" label="Hang" onPress={() => { while (true) {} }} />"#);
+    assert!(try_act(&mut state, json!({ "label": "Hang", "action": "press" })).is_err());
+    for step in 1..=6 {
+        frame(&mut state, f64::from(step) * 0.5);
+        state.settle();
+    }
+    assert!(
+        !card_problems(&state).is_empty(),
+        "{:?}",
+        state.project.problems()
+    );
+    control(&controls::collect(&state).controls, "Mute Track 2");
+    let synth = InstanceId::new("song/t00/synth").unwrap();
+    assert!(
+        matches!(state.drawn(&synth), Some(Drawn::Failed(why)) if why.contains("stopped")),
+        "the card says why it shows nothing"
+    );
+}
+
+#[test]
+fn a_generic_card_that_fails_to_draw_is_a_problem_of_its_file() {
+    let (_scratch, state) = with_card(r#"{ throw new Error("no room") }"#);
+    let problems = card_problems(&state);
+    assert!(
+        problems.iter().any(|problem| problem.contains("no room")),
+        "{:?}",
+        state.project.problems()
+    );
+    let synth = InstanceId::new("song/t00/synth").unwrap();
+    assert!(matches!(state.drawn(&synth), Some(Drawn::Failed(why)) if !why.contains("Error")));
+}
+
+/// A device of the project with no view, with a declared unit and a plain number.
+const RATE: &str = r#"import { input, number, tool } from "./sdk";
+export const rate = tool({ name: "rate", title: "Rate", when: "Never", doc: "Rate.", state: { speed: number({ min: 20, max: 20000, unit: "hz", default: 2000 }), seed: number({ min: 0, max: 1, unit: "plain", default: 0.5 }) }, sound: () => input });
+"#;
+
+#[test]
+fn a_card_keeps_the_unit_a_tool_declares() {
+    let (_scratch, folder) = with_tools(&[("rate", RATE)]);
+    let state = opened(&folder);
+    let id = InstanceId::new("song/t00/chain/rate").unwrap();
+    let card = crate::fields::card_of(&state, &id).unwrap();
+    assert_eq!(card["fields"][0]["unit"], "hz");
+    assert_eq!(card["fields"][1]["unit"], Value::Null);
+}
+
+#[test]
+fn a_tree_that_comes_during_a_drag_leaves_the_drag_where_it_is() {
+    let (_scratch, mut window) = kit();
+    let key = "t00/chain/kit:step";
+    let start = window.find(key).unwrap();
+    window.pointer_down(start.0, start.1);
+    window.frame(1.0 / 60.0);
+    travel(&mut window, start, (0.0, -2.0), 10);
+    let moved = window.state.lives.dragged(key).get();
+    assert!(moved[1] < -10.0, "{moved:?}");
+    // A run without a window settles each tree as it comes, so one comes here as in a window,
+    // where another tool's tick draws it.
+    window.state.trees_came();
+    assert_eq!(window.state.lives.dragged(key).get(), moved);
+    window.pointer_up(start.0, start.1 - 20.0);
+    redraw(&mut window);
+    assert_eq!(window.state.lives.dragged(key).get(), [0.0; 2]);
+}

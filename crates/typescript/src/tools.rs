@@ -201,7 +201,7 @@ impl Input {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Unit {
     Hz,

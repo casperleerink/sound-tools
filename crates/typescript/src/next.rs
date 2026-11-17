@@ -91,6 +91,8 @@ pub struct Tools {
     changed_records: BTreeSet<InstanceId>,
     shown: BTreeSet<InstanceId>,
     cards: BTreeMap<InstanceId, Value>,
+    /// The shown instances the generic card draws.
+    carded: BTreeSet<InstanceId>,
     told_shown: bool,
     drawn: HashMap<InstanceId, Drawn>,
     /// Why a view does not draw, by instance, until it draws again.
@@ -149,6 +151,7 @@ impl Tools {
             changed_records: every_instance(project),
             shown: BTreeSet::new(),
             cards: BTreeMap::new(),
+            carded: BTreeSet::new(),
             told_shown: true,
             drawn: HashMap::new(),
             view_problems: BTreeMap::new(),
@@ -554,13 +557,26 @@ impl Tools {
                 instance,
                 tree,
                 error,
+                card,
             } => {
                 if !self.shown.contains(&instance) {
                     return false;
                 }
+                match card {
+                    true => self.carded.insert(instance.clone()),
+                    false => self.carded.remove(&instance),
+                };
                 let before = self.drawn.remove(&instance);
-                let problem = (error.as_ref()).and_then(|error| {
-                    self.problem_of(project, &instance, &format!("its view failed: {error}"))
+                let problem = (error.as_ref()).and_then(|error| match card {
+                    // Stopped, or missing: the problems say so already.
+                    true if self.skipped.contains_key(GENERIC_CARD) || !self.has_card() => None,
+                    true => Some(Problem {
+                        path: format!("{FOLDER}/{GENERIC_CARD}"),
+                        message: format!("it fails to draw the card of {instance}: {error}"),
+                    }),
+                    false => {
+                        self.problem_of(project, &instance, &format!("its view failed: {error}"))
+                    }
                 });
                 let reported = match problem {
                     Some(problem) => self
@@ -573,6 +589,7 @@ impl Tools {
                     self.report(project);
                 }
                 let drawn = match (tree, error) {
+                    (_, Some(_)) if card => Drawn::Failed(self.card_failed()),
                     (_, Some(error)) => Drawn::Failed(error),
                     (Some(tree), None) => {
                         self.view_runs += 1;
@@ -885,6 +902,25 @@ impl Tools {
         false
     }
 
+    /// Why a device shows no card, in plain words.
+    fn card_failed(&self) -> String {
+        let why = match (self.skipped.contains_key(GENERIC_CARD), self.has_card()) {
+            (true, _) => "the card of devices was stopped, as its code did not finish",
+            (false, false) => "the project has no card for a device without a view of its own",
+            (false, true) => "the card of devices does not draw",
+        };
+        why.to_string()
+    }
+
+    fn has_card(&self) -> bool {
+        self.folder.join(GENERIC_CARD).is_file()
+    }
+
+    /// Whether the generic card drew the view of `id` last.
+    pub fn carded(&self, id: &InstanceId) -> bool {
+        self.carded.contains(id)
+    }
+
     /// A problem of the tool of `instance`, if it is one of the project's.
     fn problem_of(
         &self,
@@ -943,8 +979,10 @@ impl Tools {
         } else {
             let problem = (self.problem_of(project, instance, &problem))
                 .unwrap_or_else(|| crate::folder_problem(format!("{instance}: {problem}")));
-            self.problems.push(problem);
-            self.report(project);
+            if !self.problems.contains(&problem) {
+                self.problems.push(problem);
+                self.report(project);
+            }
         }
     }
 
@@ -976,7 +1014,6 @@ impl Tools {
             _ => {
                 self.bun = None;
                 self.performer_gone(project);
-                // A card of fields works without Bun.
                 self.forget_views();
                 let message = format!(
                     "the code of the project {why} with no tool to blame, so the tools do not run: fix them and save"
@@ -1109,10 +1146,11 @@ fn field_schema(field: &Field) -> Option<Value> {
             integer,
             default,
             label,
-            ..
+            unit,
         } => {
             let kind = if *integer { "integer" } else { "number" };
-            json!({ "type": kind, "minimum": min, "maximum": max, "default": default.unwrap_or(*min), "title": label })
+            // Its unit as declared, none for a plain number: a card reads it as it is.
+            json!({ "type": kind, "minimum": min, "maximum": max, "default": default.unwrap_or(*min), "title": label, "x-unit": unit })
         }
         Field::Boolean { default, label } => {
             json!({ "type": "boolean", "default": default, "title": label })

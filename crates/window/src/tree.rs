@@ -668,6 +668,11 @@ pub(crate) struct Gesture {
 }
 
 impl Gesture {
+    /// The element a drag moves now, once past the slop.
+    pub(crate) fn dragging(&self) -> Option<&str> {
+        self.far.then_some(self.key.as_str())
+    }
+
     fn of(key: &str) -> Self {
         Self {
             key: key.to_string(),

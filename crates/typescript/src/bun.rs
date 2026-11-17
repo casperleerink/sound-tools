@@ -473,6 +473,9 @@ pub(crate) enum Event {
         tree: Option<Value>,
         #[serde(default)]
         error: Option<String>,
+        /// The project's generic card drew it, see [`crate::next::GENERIC_CARD`].
+        #[serde(default)]
+        card: bool,
     },
     /// Code moved a number input of an instance, or of its child `child`, or sent a bang when
     /// there is no value: at `at`, engine time in seconds, or at once.

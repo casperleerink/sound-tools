@@ -3,7 +3,6 @@ import { TypeIn } from "./type-in";
 import { fitted, liveValueAt, travelled, type Range } from "./value";
 
 export const [MIN_DB, MAX_DB] = [-60, 6];
-const RANGE: Range = { min: MIN_DB, max: MAX_DB, step: 0.1 };
 const [THUMB, TARGET, TRACK, LINE] = [12, 28, 4, 24];
 
 /**
@@ -11,7 +10,8 @@ const [THUMB, TARGET, TRACK, LINE] = [12, 28, 4, 24];
  * ten times finer), arrows step a dB, a double click or Backspace sets 0 dB, a click on the value
  * or Enter types one. `onChange` hears the new dB when it is let go.
  */
-export const Fader = ({ id, label, db, height, onChange }: { id: string; label: string; db: number; height: number; onChange: (db: number) => void }) => {
+export const Fader = ({ id, label, db, height, min = MIN_DB, onChange }: { id: string; label: string; db: number; height: number; min?: number; onChange: (db: number) => void }) => {
+  const RANGE: Range = { min, max: MAX_DB, step: 0.1 };
   const set = (to: number) => onChange(fitted(to, RANGE));
   const travel = height - THUMB;
   const at = travelled(fitted(db, RANGE), RANGE);
@@ -20,7 +20,7 @@ export const Fader = ({ id, label, db, height, onChange }: { id: string; label: 
   const moved = live.drag(id).dy.plus(live.drag(`${id}-value`).dy);
   const readout = liveValueAt(moved.over(-travel).plus(at), RANGE);
   const drag = { axis: "y", min: -y, max: travel - y } as const;
-  const dragEnd = ({ dy }: { dy: number }) => set(db - (dy / travel) * (MAX_DB - MIN_DB));
+  const dragEnd = ({ dy }: { dy: number }) => set(db - (dy / travel) * (MAX_DB - min));
   return (
     <col key={id} label={label} role="slider" value={db} gap={2} align="center" radius="md" drag={drag} onDragEnd={dragEnd} actions={{ set, increment: (by) => set(db + by), decrement: (by) => set(db - by), reset: () => set(0) }}>
       <box w={TARGET} h={height}>

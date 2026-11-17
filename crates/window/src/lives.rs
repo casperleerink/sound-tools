@@ -160,10 +160,13 @@ impl Lives {
         }
     }
 
-    /// A new tree came: what a drag moved is where its record says now.
-    pub(crate) fn drop_drags(&self) {
-        for live in self.drags.borrow().values() {
-            live.set([0.0; 2]);
+    /// A new tree came: what a drag moved is where its record says now, but the drag of
+    /// `held`, which goes on.
+    pub(crate) fn drop_drags(&self, held: Option<&str>) {
+        for (key, live) in self.drags.borrow().iter() {
+            if Some(key.as_str()) != held {
+                live.set([0.0; 2]);
+            }
         }
     }
 
@@ -215,9 +218,7 @@ impl Lives {
                 },
                 Shown::Text(shown, widest),
             ) => {
-                // A live value's numbers are `f32`: a step that lands on 0 leaves a millionth.
-                let value = Some(number(value, &sources)).filter(|value| value.abs() >= 1e-6);
-                let value = value.unwrap_or(0.0);
+                let value = number(value, &sources);
                 let text = match digits {
                     Some(digits) => format!("{value:.digits$}"),
                     None => text_of(value, *unit, Some(project.clock())),

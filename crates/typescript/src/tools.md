@@ -64,7 +64,7 @@ Use the top layer that fits; each uses only those under it.
 1. Theme, `extensions/theme.json`: colours, text, spacing, radius, shadows, sizes. Props name them (`fill="surface"`, `gap={2}`, `"sound/25"` at 25%); code that needs a number imports the file. `sound` (green) is sound that moves; what is chosen takes `selected`.
 2. Primitives, each prop in `sdk/view.ts`: `box`, `row`, `col`, `text`, `shapes`, `field`, `child`, `live`; `hoverGroup` and `reveal` (shown on hover: the quiet rule), `overlay` (menus, lists, tips), `group` (one Tab stop).
 3. Components, `extensions/ui/`: Button, Toggle, Segmented, Select, Menu, Popover, Tooltip, Knob, Slider, Fader, TypeIn, Meter, Pad, TextField, Cell, Display, Kbd, Notice, Dot; `value.ts` steps, clamps and reads typed values.
-4. Blocks, `extensions/ui/blocks/`: DeviceCard, GenericCard, Panel, Section, StepRow, StepGrid, Keyboard, PaintGrid, EmptyState.
+4. Blocks, `extensions/ui/blocks/`: DeviceCard, `generic-card.tsx` (its `card`), Panel, Section, StepRow, StepGrid, Keyboard, PaintGrid, EmptyState.
 
 Change them, add yours. `--main gallery --snap g.png --size 1470x1500` shows them all.
 
