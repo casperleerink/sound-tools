@@ -22,7 +22,6 @@ import { Keyboard } from "./ui/blocks/keyboard";
 import { PaintGrid } from "./ui/blocks/paint-grid";
 import { Panel, Section } from "./ui/blocks/panel";
 import { StepGrid, type Step } from "./ui/blocks/steps";
-import { Toolbar } from "./ui/blocks/toolbar";
 
 const WAVES = [{ value: "saw", text: "Saw" }, { value: "square", text: "Square" }, { value: "sine", text: "Sine" }] as const;
 const SHAPES = [{ value: "low", text: "Low pass" }, { value: "high", text: "High pass" }, { value: "band", text: "Band pass" }] as const;
@@ -156,13 +155,6 @@ export const gallery = tool({
             />
           </Section>
           <row gap={8}>
-            <Section title="Toolbar">
-              <Toolbar label="Edit">
-                <Segmented id="tool-wave" label="Wave" options={WAVES} value={memory.wave} onChange={(wave) => (memory.wave = wave)} />
-                <Button id="tool-clear" label="Clear" text="Clear" size="sm" variant="ghost" />
-                <Toggle id="tool-sync" label="Sync" on={memory.toggles.sync ?? false} onToggle={flip("sync")} />
-              </Toolbar>
-            </Section>
             <Section title="Keys">
               <Keyboard id="keys" low={48} high={72} onPlay={(pitch) => play(pitch)} />
             </Section>

@@ -9,8 +9,8 @@ export const Segmented = <T extends string | number>({ id, label, options, value
     {options.map((option) => {
       const chosen = option.value === value;
       return (
-        <row key={`${id}-${option.value}`} label={`${label} ${option.text}`} role="radio" checked={chosen} h={height(size) - 6} px={2} align="center" justify="center" radius={size === "sm" ? "sm" : "md"} fill={chosen ? "fill-strong" : undefined} hover="fill" onPress={() => onChange(option.value)}>
-          <text style="control" color={chosen ? "text" : "text-secondary"}>{option.text}</text>
+        <row key={`${id}-${option.value}`} label={`${label} ${option.text}`} role="radio" checked={chosen} h={height(size) - 6} px={2} align="center" justify="center" radius={size === "sm" ? "sm" : "md"} fill={chosen ? "selected" : undefined} hover="fill" onPress={() => onChange(option.value)}>
+          <text style="label" color={chosen ? "text" : "text-secondary"}>{option.text}</text>
         </row>
       );
     })}

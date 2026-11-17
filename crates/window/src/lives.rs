@@ -326,13 +326,14 @@ impl Lives {
             .collect()
     }
 
-    /// What each live text shows now, but the faders' values of the template's mixer.
-    pub(crate) fn texts(&self) -> Vec<String> {
+    /// What each live text shows now, after what it shows written out.
+    pub(crate) fn texts(&self) -> Vec<(String, String)> {
         let bindings = self.bindings.borrow();
         (bindings.values())
-            .filter(|binding| !matches!(&binding.shows, Shows::Text { value, .. } if format!("{value:?}").contains("fader-")))
             .filter_map(|binding| match &binding.shown {
-                Shown::Text(shown, _) => Some(shown.get().to_string()),
+                Shown::Text(shown, _) => {
+                    Some((format!("{:?}", binding.shows), shown.get().to_string()))
+                }
                 _ => None,
             })
             .collect()

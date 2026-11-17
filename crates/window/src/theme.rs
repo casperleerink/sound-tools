@@ -17,6 +17,11 @@ pub(crate) struct Theme {
     space: HashMap<String, f32>,
     radius: HashMap<String, f32>,
     shadow: HashMap<String, ShadowToken>,
+    #[serde(default)]
+    size: HashMap<String, f32>,
+    /// The percent of its colour a toggle that is on is tinted with.
+    #[serde(default)]
+    tint: Option<f32>,
 }
 
 #[derive(Deserialize)]
@@ -72,6 +77,8 @@ impl Theme {
             space: HashMap::new(),
             radius: HashMap::new(),
             shadow: HashMap::new(),
+            size: HashMap::new(),
+            tint: None,
         }
     }
 
@@ -111,6 +118,16 @@ impl Theme {
 
     pub(crate) fn space(&self, step: u32) -> f32 {
         self.space.get(&step.to_string()).copied().unwrap_or(0.0)
+    }
+
+    /// A size of the theme, such as `sm` for a small control's height, else `fallback`.
+    pub(crate) fn size(&self, name: &str, fallback: f32) -> f32 {
+        self.size.get(name).copied().unwrap_or(fallback)
+    }
+
+    /// `colour` as a toggle that is on is tinted with it.
+    pub(crate) fn tinted(&self, colour: &str) -> Color {
+        self.color(&format!("{colour}/{}", self.tint.unwrap_or(16.0)))
     }
 
     pub(crate) fn radius(&self, name: &str) -> Option<f32> {

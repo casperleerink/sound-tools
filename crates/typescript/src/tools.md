@@ -8,7 +8,7 @@ Run 1 and 2 in `extensions/`, the rest with `sound-tools-next` (`$SOUND_TOOLS_RU
 
 1. `bun check -p .`: types, token names and props.
 2. `bun test`: one test for each thing the tool must do: `render(tool, self)`, then `find`, `press`, `act` and `apply`, as `song.test.tsx` does.
-3. `sound-tools-next . --snap out.png --play 2`: a picture after two seconds of playing. Look at what lights, is cut off or overlaps.
+3. `sound-tools-next . --snap out.png --play 2`: a picture after two seconds of playing: look at it.
 4. `--tree out.json`: every element with its text, and `controls` (key, label, role, value or `checked`, `expanded`, actions), `playing`, `playhead`, `meters` and `problems`. Check each control you made says its state.
 5. `--act steps.json` runs actions first, on the project itself: `[{ "label": "Mute Track 2", "action": "toggle" }, { "key": "fader-t00", "action": "set", "value": -6 }, { "action": "undo" }]`. `--script steps.json` points by key: `{"events": [{ "t": 0.5, "type": "tap", "key": "mute-t01" }, { "t": 1, "type": "type", "text": "-6" }, { "t": 2, "type": "drag", "key": "fader-t00", "dy": 40 }]}`.
 
@@ -34,17 +34,17 @@ export const chop = tool({
     const steps = Array.from({ length: 16 }, (_, i) => self.state.steps[i] ?? true);
     return (
       <DeviceCard id="chop" title="Chop" cells={[
+        ...[0, 8].map((from) => <Cell text={`Steps ${from + 1} to ${from + 8}`} span={4}><row gap={1}>{steps.slice(from, from + 8).map((on, j) => (
+          <Toggle id={`step-${from + j}`} label={`Step ${from + j + 1}`} text={`${from + j + 1}`} on={on} onToggle={() => update("Step", (draft) => void (draft.state.steps = steps.map((was, k) => (k === from + j ? !was : was))))} />
+        ))}</row></Cell>),
         <Knob id="depth" label="Depth" value={self.state.depth} min={0} max={1} unit="percent" onChange={(depth) => update("Depth", (draft) => void (draft.state.depth = depth))} />,
-        <Cell text="Steps" span={9}>
-          <row gap={1}>{steps.map((on, i) => <Toggle id={`step-${i}`} label={`Step ${i + 1}`} text={`${i + 1}`} on={on} onToggle={() => update("Step", (draft) => void (draft.state.steps = steps.map((was, j) => (j === i ? !was : was))))} />)}</row>
-        </Cell>,
       ]} />
     );
   },
 });
 ```
 
-- `when` and `doc` are what the next agent reads. A number field is a `Signal` in `sound`, never a number.
+- `when` and `doc` are what the next agent reads. In `sound` a number field is a `Signal`.
 - To put a device on a track, add `state/song/<track>/chain/<name>.json` as `{"tool": "chop", "state": {}}`, and its name to `order` in the chain's `instance.json`.
 - A tool without `view` gets a card with a control per field.
 
@@ -59,18 +59,18 @@ export const chop = tool({
 
 ## Look: theme, primitives, components, blocks
 
-Use the top layer that fits; each layer uses only those under it.
+Use the top layer that fits; each uses only those under it.
 
 1. Theme, `extensions/theme.json`: colours, text, spacing, radius, shadows, sizes. Props name them (`fill="surface"`, `gap={2}`, `"sound/25"` at 25%); code that needs a number imports the file. `sound` (green) is sound that moves; what is chosen takes `selected`.
 2. Primitives, each prop in `sdk/view.ts`: `box`, `row`, `col`, `text`, `shapes`, `field`, `child`, `live`; `hoverGroup` and `reveal` (shown on hover: the quiet rule), `overlay` (menus, lists, tips), `group` (one Tab stop).
 3. Components, `extensions/ui/`: Button, Toggle, Segmented, Select, Menu, Popover, Tooltip, Knob, Slider, Fader, Meter, Pad, TextField, Cell, Display, Kbd, Notice, Dot.
-4. Blocks, `extensions/ui/blocks/`: DeviceCard, Panel, Section, Toolbar, StepRow, StepGrid, Keyboard, PaintGrid, EmptyState.
+4. Blocks, `extensions/ui/blocks/`: DeviceCard, Panel, Section, StepRow, StepGrid, Keyboard, PaintGrid, EmptyState.
 
-They are the project's: change them, add yours. `--main gallery --snap g.png --size 1470x1500` shows them all.
+Change them, add yours. `--main gallery --snap g.png --size 1470x1500` shows them all.
 
-- A device is a `DeviceCard`: a display, then cells in columns of two rows. It grows wider, never taller.
+- A device is a `DeviceCard`: a display, then cells, two to a column, top to bottom. It grows wider, never taller.
 - Controls are 24, 28 or 32 points high (`size`); a card's are `sm`.
-- Use the app's transport: never add a Play or Stop button.
+- Use the app's transport: add no Play button.
 - Every control takes the keys: give it `actions` (`increment`, `decrement`, `set`, `reset`); put many in a `group`.
 
 ## What moves every frame
@@ -85,5 +85,5 @@ A live value is an expression the window works out every frame, without the view
 
 - `update(label, (draft) => …)` changes records: write to `draft`. All the changes of one press, action, drag or paint are one step of undo.
 - An element a pointer or an agent uses has a unique `key`, a `label` ("Mute Track 2") and its state (`checked`, `value`). Handlers: `onPress`, `onDragEnd`, `onEnter` (a paint: each element a held press enters), `onCommit` of a `field`, `actions`.
-- A `drag` moves the element, or with `move: false` only `live.drag(key)`; `onDragEnd` hears where it stopped. A drag never also presses.
+- `live.drag(key)` follows a `drag`, such as a thumb's `at`; `onDragEnd` hears where it stopped. A drag never also presses.
 - `tick` runs about 30 times a second, also in `--play`.

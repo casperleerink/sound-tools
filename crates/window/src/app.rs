@@ -95,10 +95,13 @@ pub(crate) struct State {
     pub(crate) turning: Option<(String, f64)>,
     /// The view a held press paints, and the keys of the elements it entered.
     painting: Option<(InstanceId, BTreeSet<String>)>,
-    /// The element a drag just ended on: the release that ends a drag is no press.
+    /// The element whose press is a drag now, once it went past the slop.
+    pub(crate) gesture: Option<String>,
+    /// The element a drag ended on in this frame: the release that ends a drag is no press.
     pub(crate) dragged: Option<String>,
-    /// The overlay open now, by the key of what opened it. How the composer works, so never saved.
-    pub(crate) open: Option<String>,
+    /// The overlays open now, each inside the one before, by the key of what opened it. How the
+    /// composer works, so never saved.
+    pub(crate) open: Vec<String>,
     /// What `--main` shows in place of the project's main instance.
     main: Option<InstanceId>,
     /// What the text fields say, by key, and the value each was made from.
@@ -200,8 +203,9 @@ impl State {
             expanded: BTreeSet::new(),
             turning: None,
             painting: None,
+            gesture: None,
             dragged: None,
-            open: None,
+            open: Vec::new(),
             main,
             fields: RefCell::default(),
             waker,
@@ -302,16 +306,12 @@ impl State {
         match target {
             Target::Play => self.play_or_stop(),
             Target::Expand(instance) => self.expand(instance),
-            Target::Opens { window_key, .. } if action == "open" => self.toggle_overlay(window_key),
-            Target::Opens { instance, key, .. } => {
-                self.act_on_view(instance, key, action, value)?
-            }
-            Target::View { instance, key } => {
+            Target::View(press) => {
                 let value = match action {
                     "drag" => value.or_else(|| Some(json!({ "dx": 0, "dy": 0 }))),
                     _ => value,
                 };
-                self.act_on_view(instance, key, action, value)?;
+                self.try_press(press, action, value)?;
             }
             Target::Field {
                 instance,
@@ -391,13 +391,59 @@ impl State {
         self.handled();
     }
 
-    /// Opens the overlay that the element `key` opens, or closes it.
-    pub(crate) fn toggle_overlay(&mut self, key: &str) {
-        self.open = match self.open.as_deref() == Some(key) {
-            true => None,
-            false => Some(key.to_string()),
-        };
+    /// Opens the overlay that the element `key` opens, inside the one it is in, or closes it
+    /// and those inside it.
+    pub(crate) fn toggle_overlay(&mut self, key: &str, within: Option<&str>) {
+        match self.open.iter().position(|open| open == key) {
+            Some(at) => self.open.truncate(at),
+            None => {
+                let kept =
+                    within.and_then(|within| self.open.iter().position(|open| open == within));
+                self.open.truncate(kept.map_or(0, |at| at + 1));
+                self.open.push(key.to_string());
+            }
+        }
         self.handled();
+    }
+
+    /// Closes the overlay the element `key` opened, and those inside it.
+    pub(crate) fn close_overlay(&mut self, key: &str) {
+        if let Some(at) = self.open.iter().position(|open| open == key) {
+            self.open.truncate(at);
+        }
+        self.handled();
+    }
+
+    /// `action` on an element of a view, as a pointer, a key or an agent does it: `open` opens
+    /// or closes what it opens, a pick from a menu closes the menu, and a typed value closes the
+    /// overlay it was typed in.
+    pub(crate) fn press(&mut self, press: &tree::Press, action: &str, value: Option<Value>) {
+        if self.try_press(press, action, value).is_err() {
+            self.notice = Some(DID_NOTHING.to_string());
+        }
+        self.handled();
+    }
+
+    fn try_press(&mut self, press: &tree::Press, action: &str, value: Option<Value>) -> Result<()> {
+        let key = format!("{}{}", self.prefix_of(&press.instance), press.element);
+        let within = press.within.as_ref();
+        if press.opens && (action == "open" || (action == "press" && !press.pressed)) {
+            self.toggle_overlay(&key, within.map(|within| within.opener.as_str()));
+            return Ok(());
+        }
+        let closes = match action {
+            "press" => within.filter(|within| within.picks),
+            "commit" => within,
+            _ => None,
+        };
+        if let Some(within) = closes {
+            let opener = within.opener.clone();
+            self.close_overlay(&opener);
+        }
+        if press.opens && action == "press" {
+            self.toggle_overlay(&key, within.map(|within| within.opener.as_str()));
+        }
+        self.act_on_view(&press.instance, &press.element, action, value)
     }
 
     /// What the field `key` says now: `value` while nobody types in it, all of it chosen, so
@@ -629,6 +675,8 @@ pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
 pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>) {
     let headless = state.headless();
     let mut changed = false;
+    // A press that a drag's release brings comes before the next frame.
+    state.dragged = None;
     if headless {
         changed |= state.settle();
         if let Err(error) = state.first_frame() {

@@ -14,7 +14,7 @@ use sound_typescript::next::Drawn;
 
 use crate::app::State;
 use crate::card::{self, Field, Kind};
-use crate::tree::{self, Node};
+use crate::tree::{Node, Opens, Press, Within};
 
 /// One control of the window, as `--tree` lists it under `controls`.
 #[derive(Serialize)]
@@ -38,11 +38,8 @@ pub(crate) struct Control {
 
 /// What runs an action of a control.
 pub(crate) enum Target {
-    /// The tool's code, for an element of its view.
-    View {
-        instance: InstanceId,
-        key: String,
-    },
+    /// The tool's code, for an element of its view, as a press on it goes.
+    View(Press),
     /// The window, for a field of a card without a view: `option` is the choice a segment sets.
     Field {
         instance: InstanceId,
@@ -51,13 +48,6 @@ pub(crate) enum Target {
     },
     /// The switch that shows all the controls of a card, or the first few.
     Expand(InstanceId),
-    /// An element that opens an overlay, by its key in the window: `open` opens or closes it,
-    /// and any other action is its view's.
-    Opens {
-        window_key: String,
-        instance: InstanceId,
-        key: String,
-    },
     Play,
 }
 
@@ -93,7 +83,7 @@ impl Found {
         match state.drawn(id) {
             Some(Drawn::View { root, memos }) => {
                 if let Ok(root) = Node::deserialize(&**root) {
-                    self.node(state, id, &prefix, memos, &root);
+                    self.node(state, id, &prefix, memos, &root, None);
                 }
             }
             Some(Drawn::Failed(_)) => {}
@@ -109,14 +99,24 @@ impl Found {
         prefix: &str,
         memos: &HashMap<String, ((u64, u64), Rc<Value>)>,
         node: &Node,
+        within: Option<&Within>,
     ) {
+        let press = |key: &str, pressed: bool, opens: bool| {
+            Target::View(Press {
+                instance: id.clone(),
+                element: key.to_string(),
+                pressed,
+                opens,
+                within: within.cloned(),
+            })
+        };
         let b = match node {
             Node::Row(b) | Node::Col(b) | Node::Plain(b) => b,
             Node::Memo { key } => {
                 let inner =
                     (memos.get(key)).and_then(|(_, inner)| Node::deserialize(&**inner).ok());
                 if let Some(inner) = inner {
-                    self.node(state, id, prefix, memos, &inner);
+                    self.node(state, id, prefix, memos, &inner, within);
                 }
                 return;
             }
@@ -136,41 +136,28 @@ impl Found {
                     checked: None,
                     expanded: None,
                     actions: vec!["commit".into()],
-                    target: Target::View {
-                        instance: id.clone(),
-                        key: f.key.clone(),
-                    },
+                    target: press(&f.key, false, false),
                 });
                 return;
             }
             Node::Text(_) | Node::Shapes(_) => return,
         };
-        let press = b.press.then(|| "press".to_string());
+        let pressed = b.press.then(|| "press".to_string());
         let drag = b.drag.is_some().then(|| "drag".to_string());
         let enter = b.enter.then(|| "enter".to_string());
-        let opens = b.opens() == Some(tree::Opens::Press);
+        let opens = b.overlay_of(Opens::Press).is_some();
         let open = opens.then(|| "open".to_string());
         let actions: Vec<String> = (open.into_iter())
-            .chain(press)
+            .chain(pressed)
             .chain(b.actions.iter().cloned())
             .chain(drag)
             .chain(enter)
             .collect();
         if let (Some(key), false) = (&b.key, actions.is_empty()) {
             let window_key = format!("{prefix}{key}");
-            let target = match opens {
-                true => Target::Opens {
-                    window_key: window_key.clone(),
-                    instance: id.clone(),
-                    key: key.clone(),
-                },
-                false => Target::View {
-                    instance: id.clone(),
-                    key: key.clone(),
-                },
-            };
+            let target = press(key, b.press, opens);
             self.controls.push(Control {
-                expanded: opens.then(|| state.open.as_deref() == Some(window_key.as_str())),
+                expanded: opens.then(|| state.open.contains(&window_key)),
                 key: window_key,
                 label: b.label.clone().unwrap_or_default(),
                 role: b.role.clone(),
@@ -181,7 +168,24 @@ impl Found {
             });
         }
         for child in &b.children {
-            self.node(state, id, prefix, memos, child);
+            let overlay = match child {
+                Node::Row(o) | Node::Col(o) | Node::Plain(o) => o.overlay.map(|spec| (o, spec)),
+                _ => None,
+            };
+            match (overlay, &b.key) {
+                // What a closed overlay shows is not there to act on, as for a pointer.
+                (Some((o, spec)), Some(key)) if spec.open == Opens::Press => {
+                    let opener = format!("{prefix}{key}");
+                    if state.open.contains(&opener) {
+                        let inside = Within {
+                            opener,
+                            picks: o.picks(),
+                        };
+                        self.node(state, id, prefix, memos, child, Some(&inside));
+                    }
+                }
+                _ => self.node(state, id, prefix, memos, child, within),
+            }
         }
     }
 

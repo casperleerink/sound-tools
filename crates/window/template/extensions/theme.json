@@ -36,7 +36,6 @@
     "heading": { "size": 14, "lineHeight": 20, "tracking": 0, "weight": 500 },
     "body": { "size": 14, "lineHeight": 20, "tracking": 0, "weight": 400 },
     "label": { "size": 12, "lineHeight": 16, "tracking": 0, "weight": 400 },
-    "control": { "size": 12, "lineHeight": 16, "tracking": 0, "weight": 500 },
     "number": { "size": 12, "lineHeight": 16, "tracking": 0, "weight": 400, "tabular": true }
   },
   "space": { "0": 0, "1": 4, "2": 8, "3": 12, "4": 16, "6": 24, "8": 32 },

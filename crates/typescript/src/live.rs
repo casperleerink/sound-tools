@@ -422,6 +422,14 @@ fn readout(value: f32, unit: Option<Unit>) -> String {
     }
 }
 
+/// How the number `field` of a record from `min` to `max` reads: in the unit its name ends in, as
+/// a pan, or as a share of 0 to 1.
+pub fn field_readout(field: &str, min: f64, max: f64) -> Option<Readout> {
+    let range = ValueRange::linear(min as f32, max as f32);
+    let unit = crate::window::unit_of(field, &range)?;
+    serde_json::from_value(Value::from(unit)).ok()
+}
+
 /// A live number as text shows it: in its unit, or a tick as a place in the piece (`5.3`), as
 /// minutes and seconds (`1:07`), or as the time signature there (`7/8`).
 pub fn text_of(value: f64, shown: Option<Readout>, clock: Option<&Clock>) -> String {

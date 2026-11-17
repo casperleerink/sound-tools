@@ -70,10 +70,10 @@ type Interactive =
       onPress?: () => void;
       actions?: Actions;
       /**
-       * The window moves it along `axis` within [min, max] points while dragged, or with `move: false` leaves it and only `live.drag(key)` follows;
-       * `onDragEnd` hears where it stopped. A drag never also presses.
+       * A drag along `axis`, within [min, max] points: `live.drag(key)` follows it every frame, such as a thumb's `at`, and `onDragEnd` hears
+       * where it stopped. A press that went past a few points is a drag and never also presses.
        */
-      drag?: { axis: "x" | "y"; min: number; max: number; move?: false };
+      drag?: { axis: "x" | "y"; min: number; max: number };
       onDragEnd?: (moved: Moved) => void;
       /** A paint: while a press that began on an element with `onEnter` is held, once for it and once for each other one the pointer enters, such as the cells of a grid. All it changes is one step of undo. */
       onEnter?: () => void;
@@ -142,7 +142,7 @@ export type TextProps = TextLook &
     | { live: Num; unit: Unit | "position" | "time"; digits?: never; children?: never }
     | { live: Num; digits?: number; unit?: never; children?: never }
   );
-/** Line segments, `points` four numbers each (x1 y1 x2 y2), all `width` points wide. Segments end to end draw as one line with round joints, which show in a see-through colour. */
+/** Line segments, `points` four numbers each (x1 y1 x2 y2), all `width` points wide. Segments end to end draw as one line. */
 export type Lines = { color: Color; width: number; points: number[] };
 /** Filled rectangles, `rects` four numbers each (x y w h). */
 export type Rects = { color: Color; rects: number[] };
@@ -238,7 +238,11 @@ export function h(tag: keyof h.JSX.IntrinsicElements | ((props: any) => Node), p
   if (tag === "text") return { t: "text", ...rest, text: words(children as TextChild) } as Node;
   if (tag === "shapes" || tag === "child" || tag === "field") return { t: tag, ...rest } as Node;
   const named = actions ? { actions: Object.keys(actions) } : {};
-  return { t: tag, ...rest, ...(onPress ? { press: true } : {}), ...(onEnter ? { enter: true } : {}), ...named, children: flat(children) } as Node;
+  const kids = flat(children);
+  const opens = kids.flatMap((kid) => ("overlay" in kid && kid.overlay ? [kid.overlay.open] : []));
+  if (opens.length > 0 && (rest.key === undefined || rest.label === undefined)) throw new Error("what an overlay is in opens it: give it a key and a label");
+  if (new Set(opens).size < opens.length) throw new Error(`${rest.key} has two overlays that open alike: one opens on a press, one on hover`);
+  return { t: tag, ...rest, ...(onPress ? { press: true } : {}), ...(onEnter ? { enter: true } : {}), ...named, children: kids } as Node;
 }
 
 /** The text of a text's children: without `false`, `null` and `undefined`, as elements leave them out. */

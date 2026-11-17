@@ -169,10 +169,10 @@ const TrackRow = ({ each, index, chosen, armed, soloed, onChoose, onMute, onSolo
   const title = titleOf(each, index);
   const muted = mixOf(each)?.mute ?? false;
   const header = memo(`head-${each.name}`, [title, chosen, muted, soloed, armed, each.state.colour], () => (
-    <row key={`track-${each.name}`} label={`Choose ${title}`} role="tab" checked={chosen} hoverGroup w={HEAD} h={ROW} px={3} gap={2} align="center" fill={chosen ? "selected" : "surface"} hover="fill" border="border-strong" borderSides={[0, 1, 0, 0]} onPress={onChoose}>
+    <row key={`track-${each.name}`} label={`Choose ${title}`} role="tab" checked={chosen} hoverGroup w={HEAD} h={ROW} px={3} gap={2} align="center" fill={chosen ? "selected" : "surface"} hover={chosen ? undefined : "fill/50"} border="border-strong" borderSides={[0, 1, 0, 0]} onPress={onChoose}>
       <Dot color={colourOf(each)} />
       <col grow={1} gap={1}>
-        <text style="heading" color="text" truncate>{title}</text>
+        <text style="heading" color={chosen ? "text" : "text-secondary"} truncate>{title}</text>
         <row gap={1}>
           <Quiet shown={muted || chosen}><Toggle id={`mute-${each.name}`} label={`Mute ${title}`} text="M" on={muted} color="warning" onToggle={onMute} /></Quiet>
           <Quiet shown={soloed || chosen}><Toggle id={`solo-${each.name}`} label={`Solo ${title}`} text="S" on={soloed} color="hot" onToggle={onSolo} /></Quiet>

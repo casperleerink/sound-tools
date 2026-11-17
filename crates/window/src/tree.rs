@@ -152,12 +152,21 @@ enum Along {
 }
 
 impl BoxNode {
-    /// The overlay among its children, which it opens.
-    pub(crate) fn opens(&self) -> Option<Opens> {
+    /// The overlay among its children that `open` opens.
+    pub(crate) fn overlay_of(&self, open: Opens) -> Option<&BoxNode> {
         self.children.iter().find_map(|child| match child {
-            Node::Row(b) | Node::Col(b) | Node::Plain(b) => b.overlay.map(|overlay| overlay.open),
+            Node::Row(b) | Node::Col(b) | Node::Plain(b)
+                if b.overlay.is_some_and(|overlay| overlay.open == open) =>
+            {
+                Some(b)
+            }
             _ => None,
         })
+    }
+
+    /// Whether a press in the overlay it is closes it, as a pick from a menu does.
+    pub(crate) fn picks(&self) -> bool {
+        matches!(self.role.as_deref(), Some("menu" | "listbox"))
     }
 
     /// Its width and height in points, live or not.
@@ -185,9 +194,6 @@ pub(crate) struct DragSpec {
     axis: Axis,
     min: f32,
     max: f32,
-    /// `false`: only `live.drag` follows the drag, the element stays.
-    #[serde(rename = "move")]
-    moves: Option<bool>,
 }
 
 impl DragSpec {
@@ -288,9 +294,17 @@ struct Scope<'a> {
     /// path from there and `:`.
     prefix: &'a str,
     memos: &'a Memos,
-    /// Inside an overlay a press opened: the key of what opened it, and whether a press inside
-    /// closes it, as in a menu.
-    closes: Option<(String, bool)>,
+    /// The overlay a press opened that this is in, if any.
+    within: Option<Within>,
+    /// Inside a control: an opener here is no stop of Tab, as the control's Enter opens it.
+    in_control: bool,
+}
+
+/// An open overlay: the key of what opened it, and whether a press inside closes it.
+#[derive(Clone)]
+pub(crate) struct Within {
+    pub(crate) opener: String,
+    pub(crate) picks: bool,
 }
 
 pub(crate) type Memos = HashMap<String, ((u64, u64), Rc<Value>)>;
@@ -436,7 +450,8 @@ pub(crate) fn view(state: &State, instance: &InstanceId, prefix: &str, drawn: &D
                 instance,
                 prefix,
                 memos,
-                closes: None,
+                within: None,
+                in_control: false,
             };
             match Node::deserialize(&**root) {
                 Ok(node) => build(&scope, &node),
@@ -576,27 +591,33 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
         let lives = &scope.state.lives;
         if let (Some(spec), Some(element)) = (b.drag, &b.key) {
             let moved = lives.dragged(key);
-            if spec.moves != Some(false) {
-                e = e.live_offset(&moved);
-            }
             let (instance, element, key) = (scope.instance.clone(), element.clone(), key.clone());
             e = e.on_drag(move |s: &mut State, d: &mut rune::Drag, _: &mut rune::Tx| {
                 let offset = spec.offset(d.dx, d.dy);
                 match d.phase {
-                    Phase::Down => s.dragged = None,
+                    Phase::Down => s.gesture = None,
                     Phase::Move => {
-                        moved.set(offset);
-                        s.lives.held(&key, far(d));
+                        if far(d) {
+                            s.gesture = Some(key.clone());
+                        }
+                        let dragging = s.gesture.as_deref() == Some(key.as_str());
+                        moved.set(if dragging { offset } else { [0.0; 2] });
+                        s.lives.held(&key, dragging);
                         s.lives.refresh(s);
                     }
                     Phase::Up => {
                         s.lives.held(&key, false);
-                        if d.cancelled() || !far(d) {
+                        // A gesture that once went past the slop is a drag, also when
+                        // it comes back: it never presses.
+                        if s.gesture.take().as_deref() != Some(key.as_str()) {
+                            return;
+                        }
+                        s.dragged = Some(key.clone());
+                        if d.cancelled() {
                             moved.set([0.0; 2]);
                             return;
                         }
                         moved.set(offset);
-                        s.dragged = Some(key.clone());
                         s.pointed(
                             &instance,
                             &element,
@@ -608,8 +629,13 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
             });
         }
     }
+    let inside = Scope {
+        in_control: scope.in_control || b.press || b.drag.is_some() || !b.actions.is_empty(),
+        within: scope.within.clone(),
+        ..*scope
+    };
     let shown = (b.children.iter()).filter(|child| !is_overlay(child));
-    e.children(shown.map(|child| build(scope, child)))
+    e.children(shown.map(|child| build(&inside, child)))
 }
 
 /// How far the pointer travels before a press is a drag, in points: a drag never also presses.
@@ -664,10 +690,7 @@ fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>) -> El {
         let (instance, element, key) = (instance.clone(), element.clone(), key.clone());
         e = e.on_drag(
             move |s: &mut State, d: &mut rune::Drag, tx: &mut rune::Tx| match d.phase {
-                Phase::Down => {
-                    s.dragged = None;
-                    s.paint(&instance, &element);
-                }
+                Phase::Down => s.paint(&instance, &element),
                 Phase::Move => {
                     let [x, y] = d.window_point();
                     tx.element_at(x, y, |s: &mut State, picked, _: &mut rune::Tx| {
@@ -684,35 +707,29 @@ fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>) -> El {
             },
         );
     }
-    let opens = b.opens();
-    if opens == Some(Opens::Hover) {
+    if b.overlay_of(Opens::Hover).is_some() {
         e = e.hover_group_shared(key.clone());
     }
-    let opens = opens == Some(Opens::Press);
-    let closes = scope
-        .closes
-        .clone()
-        .filter(|(_, menu)| *menu)
-        .map(|(opener, _)| opener);
+    let opens = b.overlay_of(Opens::Press).is_some();
+    let press = Press {
+        instance: instance.clone(),
+        element: element.clone(),
+        pressed: b.press,
+        opens,
+        within: scope.within.clone(),
+    };
     if b.press || opens {
-        let (instance, element, key, pressed) =
-            (instance.clone(), element.clone(), key.clone(), b.press);
+        let press = press.clone();
         e = e.focusable(true).on_press(move |s: &mut State| {
-            // The end of a drag on it, which is no press.
+            // The release that ends a drag on it is no press.
             if s.dragged.as_deref() == Some(key.as_str()) {
-                s.dragged = None;
                 return;
             }
-            if closes.is_some() {
-                s.open = None;
-            }
-            if opens {
-                s.toggle_overlay(&key);
-            }
-            if pressed {
-                s.pointed(&instance, &element, "press", None);
-            }
+            s.press(&press, "press", None);
         });
+        if opens && scope.in_control {
+            e = e.tab_index(-1);
+        }
     }
     let has = |name: &str| b.actions.iter().any(|action| action == name);
     if has("increment") && has("decrement") {
@@ -729,15 +746,25 @@ fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>) -> El {
             .focusable(true)
             .on_double_press(move |s: &mut State| s.pointed(&instance, &element, "reset", None));
     }
-    if reset || opens {
+    // Enter opens what it opens, or what a part of it opens, such as a knob's typed value.
+    let enter = match opens {
+        true => Some(press),
+        false => opener_inside(b).map(|inner| Press {
+            element: inner.to_string(),
+            pressed: false,
+            opens: true,
+            ..press
+        }),
+    };
+    if reset || enter.is_some() {
         e = e.on_key(move |s: &mut State, pressed: &KeyEvent, _: &mut rune::Tx| {
-            match pressed.key {
-                Key::Backspace | Key::Delete if reset => {
+            match (&pressed.key, &enter) {
+                (Key::Backspace | Key::Delete, _) if reset => {
                     s.pointed(&instance, &element, "reset", None);
                     true
                 }
-                Key::Enter if opens => {
-                    s.toggle_overlay(&key);
+                (Key::Enter, Some(enter)) => {
+                    s.press(enter, "open", None);
                     true
                 }
                 _ => false,
@@ -745,6 +772,34 @@ fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>) -> El {
         });
     }
     e
+}
+
+/// What a press on an element of a view does, by a pointer, a key or an agent: see
+/// [`State::press`].
+#[derive(Clone)]
+pub(crate) struct Press {
+    pub(crate) instance: InstanceId,
+    /// Its key in the view.
+    pub(crate) element: String,
+    /// It has `onPress`.
+    pub(crate) pressed: bool,
+    /// It opens an overlay.
+    pub(crate) opens: bool,
+    pub(crate) within: Option<Within>,
+}
+
+/// The key of the first element inside `b` that opens an overlay, not in an overlay itself.
+fn opener_inside(b: &BoxNode) -> Option<&str> {
+    let mut shown = (b.children.iter()).filter(|child| !is_overlay(child));
+    shown.find_map(|child| match child {
+        Node::Row(inner) | Node::Col(inner) | Node::Plain(inner) => {
+            match (&inner.key, inner.overlay_of(Opens::Press)) {
+                (Some(key), Some(_)) => Some(key.as_str()),
+                _ => opener_inside(inner),
+            }
+        }
+        _ => None,
+    })
 }
 
 /// The overlays of the views shown: they draw over everything, so they are laid at the root
@@ -764,7 +819,8 @@ pub(crate) fn overlays(state: &State) -> Vec<El> {
             instance: id,
             prefix: &prefix,
             memos,
-            closes: None,
+            within: None,
+            in_control: false,
         };
         overlays_in(&scope, &node, &mut layer);
     }
@@ -785,50 +841,60 @@ fn overlays_in(scope: &Scope, node: &Node, layer: &mut Vec<El>) {
         _ => return,
     };
     for child in &b.children {
-        if let (Node::Row(o) | Node::Col(o) | Node::Plain(o), Some(opener)) = (child, &b.key)
-            && let Some(spec) = o.overlay
-        {
-            layer.extend(overlay(scope, child, o, spec, &scope.key(opener)));
+        let (Node::Row(o) | Node::Col(o) | Node::Plain(o), Some(opener)) = (child, &b.key) else {
+            overlays_in(scope, child, layer);
+            continue;
+        };
+        let Some(spec) = o.overlay else {
+            overlays_in(scope, child, layer);
+            continue;
+        };
+        let opener = scope.key(opener);
+        let (side, align) = spec.place();
+        match spec.open {
+            Opens::Press if scope.state.open.contains(&opener) => {
+                let inside = Scope {
+                    within: Some(Within {
+                        opener: opener.clone(),
+                        picks: o.picks(),
+                    }),
+                    in_control: false,
+                    ..*scope
+                };
+                let close = opener.clone();
+                layer.push(
+                    build(&inside, child)
+                        .anchored(&opener, side, align, spec.gap)
+                        .modal(true, move |s: &mut State| s.close_overlay(&close))
+                        .focus_return(&opener),
+                );
+                overlays_in(&inside, child, layer);
+            }
+            Opens::Press => {}
+            Opens::Hover => layer.push(
+                el().anchored(&opener, side, align, spec.gap)
+                    .hover_group_shared(opener)
+                    .inert()
+                    .child(build(scope, child).group_opacity(0.0, 1.0)),
+            ),
         }
-        overlays_in(scope, child, layer);
     }
 }
 
-fn overlay(scope: &Scope, node: &Node, o: &BoxNode, spec: Overlay, opener: &str) -> Option<El> {
-    let side = match spec.side {
-        Edge::Top => Side::Top,
-        Edge::Bottom => Side::Bottom,
-        Edge::Left => Side::Left,
-        Edge::Right => Side::Right,
-    };
-    let align = match spec.align {
-        Along::Start => Align::Start,
-        Along::Center => Align::Center,
-        Along::End => Align::End,
-    };
-    match spec.open {
-        Opens::Press => {
-            if scope.state.open.as_deref() != Some(opener) {
-                return None;
-            }
-            let menu = matches!(o.role.as_deref(), Some("menu" | "listbox"));
-            let inside = Scope {
-                closes: Some((opener.to_string(), menu)),
-                ..*scope
-            };
-            Some(
-                build(&inside, node)
-                    .anchored(opener, side, align, spec.gap)
-                    .modal(true, |s: &mut State| s.open = None)
-                    .focus_return(opener),
-            )
-        }
-        Opens::Hover => Some(
-            el().anchored(opener, side, align, spec.gap)
-                .hover_group_shared(opener.to_string())
-                .inert()
-                .child(build(scope, node).group_opacity(0.0, 1.0)),
-        ),
+impl Overlay {
+    fn place(self) -> (Side, Align) {
+        let side = match self.side {
+            Edge::Top => Side::Top,
+            Edge::Bottom => Side::Bottom,
+            Edge::Left => Side::Left,
+            Edge::Right => Side::Right,
+        };
+        let align = match self.align {
+            Along::Start => Align::Start,
+            Along::Center => Align::Center,
+            Along::End => Align::End,
+        };
+        (side, align)
     }
 }
 
@@ -856,18 +922,20 @@ fn typed(scope: &Scope, f: &FieldNode) -> El {
         Some("end") => e = e.align(Align::End),
         _ => {}
     }
-    let (instance, element, value) = (scope.instance.clone(), f.key.clone(), f.value.clone());
-    let closes = scope.closes.clone().map(|(opener, _)| opener);
-    let typing = key.clone();
+    let press = Press {
+        instance: scope.instance.clone(),
+        element: f.key.clone(),
+        pressed: false,
+        opens: false,
+        within: scope.within.clone(),
+    };
+    let (typing, value) = (key.clone(), f.value.clone());
     e.on_edit(rune::edit_access(move |s: &mut State| {
         s.typing(&typing, &value)
     }))
     .on_submit(move |s: &mut State, _: &mut rune::Tx| {
         let text = s.typing(&key, "").text.clone();
-        if closes.is_some() {
-            s.open = None;
-        }
-        s.pointed(&instance, &element, "commit", Some(json!(text)));
+        s.press(&press, "commit", Some(json!(text)));
     })
 }
 
@@ -931,11 +999,11 @@ fn drawing(scope: &Scope, d: &ShapesNode) -> El {
     for lines in &d.lines {
         let colour = theme.color(&lines.color);
         for run in runs(&lines.points) {
-            // Round, so the joints of a run, such as an arc, show no seams.
-            let cap = if run.len() > 2 {
-                LineCap::Round
-            } else {
-                LineCap::Butt
+            // Round, so the joints of a run, such as an arc, show no seams; but round joints
+            // overlap, which shows in a see-through colour.
+            let cap = match run.len() > 2 && colour.a >= 1.0 {
+                true => LineCap::Round,
+                false => LineCap::Butt,
             };
             shape = shape.stroke_with(run, false, lines.width, cap, colour);
         }
@@ -990,7 +1058,6 @@ mod tests {
             axis: Axis::Y,
             min: 4.0,
             max: -4.0,
-            moves: None,
         };
         assert_eq!(spec.offset(0.0, 10.0), [0.0, 4.0]);
         assert_eq!(spec.offset(0.0, -10.0), [0.0, -4.0]);

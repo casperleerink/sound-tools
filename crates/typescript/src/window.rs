@@ -2545,7 +2545,7 @@ fn moved_numbers(project: &Project, instance: &InstanceId, path: &str, cx: &App)
 
 /// How a value of the number `field` reads: by the unit its name ends in, as a pan, or as a
 /// share of 0 to 1. A built-in device names its numbers so; a plugin's say nothing.
-fn unit_of(field: &str, range: &sound_core::ValueRange) -> Option<&'static str> {
+pub(crate) fn unit_of(field: &str, range: &sound_core::ValueRange) -> Option<&'static str> {
     const UNITS: [(&str, &str); 5] = [
         ("_hz", "hz"),
         ("_db", "db"),

@@ -6,6 +6,15 @@ use serde::Deserialize;
 
 use super::*;
 
+/// What the live texts of the views show, but the values of the template's faders.
+fn shown_texts(state: &State) -> Vec<String> {
+    let texts = state.lives.texts().into_iter();
+    texts
+        .filter(|(shows, _)| !shows.contains("fader-"))
+        .map(|(_, text)| text)
+        .collect()
+}
+
 /// The DAW of a new project, open as a run without a window opens it.
 fn opened(folder: &Path) -> State {
     let mut state = State::open(Options {
@@ -710,7 +719,7 @@ fn a_peak_held_three_seconds_shows_in_decibels_then_drops() {
     let mut state = opened(&folder);
     play(&mut state, 0.0, 1.0);
     state.project.engine().stop();
-    let shown = |state: &State| state.lives.texts().concat();
+    let shown = |state: &State| shown_texts(state).concat();
     let held = shown(&state);
     assert!(held.parse::<f64>().is_ok_and(|db| db > -60.0), "{held}");
     for step in 1..=30 {
@@ -874,7 +883,7 @@ fn gauge() -> (tempfile::TempDir, State) {
 #[test]
 fn a_live_field_the_record_leaves_out_shows_its_default() {
     let (_scratch, state) = gauge();
-    assert_eq!(state.lives.texts(), ["0.75"]);
+    assert_eq!(shown_texts(&state), ["0.75"]);
 }
 
 #[test]
@@ -1021,7 +1030,7 @@ fn a_live_text_with_no_width_is_as_wide_as_the_widest_it_showed() {
     for step in 1..=60 {
         drawn_frame(&mut window, f64::from(step) / 60.0);
     }
-    let shown = window.state.lives.texts().concat();
+    let shown = shown_texts(&window.state).concat();
     assert!(shown.ends_with("dB"), "{shown}");
     let measured = rune::text::TextSystem::new(&crate::FONTS, ("Inter Display", "ui-monospace"))
         .measure(&shown, window.state.theme.text("body"), 1.0)
@@ -1182,7 +1191,7 @@ fn a_key_sounds_while_a_press_or_a_clip_plays_it() {
     .unwrap();
     let mut state = opened(&folder);
     build(&state);
-    let down = |state: &State| state.lives.texts().concat();
+    let down = |state: &State| shown_texts(state).concat();
     assert_eq!(down(&state), "0");
     act(&mut state, json!({ "label": "C3", "action": "press" }));
     frame(&mut state, 0.1);
@@ -1200,26 +1209,44 @@ fn a_key_sounds_while_a_press_or_a_clip_plays_it() {
     assert!(sounded);
 }
 
-/// A step with a velocity drag, a menu, a name to type and a level the arrows step.
+/// A step with a velocity drag, a menu, a popover with another inside, a name to type, and a
+/// level the arrows step and a double click resets.
 const KIT: &str = r#"import { boolean, h, input, number, text, tool } from "./sdk";
 export const kit = tool({
   name: "kit", title: "Kit", when: "Never", doc: "Kit.",
-  state: { on: boolean({ default: false }), velocity: number({ min: 0, max: 1, default: 0.5 }), picked: number({ min: 0, max: 1, default: 0 }), name: text({ default: "" }), level: number({ min: 0, max: 10, default: 5 }) },
+  state: { on: boolean({ default: false }), velocity: number({ min: 0, max: 1, default: 0.5 }), picked: number({ min: 0, max: 2, default: 0 }), name: text({ default: "" }), level: number({ min: 0, max: 10, default: 5 }) },
   sound: () => input,
   view: (self, { update }) => (
     <row gap={2}>
       <box key="step" label="Step" w={24} h={48} fill="fill" onPress={() => update("Step", (draft) => void (draft.state.on = !draft.state.on))}
-        drag={{ axis: "y", min: -40, max: 40, move: false }} onDragEnd={({ dy }) => update("Velocity", (draft) => void (draft.state.velocity = 0.5 - dy / 80))} />
+        drag={{ axis: "y", min: -40, max: 40 }} onDragEnd={({ dy }) => update("Velocity", (draft) => void (draft.state.velocity = 0.5 - dy / 80))} />
       <box key="open" label="Open" w={24} h={24} fill="fill">
-        <col overlay={{ open: "press" }} role="menu" w={80} fill="raised">
+        <col overlay={{ open: "press" }} role="menu" group w={80} fill="raised">
+          <box key="first" label="First" w={80} h={24} onPress={() => update("Pick", (draft) => void (draft.state.picked = 2))} />
           <box key="pick" label="Pick" w={80} h={24} onPress={() => update("Pick", (draft) => void (draft.state.picked = 1))} />
         </col>
       </box>
+      <box key="pop" label="Pop" w={24} h={24} fill="fill">
+        <col overlay={{ open: "press" }} role="dialog" w={80} h={80} fill="raised">
+          <box key="inner" label="Inner" w={24} h={24} fill="fill">
+            <col overlay={{ open: "press" }} w={80} fill="raised">
+              <field key="deep" label="Deep" value="" w={80} onCommit={(name) => update("Name", (draft) => void (draft.state.name = name))} />
+            </col>
+          </box>
+        </col>
+      </box>
       <field key="name" label="Name" value={self.state.name} w={80} onCommit={(name) => update("Name", (draft) => void (draft.state.name = name))} />
-      <box key="level" label="Level" w={24} h={24} fill="fill" actions={{
+      <col key="level" label="Level" w={24} h={48} fill="fill" justify="end" actions={{
         increment: (by) => update("Level", (draft) => void (draft.state.level += by)),
         decrement: (by) => update("Level", (draft) => void (draft.state.level -= by)),
-      }} />
+        reset: () => update("Level", (draft) => void (draft.state.level = 0)),
+      }}>
+        <box key="level-value" label="Type level" w={24} h={12}>
+          <col overlay={{ open: "press" }} w={80} fill="raised">
+            <field key="typed" label="Typed level" value="" w={80} onCommit={(typed) => update("Level", (draft) => void (draft.state.level = Number(typed)))} />
+          </col>
+        </box>
+      </col>
     </row>
   ),
 });
@@ -1244,7 +1271,10 @@ fn click(window: &mut rune::Runtime<State>, key: &str) {
     redraw(window);
 }
 
+/// The next frame, as the app runs it: its poll, then Rune's frame.
 fn redraw(window: &mut rune::Runtime<State>) {
+    let seconds = window.state.last + 1.0 / 60.0;
+    frame(&mut window.state, seconds);
     window.invalidate();
     window.frame(1.0 / 60.0);
 }
@@ -1282,17 +1312,17 @@ fn an_overlay_closes_on_escape_on_a_press_outside_and_on_a_pick_from_a_menu() {
     let (_scratch, mut window) = kit();
     let opener = "t00/chain/kit:open";
     click(&mut window, opener);
-    assert_eq!(window.state.open.as_deref(), Some(opener));
+    assert_eq!(window.state.open, [opener]);
     key(&mut window, rune::Key::Escape);
-    assert_eq!(window.state.open, None);
+    assert!(window.state.open.is_empty());
     click(&mut window, opener);
     window.pointer_down(700.0, 300.0);
     window.pointer_up(700.0, 300.0);
     redraw(&mut window);
-    assert_eq!(window.state.open, None);
+    assert!(window.state.open.is_empty());
     click(&mut window, opener);
     click(&mut window, "t00/chain/kit:pick");
-    assert_eq!(window.state.open, None);
+    assert!(window.state.open.is_empty());
     assert_eq!(kit_record(&window.state)["picked"], 1);
 }
 
@@ -1328,4 +1358,118 @@ fn the_arrows_step_a_control_with_steps_that_tab_reaches() {
     assert_eq!(focused(&window).as_deref(), Some(level));
     key(&mut window, rune::Key::Up);
     assert_eq!(kit_record(&window.state)["level"], 6);
+}
+
+/// Moves the pointer from `from` by `steps` of `by`, a frame each.
+fn travel(
+    window: &mut rune::Runtime<State>,
+    from: (f32, f32),
+    by: (f32, f32),
+    steps: usize,
+) -> (f32, f32) {
+    let mut at = from;
+    for _ in 0..steps {
+        at = (at.0 + by.0, at.1 + by.1);
+        window.pointer_move(at.0, at.1);
+        window.frame(1.0 / 60.0);
+    }
+    at
+}
+
+#[test]
+fn a_drag_that_comes_back_to_where_it_started_is_no_press() {
+    let (_scratch, mut window) = kit();
+    let start = window.find("t00/chain/kit:step").unwrap();
+    window.pointer_down(start.0, start.1);
+    window.frame(1.0 / 60.0);
+    let away = travel(&mut window, start, (0.0, -2.0), 6);
+    travel(&mut window, away, (0.0, 2.0), 6);
+    window.pointer_up(start.0, start.1);
+    redraw(&mut window);
+    assert_eq!(kit_record(&window.state)["on"], Value::Null);
+}
+
+#[test]
+fn after_a_drag_let_go_outside_its_element_the_keys_press_it() {
+    let (_scratch, mut window) = kit();
+    let start = window.find("t00/chain/kit:step").unwrap();
+    window.pointer_down(start.0, start.1);
+    window.frame(1.0 / 60.0);
+    let out = travel(&mut window, start, (0.0, 6.0), 10);
+    window.pointer_up(out.0, out.1);
+    redraw(&mut window);
+    assert_eq!(kit_record(&window.state)["velocity"], 0.0);
+    let focused = window
+        .elements()
+        .into_iter()
+        .find(|element| element.focused);
+    assert_eq!(
+        focused.and_then(|element| element.key).as_deref(),
+        Some("t00/chain/kit:step")
+    );
+    key(&mut window, rune::Key::Text(" ".into()));
+    assert_eq!(kit_record(&window.state)["on"], true);
+}
+
+#[test]
+fn a_double_click_sets_what_reset_sets_and_enter_types_a_value() {
+    let (_scratch, mut window) = kit();
+    let (x, y) = window.find("t00/chain/kit:level").unwrap();
+    for _ in 0..2 {
+        window.pointer_down(x, y - 12.0);
+        window.pointer_up(x, y - 12.0);
+        window.frame(0.05);
+    }
+    redraw(&mut window);
+    assert_eq!(kit_record(&window.state)["level"], 0);
+    assert!(window.state.open.is_empty());
+    key(&mut window, rune::Key::Enter);
+    assert_eq!(window.state.open, ["t00/chain/kit:level-value"]);
+    key(&mut window, rune::Key::Text("7".into()));
+    key(&mut window, rune::Key::Enter);
+    assert_eq!(kit_record(&window.state)["level"], 7);
+    assert!(window.state.open.is_empty());
+}
+
+#[test]
+fn an_overlay_opened_inside_another_keeps_it_and_escape_closes_the_inner_first() {
+    let (_scratch, mut window) = kit();
+    let (pop, inner) = ("t00/chain/kit:pop", "t00/chain/kit:inner");
+    click(&mut window, pop);
+    click(&mut window, inner);
+    assert_eq!(window.state.open, [pop, inner]);
+    assert!(window.find("t00/chain/kit:deep").is_some());
+    key(&mut window, rune::Key::Escape);
+    assert_eq!(window.state.open, [pop]);
+    key(&mut window, rune::Key::Escape);
+    assert!(window.state.open.is_empty());
+}
+
+#[test]
+fn the_arrows_move_in_a_menu_and_enter_picks_and_closes_it() {
+    let (_scratch, mut window) = kit();
+    click(&mut window, "t00/chain/kit:open");
+    key(&mut window, rune::Key::Down);
+    key(&mut window, rune::Key::Enter);
+    assert!(window.state.open.is_empty());
+    assert_eq!(kit_record(&window.state)["picked"], 1);
+}
+
+#[test]
+fn an_agent_sees_and_acts_on_an_overlay_as_a_pointer_does() {
+    let (_scratch, mut window) = kit();
+    let shown = |state: &State| labels(state).contains(&"Pick".to_string());
+    assert!(!shown(&window.state));
+    act(
+        &mut window.state,
+        json!({ "label": "Open", "action": "open" }),
+    );
+    assert!(shown(&window.state));
+    act(
+        &mut window.state,
+        json!({ "label": "Pick", "action": "press" }),
+    );
+    assert!(window.state.open.is_empty());
+    assert!(!shown(&window.state));
+    assert_eq!(kit_record(&window.state)["picked"], 1);
 }

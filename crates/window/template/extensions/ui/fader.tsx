@@ -13,12 +13,13 @@ export const Fader = ({ id, label, db, height, onChange }: { id: string; label: 
   const travel = height - THUMB;
   const range = MAX_DB - MIN_DB;
   const y = (1 - (clamp(db) - MIN_DB) / range) * travel;
-  const dragged = live.drag(id).dy.times(-range / travel).plus(clamp(db));
+  const moved = live.drag(id).dy;
+  const dragged = moved.times(-range / travel).plus(clamp(db));
   return (
     <col gap={2} align="center">
       <box w={TARGET} h={height}>
         <box at={[(TARGET - TRACK) / 2, 0]} w={TRACK} h={height} radius="full" fill="fill-strong" />
-        <row key={id} label={label} role="slider" value={db} at={[0, y - (TARGET - THUMB) / 2]} w={TARGET} h={TARGET} align="center" justify="center" radius="md" drag={{ axis: "y", min: -y, max: travel - y }} onDragEnd={({ dy }) => onChange(tenth(db - (dy / travel) * range))} actions={{ set: (to) => onChange(tenth(to)), increment: (by) => onChange(tenth(db + by)), decrement: (by) => onChange(tenth(db - by)), reset: () => onChange(0) }}>
+        <row key={id} label={label} role="slider" value={db} at={[0, moved.plus(y - (TARGET - THUMB) / 2)]} w={TARGET} h={TARGET} align="center" justify="center" radius="md" drag={{ axis: "y", min: -y, max: travel - y }} onDragEnd={({ dy }) => onChange(tenth(db - (dy / travel) * range))} actions={{ set: (to) => onChange(tenth(to)), increment: (by) => onChange(tenth(db + by)), decrement: (by) => onChange(tenth(db - by)), reset: () => onChange(0) }}>
           <box w={20} h={THUMB} radius="sm" fill="text" shadow="sm" />
         </row>
       </box>

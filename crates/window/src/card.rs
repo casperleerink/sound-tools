@@ -9,6 +9,7 @@
 use rune::{El, LineCap, Shape, canvas, col, el, row, text};
 use serde_json::{Value, json};
 use sound_core::{InstanceId, RecordSchema};
+use sound_typescript::live::{field_readout, text_of};
 use sound_typescript::next::Drawn;
 
 use crate::app::State;
@@ -18,10 +19,26 @@ use crate::tree;
 const FEW: usize = 4;
 /// A cell of a card: a control, its label line and its value line. A choice takes two columns
 /// or more.
-const COLUMN: f32 = 64.0;
-const CELL: f32 = 72.0;
-const KNOB: f32 = 36.0;
-const FACE: f32 = 21.0;
+/// From the edge of a knob's dial to its face, and the width of its arc, as `ui/knob.tsx` has them.
+const RIM: f32 = 7.5;
+const ARC: f32 = 2.5;
+
+/// The grid of a card from the theme: a column's width, a row's height and a knob's dial.
+struct Grid {
+    column: f32,
+    row: f32,
+    knob: f32,
+}
+
+impl Grid {
+    fn of(theme: &crate::theme::Theme) -> Self {
+        Self {
+            column: theme.size("cell", 64.0),
+            row: theme.size("row", 72.0),
+            knob: theme.size("knob", 36.0),
+        }
+    }
+}
 /// How far a drag moves a knob from its start to its end, in points.
 const TRAVEL: f32 = 120.0;
 
@@ -213,7 +230,7 @@ pub(crate) fn card(state: &State, id: &InstanceId) -> El {
             .label(format!("Expand {title}"))
             .checked(expanded)
             .focusable(true)
-            .h(24.0)
+            .h(theme.size("sm", 24.0))
             .px(theme.space(2))
             .items_center()
             .radius(theme.radius("sm").unwrap_or(4.0))
@@ -233,7 +250,7 @@ pub(crate) fn card(state: &State, id: &InstanceId) -> El {
         .radius(theme.radius("lg").unwrap_or(8.0))
         .child(
             row()
-                .h(32.0)
+                .h(theme.size("lg", 32.0))
                 .gap(theme.space(2))
                 .items_center()
                 .justify_between()
@@ -262,12 +279,13 @@ pub(crate) fn controls(state: &State, id: &InstanceId) -> (El, bool) {
         }
     }
     let gap = state.theme.space(2);
+    let grid = Grid::of(&state.theme);
     let columns = columns.into_iter().map(|(wide, cells)| {
-        let column = col().h(2.0 * CELL).children(cells);
+        let column = col().h(2.0 * grid.row).children(cells);
         match wide {
             // As wide as its segments, two columns at least.
-            true => column.min_w(2.0 * COLUMN + gap),
-            false => column.w(COLUMN),
+            true => column.min_w(2.0 * grid.column + gap),
+            false => column.w(grid.column),
         }
     });
     (row().children(columns), more)
@@ -282,7 +300,8 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
             .color(theme.color("text-secondary"))
             .truncate()
     };
-    let cell = || col().h(CELL).items_center();
+    let grid = Grid::of(theme);
+    let cell = || col().h(grid.row).items_center();
     match field.kind {
         Kind::Number { min, max, log, .. } => {
             let turned = (state.turning.as_ref()).filter(|(turned, _)| *turned == key);
@@ -296,18 +315,15 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
                 key.clone(),
             );
             let face = el()
-                .absolute((KNOB - FACE) / 2.0, (KNOB - FACE) / 2.0)
-                .size(FACE, FACE)
-                .radius(FACE / 2.0)
+                .absolute(RIM, RIM)
+                .size(grid.knob - 2.0 * RIM, grid.knob - 2.0 * RIM)
+                .radius(grid.knob / 2.0 - RIM)
                 .fill(theme.color("fill"));
-            let dial = canvas(arc(
-                arc(Shape::new(), 1.0, theme.color("fill-strong")),
-                at,
-                theme.color("text"),
-            ))
-            .size(KNOB, KNOB);
+            let track = arc(Shape::new(), grid.knob, 1.0, theme.color("fill-strong"));
+            let dial =
+                canvas(arc(track, grid.knob, at, theme.color("text"))).size(grid.knob, grid.knob);
             let knob = el()
-                .size(KNOB, KNOB)
+                .size(grid.knob, grid.knob)
                 .child(dial)
                 .child(face)
                 .key(key)
@@ -338,9 +354,12 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
                 .child(el().h(2.0))
                 .child(caption(field.label))
                 .child(
-                    text(number(value))
-                        .font(theme.text("number"))
-                        .color(theme.color("text")),
+                    text(match field_readout(&field.name, min, max) {
+                        Some(unit) => text_of(value, Some(unit), None),
+                        None => number(value),
+                    })
+                    .font(theme.text("number"))
+                    .color(theme.color("text")),
                 )
         }
         Kind::Switch => {
@@ -353,17 +372,20 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
                 .label(field.label.clone())
                 .checked(on)
                 .focusable(true)
-                .h(28.0)
+                .h(theme.size("sm", 24.0))
                 .px(theme.space(2))
                 .items_center()
                 .radius(theme.radius("sm").unwrap_or(4.0))
-                .w(COLUMN - 8.0)
+                .w(grid.column - 8.0)
                 .justify_center()
                 .border(
                     1.0,
                     theme.color(if on { "#00000000" } else { "border-strong" }),
                 )
-                .fill(theme.color(if on { "on/16" } else { "#00000000" }))
+                .fill(match on {
+                    true => theme.tinted("on"),
+                    false => theme.color("#00000000"),
+                })
                 .on_press(move |s: &mut State| s.set_field(&id, &name, json!(!on)))
                 .child(
                     text(field.label)
@@ -389,7 +411,7 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
                     .label(format!("{} {shown}", field.label))
                     .checked(chosen)
                     .focusable(true)
-                    .h(24.0)
+                    .h(theme.size("sm", 24.0))
                     .px(theme.space(2))
                     .items_center()
                     .radius(theme.radius("sm").unwrap_or(4.0))
@@ -428,15 +450,15 @@ fn value_at(at: f64, min: f64, max: f64, log: bool) -> f64 {
     }
 }
 
-/// The arc of a knob from its start to `at`, of 270 degrees in all.
-fn arc(shape: Shape, at: f32, colour: rune::Color) -> Shape {
+/// The arc of a knob `size` points wide from its start to `at`, of 270 degrees in all.
+fn arc(shape: Shape, size: f32, at: f32, colour: rune::Color) -> Shape {
     let steps = 32;
-    let centre = KNOB / 2.0;
+    let centre = size / 2.0;
     let point = |t: f32| {
         let angle = (135.0 + t * 270.0_f32).to_radians();
         [
-            centre + angle.cos() * (centre - 1.25),
-            centre + angle.sin() * (centre - 1.25),
+            centre + angle.cos() * (centre - ARC / 2.0),
+            centre + angle.sin() * (centre - ARC / 2.0),
         ]
     };
     let points: Vec<[f32; 2]> = (0..=steps)
@@ -445,5 +467,5 @@ fn arc(shape: Shape, at: f32, colour: rune::Color) -> Shape {
     if at <= 0.0 {
         return shape;
     }
-    shape.stroke_with(points, false, 2.5, LineCap::Butt, colour)
+    shape.stroke_with(points, false, ARC, LineCap::Butt, colour)
 }
