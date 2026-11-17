@@ -2,6 +2,7 @@
 //! view of its main instance filling the rest. In a run without a window the engine plays
 //! offline, a step per frame, and Bun answers before each frame, so a run is always the same.
 
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -51,6 +52,8 @@ pub(crate) struct Options {
     pub(crate) headless: bool,
     /// Plays from the start for this many seconds before the picture.
     pub(crate) play: Option<f64>,
+    /// The instance shown in place of the project's main one.
+    pub(crate) main: Option<InstanceId>,
     /// The steps of `--act`, which runs in the folder itself: what they change is the point.
     pub(crate) act: Option<Vec<Step>>,
 }
@@ -92,6 +95,14 @@ pub(crate) struct State {
     pub(crate) turning: Option<(String, f64)>,
     /// The view a held press paints, and the keys of the elements it entered.
     painting: Option<(InstanceId, BTreeSet<String>)>,
+    /// The element a drag just ended on: the release that ends a drag is no press.
+    pub(crate) dragged: Option<String>,
+    /// The overlay open now, by the key of what opened it. How the composer works, so never saved.
+    pub(crate) open: Option<String>,
+    /// What `--main` shows in place of the project's main instance.
+    main: Option<InstanceId>,
+    /// What the text fields say, by key, and the value each was made from.
+    fields: RefCell<HashMap<String, (rune::TextEdit, String)>>,
     waker: Arc<Mutex<Option<rune::Waker>>>,
     /// The steps of `--act` and the seconds of `--play`, for the first frame of a run without a window.
     first: Option<(Vec<Step>, Option<f64>)>,
@@ -106,6 +117,7 @@ impl State {
             folder,
             headless,
             play,
+            main,
             act,
         } = options;
         // Whole, so `.` and `..` have a name: a folder that is not there yet becomes a project.
@@ -188,6 +200,10 @@ impl State {
             expanded: BTreeSet::new(),
             turning: None,
             painting: None,
+            dragged: None,
+            open: None,
+            main,
+            fields: RefCell::default(),
             waker,
             first: headless.then(|| (act.unwrap_or_default(), play)),
             last: 0.0,
@@ -197,7 +213,7 @@ impl State {
 
     /// The instance the window shows, as `project.json` names it now.
     pub(crate) fn main(&self) -> Option<&InstanceId> {
-        self.project.project_file().main.as_ref()
+        (self.main.as_ref()).or(self.project.project_file().main.as_ref())
     }
 
     /// What the window shows of `id`, once Bun said.
@@ -286,6 +302,10 @@ impl State {
         match target {
             Target::Play => self.play_or_stop(),
             Target::Expand(instance) => self.expand(instance),
+            Target::Opens { window_key, .. } if action == "open" => self.toggle_overlay(window_key),
+            Target::Opens { instance, key, .. } => {
+                self.act_on_view(instance, key, action, value)?
+            }
             Target::View { instance, key } => {
                 let value = match action {
                     "drag" => value.or_else(|| Some(json!({ "dx": 0, "dy": 0 }))),
@@ -369,6 +389,38 @@ impl State {
             tools.hold(&mut self.project, false);
         }
         self.handled();
+    }
+
+    /// Opens the overlay that the element `key` opens, or closes it.
+    pub(crate) fn toggle_overlay(&mut self, key: &str) {
+        self.open = match self.open.as_deref() == Some(key) {
+            true => None,
+            false => Some(key.to_string()),
+        };
+        self.handled();
+    }
+
+    /// What the field `key` says now: `value` while nobody types in it, all of it chosen, so
+    /// what is typed takes its place.
+    pub(crate) fn typed(&self, key: &str, value: &str) -> rune::TextEdit {
+        let mut fields = self.fields.borrow_mut();
+        let (edit, from) = (fields.entry(key.to_string()))
+            .or_insert_with(|| (rune::TextEdit::new(value), value.to_string()));
+        if !edit.focused {
+            if from != value || edit.text != value {
+                (*edit, *from) = (rune::TextEdit::new(value), value.to_string());
+            }
+            (edit.anchor, edit.focus) = (0, edit.text.len());
+        }
+        edit.clone()
+    }
+
+    /// The field `key`, which Rune edits.
+    pub(crate) fn typing(&mut self, key: &str, value: &str) -> &mut rune::TextEdit {
+        let fields = self.fields.get_mut();
+        let entry = (fields.entry(key.to_string()))
+            .or_insert_with(|| (rune::TextEdit::new(value), value.to_string()));
+        &mut entry.0
     }
 
     /// Shows all the controls of the card of `id`, or the first few again.
@@ -702,7 +754,7 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, _: &mut Tx) -> bool {
     true
 }
 
-pub(crate) fn view(state: &State, _: &mut Cx<State>) -> El {
+pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
     let theme = &state.theme;
     let body = match state.main() {
         Some(main) => match state.drawn(main) {
@@ -726,6 +778,7 @@ pub(crate) fn view(state: &State, _: &mut Cx<State>) -> El {
             .absolute(theme.space(3), 0.0)
             .pin(None, None, Some(theme.space(3)), Some(theme.space(2)))
     });
+    cx.focus_ring(2.0, 2.0, theme.color("focus"));
     col()
         .w_full()
         .h_full()
@@ -733,6 +786,7 @@ pub(crate) fn view(state: &State, _: &mut Cx<State>) -> El {
         .child(title_row(state))
         .child(el().grow(1.0).w_full().clip_soft(0.0).child(body))
         .children(notice)
+        .children(tree::overlays(state))
 }
 
 fn title_row(state: &State) -> El {

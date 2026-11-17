@@ -1,9 +1,11 @@
-import { boolean, choice, h, list, live, memo, text, tool, type Color, type Connection, type Declaration, type Drawn, type Lines, type ValuesOf } from "./sdk";
+import { boolean, choice, h, list, live, memo, text, tool, type Color, type Connection, type Declaration, type Drawn, type Lines, type Node, type ValuesOf } from "./sdk";
 import { bus } from "./bus";
 import { tape } from "./tape";
 import { track } from "./track";
 import { Fader, MIN_DB } from "./ui/fader";
+import { Dot } from "./ui/dot";
 import { Meter } from "./ui/meter";
+import { Section } from "./ui/blocks/panel";
 import { Toggle } from "./ui/toggle";
 
 // A song: tracks of clips in time, the devices of the chosen track, and a mixer.
@@ -167,14 +169,14 @@ const TrackRow = ({ each, index, chosen, armed, soloed, onChoose, onMute, onSolo
   const title = titleOf(each, index);
   const muted = mixOf(each)?.mute ?? false;
   const header = memo(`head-${each.name}`, [title, chosen, muted, soloed, armed, each.state.colour], () => (
-    <row key={`track-${each.name}`} label={`Choose ${title}`} role="tab" checked={chosen} w={HEAD} h={ROW} px={3} gap={2} align="center" fill={chosen ? "selected" : "surface"} border="border-strong" borderSides={[0, 1, 0, 0]} onPress={onChoose}>
-      <box w={8} h={8} radius="full" fill={colourOf(each)} />
+    <row key={`track-${each.name}`} label={`Choose ${title}`} role="tab" checked={chosen} hoverGroup w={HEAD} h={ROW} px={3} gap={2} align="center" fill={chosen ? "selected" : "surface"} hover="fill" border="border-strong" borderSides={[0, 1, 0, 0]} onPress={onChoose}>
+      <Dot color={colourOf(each)} />
       <col grow={1} gap={1}>
         <text style="heading" color="text" truncate>{title}</text>
         <row gap={1}>
-          <Toggle id={`mute-${each.name}`} label={`Mute ${title}`} letter="M" on={muted} color="peach" onToggle={onMute} />
-          <Toggle id={`solo-${each.name}`} label={`Solo ${title}`} letter="S" on={soloed} color="yellow" onToggle={onSolo} />
-          <Toggle id={`arm-${each.name}`} label={`Arm ${title}`} letter="R" on={armed} color="red" onToggle={onArm} />
+          <Quiet shown={muted || chosen}><Toggle id={`mute-${each.name}`} label={`Mute ${title}`} text="M" on={muted} color="warning" onToggle={onMute} /></Quiet>
+          <Quiet shown={soloed || chosen}><Toggle id={`solo-${each.name}`} label={`Solo ${title}`} text="S" on={soloed} color="hot" onToggle={onSolo} /></Quiet>
+          <Quiet shown={armed || chosen}><Toggle id={`arm-${each.name}`} label={`Arm ${title}`} on={armed} color="danger" dot onToggle={onArm} /></Quiet>
         </row>
       </col>
       <Meter id={`meter-head-${each.name}`} label={`Level ${title}`} path={`${each.name}/mix`} w={4} h={ROW - 16} />
@@ -211,21 +213,25 @@ const Clip = ({ name, start, length, notes, colour }: { name: string; start: num
   );
 };
 
+/** A toggle of a track's head shows while on, or while the track is chosen or pointed at. */
+const Quiet = ({ shown, children }: { shown: boolean; children?: Node }) => (shown ? <box>{children}</box> : <box reveal>{children}</box>);
+
 /** The devices of the chosen track: what plays it, then its effects in their order. */
 const Panel = ({ each, title }: { each: Track; title: string }) => {
   const chain = each.children.find((child) => child.name === "chain");
   const effects = chain?.tool === "chain" ? chain.state.order.filter((name) => chain.children.some((child) => child.name === name)) : [];
   const devices = [...(each.children.some((child) => child.name === "synth") ? ["synth"] : []), ...effects.map((name) => `chain/${name}`)];
   return (
-    <col w="full" px={3} py={2} gap={2} fill="background" border="border-strong" borderSides={[1, 0, 0, 0]}>
-      <text style="heading" color="text-secondary">{title}</text>
-      <box w="full" maxH={PANEL} scroll="both">
-        <row gap={2}>
-          {devices.map((path) => (
-            <child path={`${each.name}/${path}`} />
-          ))}
-        </row>
-      </box>
+    <col w="full" px={4} py={3} fill="background" border="border-strong" borderSides={[1, 0, 0, 0]}>
+      <Section title={title}>
+        <box w="full" maxH={PANEL} scroll="both">
+          <row gap={2}>
+            {devices.map((path) => (
+              <child path={`${each.name}/${path}`} />
+            ))}
+          </row>
+        </box>
+      </Section>
     </col>
   );
 };
@@ -233,10 +239,9 @@ const Panel = ({ each, title }: { each: Track; title: string }) => {
 const Strip = ({ id, name, title, db, onChange }: { id: string; name: string; title: string; db: number; onChange: (db: number) => void }) => (
   <col key={`strip-${id}`} w={72} h="full" py={3} gap={2} align="center">
     <text style="label" color="text-secondary" truncate>{title}</text>
-    <row gap={1}>
+    <row gap={1} align="start">
       <Fader id={`fader-${id}`} label={`Volume ${title}`} db={db} height={FADER} onChange={onChange} />
       <Meter id={`meter-${id}`} label={`Level ${title}`} path={name === "master" ? "master" : `${name}/mix`} w={4} h={FADER} />
     </row>
-    <text style="number" color="text-muted">{`${db.toFixed(1)} dB`}</text>
   </col>
 );

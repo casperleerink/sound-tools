@@ -3,8 +3,9 @@
 //!
 //! `sound-tools-next <project-folder>` opens the window; a missing or empty folder becomes a new
 //! project of the DAW. With Rune's `--snap`, `--tree` or `--script` it runs without a window,
-//! on a copy of the folder, and adds `--play <seconds>` (plays from the start first) and
-//! `--act <steps.json>` (runs actions on controls by label or key first, in the folder itself).
+//! on a copy of the folder, and adds `--play <seconds>` (plays from the start first),
+//! `--act <steps.json>` (runs actions on controls by label or key first, in the folder itself)
+//! and `--main <instance>` (shows that instance in place of the project's main one).
 
 mod app;
 mod card;
@@ -75,7 +76,7 @@ fn main() -> Result<()> {
 fn window(arguments: &[String]) -> Result<()> {
     let mut rest = arguments.iter();
     let folder = PathBuf::from(rest.next().context("give a project folder")?);
-    let (mut play, mut act, mut rune_arguments) = (None, None, vec![]);
+    let (mut play, mut act, mut main, mut rune_arguments) = (None, None, None, vec![]);
     while let Some(argument) = rest.next() {
         match argument.as_str() {
             "--play" => {
@@ -84,6 +85,13 @@ fn window(arguments: &[String]) -> Result<()> {
                     .and_then(|seconds| seconds.parse::<f64>().ok())
                     .filter(|seconds| *seconds > 0.0);
                 play = Some(seconds.context("--play takes seconds, such as 2")?);
+            }
+            "--main" => {
+                main = Some(
+                    rest.next()
+                        .context("--main takes an instance, such as gallery")?
+                        .clone(),
+                )
             }
             "--act" => {
                 act = Some(PathBuf::from(
@@ -96,8 +104,8 @@ fn window(arguments: &[String]) -> Result<()> {
     let headless = rune_arguments
         .iter()
         .any(|argument| HEADLESS.contains(&argument.as_str()));
-    if !headless && (play.is_some() || act.is_some()) {
-        bail!("--play and --act come with --snap, --tree or --script");
+    if !headless && (play.is_some() || act.is_some() || main.is_some()) {
+        bail!("--play, --act and --main come with --snap, --tree or --script");
     }
     if let (Some(seconds), false) = (
         play,
@@ -115,6 +123,9 @@ fn window(arguments: &[String]) -> Result<()> {
         folder,
         headless,
         play,
+        main: main
+            .map(|main| sound_core::InstanceId::new(&main))
+            .transpose()?,
         act: act.map(|path| controls::read_steps(&path)).transpose()?,
     })?;
     let spec = rune::AppSpec {

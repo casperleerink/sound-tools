@@ -10,7 +10,7 @@ use std::rc::Rc;
 use rune::LiveText;
 use sound_core::{InstanceId, Ticks};
 use sound_typescript::live::{
-    Ease, Eased, Leaves, Live, Num, Readout, TickReadout, number, text_of,
+    DragPart, Ease, Eased, Leaves, Live, Num, Readout, TickReadout, number, text_of,
 };
 use sound_typescript::next::Keys;
 
@@ -29,6 +29,8 @@ pub(crate) enum Shows {
     Rect([Num; 4]),
     Offset([Num; 2]),
     Opacity(Num),
+    /// The part of a shape's lines that draws: [from, to], 0 to 1.
+    Trim([Num; 2]),
 }
 
 /// What Rune draws of a [`Shows`] every frame.
@@ -39,6 +41,7 @@ pub(crate) enum Shown {
     Rect(rune::Live<[f32; 4]>),
     Offset(rune::Live<[f32; 2]>),
     Opacity(rune::Live<f32>),
+    Trim(rune::Live<[f32; 2]>),
 }
 
 impl Shown {
@@ -49,6 +52,7 @@ impl Shown {
             Self::Rect(rect) => e.absolute(0.0, 0.0).live_rect(rect),
             Self::Offset(offset) => e.absolute(0.0, 0.0).live_offset(offset),
             Self::Opacity(opacity) => e.live_opacity(opacity),
+            Self::Trim(trim) => e.live_trim(trim),
         }
     }
 }
@@ -75,6 +79,8 @@ pub(crate) struct Lives {
     /// Whether a live text showed wider than it was built for since the last look.
     wider: Cell<bool>,
     drags: RefCell<HashMap<String, rune::Live<[f32; 2]>>>,
+    /// The keys of the elements dragged now.
+    held: RefCell<HashSet<String>>,
     /// The keys down on the sounds the views read, and the frame they were last read in.
     keys: RefCell<HashMap<InstanceId, (Option<u64>, Keys, u128)>>,
     /// Where the piece plays, as the title row shows it.
@@ -94,6 +100,7 @@ impl Lives {
             moving: Cell::new(false),
             wider: Cell::new(false),
             drags: RefCell::default(),
+            held: RefCell::default(),
             keys: RefCell::default(),
             time: LiveText::new(time.to_string()),
         }
@@ -116,6 +123,7 @@ impl Lives {
             Shows::Rect(_) => Shown::Rect(rune::Live::new([0.0; 4])),
             Shows::Offset(_) => Shown::Offset(rune::Live::new([0.0; 2])),
             Shows::Opacity(_) => Shown::Opacity(rune::Live::new(1.0)),
+            Shows::Trim(_) => Shown::Trim(rune::Live::new([0.0, 1.0])),
         };
         let binding = Binding {
             instance: instance.clone(),
@@ -134,6 +142,22 @@ impl Lives {
             .entry(key.to_string())
             .or_insert_with(|| rune::Live::new([0.0; 2]))
             .clone()
+    }
+
+    /// Whether the element `key` is dragged now.
+    pub(crate) fn held(&self, key: &str, held: bool) {
+        let mut keys = self.held.borrow_mut();
+        match held {
+            true => keys.insert(key.to_string()),
+            false => keys.remove(key),
+        };
+    }
+
+    /// Shows what a drag moved at once, not a frame later.
+    pub(crate) fn refresh(&self, state: &State) {
+        for binding in self.bindings.borrow().values() {
+            self.show(state, binding);
+        }
     }
 
     /// A new tree came: what a drag moved is where its record says now.
@@ -212,6 +236,9 @@ impl Lives {
             }
             (Shows::Opacity(value), Shown::Opacity(shown)) => {
                 shown.set(of(value).clamp(0.0, 1.0));
+            }
+            (Shows::Trim(trim), Shown::Trim(shown)) => {
+                shown.set(trim.each_ref().map(|end| of(end).clamp(0.0, 1.0)));
             }
             _ => {}
         }
@@ -299,10 +326,11 @@ impl Lives {
             .collect()
     }
 
-    /// What each live text shows now.
+    /// What each live text shows now, but the faders' values of the template's mixer.
     pub(crate) fn texts(&self) -> Vec<String> {
         let bindings = self.bindings.borrow();
         (bindings.values())
+            .filter(|binding| !matches!(&binding.shows, Shows::Text { value, .. } if format!("{value:?}").contains("fader-")))
             .filter_map(|binding| match &binding.shown {
                 Shown::Text(shown, _) => Some(shown.get().to_string()),
                 _ => None,
@@ -335,7 +363,19 @@ impl Leaves for Sources<'_> {
                 let down = id.map_or(0, |id| self.keys_down(id));
                 f64::from(u8::from(down & (1 << pitch.min(&127)) != 0))
             }
-            // The new window has no drags, spaces or pointer of these yet.
+            Live::Drag { id, part } => {
+                let key = format!("{}{id}", self.state.prefix_of(self.instance));
+                let moved = (self.lives.drags.borrow().get(&key)).map_or([0.0; 2], rune::Live::get);
+                match part {
+                    DragPart::Dx => f64::from(moved[0]),
+                    DragPart::Dy => f64::from(moved[1]),
+                    DragPart::Active => {
+                        f64::from(u8::from(self.lives.held.borrow().contains(&key)))
+                    }
+                    _ => 0.0,
+                }
+            }
+            // The new window has no spaces or pointer of these yet.
             _ => 0.0,
         }
     }

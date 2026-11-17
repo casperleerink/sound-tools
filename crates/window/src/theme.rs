@@ -75,17 +75,22 @@ impl Theme {
         }
     }
 
-    /// A token, `token/percent`, or `#rrggbb[aa]`.
+    /// A token, `token/percent`, or `#rrggbb[aa]`. A token may name another, as a role names a hue.
     pub(crate) fn color(&self, name: &str) -> Color {
         let (token, percent) = match name.split_once('/') {
             Some((token, percent)) => (token, percent.parse::<f32>().ok()),
             None => (name, None),
         };
-        let hex = if token.starts_with('#') {
-            Some(token)
-        } else {
-            self.color.get(token).map(String::as_str)
-        };
+        // A role such as `sound` names a colour of the palette, such as `green`.
+        let mut hex = Some(token);
+        for _ in 0..4 {
+            match hex {
+                Some(name) if !name.starts_with('#') => {
+                    hex = self.color.get(name).map(String::as_str)
+                }
+                _ => break,
+            }
+        }
         let colour = hex.and_then(rune::color::hex).unwrap_or(MISSING);
         percent.map_or(colour, |percent| colour.alpha(colour.a * percent / 100.0))
     }

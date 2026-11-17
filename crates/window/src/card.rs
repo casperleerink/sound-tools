@@ -2,7 +2,9 @@
 //! record, made from the record's schema: a knob for a number, a switch for a yes or no, and
 //! segments for a choice. So every device shows, a built-in one, a plugin and a tool an agent
 //! wrote without a view. Its controls sit in whole columns of two cells, the first few shown
-//! and the rest behind expand, so a card grows wider, never taller.
+//! and the rest behind expand, so a card grows wider, never taller. It looks as the template's
+//! `ui/blocks/device-card.tsx` and `ui/knob.tsx` do; Bun has no schema of a built-in record to
+//! draw it with them.
 
 use rune::{El, LineCap, Shape, canvas, col, el, row, text};
 use serde_json::{Value, json};
@@ -16,9 +18,10 @@ use crate::tree;
 const FEW: usize = 4;
 /// A cell of a card: a control, its label line and its value line. A choice takes two columns
 /// or more.
-const COLUMN: f32 = 72.0;
+const COLUMN: f32 = 64.0;
 const CELL: f32 = 72.0;
-const KNOB: f32 = 32.0;
+const KNOB: f32 = 36.0;
+const FACE: f32 = 21.0;
 /// How far a drag moves a knob from its start to its end, in points.
 const TRAVEL: f32 = 120.0;
 
@@ -223,14 +226,14 @@ pub(crate) fn card(state: &State, id: &InstanceId) -> El {
     });
     col()
         .key(format!("{prefix}card"))
-        .padding(theme.space(3))
-        .gap(theme.space(2))
+        .px(theme.space(4))
+        .pb(theme.space(4))
         .fill(theme.color("surface"))
         .border(1.0, theme.color("border-strong"))
         .radius(theme.radius("lg").unwrap_or(8.0))
         .child(
             row()
-                .h(24.0)
+                .h(32.0)
                 .gap(theme.space(2))
                 .items_center()
                 .justify_between()
@@ -260,14 +263,14 @@ pub(crate) fn controls(state: &State, id: &InstanceId) -> (El, bool) {
     }
     let gap = state.theme.space(2);
     let columns = columns.into_iter().map(|(wide, cells)| {
-        let column = col().h(2.0 * CELL + gap).gap(gap).children(cells);
+        let column = col().h(2.0 * CELL).children(cells);
         match wide {
             // As wide as its segments, two columns at least.
             true => column.min_w(2.0 * COLUMN + gap),
             false => column.w(COLUMN),
         }
     });
-    (row().gap(gap).children(columns), more)
+    (row().children(columns), more)
 }
 
 fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
@@ -279,7 +282,7 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
             .color(theme.color("text-secondary"))
             .truncate()
     };
-    let cell = || col().h(CELL).gap(theme.space(1)).items_center();
+    let cell = || col().h(CELL).items_center();
     match field.kind {
         Kind::Number { min, max, log, .. } => {
             let turned = (state.turning.as_ref()).filter(|(turned, _)| *turned == key);
@@ -292,40 +295,53 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
                 field.kind.clone(),
                 key.clone(),
             );
-            let knob = canvas(arc(
+            let face = el()
+                .absolute((KNOB - FACE) / 2.0, (KNOB - FACE) / 2.0)
+                .size(FACE, FACE)
+                .radius(FACE / 2.0)
+                .fill(theme.color("fill"));
+            let dial = canvas(arc(
                 arc(Shape::new(), 1.0, theme.color("fill-strong")),
                 at,
                 theme.color("text"),
             ))
-            .size(KNOB, KNOB)
-            .key(key)
-            .role("slider")
-            .label(field.label.clone())
-            .range_value(value, min, max)
-            .focusable(true)
-            .on_drag(
-                move |s: &mut State, drag: &mut rune::Drag, _: &mut rune::Tx| {
-                    let at = travelled(record, min, max, log) + f64::from(-drag.dy / TRAVEL);
-                    let to = kind.fit(value_at(at.clamp(0.0, 1.0), min, max, log));
-                    match drag.phase {
-                        rune::Phase::Down => {}
-                        rune::Phase::Move => {
-                            s.turning = Some((turning.clone(), to.as_f64().unwrap_or(record)));
-                        }
-                        rune::Phase::Up => {
-                            s.turning = None;
-                            if !drag.cancelled() {
-                                s.set_field(&id, &name, to);
+            .size(KNOB, KNOB);
+            let knob = el()
+                .size(KNOB, KNOB)
+                .child(dial)
+                .child(face)
+                .key(key)
+                .role("slider")
+                .label(field.label.clone())
+                .range_value(value, min, max)
+                .focusable(true)
+                .on_drag(
+                    move |s: &mut State, drag: &mut rune::Drag, _: &mut rune::Tx| {
+                        let at = travelled(record, min, max, log) + f64::from(-drag.dy / TRAVEL);
+                        let to = kind.fit(value_at(at.clamp(0.0, 1.0), min, max, log));
+                        match drag.phase {
+                            rune::Phase::Down => {}
+                            rune::Phase::Move => {
+                                s.turning = Some((turning.clone(), to.as_f64().unwrap_or(record)));
+                            }
+                            rune::Phase::Up => {
+                                s.turning = None;
+                                if !drag.cancelled() {
+                                    s.set_field(&id, &name, to);
+                                }
                             }
                         }
-                    }
-                },
-            );
-            cell().child(knob).child(caption(field.label)).child(
-                text(number(value))
-                    .font(theme.text("number"))
-                    .color(theme.color("text-muted")),
-            )
+                    },
+                );
+            cell()
+                .child(knob)
+                .child(el().h(2.0))
+                .child(caption(field.label))
+                .child(
+                    text(number(value))
+                        .font(theme.text("number"))
+                        .color(theme.color("text")),
+                )
         }
         Kind::Switch => {
             // A switch carries its name and is lit while on.
@@ -341,13 +357,18 @@ fn control(state: &State, id: &InstanceId, prefix: &str, field: Field) -> El {
                 .px(theme.space(2))
                 .items_center()
                 .radius(theme.radius("sm").unwrap_or(4.0))
-                .border(1.0, theme.color(if on { "green" } else { "border-strong" }))
-                .fill(theme.color(if on { "green/25" } else { "background" }))
+                .w(COLUMN - 8.0)
+                .justify_center()
+                .border(
+                    1.0,
+                    theme.color(if on { "#00000000" } else { "border-strong" }),
+                )
+                .fill(theme.color(if on { "on/16" } else { "#00000000" }))
                 .on_press(move |s: &mut State| s.set_field(&id, &name, json!(!on)))
                 .child(
                     text(field.label)
                         .font(theme.text("label"))
-                        .color(theme.color(if on { "text" } else { "text-muted" }))
+                        .color(theme.color(if on { "text" } else { "text-secondary" }))
                         .truncate(),
                 );
             cell().child(switch)
@@ -414,8 +435,8 @@ fn arc(shape: Shape, at: f32, colour: rune::Color) -> Shape {
     let point = |t: f32| {
         let angle = (135.0 + t * 270.0_f32).to_radians();
         [
-            centre + angle.cos() * (centre - 3.0),
-            centre + angle.sin() * (centre - 3.0),
+            centre + angle.cos() * (centre - 1.25),
+            centre + angle.sin() * (centre - 1.25),
         ]
     };
     let points: Vec<[f32; 2]> = (0..=steps)
@@ -424,5 +445,5 @@ fn arc(shape: Shape, at: f32, colour: rune::Color) -> Shape {
     if at <= 0.0 {
         return shape;
     }
-    shape.stroke_with(points, false, 3.0, LineCap::Round, colour)
+    shape.stroke_with(points, false, 2.5, LineCap::Butt, colour)
 }

@@ -12,6 +12,7 @@ fn opened(folder: &Path) -> State {
         folder: folder.to_path_buf(),
         headless: true,
         play: None,
+        main: None,
         act: None,
     })
     .unwrap();

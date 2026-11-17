@@ -73,7 +73,7 @@ type Request =
   /** The instances whose views the new window shows: each sends its tree now, and again when its records change. */
   | { type: "show"; instances: string[] }
   /** An action on an element of a shown view, by its key: `press`, `drag` with `{ dx, dy }`, or one it names. */
-  | { type: "act"; instance: string; key: string; action: string; value?: number | { dx: number; dy: number } };
+  | { type: "act"; instance: string; key: string; action: string; value?: number | string | { dx: number; dy: number } };
 
 /** What bindings of an instance read: the window tells this Bun at once only what they read. */
 type Reads = { state: string[] | null; children: boolean; watches: string[] | null };

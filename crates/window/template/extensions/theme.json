@@ -2,6 +2,7 @@
   "color": {
     "background": "#121317",
     "surface": "#1b1d23",
+    "raised": "#292c34",
     "well": "#0c0d10",
     "fill": "#ffffff0d",
     "fill-strong": "#ffffff1a",
@@ -12,6 +13,12 @@
     "text-secondary": "#989ca8",
     "text-muted": "#7c808c",
     "text-inverse": "#0c0d10",
+    "on": "text",
+    "sound": "green",
+    "hot": "yellow",
+    "warning": "peach",
+    "danger": "red",
+    "focus": "lavender",
     "green": "#7ee0a0",
     "yellow": "#f3d27a",
     "peach": "#f7a26b",
@@ -29,9 +36,12 @@
     "heading": { "size": 14, "lineHeight": 20, "tracking": 0, "weight": 500 },
     "body": { "size": 14, "lineHeight": 20, "tracking": 0, "weight": 400 },
     "label": { "size": 12, "lineHeight": 16, "tracking": 0, "weight": 400 },
+    "control": { "size": 12, "lineHeight": 16, "tracking": 0, "weight": 500 },
     "number": { "size": 12, "lineHeight": 16, "tracking": 0, "weight": 400, "tabular": true }
   },
   "space": { "0": 0, "1": 4, "2": 8, "3": 12, "4": 16, "6": 24, "8": 32 },
   "radius": { "sm": 4, "md": 6, "lg": 8, "full": 9999 },
-  "shadow": { "sm": { "y": 1, "blur": 2, "color": "#00000066" }, "md": { "y": 4, "blur": 12, "color": "#00000080" } }
+  "shadow": { "sm": { "y": 1, "blur": 2, "color": "#00000066" }, "md": { "y": 4, "blur": 12, "color": "#00000080" } },
+  "size": { "sm": 24, "md": 28, "lg": 32, "cell": 64, "row": 72, "knob": 36 },
+  "tint": 16
 }

@@ -14,7 +14,7 @@ use sound_typescript::next::Drawn;
 
 use crate::app::State;
 use crate::card::{self, Field, Kind};
-use crate::tree::Node;
+use crate::tree::{self, Node};
 
 /// One control of the window, as `--tree` lists it under `controls`.
 #[derive(Serialize)]
@@ -28,6 +28,9 @@ pub(crate) struct Control {
     pub(crate) value: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) checked: Option<bool>,
+    /// Whether what it opens is open.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) expanded: Option<bool>,
     pub(crate) actions: Vec<String>,
     #[serde(skip)]
     pub(crate) target: Target,
@@ -48,6 +51,13 @@ pub(crate) enum Target {
     },
     /// The switch that shows all the controls of a card, or the first few.
     Expand(InstanceId),
+    /// An element that opens an overlay, by its key in the window: `open` opens or closes it,
+    /// and any other action is its view's.
+    Opens {
+        window_key: String,
+        instance: InstanceId,
+        key: String,
+    },
     Play,
 }
 
@@ -60,6 +70,7 @@ pub(crate) fn collect(state: &State) -> Found {
         role: Some("button".into()),
         value: None,
         checked: Some(state.playing),
+        expanded: None,
         actions: vec!["press".into()],
         target: Target::Play,
     });
@@ -116,28 +127,57 @@ impl Found {
                 }
                 return;
             }
+            Node::Field(f) => {
+                self.controls.push(Control {
+                    key: format!("{prefix}{}", f.key),
+                    label: f.label.clone(),
+                    role: Some("textbox".into()),
+                    value: Some(Value::String(f.value.clone())),
+                    checked: None,
+                    expanded: None,
+                    actions: vec!["commit".into()],
+                    target: Target::View {
+                        instance: id.clone(),
+                        key: f.key.clone(),
+                    },
+                });
+                return;
+            }
             Node::Text(_) | Node::Shapes(_) => return,
         };
         let press = b.press.then(|| "press".to_string());
         let drag = b.drag.is_some().then(|| "drag".to_string());
         let enter = b.enter.then(|| "enter".to_string());
-        let actions: Vec<String> = (press.into_iter())
+        let opens = b.opens() == Some(tree::Opens::Press);
+        let open = opens.then(|| "open".to_string());
+        let actions: Vec<String> = (open.into_iter())
+            .chain(press)
             .chain(b.actions.iter().cloned())
             .chain(drag)
             .chain(enter)
             .collect();
         if let (Some(key), false) = (&b.key, actions.is_empty()) {
+            let window_key = format!("{prefix}{key}");
+            let target = match opens {
+                true => Target::Opens {
+                    window_key: window_key.clone(),
+                    instance: id.clone(),
+                    key: key.clone(),
+                },
+                false => Target::View {
+                    instance: id.clone(),
+                    key: key.clone(),
+                },
+            };
             self.controls.push(Control {
-                key: format!("{prefix}{key}"),
+                expanded: opens.then(|| state.open.as_deref() == Some(window_key.as_str())),
+                key: window_key,
                 label: b.label.clone().unwrap_or_default(),
                 role: b.role.clone(),
                 value: b.value.clone(),
                 checked: b.checked,
                 actions,
-                target: Target::View {
-                    instance: id.clone(),
-                    key: key.clone(),
-                },
+                target,
             });
         }
         for child in &b.children {
@@ -155,6 +195,7 @@ impl Found {
                 role: Some("switch".into()),
                 value: None,
                 checked: Some(state.expanded.contains(id)),
+                expanded: None,
                 actions: ["press", "toggle"].map(String::from).to_vec(),
                 target: Target::Expand(id.clone()),
             });
@@ -174,6 +215,7 @@ impl Found {
                     role: Some("slider".into()),
                     value: Some(field.value.clone()),
                     checked: None,
+                    expanded: None,
                     actions: ["set", "increment", "decrement"].map(String::from).to_vec(),
                     target: target(None),
                 }),
@@ -183,6 +225,7 @@ impl Found {
                     role: Some("switch".into()),
                     value: None,
                     checked: field.value.as_bool(),
+                    expanded: None,
                     actions: ["press", "toggle"].map(String::from).to_vec(),
                     target: target(None),
                 }),
@@ -197,6 +240,7 @@ impl Found {
                             role: Some("button".into()),
                             value: None,
                             checked: Some(option == field.value),
+                            expanded: None,
                             actions: vec!["press".into()],
                             target: target(Some(option)),
                         });
