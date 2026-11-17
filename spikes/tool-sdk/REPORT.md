@@ -79,16 +79,21 @@ What the spike says a tool's view should be:
 Not tested: the sound side (unchanged), tool memory such as a selection, menus, text input,
 plugin windows.
 
-## Baseline: today's SDK, scored by `tooling/agent-eval/eval.py ui --label gpui`
+## Agent eval: today's SDK against the new one (`tooling/agent-eval`, `--label gpui,next`)
 
-Opus 5.5 builds 8 tasks on today's GPUI SDK: 4 new tools, 2 changes to the DAW template and 2
-follow-up messages on a tool it just built. A council (Opus 5.5 and GPT 6.1 Sol, each on its own
-copy) then checks hidden criteria by using the result through the app, and scores UI and UX
-1–5. One run each; `report.py` shows the screenshots side by side.
+Opus 5.5 builds 8 tasks (4 new tools, 2 DAW template changes, 2 follow-ups); a council (Opus 5.5,
+GPT 6.1 Sol) checks hidden criteria through the app and scores UI and UX 1–5. One run each;
+new SDK at `t3/rune-window-slice` 7f461963.
 
-- Builds work and are fast: 49–231 s and $0.35–1.44 a message; one criterion of 64 failed (the
-  peak hold timed from the first peak, which only Opus caught).
-- 12 of 64 verdicts are "unverifiable": no drag, no right-click, no hearing what a click plays,
-  so a feature in a context menu or behind a drag cannot be checked by the builder or the QA.
-- UI 3–4 (mean 3.8), UX 3–4 (mean 3.4): layout and feedback, not function.
-- Builders check unevenly: from 0 checks (DAW peak readout) to 14.
+| | today (GPUI) | new (Rune) |
+| --- | --- | --- |
+| Criteria pass / fail / unverifiable | 54 / 2 / 8 | 58 / 3 / 3 |
+| UI / UX, mean | 3.8 / 3.3 | 3.1 / 3.1 |
+| Build time, cost | 1,535 s, $9.54 | 2,463 s, $16.64 |
+
+- Works as well, and more can be checked without a window (`--act` drags and presses).
+- UI is lower for the same reasons in every task: knobs show no value, control sizes off the
+  scale, solid green for "chosen", cards stacked tall instead of the device grid, a second Play
+  button. That is missing components and blocks (SPEC's layers 3–4), not the primitives.
+- One real SDK bug: a drag on a pressable step also toggles it (sequencer follow-up).
+- Builds are 60% slower and dearer; the builders check more (`--snap`, `--tree`, `--act`).
