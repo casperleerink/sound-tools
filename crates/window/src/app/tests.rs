@@ -1199,3 +1199,133 @@ fn a_key_sounds_while_a_press_or_a_clip_plays_it() {
     }
     assert!(sounded);
 }
+
+/// A step with a velocity drag, a menu, a name to type and a level the arrows step.
+const KIT: &str = r#"import { boolean, h, input, number, text, tool } from "./sdk";
+export const kit = tool({
+  name: "kit", title: "Kit", when: "Never", doc: "Kit.",
+  state: { on: boolean({ default: false }), velocity: number({ min: 0, max: 1, default: 0.5 }), picked: number({ min: 0, max: 1, default: 0 }), name: text({ default: "" }), level: number({ min: 0, max: 10, default: 5 }) },
+  sound: () => input,
+  view: (self, { update }) => (
+    <row gap={2}>
+      <box key="step" label="Step" w={24} h={48} fill="fill" onPress={() => update("Step", (draft) => void (draft.state.on = !draft.state.on))}
+        drag={{ axis: "y", min: -40, max: 40, move: false }} onDragEnd={({ dy }) => update("Velocity", (draft) => void (draft.state.velocity = 0.5 - dy / 80))} />
+      <box key="open" label="Open" w={24} h={24} fill="fill">
+        <col overlay={{ open: "press" }} role="menu" w={80} fill="raised">
+          <box key="pick" label="Pick" w={80} h={24} onPress={() => update("Pick", (draft) => void (draft.state.picked = 1))} />
+        </col>
+      </box>
+      <field key="name" label="Name" value={self.state.name} w={80} onCommit={(name) => update("Name", (draft) => void (draft.state.name = name))} />
+      <box key="level" label="Level" w={24} h={24} fill="fill" actions={{
+        increment: (by) => update("Level", (draft) => void (draft.state.level += by)),
+        decrement: (by) => update("Level", (draft) => void (draft.state.level -= by)),
+      }} />
+    </row>
+  ),
+});
+"#;
+
+fn kit() -> (tempfile::TempDir, rune::Runtime<State>) {
+    let (scratch, folder) = with_tools(&[("kit", KIT)]);
+    (scratch, laid_out(opened(&folder)))
+}
+
+fn kit_record(state: &State) -> Value {
+    let id = InstanceId::new("song/t00/chain/kit").unwrap();
+    serde_json::from_str(&state.project.state_json(&id).unwrap()).unwrap()
+}
+
+/// A press and its release at the centre of the element `key`, then a frame that draws it.
+fn click(window: &mut rune::Runtime<State>, key: &str) {
+    let (x, y) = window.find(key).unwrap_or_else(|| panic!("no {key}"));
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    window.pointer_up(x, y);
+    redraw(window);
+}
+
+fn redraw(window: &mut rune::Runtime<State>) {
+    window.invalidate();
+    window.frame(1.0 / 60.0);
+}
+
+fn key(window: &mut rune::Runtime<State>, key: rune::Key) {
+    window.key(rune::KeyEvent {
+        key,
+        mods: rune::Mods::default(),
+    });
+    redraw(window);
+}
+
+#[test]
+fn a_drag_on_a_step_sets_how_hard_it_plays_and_never_also_presses_it() {
+    let (_scratch, mut window) = kit();
+    let (x, y) = window.find("t00/chain/kit:step").unwrap();
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    for step in 1..=10 {
+        window.pointer_move(x, y - step as f32 * 1.6);
+        window.frame(1.0 / 60.0);
+    }
+    // Let go still over the step, where a press ends.
+    window.pointer_up(x, y - 16.0);
+    redraw(&mut window);
+    let held = kit_record(&window.state);
+    assert_eq!(held["on"], Value::Null, "{held}");
+    assert_eq!(held["velocity"], 0.7);
+    click(&mut window, "t00/chain/kit:step");
+    assert_eq!(kit_record(&window.state)["on"], true);
+}
+
+#[test]
+fn an_overlay_closes_on_escape_on_a_press_outside_and_on_a_pick_from_a_menu() {
+    let (_scratch, mut window) = kit();
+    let opener = "t00/chain/kit:open";
+    click(&mut window, opener);
+    assert_eq!(window.state.open.as_deref(), Some(opener));
+    key(&mut window, rune::Key::Escape);
+    assert_eq!(window.state.open, None);
+    click(&mut window, opener);
+    window.pointer_down(700.0, 300.0);
+    window.pointer_up(700.0, 300.0);
+    redraw(&mut window);
+    assert_eq!(window.state.open, None);
+    click(&mut window, opener);
+    click(&mut window, "t00/chain/kit:pick");
+    assert_eq!(window.state.open, None);
+    assert_eq!(kit_record(&window.state)["picked"], 1);
+}
+
+#[test]
+fn a_field_keeps_what_was_typed_on_enter() {
+    let (_scratch, mut window) = kit();
+    click(&mut window, "t00/chain/kit:name");
+    for letter in ["K", "i", "c", "k"] {
+        key(&mut window, rune::Key::Text(letter.into()));
+    }
+    assert_eq!(kit_record(&window.state)["name"], Value::Null);
+    key(&mut window, rune::Key::Enter);
+    assert_eq!(kit_record(&window.state)["name"], "Kick");
+}
+
+#[test]
+fn the_arrows_step_a_control_with_steps_that_tab_reaches() {
+    let (_scratch, mut window) = kit();
+    let level = "t00/chain/kit:level";
+    let focused = |window: &rune::Runtime<State>| {
+        let elements = window.elements();
+        elements
+            .into_iter()
+            .find(|element| element.focused)
+            .and_then(|element| element.key)
+    };
+    for _ in 0..60 {
+        if focused(&window).as_deref() == Some(level) {
+            break;
+        }
+        key(&mut window, rune::Key::Tab);
+    }
+    assert_eq!(focused(&window).as_deref(), Some(level));
+    key(&mut window, rune::Key::Up);
+    assert_eq!(kit_record(&window.state)["level"], 6);
+}
