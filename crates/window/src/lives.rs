@@ -215,7 +215,9 @@ impl Lives {
                 },
                 Shown::Text(shown, widest),
             ) => {
-                let value = number(value, &sources);
+                // A live value's numbers are `f32`: a step that lands on 0 leaves a millionth.
+                let value = Some(number(value, &sources)).filter(|value| value.abs() >= 1e-6);
+                let value = value.unwrap_or(0.0);
                 let text = match digits {
                     Some(digits) => format!("{value:.digits$}"),
                     None => text_of(value, *unit, Some(project.clock())),
