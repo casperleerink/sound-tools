@@ -133,7 +133,8 @@ export type BoxProps = Interactive & Size & {
   children?: Child;
 };
 type TextChild = string | number | null | undefined | false | TextChild[];
-type TextLook = { key?: string; at?: [Num, Num]; style?: TextStyle; color?: Color; w?: number; truncate?: boolean; opacity?: Num };
+/** `align` places it in its `w`. */
+type TextLook = { key?: string; at?: [Num, Num]; style?: TextStyle; color?: Color; w?: number; align?: "center" | "end"; truncate?: boolean; opacity?: Num };
 /**
  * Its words, or a live value it shows: in `unit`, a tick as `"position"` (`5.3`) or `"time"`
  * (`1:07`), else a plain number with `digits` after the point.
@@ -187,18 +188,24 @@ export type Drawn<State, K extends ChildTools = ChildTools> = { name: string; st
 /** A tool's `view`: what the window shows of an instance, run again whenever its records change. Its handlers use `ctx` as `tick` does: `update`, `send`, `play`, `clock`. */
 export type ToolView<S extends Fields, I extends Inputs, M, K extends ChildTools> = (self: Drawn<ValuesOf<S>, K>, ctx: Context<ValuesOf<S>, I, M, K>) => Node;
 
-/** A field of a record as the card of a device without a view shows it. */
-export type CardField = { name: string; label: string } & (
-  | { kind: "number"; min: number; max: number; log: boolean; integer: boolean; unit: Unit | null; default: number }
-  | { kind: "switch"; default: boolean }
-  | { kind: "choice"; options: { value: string | number; text: string }[]; default: string | number }
-);
 /**
  * The view of the card of every device whose tool has none, such as a built-in one: the project
- * exports it as `card` from `ui/blocks/generic-card.tsx`. Its `update` changes the record.
+ * exports it as `card` from `ui/blocks/generic-card.tsx`. `fields` are those of its record, in
+ * their order; its `update` changes the record.
  */
 export type GenericCard = (
-  self: { name: string; state: Record<string, unknown>; card: { title: string; fields: CardField[] } },
+  self: {
+    name: string;
+    state: Record<string, unknown>;
+    card: {
+      title: string;
+      fields: ({ name: string; label: string } & (
+        | { kind: "number"; min: number; max: number; log: boolean; integer: boolean; unit: Unit | null; default: number }
+        | { kind: "switch"; default: boolean }
+        | { kind: "choice"; options: { value: string | number; text: string }[]; default: string | number }
+      ))[];
+    };
+  },
   ctx: { update: (label: string, change: (draft: { state: Record<string, unknown> }) => void) => void; memory: Record<string, unknown> },
 ) => Node;
 

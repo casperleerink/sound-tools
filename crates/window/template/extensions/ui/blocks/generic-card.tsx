@@ -1,4 +1,4 @@
-import { h, type CardField, type GenericCard } from "../../sdk";
+import { h, type GenericCard } from "../../sdk";
 import theme from "../../theme.json";
 import { Cell } from "../cell";
 import { Knob } from "../knob";
@@ -7,16 +7,21 @@ import { Select } from "../select";
 import { Toggle } from "../toggle";
 import { DeviceCard } from "./device-card";
 
+type Field = Parameters<GenericCard>[0]["card"]["fields"][number];
+
 /** How many controls a card shows until it is expanded, and the most options side by side. */
 const [FEW, SIDE_BY_SIDE] = [4, 3];
+/** Within what shows, knobs and switches two to a column, then choices, two columns wide. */
+const RANK = { number: 0, switch: 1, choice: 2 };
 
 /**
  * The card of every device whose tool has no view, such as a built-in one: a knob for a number,
- * a switch for a yes or no, a choice of options, the first few shown and the rest behind More.
+ * a switch for a yes or no, a choice of options: the first few of its record shown, the rest
+ * behind More.
  */
 export const card: GenericCard = ({ state, card: { title, fields } }, { update, memory }) => {
-  const set = (field: CardField, value: unknown) => update(`Change ${field.label}`, (draft) => void (draft.state[field.name] = value));
-  const control = (field: CardField) => {
+  const set = (field: Field, value: unknown) => update(`Change ${field.label}`, (draft) => void (draft.state[field.name] = value));
+  const control = (field: Field) => {
     const label = `${title} ${field.label}`;
     switch (field.kind) {
       case "number": {
@@ -34,10 +39,9 @@ export const card: GenericCard = ({ state, card: { title, fields } }, { update, 
       }
     }
   };
-  // Knobs and switches go two to a column, and choices, two columns wide, beside them.
-  const rank = { number: 0, switch: 1, choice: 2 };
-  const cells = [...fields].sort((a, b) => rank[a.kind] - rank[b.kind]).map(control);
+  // The tool's order decides what shows first; its kind only where it sits.
+  const laid = (some: Field[]) => [...some].sort((a, b) => RANK[a.kind] - RANK[b.kind]).map(control);
   return (
-    <DeviceCard id="card" title={title} cells={cells.slice(0, FEW)} more={cells.slice(FEW)} expanded={memory.expanded === true} onExpand={() => (memory.expanded = memory.expanded !== true)} />
+    <DeviceCard id="card" title={title} cells={laid(fields.slice(0, FEW))} more={laid(fields.slice(FEW))} expanded={memory.expanded === true} onExpand={() => (memory.expanded = memory.expanded !== true)} />
   );
 };

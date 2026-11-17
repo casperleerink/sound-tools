@@ -550,9 +550,14 @@ fn launch(
     mut skipped: Skipped,
     logs: bool,
 ) -> Result<Option<Launched>, String> {
-    let files = tool_files(extensions);
+    let mut files = tool_files(extensions);
     if files.is_empty() {
         return Ok(None);
+    }
+    let views = extensions.join(next::THEME).is_file();
+    let card = views && extensions.join(next::GENERIC_CARD).is_file();
+    if card {
+        files.push(next::GENERIC_CARD.to_string());
     }
     let program = bun_program().ok_or_else(|| {
         "Bun is not installed, so the tools of this project do not load: install it from https://bun.sh and open the project again".to_string()
@@ -570,7 +575,13 @@ fn launch(
                 // The tools that own children ask it what they declare while their records
                 // play, also outside the window.
                 let bun = Arc::new(bun);
-                let (sounds, problems) = checked(loaded, &skipped, &bun);
+                let (sounds, mut problems) = checked(loaded, &skipped, &bun);
+                if views && !card {
+                    problems.push(folder_problem(format!(
+                        "{} is missing, so a device whose tool has no view shows no card: write one that exports `card`, a `GenericCard`",
+                        next::GENERIC_CARD
+                    )));
+                }
                 return Ok(Some(Launched {
                     bun,
                     sounds,

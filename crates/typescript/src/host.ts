@@ -222,7 +222,11 @@ async function load() {
     say({ type: "loading", file });
     const before = new Set(sdk.host.tools.keys());
     try {
-      await import(join(folder, file));
+      const module = await import(join(folder, file));
+      if (file === GENERIC_CARD) {
+        if (typeof module.card !== "function") throw new Error("it exports no `card`, a `GenericCard`");
+        genericCard = module.card;
+      }
     } catch (error) {
       // The tools it defined before it failed are its tools too.
       errors.push({ file, message: String(error) });
@@ -237,13 +241,6 @@ async function load() {
       if (problems.length === 0) {
         tools.push(described(spec, defined));
       }
-    }
-  }
-  if (next && existsSync(join(folder, GENERIC_CARD))) {
-    try {
-      genericCard = (await import(join(folder, GENERIC_CARD))).card;
-    } catch (error) {
-      errors.push({ file: GENERIC_CARD, message: String(error) });
     }
   }
   say({ type: "loaded", tools, errors });
@@ -692,8 +689,9 @@ function drawNext(instance: string) {
   const record = recordOf(instance);
   const spec = sdk.host.tools.get(record?.tool ?? "");
   const card = fieldCards[instance];
-  if (next && record && !spec?.view && genericCard && card) {
-    drawCard(instance, record, card);
+  if (next && record && !spec?.view && card) {
+    if (genericCard) drawCard(instance, record, card);
+    else say({ type: "tree", instance, error: "the project has no card for a device without a view of its own" });
     return;
   }
   if (!next || !record || !spec?.view) {
@@ -714,6 +712,7 @@ function drawNext(instance: string) {
 /** The cards of the shown instances whose tools may have no view, and the project's view of such a card. */
 let fieldCards: Extract<Request, { type: "show" }>["cards"] = {};
 let genericCard: unknown;
+/** As `GENERIC_CARD` of the runtime names it, which loads it with the tools. */
 const GENERIC_CARD = "ui/blocks/generic-card.tsx";
 
 /** The card of an instance whose tool has no view, drawn by the project's generic card from the fields of its record. */
@@ -722,6 +721,7 @@ function drawCard(instance: string, record: Entry, card: (typeof fieldCards)[str
   const self = { name: instance.slice(instance.lastIndexOf("/") + 1), state: { ...defaults, ...(record.state as object) }, card };
   const key = `${instance} card`;
   if (!memories.has(key)) memories.set(key, {});
+  runs(GENERIC_CARD, "card");
   try {
     say({ type: "tree", instance, tree: next!.host.run(instance, genericCard, self, { update: updater(instance, defaults), memory: memories.get(key) }) });
   } catch (error) {
@@ -1545,10 +1545,14 @@ function handle(request: Request) {
     case "behaviour":
       declare(request);
       break;
-    case "show":
+    case "show": {
+      // A card whose fields changed, as when its instance became another tool, draws again.
+      const changed = request.instances.filter((id) => shown.has(id) && JSON.stringify(fieldCards[id]) !== JSON.stringify(request.cards[id]));
       fieldCards = request.cards;
       show(request.instances);
+      changed.forEach(drawNext);
       break;
+    }
     case "act":
       act(request);
       break;

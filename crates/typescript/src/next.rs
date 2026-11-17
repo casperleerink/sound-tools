@@ -33,6 +33,10 @@ use crate::{Extensions, FOLDER, Launched};
 /// of the new window: it gets `sdk/view.ts` and its agent docs.
 pub const THEME: &str = "theme.json";
 
+/// The file of a project of the new window that draws the card of a device whose tool has no
+/// view, from the fields of its record. Bun loads it with the tools.
+pub const GENERIC_CARD: &str = "ui/blocks/generic-card.tsx";
+
 /// Whether the project in `folder` is one of the new window, see [`THEME`].
 pub fn has_views(folder: &Path) -> bool {
     folder.join(FOLDER).join(THEME).is_file()
@@ -200,13 +204,19 @@ impl Tools {
     }
 
     /// The instances whose views the window shows now, and the card of each whose tool may
-    /// have no view, which the project's generic card draws.
-    pub fn show(&mut self, instances: BTreeSet<InstanceId>, cards: BTreeMap<InstanceId, Value>) {
-        if instances != self.shown || cards != self.cards {
-            self.drawn.retain(|id, _| instances.contains(id));
-            (self.shown, self.cards) = (instances, cards);
-            self.told_shown = false;
+    /// have no view, which the project's generic card draws. Whether that is news to Bun.
+    pub fn show(
+        &mut self,
+        instances: BTreeSet<InstanceId>,
+        cards: BTreeMap<InstanceId, Value>,
+    ) -> bool {
+        if instances == self.shown && cards == self.cards {
+            return false;
         }
+        self.drawn.retain(|id, _| instances.contains(id));
+        (self.shown, self.cards) = (instances, cards);
+        self.told_shown = false;
+        true
     }
 
     /// Runs `action` of the element `key` of the view of `instance`, as a pointer or an agent
@@ -898,25 +908,25 @@ impl Tools {
         edits: Vec<RecordEdit>,
         gesture: bool,
     ) {
-        let info = project
-            .tool_of(instance)
-            .and_then(|tool| find(&self.tools, tool))
-            .cloned();
-        let refused = match info.map(|info| changes_of(project, &info, instance, edits)) {
-            None => None,
-            Some(Err(refused)) => Some(refused),
-            Some(Ok((changes, touched))) => {
-                self.changed_records.extend(touched);
-                let published = match gesture {
-                    true => {
-                        let edit = self.acting.get_or_insert_with(|| project.begin(label));
-                        project.publish(edit, changes)
-                    }
-                    false => project.publish_run(instance, label, changes),
-                };
-                published.err().map(|error| error.to_string())
-            }
-        };
+        // A built-in tool, such as one a generic card shows, owns no children to change.
+        let behaviour = (project.tool_of(instance))
+            .map(|tool| find(&self.tools, tool).is_some_and(|info| info.behaviour));
+        let refused =
+            match behaviour.map(|behaviour| changes_of(project, behaviour, instance, edits)) {
+                None => Some(format!("{instance} is gone")),
+                Some(Err(refused)) => Some(refused),
+                Some(Ok((changes, touched))) => {
+                    self.changed_records.extend(touched);
+                    let published = match gesture {
+                        true => {
+                            let edit = self.acting.get_or_insert_with(|| project.begin(label));
+                            project.publish(edit, changes)
+                        }
+                        false => project.publish_run(instance, label, changes),
+                    };
+                    published.err().map(|error| error.to_string())
+                }
+            };
         if let Some(bun) = &self.bun {
             bun.heard_edit();
             if refused.is_some() {
@@ -930,7 +940,9 @@ impl Tools {
             format!("its update {label:?} was refused, and none of it applied: {refused}");
         if gesture {
             self.failed_actions.push(problem);
-        } else if let Some(problem) = self.problem_of(project, instance, &problem) {
+        } else {
+            let problem = (self.problem_of(project, instance, &problem))
+                .unwrap_or_else(|| crate::folder_problem(format!("{instance}: {problem}")));
             self.problems.push(problem);
             self.report(project);
         }
@@ -943,6 +955,15 @@ impl Tools {
             .as_ref()
             .and_then(|runs| find(&self.tools, &runs.tool).cloned());
         self.end_actions(project, &format!("the code of the project {why}"));
+        if let Some(runs) = blame.as_ref().filter(|runs| runs.tool == GENERIC_CARD) {
+            let message = format!(
+                "its {} {why}, so devices show no card: fix it and save",
+                runs.what
+            );
+            self.skipped.insert(GENERIC_CARD.to_string(), message);
+            self.restart(project);
+            return;
+        }
         match (info, blame) {
             (Some(info), Some(runs)) => {
                 let problem = info.problem(format!(

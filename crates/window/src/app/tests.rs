@@ -1545,3 +1545,129 @@ fn an_agent_sees_and_acts_on_an_overlay_as_a_pointer_does() {
     assert!(!shown(&window.state));
     assert_eq!(kit_record(&window.state)["picked"], 1);
 }
+
+fn synth(state: &State) -> Value {
+    record(state, "song/t00/synth.json")["state"].clone()
+}
+
+#[test]
+fn a_built_in_device_changes_from_its_card_one_step_of_undo_each() {
+    let scratch = new_project();
+    let mut state = opened(&scratch.path().join("song"));
+    act(
+        &mut state,
+        json!({ "label": "Synth Cutoff", "action": "set", "value": 500 }),
+    );
+    assert_eq!(synth(&state)["cutoff_hz"], 500.0);
+    act(
+        &mut state,
+        json!({ "label": "Synth Cutoff", "action": "increment" }),
+    );
+    let raised = synth(&state)["cutoff_hz"].as_f64().unwrap();
+    assert!(raised > 500.0, "{raised}");
+    act(&mut state, json!({ "action": "undo" }));
+    assert_eq!(synth(&state)["cutoff_hz"], 500.0);
+    act(&mut state, json!({ "action": "undo" }));
+    assert_eq!(synth(&state).get("cutoff_hz"), None);
+}
+
+#[test]
+fn a_card_follows_its_instance_becoming_another_tool_and_its_tool_gaining_a_field() {
+    let (_scratch, folder) = with_tools(&[("amp", AMP)]);
+    let mut state = opened(&folder);
+    assert!(labels(&state).contains(&"Amp Gain".to_string()));
+    let root = state.project.root().to_path_buf();
+    let amp = root.join("extensions/amp.tsx");
+    let code = std::fs::read_to_string(&amp).unwrap();
+    std::fs::write(
+        &amp,
+        code.replace(
+            "stages:",
+            "tone: number({ min: 0, max: 1, default: 0.5 }), stages:",
+        ),
+    )
+    .unwrap();
+    state.tools.as_mut().unwrap().code_changed();
+    frame(&mut state, 0.1);
+    state.settle();
+    assert!(
+        labels(&state).contains(&"Amp Tone".to_string()),
+        "{:?}",
+        labels(&state)
+    );
+    let record = root.join("state/song/t00/chain/amp.json");
+    std::fs::write(&record, r#"{"tool": "compressor", "state": {}}"#).unwrap();
+    state.project.apply_outside_changes(&[record]).unwrap();
+    frame(&mut state, 0.2);
+    state.settle();
+    let shown = labels(&state);
+    assert!(
+        !shown.iter().any(|label| label.starts_with("Amp ")),
+        "{shown:?}"
+    );
+    assert!(
+        shown.iter().any(|label| label.starts_with("Compressor ")),
+        "{shown:?}"
+    );
+}
+
+#[test]
+fn a_project_without_its_generic_card_says_so_in_plain_words() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    std::fs::remove_file(folder.join("extensions/ui/blocks/generic-card.tsx")).unwrap();
+    let state = opened(&folder);
+    let problems = state.project.problems();
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.message.contains("generic-card.tsx is missing")),
+        "{problems:?}"
+    );
+    let synth = InstanceId::new("song/t00/synth").unwrap();
+    assert!(matches!(state.drawn(&synth), Some(Drawn::Failed(why)) if why.contains("no card")));
+}
+
+#[test]
+fn a_generic_card_that_hangs_is_blamed_alone_and_the_tools_go_on() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    std::fs::write(
+        folder.join("extensions/ui/blocks/generic-card.tsx"),
+        "export const card = () => { while (true) {} };\n",
+    )
+    .unwrap();
+    let mut state = opened(&folder);
+    for step in 1..=8 {
+        frame(&mut state, f64::from(step) * 0.5);
+        state.settle();
+    }
+    let problems = state.project.problems();
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.path.contains("generic-card.tsx")),
+        "{problems:?}"
+    );
+    control(&controls::collect(&state).controls, "Mute Track 2");
+}
+
+#[test]
+fn enter_on_a_fader_types_its_value_and_the_keys_stay_with_it() {
+    let scratch = new_project();
+    let mut window = laid_out(opened(&scratch.path().join("song")));
+    let gain = |state: &State| record(state, "song/t00/mix.json")["state"]["gain_db"].clone();
+    tab_to(&mut window, "fader-t00");
+    key(&mut window, rune::Key::Enter);
+    assert_eq!(window.state.open, ["fader-t00-value"]);
+    for typed in ["-", "1", "2"] {
+        key(&mut window, rune::Key::Text(typed.into()));
+    }
+    key(&mut window, rune::Key::Enter);
+    assert_eq!(gain(&window.state), -12.0);
+    assert_eq!(focused(&window).as_deref(), Some("fader-t00"));
+    key(&mut window, rune::Key::Up);
+    assert_eq!(gain(&window.state), -11.0);
+    key(&mut window, rune::Key::Tab);
+    assert_ne!(focused(&window).as_deref(), Some("fader-t00-value"));
+}

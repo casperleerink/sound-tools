@@ -56,9 +56,9 @@ export const Knob = ({ id, label, text, value, initial, unit, bipolar = false, o
         <box at={[pointer(true), pointer(false)]} w={3} h={3} radius="full" fill="text" />
       </box>
       <box h={2} />
-      <text style="label" color="text-secondary">{text ?? label}</text>
+      <text style="label" color="text-secondary" w={CELL - 4} align="center" truncate>{text ?? label}</text>
       <TypeIn id={id} label={label} value={value} unit={unit} range={range} w={CELL + 16} h={ROW - DIAL} drag={drag} onDragEnd={dragEnd} onChange={set}>
-        {unit === undefined ? <text style="number" color="text" live={readout} digits={range.step && range.step >= 1 ? 0 : 2} /> : <text style="number" color="text" live={readout} unit={unit} />}
+        {unit === undefined ? <text style="number" color="text" live={readout} /> : <text style="number" color="text" live={readout} unit={unit} />}
       </TypeIn>
     </col>
   );

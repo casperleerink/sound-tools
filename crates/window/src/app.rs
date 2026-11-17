@@ -482,21 +482,26 @@ impl State {
         let mut changed = false;
         loop {
             let shown = controls::collect(self).shown;
-            if shown == self.shown {
-                return changed;
-            }
-            self.shown = shown.clone();
+            // A card follows its instance's tool and that tool's fields, also where the same
+            // instances show.
             let cards = (shown.iter())
                 .filter_map(|id| Some((id.clone(), crate::fields::card_of(self, id)?)))
                 .collect();
+            let more = shown != self.shown;
+            self.shown = shown.clone();
             let Some(tools) = &mut self.tools else {
                 return changed;
             };
-            tools.show(shown, cards);
+            if !tools.show(shown, cards) {
+                return changed;
+            }
             if !settle {
                 return true;
             }
             changed |= self.settle_tools();
+            if !more {
+                return changed;
+            }
         }
     }
 

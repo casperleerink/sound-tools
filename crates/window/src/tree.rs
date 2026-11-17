@@ -231,6 +231,7 @@ pub(crate) struct TextNode {
     style: Option<String>,
     color: Option<String>,
     w: Option<f32>,
+    align: Option<String>,
     #[serde(default)]
     truncate: bool,
     opacity: Option<Num>,
@@ -1043,6 +1044,11 @@ fn label(scope: &Scope, t: &TextNode) -> El {
     }
     if let Some(w) = t.w {
         e = e.w(w);
+    }
+    match t.align.as_deref() {
+        Some("center") => e = e.align(Align::Center),
+        Some("end") => e = e.align(Align::End),
+        _ => {}
     }
     if t.truncate {
         e = e.truncate();

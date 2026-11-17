@@ -6,6 +6,8 @@ test("a value steps from min and stays in range, without float noise", () => {
   expect([fitted(0, range), fitted(12, range), fitted(6, range)]).toEqual([1, 9, 5]);
   expect(fitted(0.1 * 3, { min: 0, max: 1, step: 0.1 })).toBe(0.3);
   expect(fitted(100, { min: 0, max: 1 })).toBe(1);
+  expect(stepped(0.05, 1, { min: 0.05, max: 1, step: 0.1 })).toBe(0.15);
+  expect(fitted(3e-7, { min: 0, max: 1e-6, step: 1e-7 })).toBe(3e-7);
 });
 
 test("an arrow moves a stepped log value by its step", () => {
@@ -17,6 +19,8 @@ test("typed text is read as the value shows, and what was shown changes nothing"
   expect(typedValue("2 kHz", "hz")).toBe(2000);
   expect(typedValue("+3", "db")).toBe(3);
   expect(typedValue("5 x", "db")).toBeUndefined();
+  expect(typedOver("20", 5, { min: 1, max: 5000 }, "ms")).toBe(20);
+  expect(typedOver("3", 2000, { min: 20, max: 20000, scale: "log" }, "hz")).toBe(3000);
   const range = { min: 20, max: 20000, scale: "log" as const };
   expect(typedOver(shown(2345.6, "hz"), 2345.6, range, "hz")).toBeUndefined();
 });

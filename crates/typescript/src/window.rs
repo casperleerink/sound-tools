@@ -2192,7 +2192,7 @@ impl Live {
         let project = session.read(cx).project();
         let tools = self.tools.borrow();
         let info = (project.tool_of(instance)).and_then(|tool| find(&tools, tool));
-        let changes = info.map(|info| changes_of(project, info, instance, edits));
+        let changes = info.map(|info| changes_of(project, info.behaviour, instance, edits));
         drop(tools);
         let refused = match changes {
             None => None,
@@ -2435,7 +2435,7 @@ impl Live {
 /// they are now, with each record they touch. Or what is wrong with one of them.
 pub(crate) fn changes_of(
     project: &Project,
-    info: &ToolInfo,
+    behaviour: bool,
     instance: &InstanceId,
     edits: Vec<RecordEdit>,
 ) -> Result<(Changes, Vec<InstanceId>), String> {
@@ -2472,7 +2472,7 @@ pub(crate) fn changes_of(
                 tool,
                 state,
             } => {
-                if !info.behaviour {
+                if !behaviour {
                     return Err(format!(
                         "it adds the child {name:?}, but only a tool with a behaviour has children"
                     ));

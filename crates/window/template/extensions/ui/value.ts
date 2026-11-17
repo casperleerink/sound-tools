@@ -9,8 +9,8 @@ export type Range = { min: number; max: number; scale?: Scale; step?: number };
 const clamp = (at: number) => Math.min(Math.max(at, 0), 1);
 /** What an arrow key moves of the travel when there is no `step`. */
 const KEY_STEP = 0.02;
-/** The digits after the point of `step`, so 0.1 * 3 is 0.3. */
-const digits = (step: number) => (String(step).split(".")[1] ?? "").length;
+/** `value` without the noise of binary fractions: 0.1 * 3 is 0.3, and 3e-7 stays 3e-7. */
+const clean = (value: number) => Number(value.toPrecision(12));
 
 /** Where `value` is on the travel, 0 to 1. */
 export const travelled = (value: number, { min, max, scale }: Range): number =>
@@ -22,7 +22,7 @@ const top = ({ min, max, step }: Range) => (step ? min + Math.floor((max - min) 
 /** `value` in whole `step`s from `min`, within the range: what every `set`, key and typed value goes through. */
 export const fitted = (value: number, range: Range): number => {
   const { min, step } = range;
-  const stepped = step ? Number((min + Math.round((value - min) / step) * step).toFixed(digits(step))) : value;
+  const stepped = step ? clean(min + Math.round((value - min) / step) * step) : value;
   return Math.min(Math.max(stepped, min), top(range));
 };
 
@@ -81,21 +81,26 @@ const WORDS: Record<Unit | "none", Record<string, number>> = {
   none: { "": 1 },
 };
 
+const NUMBER = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)\s*([a-z%]*)$/;
+
 /**
  * What was typed in `unit`, read as {@link shown} writes it: `2k`, `2 kHz`, `440 Hz`, `1.5 s`,
- * `30%`, `25L`, `C`, `+3`. Undefined when it is no value of `unit`.
+ * `30%`, `25L`, `C`, `+3`. A bare number is in the word of `shownAs`, such as ms in `5 ms`.
+ * Undefined when it is no value of `unit`.
  */
-export const typedValue = (text: string, unit?: Unit): number | undefined => {
+export const typedValue = (text: string, unit?: Unit, shownAs?: string): number | undefined => {
   const typed = text.trim().toLowerCase().replace("−", "-");
   if (unit === "pan" && typed === "c") return 0;
-  const match = /^([+-]?(?:\d+\.?\d*|\.\d+))\s*([a-z%]*)$/.exec(typed);
-  const times = match ? WORDS[unit ?? "none"][match[2] ?? ""] : undefined;
+  const match = NUMBER.exec(typed);
+  const shownWord = unit === "pan" ? "" : (NUMBER.exec(shownAs?.toLowerCase().replace("−", "-") ?? "")?.[2] ?? "");
+  const times = match ? WORDS[unit ?? "none"][match[2] || shownWord] : undefined;
   return match && times !== undefined ? Number(match[1]) * times : undefined;
 };
 
 /** The value typed over `value`, within the range; undefined when it says what was shown, or no value. */
 export const typedOver = (text: string, value: number, range: Range, unit?: Unit): number | undefined => {
-  if (text.trim() === shown(value, unit)) return undefined;
-  const typed = typedValue(text, unit);
+  const was = shown(value, unit);
+  if (text.trim() === was) return undefined;
+  const typed = typedValue(text, unit, was);
   return typed === undefined ? undefined : fitted(typed, range);
 };

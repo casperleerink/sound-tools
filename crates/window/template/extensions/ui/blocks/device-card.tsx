@@ -1,14 +1,24 @@
 import { h, type Node } from "../../sdk";
 import theme from "../../theme.json";
-import { Button } from "../button";
+import { Toggle } from "../toggle";
 
 const [ROW, PAD, HEADER] = [theme.size.row, 16, 32];
 /** Every card is this tall, so a rack has a straight bottom. */
 export const CARD_HEIGHT = HEADER + 2 * ROW + PAD;
 
-/** `cells` as columns of two, top to bottom then left to right. */
-const columns = (cells: readonly Node[]) =>
-  Array.from({ length: Math.ceil(cells.length / 2) }, (_, i) => <col>{cells.slice(2 * i, 2 * i + 2)}</col>);
+/** How many columns a cell takes. */
+const widthOf = (cell: Node) => ("w" in cell && typeof cell.w === "number" ? cell.w : 0);
+
+/** `cells` as columns of two, top to bottom then left to right; a cell starts a new column rather than sit over one of another width. */
+const columns = (cells: readonly Node[]) => {
+  const stacked: Node[][] = [];
+  for (const cell of cells) {
+    const last = stacked.at(-1);
+    if (last && last.length < 2 && widthOf(last[0]!) === widthOf(cell)) last.push(cell);
+    else stacked.push([cell]);
+  }
+  return stacked.map((pair) => <col>{pair}</col>);
+};
 
 /**
  * A device's card: its title, then its `display` at the left and its `cells` in columns of two
@@ -19,7 +29,7 @@ export const DeviceCard = ({ id, title, display, cells = [], more = [], expanded
   <col key={id} h={CARD_HEIGHT} radius="lg" fill="surface" border="border-strong">
     <row h={HEADER} px={4} gap={2} align="center" justify="between">
       <text style="heading" color="text" truncate>{title}</text>
-      {more.length > 0 && onExpand && <Button id={`${id}-more`} label={`${expanded ? "Less" : "More"} of ${title}`} text={expanded ? "Less" : "More"} variant="ghost" size="sm" onPress={onExpand} />}
+      {more.length > 0 && onExpand && <Toggle id={`${id}-more`} label={`More of ${title}`} text="More" on={expanded} onToggle={onExpand} />}
     </row>
     <row px={4} gap={2}>
       {display}
