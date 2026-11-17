@@ -771,8 +771,9 @@ fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>) -> El {
             }
             s.press(&press, "press", None);
         });
+        // A part a control's Enter opens leaves the keys with the control, also when pressed.
         if opens && scope.in_control {
-            e = e.tab_index(-1);
+            e = e.focusable(false);
         }
     }
     let has = |name: &str| b.actions.iter().any(|action| action == name);

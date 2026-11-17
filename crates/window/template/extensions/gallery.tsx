@@ -36,6 +36,7 @@ type Memory = {
   values: Record<string, number>;
   name: string;
   expanded: boolean;
+  chosen: boolean;
   steps: Step[][];
   cells: boolean[][];
 };
@@ -57,6 +58,7 @@ export const gallery = tool({
     values: { cutoff: 2000, resonance: 0.3, pan: -0.25, drive: 0.6, mix: 0.75, fader: -6, slider: 0.4 },
     name: "Bass",
     expanded: false,
+    chosen: true,
     steps: [pattern([0, 4, 8, 12]), pattern([4, 12]), pattern([0, 2, 4, 6, 8, 10, 12, 14])],
     cells: Array.from({ length: 4 }, (_, r) => Array.from({ length: 12 }, (_, c) => (r + c) % 5 === 0)),
   }),
@@ -102,6 +104,10 @@ export const gallery = tool({
                   {knob("swing", "Swing", { min: 0, max: 1, unit: "percent" })}
                 </Popover>
               </Grid>
+              <row key="row" label="Choose Bass" role="tab" checked={memory.chosen} w={240} h={32} px={2} gap={2} align="center" justify="between" radius="md" fill={memory.chosen ? "selected" : undefined} hover="fill" onPress={() => (memory.chosen = !memory.chosen)}>
+                <text style="body" color="text">Bass</text>
+                <Menu id="row-menu" label="Bass menu" size="sm" items={[{ text: "Rename", onPress: () => {} }, { text: "Delete", onPress: () => {}, danger: true }]} />
+              </row>
             </Section>
           </row>
           <row gap={8}>
