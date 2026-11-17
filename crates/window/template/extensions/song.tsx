@@ -1,8 +1,9 @@
-import { boolean, choice, h, list, live, memo, text, tool, type Color, type Live, type Connection, type Declaration, type Drawn, type Lines, type Node, type ValuesOf } from "./sdk";
+import { boolean, choice, h, list, live, memo, text, tool, type Color, type Connection, type Declaration, type Drawn, type Lines, type Node, type ValuesOf } from "./sdk";
 import { bus } from "./bus";
 import { tape } from "./tape";
 import { track } from "./track";
-import { Fader, MIN_DB } from "./ui/fader";
+import { Fader, MAX_DB, MIN_DB } from "./ui/fader";
+import { control, type Bound } from "./ui/field";
 import { Dot } from "./ui/dot";
 import { Meter } from "./ui/meter";
 import { Section } from "./ui/blocks/panel";
@@ -67,8 +68,6 @@ export const song = tool({
   },
   memory: (): Memory => ({ chosen: null, armed: [] }),
   view: (self, { memory, update, held }) => {
-    /** The gain of `name`'s fader as a lane plays it, when one does. */
-    const playing = (gain: string) => (held(gain) ? live.field(gain) : undefined);
     const tracks = ordered(self.children.filter((child): child is Track => child.tool === "track"), self.state.order);
     const chosen = tracks.find((each) => each.name === memory.chosen) ?? tracks[0];
     /** Changes the fader of `name`, a track or the master. */
@@ -109,10 +108,10 @@ export const song = tool({
         {chosen && <Panel each={chosen} title={titleOf(chosen, tracks.indexOf(chosen))} />}
         <row w="full" h={MIXER} px={3} gap={1} fill="surface" border="border-strong" borderSides={[1, 0, 0, 0]} scroll="x">
           {tracks.map((each, index) => (
-            <Strip id={each.name} name={each.name} title={titleOf(each, index)} db={dbOf(mixOf(each)?.gain_db)} held={playing(`${each.name}/mix.gain_db`)} onChange={(db) => mixing(each.name, `Volume ${titleOf(each, index)}`, (mix) => (mix.gain_db = db))} />
+            <Strip id={each.name} name={each.name} title={titleOf(each, index)} fader={control(held, `${each.name}/mix.gain_db`, GAIN, dbOf(mixOf(each)?.gain_db), (db) => mixing(each.name, `Volume ${titleOf(each, index)}`, (mix) => (mix.gain_db = db)))} />
           ))}
           <box grow={1} />
-          <Strip id="master" name="master" title="Master" db={dbOf(self.children.find((child) => child.name === "master" && child.tool === "fader")?.state.gain_db)} held={playing("master.gain_db")} onChange={(db) => mixing("master", "Volume Master", (mix) => (mix.gain_db = db))} />
+          <Strip id="master" name="master" title="Master" fader={control(held, "master.gain_db", GAIN, dbOf(self.children.find((child) => child.name === "master" && child.tool === "fader")?.state.gain_db), (db) => mixing("master", "Volume Master", (mix) => (mix.gain_db = db)))} />
         </row>
       </col>
     );
@@ -135,6 +134,8 @@ const [BAR, BEAT] = [3840, 960];
 const [ZOOM, BARS] = [0.03, 32];
 const [HEAD, ROW, RULER, LEAD, PANEL, MIXER, FADER] = [208, 56, 24, 8, 320, 208, 120];
 const [LOW, HIGH] = [36, 96];
+/** The gain of a fader, as its control reads it. */
+const GAIN = { min: MIN_DB, max: MAX_DB, unit: "db" } as const;
 const COLOURS = ["blue", "green", "yellow", "peach", "red", "lavender", "sky", "teal", "mauve", "pink"];
 
 const colourOf = (each: Track): Color => (COLOURS.includes(each.state.colour) ? (each.state.colour as Color) : "blue");
@@ -221,7 +222,8 @@ const Quiet = ({ shown, children }: { shown: boolean; children?: Node }) => (sho
 /** The devices of the chosen track: what plays it, then its effects in their order. */
 const Panel = ({ each, title }: { each: Track; title: string }) => {
   const chain = each.children.find((child) => child.name === "chain");
-  const effects = chain?.tool === "chain" ? chain.state.order.filter((name) => chain.children.some((child) => child.name === name)) : [];
+  // Each it names, also one whose code did not load: it says so where it sits.
+  const effects = chain?.tool === "chain" ? chain.state.order : [];
   const devices = [...(each.children.some((child) => child.name === "synth") ? ["synth"] : []), ...effects.map((name) => `chain/${name}`)];
   return (
     <col w="full" px={4} py={3} fill="background" border="border-strong" borderSides={[1, 0, 0, 0]}>
@@ -238,11 +240,11 @@ const Panel = ({ each, title }: { each: Track; title: string }) => {
   );
 };
 
-const Strip = ({ id, name, title, db, held, onChange }: { id: string; name: string; title: string; db: number; held?: Live; onChange: (db: number) => void }) => (
+const Strip = ({ id, name, title, fader }: { id: string; name: string; title: string; fader: Bound }) => (
   <col key={`strip-${id}`} w={72} h="full" py={3} gap={2} align="center">
     <text style="label" color="text-secondary" truncate>{title}</text>
     <row gap={2} align="start">
-      <Fader id={`fader-${id}`} label={`Volume ${title}`} db={db} height={FADER} held={held} onChange={onChange} />
+      <Fader {...fader} id={`fader-${id}`} label={`Volume ${title}`} height={FADER} />
       <Meter id={`meter-${id}`} label={`Level ${title}`} path={name === "master" ? "master" : `${name}/mix`} w={4} h={FADER} />
     </row>
   </col>

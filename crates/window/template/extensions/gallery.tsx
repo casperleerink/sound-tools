@@ -4,6 +4,7 @@ import { Cell } from "./ui/cell";
 import { Display, displayWidth, DISPLAY_HEIGHT } from "./ui/display";
 import { Dot } from "./ui/dot";
 import { Fader } from "./ui/fader";
+import { control, type NumberLike } from "./ui/field";
 import { Kbd } from "./ui/kbd";
 import { Knob } from "./ui/knob";
 import { Menu } from "./ui/menu";
@@ -65,7 +66,10 @@ export const gallery = tool({
   view: (_, { memory, play }) => {
     const flip = (name: string) => () => (memory.toggles[name] = !memory.toggles[name]);
     const value = (name: string) => ({ value: memory.values[name] ?? 0, onChange: (to: number) => (memory.values[name] = to) });
-    const knob = (id: string, label: string, props: { min: number; max: number; scale?: "log"; unit?: "hz" | "percent" | "pan"; bipolar?: boolean; initial?: number }) => <Knob id={id} label={label} {...props} {...value(id)} />;
+    // Memory, not a record: the controls are wired by hand to it, as `control` takes.
+    const bound = (id: string, label: string, field: NumberLike) => ({ ...control(() => false, id, field, memory.values[id] ?? field.default ?? field.min, (to) => (memory.values[id] = to)), label });
+    const knob = (id: string, label: string, props: NumberLike & { bipolar?: boolean; initial?: number }) => <Knob {...bound(id, label, { ...props, default: props.initial })} bipolar={props.bipolar} />;
+    const gain = (id: string, label: string) => bound(id, label, { min: -60, max: 6, unit: "db" });
     const toggle = (id: string, label: string, color?: "warning" | "hot" | "danger", dot?: boolean, text?: string) => <Toggle id={id} label={label} text={text} on={memory.toggles[id] ?? false} color={color} dot={dot} onToggle={flip(id)} />;
     return (
       <col w="full" h="full" scroll="y">
@@ -114,15 +118,15 @@ export const gallery = tool({
             <Section title="Values">
               <row gap={4} align="end">
                 <row>
-                  {knob("cutoff", "Cutoff", { min: 20, max: 20000, scale: "log", unit: "hz", initial: 2000 })}
+                  {knob("cutoff", "Cutoff", { min: 20, max: 20000, log: true, unit: "hz", initial: 2000 })}
                   {knob("resonance", "Resonance", { min: 0, max: 1, unit: "percent" })}
                   {knob("pan", "Pan", { min: -1, max: 1, unit: "pan", bipolar: true, initial: 0 })}
-                  <Knob id="note" label="Note" min={36} max={96} step={1} unit="pitch" {...value("note")} />
+                  <Knob {...bound("note", "Note", { min: 36, max: 96, integer: true, unit: "pitch" })} />
                   <Knob id="held" label="Held" min={20} max={20000} scale="log" unit="hz" value={500} held={Live.of(8000)} onChange={() => {}} />
                 </row>
-                <Fader id="fader" label="Volume" db={memory.values.fader ?? 0} height={120} onChange={(db) => (memory.values.fader = db)} />
+                <Fader {...gain("fader", "Volume")} height={120} />
                 <Meter id="meter" label="Level" path="nothing" w={4} h={120} />
-                <Fader id="deep" label="Deep volume" db={memory.values.deep ?? 0} height={120} min={-96} onChange={(db) => (memory.values.deep = db)} />
+                <Fader {...gain("deep", "Deep volume")} height={120} min={-96} />
                 <Slider id="slider" label="Amount" w={160} min={0} max={1} {...value("slider")} />
               </row>
             </Section>

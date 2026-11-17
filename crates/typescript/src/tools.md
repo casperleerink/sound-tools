@@ -19,25 +19,29 @@ Run 1 and 2 in `extensions/`, the rest with `sound-tools-next` on the project fo
 ```tsx
 import { boolean, h, input, list, number, tool } from "./sdk";
 import { Cell } from "./ui/cell";
+import { binder } from "./ui/field";
 import { Knob } from "./ui/knob";
 import { Toggle } from "./ui/toggle";
 import { DeviceCard } from "./ui/blocks/device-card";
+
+const fields = { steps: list(boolean({ default: true }), { max: 16 }), depth: number({ min: 0, max: 1, default: 1 }) };
 
 export const chop = tool({
   name: "chop",
   title: "Chop",
   when: "You want a sound cut in a rhythm of sixteen steps",
   doc: "Lets the sound through on the steps that are on, `depth` how far it cuts the others.",
-  state: { steps: list(boolean({ default: true }), { max: 16 }), depth: number({ min: 0, max: 1, default: 1 }) },
+  state: fields,
   sound: ({ depth }) => input.times(depth.negate().plus(1)),
-  view: (self, { update }) => {
+  view: (self, ctx) => {
+    const field = binder(self, ctx, fields);
     const steps = Array.from({ length: 16 }, (_, i) => self.state.steps[i] ?? true);
     return (
       <DeviceCard id="chop" title="Chop" cells={[
         ...[0, 8].map((from) => <Cell text={`Steps ${from + 1} to ${from + 8}`} span={4}><row gap={1}>{steps.slice(from, from + 8).map((on, j) => (
-          <Toggle id={`step-${from + j}`} label={`Step ${from + j + 1}`} text={`${from + j + 1}`} on={on} onToggle={() => update("Step", (draft) => void (draft.state.steps = steps.map((was, k) => (k === from + j ? !was : was))))} />
+          <Toggle id={`step-${from + j}`} label={`Step ${from + j + 1}`} text={`${from + j + 1}`} on={on} onToggle={() => ctx.update("Step", (draft) => void (draft.state.steps = steps.map((was, k) => (k === from + j ? !was : was))))} />
         ))}</row></Cell>),
-        <Knob id="depth" label="Depth" value={self.state.depth} min={0} max={1} unit="percent" onChange={(depth) => update("Depth", (draft) => void (draft.state.depth = depth))} />,
+        <Knob {...field("depth")} />,
       ]} />
     );
   },
@@ -53,9 +57,9 @@ export const chop = tool({
 `view: (self, ctx) => …` is a plain function of `self.state` and `self.children`, run again after every change and action. Never name a variable `h`. A part of a view types its records with `Drawn<ValuesOf<typeof fields>, typeof children>`.
 
 - `ctx` is what `tick` gets: `update`, `send`, `play`, `clock`, `memory`.
-- `memo(key, deps, () => …)` builds a part again only when one of `deps`, all it shows, changes. Build its keys from `deps`, never an index.
-- `memory` is never saved, such as the chosen track. Change it in a handler, not in `tick`, to draw again.
-- What does not fit is cut off: give a box `scroll` and `maxH`.
+- `memo(key, deps, () => …)` builds a part again only when one of `deps`, all it shows, changes; its keys come from `deps`.
+- `memory` is never saved, such as the chosen track: change it in a handler to draw again.
+- What does not fit is cut off: use `scroll` and `maxH`.
 
 ## Look: theme, primitives, components, blocks
 
@@ -71,7 +75,7 @@ Change them, add yours. `--main gallery --snap g.png --size 1470x1500` shows the
 - A device is a `DeviceCard`: a display, then cells, two to a column, top to bottom. It grows wider, never taller.
 - Controls are 24, 28 or 32 points high (`size`); a card's are `sm`.
 - Use the app's transport: add no Play button.
-- Every control takes the keys: give it `actions` (`increment`, `decrement`, `set`, `reset`); put many in a `group`.
+- Every control takes the keys: `actions` (`increment`, `decrement`, `set`, `reset`); many go in a `group`.
 
 ## What moves every frame
 
@@ -80,11 +84,11 @@ A live value is an expression the window works out every frame, without the view
 - `<text live={live.peak("t01/mix").hold(3).decibels()} unit="db" />` shows one, with `unit` or `digits`.
 - `at`, `w`, `h`, `opacity` and a `shapes`'s `trim` take one, as `ui/meter.tsx` and `ui/knob.tsx` do.
 - Code cannot read one: read the clock in `tick` or a handler.
-- `held(name)` of `ctx`: a lane moves that number; pass `live.field(name)` as the control's `held`.
+- `binder(self, ctx, fields)` of `ui/field.ts` wires a number's control: range, unit, default, change, and what a lane plays (`held`), which `render(tool, self, { held })` tests.
 
 ## Changes and actions
 
 - `update(label, (draft) => …)` changes records: write to `draft`. All the changes of one press, action, drag or paint are one step of undo.
 - An element a pointer or an agent uses has a unique `key`, a `label` ("Mute Track 2") and its state (`checked`, `value`). Handlers: `onPress`, `onDragEnd`, `onEnter` (a paint: each element a held press enters), `onCommit` of a `field`, `actions`.
 - `live.drag(key)` follows a `drag`, such as a thumb's `at`; `onDragEnd` hears where it stopped.
-- `tick` runs about 30 times a second, also in `--play`.
+- `tick` runs about 30 times a second.

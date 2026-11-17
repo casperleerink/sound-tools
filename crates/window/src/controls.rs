@@ -242,6 +242,11 @@ impl Step {
                 labels.join(", ")
             );
         };
+        if control.actions.is_empty() {
+            bail!(
+                "a lane of the track moves {named}, so it takes no change until the lane is taken out"
+            );
+        }
         if !control.actions.contains(&self.action) {
             bail!(
                 "{named} takes {}, not {}",

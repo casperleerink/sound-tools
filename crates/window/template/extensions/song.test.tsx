@@ -44,3 +44,9 @@ test("a press mutes the track it names, also after tracks come and go", () => {
   render(song, tracks("t00", "t02", "t03"));
   expect(act("Mute Track 4", "toggle")).toEqual([[["children", 2, "children", 0, "state", "mute"], true]]);
 });
+
+test("a fader a lane moves takes no change", () => {
+  render(song, self(false), { held: ["t00/mix.gain_db"] });
+  expect(() => act("Volume Track 1", "set", -6)).toThrow();
+  expect(act("Volume Track 2", "set", -6)).toEqual([[["children", 1, "children", 0, "state", "gain_db"], -6]]);
+});

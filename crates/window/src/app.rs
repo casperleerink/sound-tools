@@ -545,15 +545,7 @@ impl State {
 
     /// The numbers a lane moves of each instance of `shown`, for `held` of its view.
     fn holds(&self, shown: &BTreeSet<InstanceId>) -> BTreeMap<InstanceId, Vec<String>> {
-        (shown.iter())
-            .map(|id| {
-                (
-                    id.clone(),
-                    sound_typescript::next::held_in(&self.project, id),
-                )
-            })
-            .filter(|(_, held)| !held.is_empty())
-            .collect()
+        sound_typescript::next::holds(&self.project, shown)
     }
 
     /// Waits for Bun; a run without a window fails when it does not finish.
@@ -582,9 +574,29 @@ impl State {
         let Some((steps, play)) = self.first.take() else {
             return Ok(());
         };
-        // Lanes bind once the tools' behaviours answered and the engine played what they bound:
-        // the steps and the first picture see what they hold. A block of 2 ms, not heard.
-        self.play_offline(0.002)?;
+        self.bind_lanes()?;
+        for step in steps {
+            step.run(self)?;
+            self.bind_lanes()?;
+        }
+        if play.is_some() {
+            self.project.engine().play();
+        }
+        Ok(())
+    }
+
+    /// Lanes bind once the tools' behaviours answered and the engine played what they bound:
+    /// in a run without a window, a step and the picture see what the step before it left. A
+    /// block of 2 ms, not heard and not counted, so `--play` plays all it says.
+    fn bind_lanes(&mut self) -> Result<()> {
+        let Sound::Offline { played, .. } = &self.sound else {
+            return Ok(());
+        };
+        let before = *played;
+        self.play_offline(before + 0.002)?;
+        if let Sound::Offline { played, .. } = &mut self.sound {
+            *played = before;
+        }
         for _ in 0..2 {
             self.project.poll()?;
             let (problems, errors) = runtime::tick(&mut self.project, &self.plugins);
@@ -595,12 +607,6 @@ impl State {
                 self.notice = Some(error.to_string());
             }
             self.settle();
-        }
-        for step in steps {
-            step.run(self)?;
-        }
-        if play.is_some() {
-            self.project.engine().play();
         }
         Ok(())
     }
@@ -824,6 +830,9 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
     let theme = &state.theme;
     let body = match state.main() {
         Some(main) => match state.drawn(main) {
+            _ if state.code_failed(main) => el()
+                .padding(theme.space(4))
+                .child(tree::code_failed(state, main)),
             // A device's card on its own has the page's margin.
             Some(drawn) if state.cards.contains_key(main) => el()
                 .padding(theme.space(4))

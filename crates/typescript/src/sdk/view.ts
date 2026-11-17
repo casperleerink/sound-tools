@@ -361,15 +361,15 @@ export const host = {
 // For tests: one view at a time, with no window.
 
 const TESTED = "test";
-let tested: { tool: ProjectTool; self: Drawn<unknown>; changes: Op[]; memory: unknown } | undefined;
+let tested: { tool: ProjectTool; self: Drawn<unknown>; changes: Op[]; memory: unknown; held: string[] } | undefined;
 
-/** Runs the view of `tool` on `self` as the window does, and keeps it for `find`, `press` and `act`. Its memory lasts while the tool is the same. */
-export function render<T extends ProjectTool>(tool: T, self: Self<T>): Node {
+/** Runs the view of `tool` on `self` as the window does, and keeps it for `find`, `press` and `act`; `held` names the numbers a lane moves. Its memory lasts while the tool is the same. */
+export function render<T extends ProjectTool>(tool: T, self: Self<T>, { held = [] }: { held?: string[] } = {}): Node {
   const spec = registry.tools.get(String(tool));
   if (!spec?.view) throw new Error(`${String(tool)} has no view`);
   const memory = tested?.tool === tool ? tested.memory : (spec.memory?.() ?? {});
   if (tested?.tool !== tool) instances.delete(TESTED);
-  tested = { tool, self: self as Drawn<unknown>, changes: [], memory };
+  tested = { tool, self: self as Drawn<unknown>, changes: [], memory, held };
   // A handler a memo kept from an earlier run changes what the last run shows, as in the window.
   // Its draft is a copy of the records with its earlier changes, as the host's is.
   const update = (_label: string, edit: (draft: never) => void) => {
@@ -379,16 +379,16 @@ export function render<T extends ProjectTool>(tool: T, self: Self<T>): Node {
     edit(draft as never);
     tested.changes.push(...diff(before, draft));
   };
-  run(TESTED, spec.view as unknown as Draw, tested.self, quiet(tested.self, memory, update));
+  run(TESTED, spec.view as unknown as Draw, tested.self, quiet(tested.self, memory, update, held));
   return instances.get(TESTED)!.last;
 }
 
 /** What code gets in a test: its records and `update`; what it plays and asks goes nowhere. */
-function quiet(self: Drawn<unknown>, memory: unknown, update: Context<unknown>["update"]): Context<any> {
+function quiet(self: Drawn<unknown>, memory: unknown, update: Context<unknown>["update"], held: string[]): Context<any> {
   const nothing = () => {};
   const clock = { playing: false, repeat: null, click: false, computerKeys: false, writeAutomation: false, tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] }, sections: [], tick: 0, bar: 1, beat: 1, bpm: 120, play: nothing, pause: nothing, stop: nothing, jump: nothing, setRepeat: nothing, setClick: nothing, setComputerKeys: nothing, setWriteAutomation: nothing, update: nothing } as unknown as Clock;
   const asked = async () => null;
-  return { state: self.state, children: self.children, memory, update, held: () => false, clock, time: 0, outputs: {}, send: nothing, play: nothing, select: nothing, addOffer: nothing, openWindow: nothing, openFile: asked, render: asked, openMenu: asked, exportNotes: async () => false, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [] } as unknown as Context<any>;
+  return { state: self.state, children: self.children, memory, update, held: (name: string) => held.includes(name), clock, time: 0, outputs: {}, send: nothing, play: nothing, select: nothing, addOffer: nothing, openWindow: nothing, openFile: asked, render: asked, openMenu: asked, exportNotes: async () => false, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [] } as unknown as Context<any>;
 }
 
 /** Presses `key` as a pointer does; the changes it asked for. The view runs again, as in the window. */
@@ -404,8 +404,8 @@ export function act(keyOrLabel: string, action: string, value?: Value): Op[] {
   const key = found && "key" in found ? found.key : undefined;
   if (key === undefined) throw new Error(`no ${keyOrLabel}`);
   perform(at, key, action, value);
-  const { tool, self, changes } = tested;
-  render(tool, apply(self, changes) as Self<ProjectTool>);
+  const { tool, self, changes, held } = tested;
+  render(tool, apply(self, changes) as Self<ProjectTool>, { held });
   return changes;
 }
 

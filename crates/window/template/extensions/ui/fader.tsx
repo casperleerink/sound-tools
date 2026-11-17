@@ -12,7 +12,7 @@ const [THUMB, TARGET, TRACK, LINE] = [12, 28, 4, 24];
  * or Enter types one. `onChange` hears the new dB when it is let go. While a lane plays into it,
  * `held`, it shows that and is not the composer's to change.
  */
-export const Fader = ({ id, label, db, height, min = MIN_DB, held, onChange }: { id: string; label: string; db: number; height: number; min?: number; held?: Live; onChange: (db: number) => void }) => {
+export const Fader = ({ id, label, value: db, height, min = MIN_DB, held, onChange }: { id: string; label: string; value: number; height: number; min?: number; held?: Live; onChange: (db: number) => void }) => {
   const range: Range = { min, max: MAX_DB, step: 0.1 };
   const set = (to: number) => onChange(fitted(to, range));
   const travel = height - THUMB;

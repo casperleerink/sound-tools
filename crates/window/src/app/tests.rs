@@ -1991,3 +1991,124 @@ fn a_device_whose_code_does_not_load_says_so() {
     let synth = InstanceId::new("song/t00/synth").unwrap();
     assert!(!state.code_failed(&synth));
 }
+
+#[test]
+fn a_device_whose_code_does_not_load_says_so_where_it_sits_and_as_the_main_view() {
+    let (_scratch, folder) = with_tools(&[("broken", "export const broken = (;\n")]);
+    let window = laid_out(opened(&folder));
+    assert!(window.find("t00/chain/broken:code-failed").is_some());
+    let main = State::open(Options {
+        folder,
+        headless: true,
+        play: None,
+        main: Some(InstanceId::new("song/t00/chain/broken").unwrap()),
+        act: None,
+    })
+    .unwrap();
+    let mut window = laid_out(main);
+    drawn_frame(&mut window, 0.1);
+    assert!(window.find("code-failed").is_some());
+}
+
+/// The song with a button that puts a lane on Track 1's volume.
+fn with_lane_button(scratch: &tempfile::TempDir) {
+    let song = scratch.path().join("song/extensions/song.tsx");
+    let code = std::fs::read_to_string(&song).unwrap();
+    let button = r#"<Ruler /><box key="add-lane" label="Add lane" w={20} h={20} onPress={() => update("Lane", (draft) => {
+      const first = draft.children.find((child) => child.name === "t00");
+      first.state.automation = [{ lane: "lane-held", target: "mix.gain_db" }];
+      first.children.push({ name: "lane-held", tool: "lane", state: { points: [{ tick: 0, value: -24 }] }, children: [] });
+    })} />"#;
+    std::fs::write(&song, code.replacen("<Ruler />", button, 1)).unwrap();
+}
+
+fn acted(scratch: &tempfile::TempDir, steps: Value) -> State {
+    let mut state = State::open(Options {
+        folder: scratch.path().join("song"),
+        headless: true,
+        play: None,
+        main: None,
+        act: Some(serde_json::from_value(steps).unwrap()),
+    })
+    .unwrap();
+    frame(&mut state, 0.0);
+    state
+}
+
+#[test]
+fn each_step_of_act_sees_the_lanes_the_step_before_left() {
+    let scratch = new_project();
+    with_lane_button(&scratch);
+    let set = json!({ "label": "Volume Track 1", "action": "set", "value": -6 });
+    let state = acted(
+        &scratch,
+        json!([{ "label": "Add lane", "action": "press" }, set]),
+    );
+    let failed = FAILED.lock().unwrap_or_else(PoisonError::into_inner).take();
+    assert!(failed.is_some_and(|why| why.contains("lane")));
+    assert_eq!(
+        record(&state, "song/t00/mix.json")["state"].get("gain_db"),
+        None
+    );
+    let scratch = new_project();
+    with_lane_button(&scratch);
+    let undo = json!({ "action": "undo" });
+    let state = acted(
+        &scratch,
+        json!([{ "label": "Add lane", "action": "press" }, undo, set]),
+    );
+    assert_eq!(
+        record(&state, "song/t00/mix.json")["state"]["gain_db"],
+        -6.0
+    );
+}
+
+#[test]
+fn play_plays_all_the_seconds_it_says() {
+    let scratch = new_project();
+    let mut state = State::open(Options {
+        folder: scratch.path().join("song"),
+        headless: true,
+        play: Some(2.0),
+        main: None,
+        act: None,
+    })
+    .unwrap();
+    for step in 0..=120 {
+        frame(&mut state, f64::from(step) / 60.0);
+    }
+    assert_eq!(state.playhead.0, 3840);
+}
+
+#[test]
+fn a_held_control_s_accessibility_value_follows_its_lane() {
+    let scratch = new_project();
+    let track = scratch.path().join("song/state/song/t00");
+    let automation = json!([{ "lane": "lane-held", "target": "synth.cutoff_hz" }]);
+    let instance = json!({ "tool": "track", "state": { "title": "Track 1", "colour": "blue", "automation": automation } });
+    std::fs::write(track.join("instance.json"), instance.to_string()).unwrap();
+    let points = json!([{ "tick": 0, "value": 8000 }, { "tick": 1920, "value": 12000 }]);
+    let lane = json!({ "tool": "lane", "state": { "points": points } });
+    std::fs::write(track.join("lane-held.json"), lane.to_string()).unwrap();
+    let mut window = laid_out(opened(&scratch.path().join("song")));
+    window.state.project.engine().play();
+    for step in 1..=15 {
+        drawn_frame(&mut window, f64::from(step) / 60.0);
+    }
+    let spoken: f64 = window
+        .state
+        .lives
+        .spoken("t00/synth:cutoff_hz")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let controls = controls::collect(&window.state).controls;
+    let value = control(&controls, "Synth Cutoff")
+        .value
+        .clone()
+        .unwrap()
+        .as_f64()
+        .unwrap();
+    assert!(spoken > 8100.0, "{spoken}");
+    assert!((spoken - value).abs() < value * 0.01, "{spoken} {value}");
+}

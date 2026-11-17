@@ -76,11 +76,15 @@ pub(crate) struct Lives {
     playhead: Cell<f64>,
     /// Whether an eased value still moves without new sound.
     moving: Cell<bool>,
-    /// Whether a live text showed wider than it was built for since the last look.
+    /// Whether a live text showed wider than it was built for, or a live accessibility value
+    /// moved, since the last look.
     wider: Cell<bool>,
     drags: RefCell<HashMap<String, rune::Live<[f32; 2]>>>,
     /// The keys of the elements dragged now.
     held: RefCell<HashSet<String>>,
+    /// The live accessibility values of the views, by element key: their instance, their value,
+    /// and what they said when the view was built.
+    spoken: RefCell<HashMap<String, (InstanceId, Num, String)>>,
     /// The keys down on the sounds the views read, and the frame they were last read in.
     keys: RefCell<HashMap<InstanceId, (Option<u64>, Keys, u128)>>,
     /// Where the piece plays, as the title row shows it.
@@ -101,6 +105,7 @@ impl Lives {
             wider: Cell::new(false),
             drags: RefCell::default(),
             held: RefCell::default(),
+            spoken: RefCell::default(),
             keys: RefCell::default(),
             time: LiveText::new(time.to_string()),
         }
@@ -142,6 +147,27 @@ impl Lives {
             .entry(key.to_string())
             .or_insert_with(|| rune::Live::new([0.0; 2]))
             .clone()
+    }
+
+    /// The accessibility value of the element `key` of the view of `instance`, `value` as it is
+    /// now; while it is live it is followed each frame, and the view is built again when what it
+    /// says changes, as Rune's accessibility values do not move by themselves.
+    pub(crate) fn said_live(
+        &self,
+        state: &State,
+        instance: &InstanceId,
+        key: &str,
+        value: &serde_json::Value,
+    ) -> String {
+        let said = self.said(state, instance, value);
+        let text = said
+            .as_str()
+            .map_or_else(|| said.to_string(), str::to_string);
+        if let Ok(num @ Num::Live(_)) = serde_json::from_value::<Num>(value.clone()) {
+            let entry = (instance.clone(), num, text.clone());
+            self.spoken.borrow_mut().insert(key.to_string(), entry);
+        }
+        text
     }
 
     /// What `value` of an element of the view of `instance` says now: a live value as it is.
@@ -212,6 +238,20 @@ impl Lives {
         for binding in self.bindings.borrow().values() {
             self.show(state, binding);
         }
+        let mut spoken = self.spoken.borrow_mut();
+        spoken.retain(|_, (instance, ..)| state.shown.contains(instance));
+        for (instance, value, said) in spoken.values() {
+            let sources = Sources {
+                lives: self,
+                state,
+                instance,
+            };
+            let now = serde_json::json!(number(value, &sources)).to_string();
+            if now != *said {
+                self.wider.set(true);
+            }
+        }
+        drop(spoken);
         // What no binding read this frame eases nothing any more.
         let frame = self.frame.get();
         self.eased
@@ -267,8 +307,8 @@ impl Lives {
         }
     }
 
-    /// Whether a live text showed wider than it was built for, since the last call: the view
-    /// is built again to make room.
+    /// Whether a live text showed wider than it was built for, or a live accessibility value
+    /// moved, since the last call: the view is built again.
     pub(crate) fn take_wider(&self) -> bool {
         self.wider.replace(false)
     }
@@ -347,6 +387,14 @@ impl Lives {
                 _ => None,
             })
             .collect()
+    }
+
+    /// What the live accessibility value of the element `key` said when its view was built.
+    pub(crate) fn spoken(&self, key: &str) -> Option<String> {
+        self.spoken
+            .borrow()
+            .get(key)
+            .map(|(_, _, said)| said.clone())
     }
 
     /// What each live text shows now, after what it shows written out.
