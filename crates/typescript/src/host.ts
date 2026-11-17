@@ -71,7 +71,7 @@ type Request =
   /** The answer to a question of `ask`. */
   | { type: "answer"; question: number; answer: unknown }
   /** The instances whose views the new window shows: each sends its tree now, and again when its records change. */
-  | { type: "show"; instances: string[]; cards: Record<string, { title: string; fields: { name: string; default: unknown }[] }> }
+  | { type: "show"; instances: string[]; cards: Record<string, { title: string; fields: { name: string; default: unknown }[] }>; held: Record<string, string[]> }
   /** An action on an element of a shown view, by its key: `press`, `drag` with `{ dx, dy }`, or one it names. */
   | { type: "act"; instance: string; key: string; action: string; value?: number | string | { dx: number; dy: number } };
 
@@ -689,7 +689,8 @@ function drawNext(instance: string) {
   const record = recordOf(instance);
   const spec = sdk.host.tools.get(record?.tool ?? "");
   const card = fieldCards[instance];
-  if (next && record && !spec?.view && card) {
+  // The runtime says which instances the generic card draws: it and Bun read one list.
+  if (next && record && card) {
     // Without a generic card that loaded, the runtime says why in its problems.
     if (genericCard) drawCard(instance, record, card);
     else say({ type: "tree", instance, none: true });
@@ -714,7 +715,10 @@ function drawNext(instance: string) {
 let fieldCards: Extract<Request, { type: "show" }>["cards"] = {};
 let genericCard: unknown;
 /** Whether the generic card draws `instance`: its file runs that code, and is blamed for it. */
-const carded = (instance: string) => fieldCards[instance] !== undefined && !sdk.host.tools.get(recordOf(instance)?.tool ?? "")?.view;
+const carded = (instance: string) => fieldCards[instance] !== undefined;
+/** The numbers a lane moves of each shown instance, by name as `held` takes it. */
+let heldFields: Record<string, string[]> = {};
+const heldIn = (instance: string) => (name: string) => heldFields[instance]?.includes(name) ?? false;
 /** As `GENERIC_CARD` of the runtime names it, which loads it with the tools. */
 const GENERIC_CARD = "ui/blocks/generic-card.tsx";
 
@@ -726,7 +730,7 @@ function drawCard(instance: string, record: Entry, card: (typeof fieldCards)[str
   if (!memories.has(key)) memories.set(key, {});
   runs(GENERIC_CARD, "card");
   try {
-    say({ type: "tree", instance, tree: next!.host.run(instance, genericCard, self, { update: updater(instance, defaults), memory: memories.get(key) }) });
+    say({ type: "tree", instance, tree: next!.host.run(instance, genericCard, self, { update: updater(instance, defaults), memory: memories.get(key), held: heldIn(instance) }) });
   } catch (error) {
     say({ type: "tree", instance, error: String(error) });
   }
@@ -1101,6 +1105,7 @@ function doers(instance: string, spec: Spec) {
     memory: memoryOf(instance, spec),
     clock: clockFor(instance),
     update: updater(instance),
+    held: heldIn(instance),
     select: selector(instance),
     addOffer: offerAdder(instance),
     openWindow: (path: string) => say({ type: "open_window", instance, path }),
@@ -1404,7 +1409,7 @@ function defaultOf(field: Field): unknown {
 /** The ops of a tool's view at its defaults, after one tick: a check without a window. */
 function draw(spec: Spec): unknown {
   const memory = freshMemory(spec);
-  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, render: async () => null, openMenu: async () => null, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [], addOffer() {}, openWindow() {} };
+  const performs = { play() {}, send() {}, update() {}, held: () => false, select() {}, openFile: async () => null, render: async () => null, openMenu: async () => null, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [], addOffer() {}, openWindow() {} };
   const state = frozen(filledObject(spec.state, {}));
   // What the check plays on the clock goes nowhere.
   const clock = { ...clockFor(""), play() {}, pause() {}, stop() {}, jump() {}, setRepeat() {}, setClick() {}, setComputerKeys() {}, update() {} };
@@ -1549,9 +1554,12 @@ function handle(request: Request) {
       declare(request);
       break;
     case "show": {
-      // A card whose fields changed, as when its instance became another tool, draws again.
-      const changed = request.instances.filter((id) => shown.has(id) && JSON.stringify(fieldCards[id]) !== JSON.stringify(request.cards[id]));
+      // A view whose card or held numbers changed, as when a lane came, draws again.
+      const changed = request.instances.filter(
+        (id) => shown.has(id) && (JSON.stringify(fieldCards[id]) !== JSON.stringify(request.cards[id]) || JSON.stringify(heldFields[id]) !== JSON.stringify(request.held[id])),
+      );
       fieldCards = request.cards;
+      heldFields = request.held;
       show(request.instances);
       changed.forEach(drawNext);
       break;

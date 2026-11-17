@@ -30,7 +30,7 @@ export const Fader = ({ id, label, db, height, min = MIN_DB, held, onChange }: {
   );
   if (held) {
     return (
-      <col key={id} label={label} role="slider" value={db} gap={2} align="center" radius="md">
+      <col key={id} label={label} role="slider" value={held} gap={2} align="center" radius="md">
         {thumb}
         <row w={64} h={LINE} justify="center"><text style="number" color="text" live={readout} unit="db" /></row>
         <Tooltip text="A lane of the track plays this value" side="bottom" />

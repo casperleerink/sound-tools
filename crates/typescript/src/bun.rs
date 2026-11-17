@@ -173,6 +173,8 @@ pub(crate) enum Request<'a> {
         /// The card of each shown instance whose tool has no view: what `GenericCard` of
         /// `sdk/view.ts` gets.
         cards: &'a BTreeMap<InstanceId, Value>,
+        /// The numbers a lane moves of each shown instance, as its `held` names them.
+        held: &'a BTreeMap<InstanceId, Vec<String>>,
     },
     /// An action on the element `key` of the view of `instance`: `press`, `drag` with `{dx, dy}`,
     /// or one the element names, such as `toggle` or `set` with a number.

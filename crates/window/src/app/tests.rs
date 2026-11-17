@@ -1767,26 +1767,24 @@ fn a_tree_that_comes_during_a_drag_leaves_the_drag_where_it_is() {
     assert_eq!(window.state.lives.dragged(key).get(), [0.0; 2]);
 }
 
-/// A new project whose first track's lane plays 8 kHz into its synth's cutoff.
+/// A lane on the first track of the project in `scratch` that plays `value` into `target`,
+/// such as `synth.cutoff_hz`.
+fn lane(scratch: &tempfile::TempDir, target: &str, value: f64) {
+    let track = scratch.path().join("song/state/song/t00");
+    let automation = json!([{ "lane": "lane-held", "target": target }]);
+    let instance = json!({ "tool": "track", "state": { "title": "Track 1", "colour": "blue", "automation": automation } });
+    std::fs::write(track.join("instance.json"), instance.to_string()).unwrap();
+    let points = json!({ "tool": "lane", "state": { "points": [{ "tick": 0, "value": value }] } });
+    std::fs::write(track.join("lane-held.json"), points.to_string()).unwrap();
+}
+
+/// A new project whose first track's lane plays 8 kHz into its synth's cutoff, saved at 500.
 fn automated_cutoff() -> tempfile::TempDir {
     let scratch = new_project();
+    lane(&scratch, "synth.cutoff_hz", 8000.0);
+    let synth = json!({ "tool": "instrument.synth", "state": { "cutoff_hz": 500 } });
     let track = scratch.path().join("song/state/song/t00");
-    std::fs::write(
-        track.join("instance.json"),
-        json!({ "tool": "track", "state": { "title": "Track 1", "colour": "blue", "automation": [{ "lane": "lane-cutoff", "target": "synth.cutoff_hz" }] } }).to_string(),
-    )
-    .unwrap();
-    std::fs::write(
-        track.join("lane-cutoff.json"),
-        json!({ "tool": "lane", "state": { "points": [{ "tick": 0, "value": 8000 }] } })
-            .to_string(),
-    )
-    .unwrap();
-    std::fs::write(
-        track.join("synth.json"),
-        json!({ "tool": "instrument.synth", "state": { "cutoff_hz": 500 } }).to_string(),
-    )
-    .unwrap();
+    std::fs::write(track.join("synth.json"), synth.to_string()).unwrap();
     scratch
 }
 
@@ -1898,4 +1896,98 @@ fn a_project_of_only_built_in_devices_shows_their_cards() {
         labels(&state),
         state.project.problems()
     );
+}
+
+#[test]
+fn a_held_control_reports_what_plays_and_takes_no_change() {
+    let scratch = automated_cutoff();
+    let mut state = opened(&scratch.path().join("song"));
+    let controls = controls::collect(&state).controls;
+    assert_eq!(
+        control(&controls, "Synth Cutoff").value,
+        Some(json!(8000.0))
+    );
+    assert!(
+        try_act(
+            &mut state,
+            json!({ "label": "Synth Cutoff", "action": "set", "value": 1000 })
+        )
+        .is_err()
+    );
+    assert_eq!(synth(&state)["cutoff_hz"], 500);
+}
+
+#[test]
+fn the_mixer_holds_a_fader_a_lane_moves() {
+    let scratch = new_project();
+    lane(&scratch, "mix.gain_db", -24.0);
+    let mut state = opened(&scratch.path().join("song"));
+    let controls = controls::collect(&state).controls;
+    let fader = control(&controls, "Volume Track 1");
+    assert!(fader.actions.is_empty(), "{:?}", fader.actions);
+    assert_eq!(fader.value, Some(json!(-24.0)));
+    assert!(
+        try_act(
+            &mut state,
+            json!({ "label": "Volume Track 1", "action": "increment" })
+        )
+        .is_err()
+    );
+}
+
+/// A device of the project whose own view holds its level while a lane moves it.
+const LEVEL: &str = r#"import { h, input, live, number, tool } from "./sdk";
+import { Knob } from "./ui/knob";
+export const level = tool({
+  name: "level", title: "Level", when: "Never", doc: "Level.", state: { level: number({ min: 0, max: 10000, default: 500 }) }, sound: ({ level }) => input.times(level.times(0.0001)),
+  view: (self, { update, held }) => (
+    <Knob id="level" label="Level" value={self.state.level} min={0} max={10000} held={held("level") ? live.field("level") : undefined} onChange={(level) => update("Level", (draft) => void (draft.state.level = level))} />
+  ),
+});
+"#;
+
+#[test]
+fn a_tool_s_own_knob_holds_while_a_lane_moves_it() {
+    let (scratch, folder) = with_tools(&[("level", LEVEL)]);
+    lane(&scratch, "chain/level.level", 8000.0);
+    let mut state = opened(&folder);
+    let controls = controls::collect(&state).controls;
+    let level = control(&controls, "Level");
+    assert!(level.actions.is_empty(), "{:?}", level.actions);
+    assert_eq!(level.value, Some(json!(8000.0)));
+    assert!(
+        try_act(
+            &mut state,
+            json!({ "label": "Level", "action": "increment" })
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn the_steps_of_act_see_the_lanes_already_bound() {
+    let scratch = automated_cutoff();
+    let steps = json!([{ "label": "Synth Cutoff", "action": "set", "value": 1000 }]);
+    let mut state = State::open(Options {
+        folder: scratch.path().join("song"),
+        headless: true,
+        play: None,
+        main: None,
+        act: Some(serde_json::from_value(steps).unwrap()),
+    })
+    .unwrap();
+    frame(&mut state, 0.0);
+    let failed = FAILED.lock().unwrap_or_else(PoisonError::into_inner).take();
+    assert!(failed.is_some_and(|why| why.contains("Synth Cutoff")));
+    assert_eq!(synth(&state)["cutoff_hz"], 500);
+}
+
+#[test]
+fn a_device_whose_code_does_not_load_says_so() {
+    let (_scratch, folder) = with_tools(&[("broken", "export const broken = (;\n")]);
+    let state = opened(&folder);
+    let broken = InstanceId::new("song/t00/chain/broken").unwrap();
+    assert!(state.code_failed(&broken));
+    let synth = InstanceId::new("song/t00/synth").unwrap();
+    assert!(!state.code_failed(&synth));
 }

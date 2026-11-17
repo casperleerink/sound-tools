@@ -38,7 +38,8 @@ export const valueAt = (at: number, range: Range): number => {
 
 /** {@link travelled} of a live value, such as what a lane plays. */
 export const liveTravelled = (value: Live, { min, max, scale }: Range): Live =>
-  (scale === "log" ? value.over(min).ln().over(Math.log(max / min)) : value.minus(min).over(max - min || 1)).clamp(0, 1);
+  // `decibels` is 20 log10: a ratio in dB over the range's, a place on a log scale.
+  (scale === "log" ? value.over(min).decibels().over(20 * Math.log10(max / min)) : value.minus(min).over(max - min || 1)).clamp(0, 1);
 
 /** {@link valueAt} as a live value, for what shows while a drag goes on: exactly what a release there sets. */
 export const liveValueAt = (at: Live, range: Range): Live => {
@@ -70,13 +71,13 @@ const note = (pitch: number): string => {
   return cents === 0 ? name : `${name} ${cents > 0 ? "+" : "−"}${Math.abs(cents)}`;
 };
 
-/** A note as typed, `C4`, `c#3`, `Bb2`: its MIDI pitch, or undefined. */
+/** A note as typed, `C4`, `c#3`, `Bb2`, `D2 +30` with cents: its MIDI pitch, or undefined. */
 const pitchOf = (typed: string): number | undefined => {
-  const match = /^([a-g])(#|b)?(-?\d+)$/.exec(typed);
+  const match = /^([a-g])(#|b)?(-?\d+)(?:\s*([+-]\d+))?$/.exec(typed);
   if (!match) return undefined;
   const base = NOTES.indexOf(match[1]!.toUpperCase());
   const shift = match[2] === "#" ? 1 : match[2] === "b" ? -1 : 0;
-  return (Number(match[3]) + 1) * 12 + base + shift;
+  return (Number(match[3]) + 1) * 12 + base + shift + Number(match[4] ?? 0) / 100;
 };
 
 /** `value` as the window shows it in `unit`, such as `2 kHz`, `25L` or `C4`. */
@@ -100,7 +101,7 @@ export const shown = (value: number, unit?: Unit): string => {
 const WORDS: Record<Unit | "none", Record<string, number>> = {
   hz: { "": 1, hz: 1, k: 1000, khz: 1000 },
   ms: { "": 1, ms: 1, s: 1000 },
-  seconds: { "": 1, s: 1, ms: 0.001 },
+  seconds: { "": 0.001, s: 1, ms: 0.001 },
   db: { "": 1, db: 1 },
   percent: { "": 0.01, "%": 0.01 },
   semitones: { "": 1, st: 1 },
@@ -115,9 +116,9 @@ const NUMBER = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)\s*([a-z%]*)$/;
 
 /**
  * What was typed in `unit`, read as {@link shown} writes it: `2k`, `2 kHz`, `440 Hz`, `1.5 s`,
- * `30%`, `25L`, `C`, `C4`, `+3`. A bare number is in the field's own unit, whatever prefix shows:
- * Hz for `2 kHz`, seconds for `1.5 s`. A pan's side gives its direction, with no sign. Undefined
- * when it is no value of `unit`.
+ * `30%`, `25L`, `C`, `C4`, `+3`. A bare number is in one unit per kind, as in other music apps:
+ * Hz, ms (also for a field in seconds), dB, percent, a MIDI note, as is; a typed unit wins. A
+ * pan's side gives its direction, with no sign. Undefined when it is no value of `unit`.
  */
 export const typedValue = (text: string, unit?: Unit): number | undefined => {
   const typed = text.trim().toLowerCase().replace("−", "-");

@@ -1,4 +1,4 @@
-import { h, input, tool, type Child } from "./sdk";
+import { h, input, Live, tool, type Child } from "./sdk";
 import { Button } from "./ui/button";
 import { Cell } from "./ui/cell";
 import { Display, displayWidth, DISPLAY_HEIGHT } from "./ui/display";
@@ -118,6 +118,7 @@ export const gallery = tool({
                   {knob("resonance", "Resonance", { min: 0, max: 1, unit: "percent" })}
                   {knob("pan", "Pan", { min: -1, max: 1, unit: "pan", bipolar: true, initial: 0 })}
                   <Knob id="note" label="Note" min={36} max={96} step={1} unit="pitch" {...value("note")} />
+                  <Knob id="held" label="Held" min={20} max={20000} scale="log" unit="hz" value={500} held={Live.of(8000)} onChange={() => {}} />
                 </row>
                 <Fader id="fader" label="Volume" db={memory.values.fader ?? 0} height={120} onChange={(db) => (memory.values.fader = db)} />
                 <Meter id="meter" label="Level" path="nothing" w={4} h={120} />

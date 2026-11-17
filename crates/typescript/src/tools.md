@@ -1,6 +1,6 @@
 # Writing a tool for this project
 
-A tool is TypeScript, with no build: a device on a track, the song page, or the whole project. One tool per file in `extensions/`. Import from `./sdk`; `sdk.ts` lists every name by the module of `sdk/` that documents it. Do not edit `sdk.ts`, `sdk/` or `tsconfig.json`.
+A tool is TypeScript: a device on a track, the song page, or the whole project. One tool per file in `extensions/`. Import from `./sdk`; `sdk.ts` lists every name by its module of `sdk/`. Do not edit `sdk.ts`, `sdk/` or `tsconfig.json`.
 
 ## Check your work, after every change
 
@@ -8,11 +8,11 @@ Run 1 and 2 in `extensions/`, the rest with `sound-tools-next` (`$SOUND_TOOLS_RU
 
 1. `bun check -p .`: types, token names and props.
 2. `bun test`: one test for each thing the tool must do: `render(tool, self)`, then `find`, `press`, `act` and `apply`, as `song.test.tsx` does.
-3. `sound-tools-next . --snap out.png --play 2`: a picture after two seconds of playing: look at it.
+3. `sound-tools-next . --snap out.png --play 2`: a picture after two seconds of playing.
 4. `--tree out.json`: every element with its text, and `controls` (key, label, role, value or `checked`, `expanded`, actions), `playing`, `playhead`, `meters` and `problems`. Check each control you made says its state.
 5. `--act steps.json` runs actions first, on the project itself: `[{ "label": "Mute Track 2", "action": "toggle" }, { "key": "fader-t00", "action": "set", "value": -6 }, { "action": "undo" }]`. `--script steps.json` points by key: `{"events": [{ "t": 0.5, "type": "tap", "key": "mute-t01" }, { "t": 1, "type": "type", "text": "-6" }, { "t": 2, "type": "drag", "key": "fader-t00", "dy": 40 }]}`.
 
-`problems.txt` says why what does not load. `--inspect` prints the records; `--analyze` and `--render` play the sound.
+`problems.txt` says why what does not load. `--inspect` prints the records.
 
 ## A tool
 
@@ -52,7 +52,7 @@ export const chop = tool({
 
 `view: (self, ctx) => …` is a plain function of `self.state` and `self.children`, run again after every change and action. Never name a variable `h`. A part of a view types its records with `Drawn<ValuesOf<typeof fields>, typeof children>`.
 
-- `ctx` is what `tick` gets: `update`, `send`, `play`, `clock`, `memory`, for handlers.
+- `ctx` is what `tick` gets: `update`, `send`, `play`, `clock`, `memory`.
 - `memo(key, deps, () => …)` builds a part again only when one of `deps`, all it shows, changes. Build its keys from `deps`, never an index.
 - `memory` is never saved, such as the chosen track. Change it in a handler, not in `tick`, to draw again.
 - What does not fit is cut off: give a box `scroll` and `maxH`.
@@ -80,6 +80,7 @@ A live value is an expression the window works out every frame, without the view
 - `<text live={live.peak("t01/mix").hold(3).decibels()} unit="db" />` shows one, with `unit` or `digits`.
 - `at`, `w`, `h`, `opacity` and a `shapes`'s `trim` take one, as `ui/meter.tsx` and `ui/knob.tsx` do.
 - Code cannot read one: read the clock in `tick` or a handler.
+- `held(name)` of `ctx`: a lane moves that number; pass `live.field(name)` as the control's `held`.
 
 ## Changes and actions
 

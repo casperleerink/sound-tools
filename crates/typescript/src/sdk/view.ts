@@ -67,8 +67,8 @@ type Interactive =
       role?: Role;
       /** A switch's state. */
       checked?: boolean;
-      /** What it shows, such as -6 for a fader in dB. */
-      value?: number | string;
+      /** What it shows, such as -6 for a fader in dB, or what plays while a lane moves it. */
+      value?: number | string | Live;
       onPress?: () => void;
       actions?: Actions;
       /**
@@ -200,19 +200,25 @@ export type GenericCard = (
     card: {
       title: string;
       fields: ({ name: string; label: string } & (
-        | { kind: "number"; min: number; max: number; log: boolean; integer: boolean; unit: Unit | null; default: number; automated: boolean }
+        | { kind: "number"; min: number; max: number; log: boolean; integer: boolean; unit: Unit | null; default: number }
         | { kind: "switch"; default: boolean }
         | { kind: "choice"; options: { value: string | number; text: string }[]; default: string | number }
       ))[];
     };
   },
-  ctx: { update: (label: string, change: (draft: { state: Record<string, unknown> }) => void) => void; memory: Record<string, unknown> },
+  ctx: { update: (label: string, change: (draft: { state: Record<string, unknown> }) => void) => void; memory: Record<string, unknown>; held: (name: string) => boolean },
 ) => Node;
 
 /** What all code of an instance gets of the view. */
 export interface ViewContext<_State, _I extends Inputs, M> {
   /** What its code keeps and nothing saves, made by its tool's `memory`. Changed in a handler, the view runs again. */
   memory: M;
+  /**
+   * Whether a lane moves the number `name` now, of the record or of an instance inside it as
+   * `"t01/mix.gain_db"`: its control shows `live.field(name)`, what plays, and is not the
+   * composer's to change. The view runs again when a lane comes or goes.
+   */
+  held(name: string): boolean;
 }
 
 type Draw = (self: Drawn<unknown>, ctx: Context<any>) => Node;
@@ -382,7 +388,7 @@ function quiet(self: Drawn<unknown>, memory: unknown, update: Context<unknown>["
   const nothing = () => {};
   const clock = { playing: false, repeat: null, click: false, computerKeys: false, writeAutomation: false, tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] }, sections: [], tick: 0, bar: 1, beat: 1, bpm: 120, play: nothing, pause: nothing, stop: nothing, jump: nothing, setRepeat: nothing, setClick: nothing, setComputerKeys: nothing, setWriteAutomation: nothing, update: nothing } as unknown as Clock;
   const asked = async () => null;
-  return { state: self.state, children: self.children, memory, update, clock, time: 0, outputs: {}, send: nothing, play: nothing, select: nothing, addOffer: nothing, openWindow: nothing, openFile: asked, render: asked, openMenu: asked, exportNotes: async () => false, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [] } as unknown as Context<any>;
+  return { state: self.state, children: self.children, memory, update, held: () => false, clock, time: 0, outputs: {}, send: nothing, play: nothing, select: nothing, addOffer: nothing, openWindow: nothing, openFile: asked, render: asked, openMenu: asked, exportNotes: async () => false, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [] } as unknown as Context<any>;
 }
 
 /** Presses `key` as a pointer does; the changes it asked for. The view runs again, as in the window. */

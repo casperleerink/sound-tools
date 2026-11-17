@@ -19,14 +19,14 @@ const RANK = { number: 0, switch: 1, choice: 2 };
  * a switch for a yes or no, a choice of options: the first few of its record shown, the rest
  * behind More.
  */
-export const card: GenericCard = ({ state, card: { title, fields } }, { update, memory }) => {
+export const card: GenericCard = ({ state, card: { title, fields } }, { update, memory, held }) => {
   const set = (field: Field, value: unknown) => update(`Change ${field.label}`, (draft) => void (draft.state[field.name] = value));
   const control = (field: Field) => {
     const label = `${title} ${field.label}`;
     switch (field.kind) {
       case "number": {
         const value = typeof state[field.name] === "number" ? (state[field.name] as number) : field.default;
-        return <Knob id={field.name} label={label} text={field.label} value={value} min={field.min} max={field.max} scale={field.log ? "log" : "linear"} step={field.integer ? 1 : undefined} unit={field.unit ?? undefined} initial={field.default} held={field.automated ? live.field(field.name) : undefined} onChange={(to) => set(field, to)} />;
+        return <Knob id={field.name} label={label} text={field.label} value={value} min={field.min} max={field.max} scale={field.log ? "log" : "linear"} step={field.integer ? 1 : undefined} unit={field.unit ?? undefined} initial={field.default} held={held(field.name) ? live.field(field.name) : undefined} onChange={(to) => set(field, to)} />;
       }
       case "switch":
         return <Cell><Toggle id={field.name} label={label} text={field.label} on={state[field.name] === true} w={theme.size.cell - 8} onToggle={() => set(field, state[field.name] !== true)} /></Cell>;

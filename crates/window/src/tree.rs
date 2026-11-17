@@ -442,6 +442,10 @@ fn walk(node: &Node, memos: &Memos, bind: &mut impl FnMut(Shows)) {
     live.into_iter().for_each(bind);
 }
 
+/// What a device whose tool's code did not load shows.
+const CODE_FAILED: &str =
+    "This device's code has a mistake, so it shows nothing until it is mended.";
+
 /// The view `drawn` of `instance`, with its keys after `prefix`.
 pub(crate) fn view(state: &State, instance: &InstanceId, prefix: &str, drawn: &Drawn) -> El {
     match drawn {
@@ -485,6 +489,10 @@ fn build(scope: &Scope, node: &Node) -> El {
         Node::Field(field) => typed(scope, field),
         Node::Child { path } => match scope.instance.child(path) {
             Ok(child) => match scope.state.drawn(&child) {
+                _ if scope.state.code_failed(&child) => text(CODE_FAILED)
+                    .font(scope.state.theme.text("label"))
+                    .color(scope.state.theme.color("text-secondary"))
+                    .wrap(),
                 Some(drawn) => view(scope.state, &child, &scope.state.prefix_of(&child), drawn),
                 None => el(),
             },
@@ -730,6 +738,7 @@ fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>) -> El {
         e = e.checked(checked);
     }
     if let Some(value) = &b.value {
+        let value = scope.state.lives.said(scope.state, scope.instance, value);
         e = e.a11y_value(
             value
                 .as_str()

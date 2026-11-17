@@ -1,4 +1,4 @@
-import { boolean, choice, h, list, live, memo, text, tool, type Color, type Connection, type Declaration, type Drawn, type Lines, type Node, type ValuesOf } from "./sdk";
+import { boolean, choice, h, list, live, memo, text, tool, type Color, type Live, type Connection, type Declaration, type Drawn, type Lines, type Node, type ValuesOf } from "./sdk";
 import { bus } from "./bus";
 import { tape } from "./tape";
 import { track } from "./track";
@@ -66,7 +66,9 @@ export const song = tool({
     return { connections };
   },
   memory: (): Memory => ({ chosen: null, armed: [] }),
-  view: (self, { memory, update }) => {
+  view: (self, { memory, update, held }) => {
+    /** The gain of `name`'s fader as a lane plays it, when one does. */
+    const playing = (gain: string) => (held(gain) ? live.field(gain) : undefined);
     const tracks = ordered(self.children.filter((child): child is Track => child.tool === "track"), self.state.order);
     const chosen = tracks.find((each) => each.name === memory.chosen) ?? tracks[0];
     /** Changes the fader of `name`, a track or the master. */
@@ -107,10 +109,10 @@ export const song = tool({
         {chosen && <Panel each={chosen} title={titleOf(chosen, tracks.indexOf(chosen))} />}
         <row w="full" h={MIXER} px={3} gap={1} fill="surface" border="border-strong" borderSides={[1, 0, 0, 0]} scroll="x">
           {tracks.map((each, index) => (
-            <Strip id={each.name} name={each.name} title={titleOf(each, index)} db={dbOf(mixOf(each)?.gain_db)} onChange={(db) => mixing(each.name, `Volume ${titleOf(each, index)}`, (mix) => (mix.gain_db = db))} />
+            <Strip id={each.name} name={each.name} title={titleOf(each, index)} db={dbOf(mixOf(each)?.gain_db)} held={playing(`${each.name}/mix.gain_db`)} onChange={(db) => mixing(each.name, `Volume ${titleOf(each, index)}`, (mix) => (mix.gain_db = db))} />
           ))}
           <box grow={1} />
-          <Strip id="master" name="master" title="Master" db={dbOf(self.children.find((child) => child.name === "master" && child.tool === "fader")?.state.gain_db)} onChange={(db) => mixing("master", "Volume Master", (mix) => (mix.gain_db = db))} />
+          <Strip id="master" name="master" title="Master" db={dbOf(self.children.find((child) => child.name === "master" && child.tool === "fader")?.state.gain_db)} held={playing("master.gain_db")} onChange={(db) => mixing("master", "Volume Master", (mix) => (mix.gain_db = db))} />
         </row>
       </col>
     );
@@ -236,11 +238,11 @@ const Panel = ({ each, title }: { each: Track; title: string }) => {
   );
 };
 
-const Strip = ({ id, name, title, db, onChange }: { id: string; name: string; title: string; db: number; onChange: (db: number) => void }) => (
+const Strip = ({ id, name, title, db, held, onChange }: { id: string; name: string; title: string; db: number; held?: Live; onChange: (db: number) => void }) => (
   <col key={`strip-${id}`} w={72} h="full" py={3} gap={2} align="center">
     <text style="label" color="text-secondary" truncate>{title}</text>
     <row gap={2} align="start">
-      <Fader id={`fader-${id}`} label={`Volume ${title}`} db={db} height={FADER} onChange={onChange} />
+      <Fader id={`fader-${id}`} label={`Volume ${title}`} db={db} height={FADER} held={held} onChange={onChange} />
       <Meter id={`meter-${id}`} label={`Level ${title}`} path={name === "master" ? "master" : `${name}/mix`} w={4} h={FADER} />
     </row>
   </col>

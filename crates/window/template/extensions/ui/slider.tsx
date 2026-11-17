@@ -22,7 +22,7 @@ export const Slider = ({ id, label, value, w, held, onChange, ...range }: Range 
     <box w={w} h={TARGET}>
       <box at={[0, (TARGET - 2) / 2]} w={w} h={2} radius="full" fill="fill-strong" />
       <box at={[0, (TARGET - 2) / 2]} w={dragged.plus(THUMB / 2)} h={2} radius="full" fill="text" />
-      <row key={id} label={label} role="slider" value={value} at={[dragged.minus((TARGET - THUMB) / 2), 0]} w={TARGET} h={TARGET} align="center" justify="center" radius="full" {...control}>
+      <row key={id} label={label} role="slider" value={held ?? value} at={[dragged.minus((TARGET - THUMB) / 2), 0]} w={TARGET} h={TARGET} align="center" justify="center" radius="full" {...control}>
         <box w={THUMB} h={THUMB} radius="full" fill={held ? "text-secondary" : "text"} shadow="sm" />
         {held && <Tooltip text="A lane of the track plays this value" />}
       </row>

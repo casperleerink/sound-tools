@@ -96,6 +96,8 @@ pub struct Tools {
     changed_records: BTreeSet<InstanceId>,
     shown: BTreeSet<InstanceId>,
     cards: BTreeMap<InstanceId, Value>,
+    /// The numbers a lane moves of each shown instance, see [`held_in`].
+    holds: BTreeMap<InstanceId, Vec<String>>,
     told_shown: bool,
     drawn: HashMap<InstanceId, Drawn>,
     /// Why a view does not draw, by instance, until it draws again.
@@ -154,6 +156,7 @@ impl Tools {
             changed_records: every_instance(project),
             shown: BTreeSet::new(),
             cards: BTreeMap::new(),
+            holds: BTreeMap::new(),
             told_shown: true,
             drawn: HashMap::new(),
             view_problems: BTreeMap::new(),
@@ -214,10 +217,12 @@ impl Tools {
         &mut self,
         instances: BTreeSet<InstanceId>,
         cards: BTreeMap<InstanceId, Value>,
+        holds: BTreeMap<InstanceId, Vec<String>>,
     ) -> bool {
-        if instances == self.shown && cards == self.cards {
+        if instances == self.shown && cards == self.cards && holds == self.holds {
             return false;
         }
+        self.holds = holds;
         // A built-in device a card shows is told to Bun, as one inside a tool of the project is.
         let new: Vec<InstanceId> = (cards.keys())
             .filter(|id| !self.cards.contains_key(*id))
@@ -921,11 +926,14 @@ impl Tools {
         }
     }
 
-    /// Whether a lane moves the number `name` of `instance`: its control shows what plays, and
-    /// is not the composer's to change.
-    pub fn automated(project: &Project, instance: &InstanceId, name: &str) -> bool {
-        let at = crate::feeds::Moment::at(Ticks(0));
-        crate::feeds::lane_value(project, instance, name, at).is_some()
+    /// The numbers a lane moves of each shown instance, as Bun was told last.
+    pub fn holds(&self) -> &BTreeMap<InstanceId, Vec<String>> {
+        &self.holds
+    }
+
+    /// Whether `tool` is a tool of the project that loaded.
+    pub fn knows(&self, tool: &str) -> bool {
+        find(&self.tools, tool).is_some()
     }
 
     /// Whether the tool `tool` draws a view of its own; without one, the generic card draws it.
@@ -1067,10 +1075,40 @@ impl Tools {
         }
         if !self.told_shown {
             let instances = self.shown.iter().collect();
-            let cards = &self.cards;
-            self.told_shown = bun.send(&Request::Show { instances, cards });
+            let (cards, held) = (&self.cards, &self.holds);
+            self.told_shown = bun.send(&Request::Show {
+                instances,
+                cards,
+                held,
+            });
         }
     }
+}
+
+/// The numbers a lane moves of `instance` and of each instance inside it, as code names them:
+/// `cutoff_hz` of its own, `t01/mix.gain_db` of one inside. Their controls show what plays, and
+/// are not the composer's to change.
+pub fn held_in(project: &Project, instance: &InstanceId) -> Vec<String> {
+    let mut held = Vec::new();
+    let mut values = Vec::new();
+    for (inner, _) in project.instances() {
+        let path = match inner == instance {
+            true => String::new(),
+            false if inner.is_inside(instance) => {
+                format!("{}.", &inner.as_str()[instance.as_str().len() + 1..])
+            }
+            false => continue,
+        };
+        let Some(lanes) = project.lanes(inner) else {
+            continue;
+        };
+        values.clear();
+        lanes.values_at(Ticks(0), &mut values);
+        held.extend(values.iter().map(|(name, _)| format!("{path}{name}")));
+    }
+    held.sort();
+    held.dedup();
+    held
 }
 
 /// The keys down on the sound of a tool of the project, followed from what its keys did.

@@ -144,6 +144,26 @@ impl Lives {
             .clone()
     }
 
+    /// What `value` of an element of the view of `instance` says now: a live value as it is.
+    pub(crate) fn said(
+        &self,
+        state: &State,
+        instance: &InstanceId,
+        value: &serde_json::Value,
+    ) -> serde_json::Value {
+        match serde_json::from_value::<Num>(value.clone()) {
+            Ok(num @ Num::Live(_)) => {
+                let sources = Sources {
+                    lives: self,
+                    state,
+                    instance,
+                };
+                serde_json::json!(number(&num, &sources))
+            }
+            _ => value.clone(),
+        }
+    }
+
     /// Whether the element `key` is dragged now.
     pub(crate) fn held(&self, key: &str, held: bool) {
         let mut keys = self.held.borrow_mut();

@@ -3,7 +3,7 @@
 //! offline, a step per frame, and Bun answers before each frame, so a run is always the same.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -210,6 +210,22 @@ impl State {
             last: 0.0,
             _copy: copy,
         })
+    }
+
+    /// Whether the tool of `id` is one of the project's whose code did not load: no built-in
+    /// tool, none that loaded, or no record, and the project's code has problems.
+    pub(crate) fn code_failed(&self, id: &InstanceId) -> bool {
+        let Some(tools) = &self.tools else {
+            return false;
+        };
+        let problems = self.project.problems();
+        let code = problems
+            .iter()
+            .any(|problem| problem.path.starts_with(sound_typescript::FOLDER));
+        // A record whose tool did not load may not open at all.
+        let unknown = (self.project.tool_of(id))
+            .is_none_or(|tool| !tools.knows(tool) && !self.schemas.contains_key(tool));
+        code && unknown
     }
 
     /// The instance the window shows, as `project.json` names it now.
@@ -490,12 +506,13 @@ impl State {
                 .filter_map(|id| Some((id.clone(), self.card(id)?)))
                 .collect();
             self.cards.retain(|id, _| shown.contains(id));
+            let holds = self.holds(&shown);
             let more = shown != self.shown;
             self.shown = shown.clone();
             let Some(tools) = &mut self.tools else {
                 return changed;
             };
-            if !tools.show(shown, cards) {
+            if !tools.show(shown, cards, holds) {
                 return changed;
             }
             if !settle {
@@ -510,7 +527,7 @@ impl State {
 
     /// The card of `id` for the generic card, unless its tool draws a view of its own. Its
     /// fields follow its instance's tool and that tool's code: made again only when either
-    /// changed. Which a lane moves follows the lanes.
+    /// changed.
     fn card(&mut self, id: &InstanceId) -> Option<Value> {
         let tool = self.project.tool_of(id)?.to_string();
         let tools = self.tools.as_ref();
@@ -523,13 +540,20 @@ impl State {
             let card = crate::fields::card_of(self, id)?;
             self.cards.insert(id.clone(), (tool, loads, card));
         }
-        let mut card = self.cards.get(id)?.2.clone();
-        for field in card["fields"].as_array_mut()?.iter_mut() {
-            let name = field["name"].as_str().unwrap_or_default().to_string();
-            let automated = Tools::automated(&self.project, id, &name);
-            field["automated"] = json!(automated);
-        }
-        Some(card)
+        self.cards.get(id).map(|(_, _, card)| card.clone())
+    }
+
+    /// The numbers a lane moves of each instance of `shown`, for `held` of its view.
+    fn holds(&self, shown: &BTreeSet<InstanceId>) -> BTreeMap<InstanceId, Vec<String>> {
+        (shown.iter())
+            .map(|id| {
+                (
+                    id.clone(),
+                    sound_typescript::next::held_in(&self.project, id),
+                )
+            })
+            .filter(|(_, held)| !held.is_empty())
+            .collect()
     }
 
     /// Waits for Bun; a run without a window fails when it does not finish.
@@ -558,6 +582,20 @@ impl State {
         let Some((steps, play)) = self.first.take() else {
             return Ok(());
         };
+        // Lanes bind once the tools' behaviours answered and the engine played what they bound:
+        // the steps and the first picture see what they hold. A block of 2 ms, not heard.
+        self.play_offline(0.002)?;
+        for _ in 0..2 {
+            self.project.poll()?;
+            let (problems, errors) = runtime::tick(&mut self.project, &self.plugins);
+            if let Some(problem) = problems.first() {
+                self.notice = Some(problem.to_string());
+            }
+            if let Some(error) = errors.first() {
+                self.notice = Some(error.to_string());
+            }
+            self.settle();
+        }
         for step in steps {
             step.run(self)?;
         }
@@ -687,8 +725,14 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
         }
         changed |= drawn;
     }
-    // What the views name changes only with what they show.
-    if changed {
+    // What the views name changes only with what they show, and a lane bound or let go as a
+    // behaviour answers, which says nothing.
+    let holds = state.holds(&state.shown);
+    let moved = state
+        .tools
+        .as_ref()
+        .is_some_and(|tools| *tools.holds() != holds);
+    if changed || moved {
         changed |= state.discover(headless);
     }
     if let Ok(status) = state.project.engine().poll() {
@@ -780,6 +824,10 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
     let theme = &state.theme;
     let body = match state.main() {
         Some(main) => match state.drawn(main) {
+            // A device's card on its own has the page's margin.
+            Some(drawn) if state.cards.contains_key(main) => el()
+                .padding(theme.space(4))
+                .child(tree::view(state, main, "", drawn)),
             Some(drawn) => tree::view(state, main, "", drawn),
             None => el(),
         },

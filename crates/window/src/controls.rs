@@ -142,7 +142,7 @@ impl Found {
             .chain(drag)
             .chain(enter)
             .collect();
-        // A slider a lane moves takes no action, but an agent reads what it plays.
+        // A slider a lane moves takes no action, but an agent reads what it plays: its value.
         let listed = !actions.is_empty() || b.role.as_deref() == Some("slider");
         if let (Some(key), true) = (&b.key, listed) {
             let window_key = format!("{prefix}{key}");
@@ -152,7 +152,7 @@ impl Found {
                 key: window_key,
                 label: b.label.clone().unwrap_or_default(),
                 role: b.role.clone(),
-                value: b.value.clone(),
+                value: (b.value.as_ref()).map(|value| state.lives.said(state, id, value)),
                 checked: b.checked,
                 actions,
                 target,

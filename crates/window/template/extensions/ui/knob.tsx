@@ -40,7 +40,7 @@ export type KnobProps = Range & {
  * the value or Enter types one. The arc is the one bright line and follows the drag.
  */
 export const Knob = ({ id, label, text, value, initial, unit, bipolar = false, held, onChange, ...range }: KnobProps) => {
-  if (held) return <Held id={id} label={label} text={text} value={value} unit={unit} bipolar={bipolar} held={held} range={range} />;
+  if (held) return <Held id={id} label={label} text={text} unit={unit} bipolar={bipolar} held={held} range={range} />;
   const at = travelled(value, range);
   const set = (next: number) => onChange(fitted(next, range));
   // A drag from the value line turns the knob too.
@@ -77,8 +77,8 @@ const Dial = ({ at, bipolar, mark = false }: { at: Live; bipolar: boolean; mark?
 };
 
 /** A knob a lane moves: it shows what plays, stays a stop of Tab, and its keys, drag and reset do nothing; a dot and a tip say why. */
-const Held = ({ id, label, text, value, unit, bipolar, held, range }: { id: string; label: string; text?: string; value: number; unit?: Unit; bipolar: boolean; held: Live; range: Range }) => (
-  <col key={id} label={label} role="slider" value={value} w={CELL} h={ROW} align="center" radius="md">
+const Held = ({ id, label, text, unit, bipolar, held, range }: { id: string; label: string; text?: string; unit?: Unit; bipolar: boolean; held: Live; range: Range }) => (
+  <col key={id} label={label} role="slider" value={held} w={CELL} h={ROW} align="center" radius="md">
     <Dial at={liveTravelled(held, range)} bipolar={bipolar} mark />
     <box h={2} />
     <text style="label" color="text-secondary" w={CELL - 4} align="center" truncate>{text ?? label}</text>
