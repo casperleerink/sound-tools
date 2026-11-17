@@ -931,7 +931,13 @@ fn drawing(scope: &Scope, d: &ShapesNode) -> El {
     for lines in &d.lines {
         let colour = theme.color(&lines.color);
         for run in runs(&lines.points) {
-            shape = shape.stroke_with(run, false, lines.width, LineCap::Butt, colour);
+            // Round, so the joints of a run, such as an arc, show no seams.
+            let cap = if run.len() > 2 {
+                LineCap::Round
+            } else {
+                LineCap::Butt
+            };
+            shape = shape.stroke_with(run, false, lines.width, cap, colour);
         }
     }
     for rects in &d.rects {

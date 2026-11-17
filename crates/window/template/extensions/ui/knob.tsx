@@ -45,7 +45,7 @@ export const Knob = ({ id, label, text, value, initial, unit, bipolar = false, o
   return (
     <col key={id} label={label} role="slider" value={value} w={CELL} h={ROW} align="center" radius="md" drag={{ axis: "y", min: -(1 - at) * TRAVEL, max: at * TRAVEL, move: false }} onDragEnd={({ dy }) => onChange(valueAt(at - dy / TRAVEL, range))} actions={actions}>
       <box w={DIAL} h={DIAL}>
-        <shapes at={[0, 0]} w={DIAL} h={DIAL} lines={[{ color: "fill-strong", width: TRACK, points: ARC }]} />
+        <shapes at={[0, 0]} w={DIAL} h={DIAL} lines={[{ color: "raised", width: TRACK, points: ARC }]} />
         <shapes at={[0, 0]} w={DIAL} h={DIAL} lines={[{ color: "text", width: TRACK, points: ARC }]} trim={bipolar ? [dragged.min(0.5), dragged.max(0.5)] : [0, dragged]} />
         <box at={[(DIAL - FACE) / 2, (DIAL - FACE) / 2]} w={FACE} h={FACE} radius="full" fill="fill" />
         <box at={[pointer(true), pointer(false)]} w={3} h={3} radius="full" fill="text" />

@@ -142,7 +142,7 @@ export type TextProps = TextLook &
     | { live: Num; unit: Unit | "position" | "time"; digits?: never; children?: never }
     | { live: Num; digits?: number; unit?: never; children?: never }
   );
-/** Line segments, `points` four numbers each (x1 y1 x2 y2), all `width` points wide. */
+/** Line segments, `points` four numbers each (x1 y1 x2 y2), all `width` points wide. Segments end to end draw as one line with round joints, which show in a see-through colour. */
 export type Lines = { color: Color; width: number; points: number[] };
 /** Filled rectangles, `rects` four numbers each (x y w h). */
 export type Rects = { color: Color; rects: number[] };
