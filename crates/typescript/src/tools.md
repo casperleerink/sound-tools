@@ -4,7 +4,7 @@ A tool is TypeScript: a device on a track, the song page, or the whole project. 
 
 ## Check your work, after every change
 
-Run 1 and 2 in `extensions/`, the rest with `sound-tools-next` (`$SOUND_TOOLS_RUNTIME` when set) on the project folder.
+Run 1 and 2 in `extensions/`, the rest with `sound-tools-next` on the project folder.
 
 1. `bun check -p .`: types, token names and props.
 2. `bun test`: one test for each thing the tool must do: `render(tool, self)`, then `find`, `press`, `act` and `apply`, as `song.test.tsx` does.
@@ -12,7 +12,7 @@ Run 1 and 2 in `extensions/`, the rest with `sound-tools-next` (`$SOUND_TOOLS_RU
 4. `--tree out.json`: every element with its text, and `controls` (key, label, role, value or `checked`, `expanded`, actions), `playing`, `playhead`, `meters` and `problems`. Check each control you made says its state.
 5. `--act steps.json` runs actions first, on the project itself: `[{ "label": "Mute Track 2", "action": "toggle" }, { "key": "fader-t00", "action": "set", "value": -6 }, { "action": "undo" }]`. `--script steps.json` points by key: `{"events": [{ "t": 0.5, "type": "tap", "key": "mute-t01" }, { "t": 1, "type": "type", "text": "-6" }, { "t": 2, "type": "drag", "key": "fader-t00", "dy": 40 }]}`.
 
-`problems.txt` says why what does not load. `--inspect` prints the records.
+`problems.txt` says why what does not load. `--inspect` prints the records; `--analyze` and `--render` play the sound.
 
 ## A tool
 
@@ -44,7 +44,7 @@ export const chop = tool({
 });
 ```
 
-- `when` and `doc` are what the next agent reads. In `sound` a number field is a `Signal`.
+- The next agent reads `when` and `doc`. In `sound` a number field is a `Signal`.
 - To put a device on a track, add `state/song/<track>/chain/<name>.json` as `{"tool": "chop", "state": {}}`, and its name to `order` in the chain's `instance.json`.
 - A tool without `view` gets the card of `ui/blocks/generic-card.tsx`.
 
