@@ -6,6 +6,7 @@ sources, no MCP, no slash commands, and the project as an added folder so its CL
 `sound-tools` on the PATH is this checkout's debug build, or `$SOUND_TOOLS_RUNTIME`.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -17,7 +18,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 RUNTIME = Path(os.environ.get("SOUND_TOOLS_RUNTIME", REPO / "target" / "debug" / "runtime"))
 LOGS = Path.home() / ".cache" / "sound-tools-eval"
-BIN = LOGS / "bin"
+# One folder per program under test, so two evals running at once keep their own.
+BIN = LOGS / "bin" / hashlib.sha1(str(RUNTIME).encode()).hexdigest()[:8]
 APP_TOOLS = "Bash,Read,Edit,Write,Glob,Grep"
 
 
@@ -56,7 +58,8 @@ class Run:
     def checks_run(self) -> dict:
         """How the agent checked its work: each way, and how often."""
         ways = {"screenshot": "--screenshot", "click": "--click", "play": "--play",
-                "inspect": "--inspect", "analyze": "--analyze", "types": "bun check"}
+                "inspect": "--inspect", "analyze": "--analyze", "types": "bun check",
+                "snap": "--snap", "tree": "--tree", "act": "--act"}
         counts = {way: sum(flag in argument for tool, argument in self.calls if tool == "Bash")
                   for way, flag in ways.items()}
         counts["looked"] = sum(tool == "Read" and argument.endswith(".png")
