@@ -13,9 +13,9 @@ through the driver's parser and mapper, so after recording run
 `cargo insta test -p sound-agent --review` and read the changed snapshots in
 `crates/agent/src/provider/claude/snapshots/`.
 
-The flags and the environment match `crates/agent/src/provider/claude/mod.rs`. Personal data (account, paths, the user's own
-agents) is replaced before writing, since the repository is public. Runs use haiku to
-stay cheap; one full recording costs a few cents.
+The flags and the environment match `crates/agent/src/provider/claude/mod.rs`. Personal data
+(account, paths, the user's own agents) is replaced before writing, since the repository is
+public. Runs use haiku to stay cheap; one full recording costs a few cents.
 """
 
 import base64

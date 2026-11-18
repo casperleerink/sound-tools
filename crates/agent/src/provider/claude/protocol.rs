@@ -301,7 +301,6 @@ pub(crate) enum Request {
     SetPermissionMode {
         mode: PermissionMode,
     },
-    /// From the next message on. An unknown model is an error answer, and the model stays.
     SetModel {
         model: String,
     },

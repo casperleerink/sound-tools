@@ -238,7 +238,7 @@ fn the_models_come_with_no_message() {
     );
 }
 
-/// The agent waits on, so only the error ends the wait.
+/// The agent refuses to start and keeps running, so only the error ends the wait.
 #[test]
 fn models_refused_say_why() {
     let folder = tempfile::tempdir().unwrap();

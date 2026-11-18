@@ -37,7 +37,7 @@ const LOCK: &str = ".lock";
 /// The longest server message shown. A longer answer is a page, not a message.
 const MESSAGE_LENGTH: usize = 300;
 
-/// A pinned program a provider downloads, with the values its driver fills in.
+/// A pinned program to download: a provider's, or the app's own update.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Download {
     /// The program's file name, such as `claude`, or `claude.exe` on Windows. Its versions

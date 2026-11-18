@@ -18,8 +18,8 @@ impl ProcessTree {
     pub(crate) fn prepare(#[cfg_attr(windows, allow(unused_variables))] command: &mut Command) {
         // Its own process group: a ctrl-c in the terminal that started the app does not stop
         // the program halfway through a write, and the group can be ended as one. On Windows
-        // the hidden console of `background_command` already keeps a ctrl-c away, and the job is made
-        // once the program runs.
+        // the hidden console of `background_command` already keeps a ctrl-c away, and the job
+        // is made once the program runs.
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(command, 0);
     }

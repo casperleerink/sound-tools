@@ -11,8 +11,8 @@
 //!   Finder has a bare `PATH`, and the agent needs `cargo` and `git`.
 //! - [`Agents`] finds each provider's program once for the app, downloads Claude Code when
 //!   there is none ([`install`]) and runs the provider's own sign-in ([`Provider::status`],
-//!   [`SignInChoice`]). [`AgentsPage`] shows
-//!   each [`Setup`] state on the Settings page; the sidebar runs a thread once one is ready.
+//!   [`SignInChoice`]). [`AgentsPage`] shows each [`Setup`] state on the Settings page; the
+//!   sidebar runs a thread once one is ready.
 //! - Once it is ready, the sidebar also names the versions of the project history with the
 //!   provider's small model ([`Provider::ask_small_model`], `naming`).
 //!

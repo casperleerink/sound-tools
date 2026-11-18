@@ -168,17 +168,6 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::with(session, agents, threads, settings, window, cx)
-    }
-
-    fn with(
-        session: Entity<sound_ui::Session>,
-        agents: Entity<Agents>,
-        threads: Option<PathBuf>,
-        settings: Entity<AgentSettings>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
         install_bindings(cx);
         let loading = threads.map(|threads| {
             let project = session.read(cx).project().root().to_path_buf();
@@ -254,7 +243,7 @@ impl Sidebar {
                 sidebar.picked(picked, window, cx);
             }),
             cx.observe(&settings, |sidebar, _, cx| sidebar.follow(cx)),
-            cx.observe(&agents, Self::agents_changed),
+            cx.observe(&agents, |sidebar, _, cx| sidebar.follow(cx)),
             cx.subscribe(&agents, |sidebar, _, event: &AgentsEvent, cx| match event {
                 AgentsEvent::Notice(notice) => {
                     sidebar.conversation.notice(notice.clone());
@@ -334,8 +323,8 @@ impl Sidebar {
         self.history.reset();
     }
 
-    /// A change of the settings applies at once: the running agent hears it now, from its
-    /// next tool on. A request that fails comes back as an error line.
+    /// A change of the settings goes to the running agent at once. A request that fails
+    /// shows as a notice.
     fn settings_event(
         &mut self,
         _: Entity<AgentSettings>,
@@ -420,12 +409,6 @@ impl Sidebar {
     fn ready_program(&self, cx: &App) -> Option<(Provider, Installed)> {
         let provider = self.provider(cx);
         Some((provider, self.agents.read(cx).ready(provider)?))
-    }
-
-    /// A change of the app's agents: one signed in, or out. Signed out, the thread's agent
-    /// ends; the thread shows again once it is signed in.
-    fn agents_changed(&mut self, _: Entity<Agents>, cx: &mut Context<Self>) {
-        self.follow(cx);
     }
 
     /// Follows the thread's provider, after a change of the agents, the settings or the
@@ -875,7 +858,6 @@ impl Sidebar {
                 .variant(ButtonVariant::Subtle)
                 .disabled(true)
         };
-        // The access pill always says the mode, so it is never a surprise.
         let went_back = self.went_back_line(cx);
         div()
             .flex_none()
