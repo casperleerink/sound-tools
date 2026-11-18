@@ -1,7 +1,6 @@
 //! Claude Code: the `claude` CLI in stream-json mode, one process per thread.
 //!
-//! Every Claude flag and type is in this module. The process reads one JSON message per line
-//! on stdin and writes one per line on stdout. Approvals come as `can_use_tool` requests that
+//! Every Claude flag and type is in this module. Approvals come as `can_use_tool` requests that
 //! we answer (`--permission-prompt-tool stdio`). It exits when stdin closes. The pinned
 //! download and the sign-in are in [`setup`].
 
@@ -97,7 +96,7 @@ fn arguments(options: &ThreadOptions, session_id: &str) -> Vec<OsString> {
 }
 
 /// `claude` in the environment without what would confuse it. Every run of the CLI starts
-/// here: a thread, and `auth`.
+/// here.
 fn command(program: &Path, environment: &HashMap<OsString, OsString>) -> std::process::Command {
     let environment = environment.iter().filter(|(key, _)| {
         let key = key.to_string_lossy();

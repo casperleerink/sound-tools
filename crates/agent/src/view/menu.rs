@@ -1,6 +1,6 @@
 //! The sidebar's menus. In the composer: how much the agent may do without asking, a setting
-//! of the machine (see
-//! `crate::settings`). In the header: **New**, the recent threads, and the instructions.
+//! of the machine (see `crate::settings`). In the header: **New**, the recent threads, and the
+//! instructions.
 
 use gpui::SharedString;
 use sound_ui::components::dropdown_menu::{MenuEntry, MenuGroup, MenuItem};

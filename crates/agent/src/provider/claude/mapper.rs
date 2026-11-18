@@ -165,8 +165,6 @@ impl Mapper {
         }
     }
 
-    /// The process ended: it closed its output and exited with `code`, or `None` when a
-    /// signal stopped it. `said` is the first line it wrote on stderr.
     pub(super) fn exited(&mut self, code: Option<i32>, said: Option<&str>) -> Vec<AgentEvent> {
         let mut events = self.close_blocks();
         if self.turn_open {
@@ -452,7 +450,7 @@ fn blocks(content: Content) -> Vec<Block> {
     }
 }
 
-/// The first error the CLI reported. Lines that start with `[ede_diagnostic]` are its own notes.
+/// The first error the CLI reported.
 fn failure(result: &TurnResult) -> String {
     result
         .errors

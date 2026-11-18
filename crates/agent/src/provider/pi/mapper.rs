@@ -12,7 +12,8 @@ use crate::provider::{
     AgentEvent, ApprovalAnswer, ApprovalId, ExitReason, Model, StepId, StepOutcome, TurnOutcome,
 };
 
-/// The id of our first command of each kind, which the mapper reads back from its response.
+/// The kinds of our commands. A command's id starts with its kind, so a refusal says which
+/// command it refuses.
 pub(super) const MESSAGE: &str = "message";
 pub(super) const MODELS: &str = "models";
 pub(super) const APPROVAL_MODE: &str = "approval-mode";
@@ -171,8 +172,6 @@ impl Mapper {
         })
     }
 
-    /// The process ended with `code`, or `None` when a signal stopped it. `said` is the first
-    /// line it wrote on stderr.
     pub(super) fn exited(&mut self, code: Option<i32>, said: Option<&str>) -> Vec<AgentEvent> {
         let mut events = self.close_blocks();
         if self.turn_open {
@@ -196,7 +195,7 @@ impl Mapper {
         events
     }
 
-    /// A command of ours that Pi refused. The ids say which: see the constants above.
+    /// A command of ours that Pi refused.
     fn refused(&mut self, id: Option<&str>, error: Option<String>) -> Vec<AgentEvent> {
         let error = error.unwrap_or_else(|| "it gave no reason".to_string());
         let kind = id.and_then(|id| id.rsplit_once('-')).map(|(kind, _)| kind);

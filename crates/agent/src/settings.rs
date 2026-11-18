@@ -5,9 +5,8 @@
 //! Never in a project: the agent writes there, and must not raise its own access by editing a
 //! file.
 //!
-//! [`AgentSettings`] holds them once for the app, so every sidebar shows and changes the same.
-//! It also knows where the composer's instructions for every project are: `instructions.md`
-//! beside the settings, read when an agent starts (see `crate::view::instructions`).
+//! The composer's instructions for every project are `instructions.md` beside it, read when an
+//! agent starts (see `crate::view::instructions`).
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;

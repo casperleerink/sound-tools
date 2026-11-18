@@ -56,7 +56,6 @@ impl Provider {
         }
     }
 
-    /// The program's name on the `PATH`, when the composer installed it themselves.
     /// Where the composer gets the program.
     pub fn website(self) -> &'static str {
         match self {
@@ -65,6 +64,7 @@ impl Provider {
         }
     }
 
+    /// The program's name on the `PATH`, when the composer installed it themselves.
     pub fn command(self) -> &'static str {
         match self {
             Provider::Claude => "claude",

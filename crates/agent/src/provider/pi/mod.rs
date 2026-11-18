@@ -1,8 +1,7 @@
 //! Pi: `pi --mode rpc`, one process per thread, with our extension (`extension.js`) loaded.
 //!
-//! Every Pi flag and record is in this module. Pi reads one JSON command per line on stdin and
-//! writes responses and events on stdout. Pi has no approvals of its own: the extension asks
-//! before a tool runs, as an extension UI request we answer. The sign-in, the models and the
+//! Every Pi flag and record is in this module. Pi has no approvals of its own: the extension
+//! asks before a tool runs, as an extension UI request we answer. The sign-in, the models and the
 //! one-shot question are in [`setup`].
 
 mod mapper;
