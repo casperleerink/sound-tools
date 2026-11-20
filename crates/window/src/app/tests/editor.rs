@@ -182,4 +182,3 @@ fn two_thousand_notes_of_the_editor_scroll_play_zoom_and_drag_within_their_budge
     );
     assert!(zoom < super::budget::ZOOM, "a zoom frame took {zoom:?}");
 }
-
