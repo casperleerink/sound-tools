@@ -650,3 +650,24 @@ fn the_composer_passes_on_the_apps_keys_that_never_type() {
     chord(&mut window, ',');
     assert!(window.state.settings.page.is_some());
 }
+
+#[test]
+fn the_access_menu_shows_what_each_mode_means_in_full() {
+    let (_scratch, mut window) = window("agent-empty");
+    click(&mut window, "agent-access-trigger");
+    redraw(&mut window);
+    let small = window.state.theme.kit.ty.small;
+    let descriptions: Vec<_> = (window.elements().into_iter())
+        .filter(|element| element.key.as_deref() == Some("description"))
+        .collect();
+    assert_eq!(descriptions.len(), 3);
+    for description in descriptions {
+        let words = description.text.unwrap();
+        let (width, _) = rune::text::measure(&words, &[], small, None);
+        assert!(
+            description.rect[2] >= width,
+            "{words} cut: {width} in {:?}",
+            description.rect
+        );
+    }
+}
