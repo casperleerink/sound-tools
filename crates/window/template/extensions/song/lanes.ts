@@ -2,7 +2,7 @@
 // moves a number of the track's fader or of one of its devices over the song.
 // A lane's plane: x in ticks of the song, y down its travel, 0 its top (`max`) and 1 its bottom.
 import { builtInNumbers, type FilledStateOfTool, type Pointer, type Unit } from "../sdk";
-import { envelope, lfo } from "../lfo";
+import { ENVELOPE, envelope, lfo } from "../lfo";
 import { freeName, splitTarget, type Mover } from "../track";
 import { isRow, mixOf, nameFrom, words, type Child, type Draft, type Song } from "./model";
 import { positionOf, valueOf } from "../ui/value";
@@ -140,12 +140,14 @@ export function movablesOf(row: Child): Movable[] {
 
 /** How far the points at `ticks` of `points` may move in time: one alone stays between its neighbours, many stay after 0. */
 export function roomOf(points: readonly { tick: number }[], ticks: readonly number[]): [earliest: number, latest: number] {
-  if (ticks.length !== 1) return [-Math.min(...ticks), Infinity];
+  if (ticks.length !== 1) return [-Math.min(...ticks), FAR];
   const index = points.findIndex((point) => point.tick === ticks[0]);
   const tick = points[index]?.tick;
   if (tick === undefined) return [0, 0];
-  return [(points[index - 1]?.tick ?? -1) + 1 - tick, (points[index + 1]?.tick ?? Infinity) - 1 - tick];
+  return [(points[index - 1]?.tick ?? -1) + 1 - tick, (points[index + 1]?.tick ?? FAR) - 1 - tick];
 }
+/** Further than any song goes, in ticks: a bound a drag can be given. */
+const FAR = 1e12;
 
 /** The track or audio track `name` of a draft. */
 const rowIn = (draft: Draft, name: string) => {
@@ -336,6 +338,13 @@ export const laneEdits = (song: Song) => {
     /** A double click on the handle: the line is straight again. */
     straighten(track: string, lane: string, tick: number) {
       editPoints(song, "Straighten a line", track, lane, (all) => all.map((each) => (each.tick === tick ? { tick: each.tick, value: each.value } : each)));
+    },
+    /** A field of the LFO or the envelope that moves the number of `lane`: its shape or rate, or a time or the sustain. */
+    tune(track: string, lane: string, field: "shape" | "rate" | keyof typeof ENVELOPE, value: string | number) {
+      update(`Change the ${words(field).toLowerCase()}`, (draft) => {
+        const child = rowIn(draft, track)?.children.find((each) => each.name === lane);
+        if (child?.tool === "lfo" || child?.tool === "envelope") (child.state as Record<string, unknown>)[field] = value;
+      });
     },
     /** The low or the high line of an LFO's or an envelope's band dragged by `dy`. */
     band(track: string, lane: string, end: "low" | "high", p: Pick<Pointer, "dy">) {
