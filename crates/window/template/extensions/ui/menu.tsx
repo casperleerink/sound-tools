@@ -36,8 +36,8 @@ export const MenuList = ({ id, label, items, open = "press", w = 220 }: { id: st
 };
 
 /** A button that opens a list of things to do. */
-export const Menu = ({ id, label, text, icon = "ellipsis", variant = "ghost", size = "md", items }: { id: string; label: string; text?: string; icon?: IconName; variant?: Variant; size?: Size; items: readonly Item[] }) => (
-  <Button id={id} label={label} text={text} icon={text === undefined ? icon : undefined} variant={variant} size={size}>
-    <MenuList id={id} label={label} items={items} w={200} />
+export const Menu = ({ id, label, text, icon = "ellipsis", variant = "ghost", size = "md", tip, keys, w = 200, items }: { id: string; label: string; text?: string; icon?: IconName; variant?: Variant; size?: Size; tip?: string; keys?: string; w?: number; items: readonly Item[] }) => (
+  <Button id={id} label={label} text={text} icon={text === undefined ? icon : undefined} variant={variant} size={size} tip={tip} keys={keys}>
+    <MenuList id={id} label={label} items={items} w={w} />
   </Button>
 );

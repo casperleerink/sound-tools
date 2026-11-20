@@ -2110,6 +2110,7 @@ fn code_that_opens_the_window_of_a_child_with_none_has_a_problem() {
 mod behaviours;
 mod budget;
 mod drops;
+mod editor;
 mod export;
 mod facts;
 mod feeds;
