@@ -238,7 +238,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - **(v1) A field reads as it plays**, on every control and in `now.value`: a lane's number shows the lane and does not drag, as the window's knobs. Rejected: an option, which the shortest form left off.
 - **(v1) A number from 0 to 1 reads as a percent** unless its field says `plain`; a knob with its label outside `Controls` fails its view. Rejected: laying it out for the author, which hides why.
 - **(v1) A view draws the sound of its tool or of a child with no meter**: the frame that first draws it asks the tool's behaviour for a tap. Rejected: a tap on every tool, which a song of many devices pays for.
-- **(v1) A page's transport shows the bars only for a tool that plays in them**: its sound reads `beat` or `bpm`, or a child it names is in time. Rejected: a prop per part.
+- **The transport is the window's**, Rust in the title row, all of it for every tool: it works while code is broken. Rejected: a pill per page, and hiding the bars for a tool not in time.
 - **One import, `./sdk`, over modules by area**, so an agent reads one area. Rejected: `export *`, which makes the internals they share importable.
 - **Children reach all code filled with their defaults**, as one shape. A slot names a tool, or `takes(port)`: any tool with that port, so a project's own instruments and plugins fit. Rejected: a list of tools, which grows with every block.
 - **A tool's code edits its record and its children's** by the fields it changed, on the records as they are: a late edit takes nothing back.

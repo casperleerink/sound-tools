@@ -1,4 +1,4 @@
-//! The window of one project: a title row (its name, the side panel, play and stop), and the
+//! The window of one project: a title row (its name, the side panel, the transport), and the
 //! view of its main instance filling the rest. In a run without a window the engine plays
 //! offline, a step per frame, and Bun answers before each frame, so a run is always the same.
 
