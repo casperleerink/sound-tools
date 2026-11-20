@@ -24,8 +24,8 @@ use super::recorder::{
 };
 use super::{Happened, Hold, Input};
 
-/// How long a finished take waits for its audio files to hold what was heard up to its end,
-/// before it closes them with what they have.
+/// How long a take that ended waits for its first frames, and then for its audio files to
+/// hold what was heard up to its end, before it closes them with what they have.
 const FINISH_WAIT: Duration = Duration::from_secs(2);
 
 /// The notes a take that runs heard so far.
@@ -92,12 +92,22 @@ struct AudioTake {
     /// Where it ended, once it did.
     end: Option<Ticks>,
     started: Vec<StartedTake>,
-    /// Since when a finish waits for the input to bring the end.
-    finishing: Option<Instant>,
-    /// It stopped waiting, and closes with what it has.
-    closed: bool,
+    /// How far its end is, once it ended.
+    ending: Option<Ending>,
     /// The notes of the same take, written with its sound.
     notes: Option<Finished>,
+}
+
+/// A take of sound that ended, on its way to being closed.
+#[derive(Clone, Copy)]
+enum Ending {
+    /// Since when it waits to know how many frames of the input hold what was heard up to its
+    /// end: its first frames are not there yet.
+    Waiting(Instant),
+    /// Since when the recorder was asked to close it once those frames came.
+    Asked(Instant),
+    /// It was asked to close with what it has.
+    Closed,
 }
 
 /// What the takes of a recorder did, in order: a take of sound starts at a frame of the song,
@@ -373,8 +383,7 @@ impl Input {
             placement: Placement::new(clock.tick_at(Frames(frame)), clock.clone()),
             end: None,
             started: Vec::new(),
-            finishing: None,
-            closed: false,
+            ending: None,
             notes: None,
         });
         self.audio.open();
@@ -389,24 +398,26 @@ impl Input {
         let timing = self.timing.as_deref();
         let mut finishes = Vec::new();
         for audio in &mut self.recorders.audio {
-            let finish = match (audio.end, audio.finishing) {
-                (None, _) => {
-                    audio.placement.observe(status);
-                    None
-                }
-                (Some(end), None) => {
-                    audio.finishing = Some(Instant::now());
-                    let frames = input_rate.and_then(|rate| {
-                        (audio.placement).input_frames_until(end, timing, rate)
-                    });
-                    Some(frames)
+            let Some(end) = audio.end else {
+                audio.placement.observe(status);
+                continue;
+            };
+            let ending = audio.ending.get_or_insert(Ending::Waiting(Instant::now()));
+            let frames = input_rate
+                .and_then(|rate| (audio.placement).input_frames_until(end, timing, rate));
+            let finish = match (*ending, frames) {
+                (Ending::Waiting(_), Some(frames)) => {
+                    *ending = Ending::Asked(Instant::now());
+                    Some(Some(frames))
                 }
                 // The input never brought the end: the file closes with what it has.
-                (Some(_), Some(since)) if !audio.closed && since.elapsed() >= FINISH_WAIT => {
-                    audio.closed = true;
+                (Ending::Waiting(since) | Ending::Asked(since), _)
+                    if since.elapsed() >= FINISH_WAIT =>
+                {
+                    *ending = Ending::Closed;
                     Some(None)
                 }
-                (Some(_), Some(_)) => None,
+                _ => None,
             };
             if let Some(frames) = finish {
                 finishes.push(RecorderCommand::Finish {
