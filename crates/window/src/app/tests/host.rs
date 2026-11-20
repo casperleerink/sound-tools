@@ -1395,32 +1395,71 @@ export const cut = tool({
     assert_eq!(tip(&window), None);
 }
 
-/// A newer template changes code the project changed too: the window says so, and the
-/// project's code stays as it is.
-#[test]
-#[ignore = "missing: no notice of a newer template for changed code (shell-fix, app/notices.rs)"]
-fn a_newer_template_for_code_the_project_changed_shows_a_notice() {
-    let scratch = new_project();
+/// A project of the DAW template, as an older release made it: `song.tsx` the project never
+/// changed and `track.ts` it did, each as the older template had it.
+fn older_daw(scratch: &tempfile::TempDir) -> PathBuf {
     let folder = scratch.path().join("song");
-    // As an older release kept it, and the project changed it since.
-    let song = "extensions/song.tsx";
-    std::fs::write(
-        folder.join(runtime::templates::KEPT).join(song),
-        "// an older template",
-    )
-    .unwrap();
-    let ours = std::fs::read_to_string(folder.join(song)).unwrap() + "\n// ours\n";
-    std::fs::write(folder.join(song), &ours).unwrap();
-    let state = opened(&folder);
-    let controls = controls::collect(&state).controls;
-    let texts: Vec<String> = controls.into_iter().map(|control| control.label).collect();
-    let texts = texts.join(", ");
-    let notice = state.session.notice().unwrap_or_default().to_string();
-    assert!(
-        notice.contains("template") || texts.contains("template"),
-        "{notice} {texts}"
-    );
-    assert_eq!(std::fs::read_to_string(folder.join(song)).unwrap(), ours);
+    let kept = folder.join(runtime::templates::KEPT);
+    for (file, ours) in [("song.tsx", "// older\n"), ("track.ts", "// older, then ours\n")] {
+        let path = format!("extensions/{file}");
+        let older = std::fs::read_to_string(folder.join(&path)).unwrap() + "// older\n";
+        std::fs::write(kept.join(&path), &older).unwrap();
+        let theirs = std::fs::read_to_string(folder.join(&path)).unwrap() + ours;
+        std::fs::write(folder.join(&path), theirs).unwrap();
+    }
+    folder
+}
+
+/// A newer template: what the project never changed becomes the template's, what it changed
+/// stays and waits, and "Merge with the agent" puts the merge into the agent's composer with
+/// the old template beside the new.
+#[test]
+fn a_newer_template_updates_untouched_code_and_the_agent_merges_the_rest() {
+    let scratch = new_project();
+    let folder = older_daw(&scratch);
+    let song = std::fs::read_to_string(folder.join("extensions/song.tsx")).unwrap();
+    let track = std::fs::read_to_string(folder.join("extensions/track.ts")).unwrap();
+    let mut state = opened_in_place(&folder);
+    crate::sidebar::scene(&mut state, "agent-empty");
+    let mut window = laid_out(state);
+    redraw(&mut window);
+    let daw = runtime::templates::named("DAW").unwrap();
+    let newest = |path: &str| (daw.files.iter()).find(|(each, _)| *each == path).unwrap().1;
+    assert_ne!(song, newest("extensions/song.tsx"));
+    let read = |path: &str| std::fs::read_to_string(folder.join(path)).unwrap();
+    assert_eq!(read("extensions/song.tsx"), newest("extensions/song.tsx"));
+    assert_eq!(read("extensions/track.ts"), track);
+    let words = "A newer DAW template changes a file this project changed too.";
+    let labels = window.elements().into_iter().filter_map(|element| element.label);
+    assert!(labels.into_iter().any(|label| label == words), "no notice");
+
+    act(&mut window.state, json!({ "label": "Merge with the agent", "action": "press" }));
+    redraw(&mut window);
+    let composer = (chrome_controls(&window.state).into_iter())
+        .find(|control| control.key == "agent-composer")
+        .and_then(|control| control.value)
+        .unwrap();
+    let composer = composer.as_str().unwrap();
+    assert!(composer.contains("- extensions/track.ts"), "{composer}");
+    assert!(window.state.panel.open && window.state.panel.tab == Tab::Agent);
+    let previous = folder.join(".template/previous/extensions/track.ts");
+    assert!(std::fs::read_to_string(previous).unwrap().ends_with("// older\n"));
+    assert_eq!(read("extensions/track.ts"), track);
+    assert!(window.state.template_update.is_none());
+}
+
+/// Dismissed, the notice goes and the project's code stays; it comes again on the next open.
+#[test]
+fn a_dismissed_template_notice_leaves_the_code_as_it_is() {
+    let scratch = new_project();
+    let folder = older_daw(&scratch);
+    let track = std::fs::read_to_string(folder.join("extensions/track.ts")).unwrap();
+    let mut state = opened_in_place(&folder);
+    act(&mut state, json!({ "key": "notice-template-dismiss", "action": "press" }));
+    assert!(state.template_update.is_none());
+    drop(state);
+    assert_eq!(std::fs::read_to_string(folder.join("extensions/track.ts")).unwrap(), track);
+    assert!(opened_in_place(&folder).template_update.is_some());
 }
 
 /// A transport of its own: its presses play, pause, stop and jump the clock, and its label

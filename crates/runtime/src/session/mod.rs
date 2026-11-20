@@ -17,9 +17,9 @@ use sound_core::{
     EngineStatus, InstanceId, PlayedLanes, PointId, Project, ProjectEdit, ProjectError,
     ProjectEvent, Ticks,
 };
+use sound_typescript::touch;
 pub use sound_typescript::window::Waker;
 use sound_typescript::window::{Clock, Transport};
-use sound_typescript::touch;
 
 pub use gesture::{Drag, Held};
 pub use render::Rendered;

@@ -168,6 +168,8 @@ pub(crate) struct State {
     pub(crate) drops: drops::Drops,
     pub(crate) shell: crate::shell::Projects,
     pub(crate) incoming: input::Incoming,
+    /// Files of a newer template that the project changed too: they wait for a merge.
+    pub(crate) template_update: Option<runtime::templates::Update>,
     pub(crate) export: export::Export,
     renders: render::Renders,
     pub(crate) project_menu: menu::Menu,
@@ -200,7 +202,8 @@ impl State {
             _ => (folder, None),
         };
         if !folder.join(runtime::PROJECT_FILE).exists() {
-            let daw = runtime::templates::named("DAW").context("this release has no DAW template")?;
+            let daw =
+                runtime::templates::named("DAW").context("this release has no DAW template")?;
             runtime::templates::write(&folder, daw)?;
         }
         // The tools wait for Bun while the output device opens, as the GPUI app did.
@@ -292,6 +295,14 @@ impl State {
         if let Some(problem) = theme_problem.or(unread) {
             session.report(problem);
         }
+        // Asked again after the open brought the rest of its code up to date.
+        let template_update = match runtime::templates::update(&folder) {
+            Ok(update) => update,
+            Err(error) => {
+                session.report(format!("{error:#}"));
+                None
+            }
+        };
         let schemas = (runtime::tool_schemas()?.into_iter())
             .map(|schema| (schema.tool, schema.schema))
             .collect();
@@ -358,6 +369,7 @@ impl State {
                 Some(folder),
             ),
             incoming,
+            template_update,
             export: export::Export::new(
                 (!headless)
                     .then(runtime::app::support_folder)

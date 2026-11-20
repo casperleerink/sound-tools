@@ -368,7 +368,6 @@ fn a_bare_project_has_the_kit_and_no_problem() {
     run_bun(&state, &["test"]);
 }
 
-
 /// Rune moves a live size only with both: the other in points, never `"full"` or left out.
 #[test]
 fn a_live_width_or_height_needs_the_other_in_points() {

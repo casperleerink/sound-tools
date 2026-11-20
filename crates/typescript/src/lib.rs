@@ -22,7 +22,6 @@ mod feeds;
 mod lane;
 pub mod live;
 mod meter;
-pub mod window;
 pub mod path;
 mod project;
 mod readout;
@@ -34,6 +33,7 @@ pub mod shortcuts;
 mod timeline;
 mod tools;
 pub mod touch;
+pub mod window;
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};

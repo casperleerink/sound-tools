@@ -84,7 +84,10 @@ fn shared(templates: &Path, shares: &[String]) -> Result<Vec<(PathBuf, PathBuf)>
         .collect();
     let mut files = Vec::new();
     for path in shared {
-        let template = path.split('/').next().ok_or("a shared path names no template")?;
+        let template = path
+            .split('/')
+            .next()
+            .ok_or("a shared path names no template")?;
         let path = templates.join(path);
         let mut found = Vec::new();
         match path.is_dir() {
@@ -92,7 +95,9 @@ fn shared(templates: &Path, shares: &[String]) -> Result<Vec<(PathBuf, PathBuf)>
             false if path.is_file() => found.push(path),
             false => return Err(format!("{} is no file of a template", path.display()).into()),
         }
-        let kept = found.into_iter().filter(|file| !left_out.iter().any(|out| file.starts_with(out)));
+        let kept = found
+            .into_iter()
+            .filter(|file| !left_out.iter().any(|out| file.starts_with(out)));
         files.extend(kept.map(|file| (templates.join(template), file)));
     }
     Ok(files)
