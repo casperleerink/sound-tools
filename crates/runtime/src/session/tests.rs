@@ -466,6 +466,37 @@ fn a_drag_of_a_held_number_while_it_plays_writes_into_its_lane() {
     assert_eq!(opened.undo_label(), before);
 }
 
+/// A hand that holds the cutoff while the loop goes back writes each pass on its own: the
+/// second pass writes from the loop's start, where the first had not been.
+#[test]
+fn a_drag_held_over_the_end_of_a_loop_writes_each_pass() {
+    let mut opened = Opened::automated(&[(0, 1_000.0), (64 * BAR, 1_000.0)]);
+    opened.session.set_writes_automation(true);
+    opened.session.set_loop(Loop {
+        range: Ticks(0)..Ticks(BAR),
+        on: true,
+    });
+    opened.session.background(|project| project.engine().play());
+    // Half a second into the bar of two seconds, then on past its end.
+    opened.play(24_000);
+    let mut drag = Drag::new("Change cutoff");
+    (opened.session)
+        .play(&mut drag, &id(TRACK), &[("synth.cutoff_hz", 2_500.0)])
+        .unwrap();
+    for _ in 0..20 {
+        opened.play(4_800);
+    }
+    opened.session.finish(drag);
+    let written = opened.lane();
+    // The line holds what the hand held over `tick`.
+    let holds = |tick: u64| {
+        let around = (written.windows(2)).find(|pair| pair[0].0 <= tick && tick < pair[1].0);
+        around.is_some_and(|pair| pair[0].1 == 2_500.0 && pair[1].1 == 2_500.0)
+    };
+    // The hand took it a quarter of the way into the first pass, and held it into the second.
+    assert!(holds(500) && holds(2_500), "{written:?}");
+}
+
 /// A typed value while automation is written lands in the lane where the piece plays.
 #[test]
 fn a_typed_value_while_it_plays_lands_in_the_lane_where_it_plays() {
