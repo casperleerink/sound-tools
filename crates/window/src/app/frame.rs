@@ -82,8 +82,11 @@ impl State {
             }
             changed |= drawn;
         }
-        changed |= crate::sidebar::pump(self, &polled.events);
-        changed | self.take_in(&polled.events)
+        // What Bun's edits did while a run without a window waited for it, first.
+        let mut events = std::mem::take(&mut self.heard);
+        events.extend(polled.events);
+        changed |= crate::sidebar::pump(self, &events);
+        changed | self.take_in(&events)
     }
 
     /// Waits for Bun; a run without a window fails when it does not finish.
@@ -91,7 +94,10 @@ impl State {
         let Some(tools) = &mut self.tools else {
             return false;
         };
-        let settled = self.session.background(|project| tools.settle(project));
+        // The rest of the window hears what Bun's edits did as a window's poll would have.
+        let heard = &mut self.heard;
+        let settled = (self.session).background(|project| tools.settle(project, heard));
+        self.session.heard(&self.heard);
         let mut changed = settled.unwrap_or_else(|why| {
             *FAILED.lock().unwrap_or_else(PoisonError::into_inner) = Some(why);
             true

@@ -134,6 +134,9 @@ pub(crate) struct State {
     facts: BTreeMap<InstanceId, sound_core::facts::Facts>,
     /// When facts were last read, in seconds of the window's clock.
     facts_read: f64,
+    /// Events of the project a run without a window took while it waited for Bun, which the
+    /// next poll gives the rest of the window.
+    heard: Vec<sound_core::ProjectEvent>,
     /// The offers of the plugins of this computer, and the scan they were made for.
     plugin_offers: (u64, Vec<sound_typescript::devices::Offer>),
     /// The overlays open now, each inside the one before, by the key of what opened it. How the
@@ -320,6 +323,7 @@ impl State {
             menu: None,
             facts: BTreeMap::new(),
             facts_read: 0.0,
+            heard: Vec::new(),
             plugin_offers: (0, Vec::new()),
             main,
             waiting: host::Waiting::default(),

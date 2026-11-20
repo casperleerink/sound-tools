@@ -172,6 +172,12 @@ impl Session {
         }
     }
 
+    /// Events of the project that another took before [`Self::poll`] could, such as a run
+    /// without a window that waits for Bun.
+    pub fn heard(&mut self, events: &[ProjectEvent]) {
+        self.finish_if_deleted(events);
+    }
+
     /// Runs one project operation, such as a `commit`. An error goes to the notice and gives
     /// `None`; one that works clears the notice of an edit that failed.
     pub fn edit<R>(

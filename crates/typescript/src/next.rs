@@ -796,8 +796,13 @@ impl Tools {
 
     /// Waits until Bun did all it was told and the window heard it, and polls, until nothing
     /// is left: what a run without a window does before each frame. Whether what it shows
-    /// changed, or that Bun did not finish.
-    pub fn settle(&mut self, project: &mut Project) -> Result<bool, String> {
+    /// changed, or that Bun did not finish. The events of the project it took go into
+    /// `heard`, for whoever else hears them.
+    pub fn settle(
+        &mut self,
+        project: &mut Project,
+        heard: &mut Vec<ProjectEvent>,
+    ) -> Result<bool, String> {
         let started = Instant::now();
         let mut changed = false;
         loop {
@@ -821,6 +826,7 @@ impl Tools {
             }
             let events = project.drain_events();
             let polled = self.poll(project, &events);
+            heard.extend(events);
             changed |= polled;
             let idle = self.bun.as_ref().is_none_or(|bun| bun.is_idle());
             if !polled && !starting && idle && self.starting.is_none() {
