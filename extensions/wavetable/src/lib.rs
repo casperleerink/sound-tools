@@ -25,6 +25,7 @@
 
 mod dsp;
 mod matrix;
+mod shown;
 pub mod state;
 mod synth;
 mod tables;
@@ -53,12 +54,35 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
     markdown: include_str!("../agent-doc.md"),
 };
 
+const FRAMES: &str = "The frames of the table of oscillator 1 (frames_2: of 2), at most 12 evenly chosen, first to last, each one cycle of `points` samples (96 unless the binding says) from -1 to 1, frame after frame.";
+const FRAME: &str = "The frame oscillator 1 (frame_2: 2) plays at its position, a mix of the two frames it is between: one cycle of `points` samples (96 unless the binding says) from -1 to 1.";
+const RESPONSE: &str = "The response of filter 1 (response_2: 2) for a quiet sound: pairs of x, octaves above 20 Hz (0 to 9.97, 20 kHz), and y, the gain in dB; flat while it is off.";
+
 /// Registers the wavetable tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<WavetableState>(EXTENSION)?
         .behaviour(apply)
-        .schema(WavetableSynth::AUTOMATION.parameters());
+        .schema(WavetableSynth::AUTOMATION.parameters())
+        .feed("frames", FRAMES, |state, context| {
+            shown::frames(state.osc_1.table, context.points_or(shown::POINTS))
+        })
+        .feed("frame", FRAME, |state, context| {
+            shown::playing(&state.osc_1, context.points_or(shown::POINTS))
+        })
+        .feed("frames_2", FRAMES, |state, context| {
+            shown::frames(state.osc_2.table, context.points_or(shown::POINTS))
+        })
+        .feed("frame_2", FRAME, |state, context| {
+            shown::playing(&state.osc_2, context.points_or(shown::POINTS))
+        })
+        .feed("response_1", RESPONSE, |state, context| {
+            shown::response(&state.filter_1, context)
+        })
+        .feed("response_2", RESPONSE, |state, context| {
+            shown::response(&state.filter_2, context)
+        })
+        .facts(|_, _| shown::Facts::new());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

@@ -183,6 +183,20 @@ pub enum Category {
     Digital,
 }
 
+impl Category {
+    /// The name a composer sees.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Basic => "Basic",
+            Self::Additive => "Additive",
+            Self::Vocal => "Vocal",
+            Self::Spectral => "Spectral",
+            Self::Synthesis => "Synthesis",
+            Self::Digital => "Digital",
+        }
+    }
+}
+
 /// A built-in table. Each is made in code, so nothing is loaded and every machine plays the
 /// same.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
