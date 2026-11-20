@@ -1,10 +1,10 @@
-//! The tools of `extensions/` for the new window, with no GPUI: Bun runs their views of
+//! The tools of `extensions/` for the window: Bun runs their views of
 //! `sdk/view.ts`, a plain function of the records each, and the actions on them. The window
 //! calls [`Tools::poll`] at the start of each frame, and [`Tools::run_loops`] every
 //! [`FRAME_INTERVAL`]; nothing here waits for Bun but [`Tools::settle`], which a run without a
 //! window calls before each frame so the same project always draws the same.
 //!
-//! Any change in `extensions/`, a crash or a hang of Bun starts a new Bun, as in the old window.
+//! Any change in `extensions/`, a crash or a hang of Bun starts a new Bun.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -25,8 +25,10 @@ use crate::bun::{
     Answer, Bun, Clock, Event, Played, RecordEdit, Request, Runs, Skipped, Telling, Transport,
     TransportOp, record_key,
 };
+use crate::project::{
+    changes_of, control_update, every_instance, find, played, told_to_bun, watch,
+};
 use crate::tools::{Choice, Field, SOUNDING_TAP, ToolInfo, feed_child, feed_processor};
-use crate::window::{changes_of, control_update, every_instance, find, played, told_to_bun, watch};
 use crate::{Extensions, FOLDER, Launched};
 
 /// The file of a project's design tokens, in `extensions/`. A project that has one is a project
@@ -762,7 +764,7 @@ impl Tools {
             (state, _) => state,
         };
         let value = (state.as_ref())
-            .and_then(|state| crate::path::at(state, name).and_then(crate::tree::number_of));
+            .and_then(|state| crate::path::at(state, name).and_then(crate::path::number_of));
         value.map_or(0.0, f64::from)
     }
 

@@ -1,21 +1,13 @@
 //! Live values: numbers of a tree the window works out again on every frame, so what moves on
-//! a card or a page moves without Bun. Both windows work them out here, each from sources of
-//! its own, see [`Leaves`].
+//! a view moves without Bun. The window gives what they read, see [`Leaves`].
 
-use std::collections::{BTreeMap, HashMap};
+use serde::de::value::MapAccessDeserializer;
+use serde::de::{Error, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer};
+use sound_core::Clock;
 
-use serde_json::Value;
-use sound_core::{Clock, ValueRange};
-use sound_ui::components::knob::{
-    decibels_readout, hertz_readout, milliseconds_readout, pan_readout, percent_readout,
-    seconds_readout, semitones_readout, short,
-};
-
-use crate::feeds::Feeds;
+use crate::readout;
 pub use crate::tools::Unit;
-use crate::tools::{Input, ToolInfo};
-use crate::tree::named;
-pub use crate::tree::{DragPart, Ease, Live, Num, Readout, SpacePart, TickReadout};
 
 /// How close an ease comes before it is there, or a smooth one would move for a minute.
 const SETTLED: f64 = 1e-6;
@@ -163,242 +155,271 @@ impl Eased {
     }
 }
 
-/// Where a drag is, in the units of its space, as `now.drag(id)` reads it.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct DragNumbers {
-    pub start_x: f64,
-    pub start_y: f64,
-    pub dx: f64,
-    pub dy: f64,
-    pub active: bool,
-    pub alt: bool,
+/// A number, or a live value the window works out on every frame. Read by hand: serde's
+/// untagged enums buffer every number of a tree.
+#[derive(Clone, Debug)]
+pub enum Num {
+    Fixed(f32),
+    Live(Box<Live>),
 }
 
-impl DragNumbers {
-    fn part(&self, part: DragPart) -> f64 {
-        match part {
-            DragPart::StartX => self.start_x,
-            DragPart::StartY => self.start_y,
-            DragPart::Dx => self.dx,
-            DragPart::Dy => self.dy,
-            DragPart::X => self.start_x + self.dx,
-            DragPart::Y => self.start_y + self.dy,
-            DragPart::Active => f64::from(u8::from(self.active)),
-            DragPart::Alt => f64::from(u8::from(self.alt)),
+impl<'de> Deserialize<'de> for Num {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(NumVisitor)
+    }
+}
+
+struct NumVisitor;
+
+impl<'de> Visitor<'de> for NumVisitor {
+    type Value = Num;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a number or a live value")
+    }
+
+    fn visit_f64<E: Error>(self, value: f64) -> Result<Num, E> {
+        Ok(Num::Fixed(value as f32))
+    }
+
+    fn visit_i64<E: Error>(self, value: i64) -> Result<Num, E> {
+        Ok(Num::Fixed(value as f32))
+    }
+
+    fn visit_u64<E: Error>(self, value: u64) -> Result<Num, E> {
+        Ok(Num::Fixed(value as f32))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Num, A::Error> {
+        Ok(Num::Live(Box::new(Live::deserialize(
+            MapAccessDeserializer::new(map),
+        )?)))
+    }
+}
+
+impl Num {
+    /// Its number, when it is one and not a live value.
+    pub fn fixed(&self) -> Option<f32> {
+        match self {
+            Self::Fixed(number) => Some(*number),
+            Self::Live(_) => None,
         }
     }
 }
 
-/// What the window shows of a space: where it is scrolled to and how far zoomed, in its units,
-/// and its size in points when it was last laid out.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct SpaceView {
-    /// The unit at its left and top edge.
-    pub left: f64,
-    pub top: f64,
-    pub zoom_x: f64,
-    pub zoom_y: f64,
-    /// Points per unit at zoom 1.
-    pub unit_x: f64,
-    pub unit_y: f64,
-    pub width: f64,
-    pub height: f64,
-    /// Whether its `fit` was applied, once it was laid out.
-    pub fitted: bool,
+/// A live value, as `sdk.ts`'s `Live` sends it.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Live {
+    Tick,
+    /// 1 while the piece plays, else 0.
+    Playing,
+    /// The tempo at the playhead.
+    Bpm,
+    /// Seconds since the view opened.
+    Elapsed,
+    /// A number by its name: a field of the record, a number input or a number output of the
+    /// sound; of the instance at the path `child` inside it, its field or its output.
+    /// A field reads as it plays: what a lane or a cable plays into it, else its record.
+    Value {
+        name: String,
+        child: Option<String>,
+        fraction: bool,
+    },
+    /// 1 while a lane or a cable moves the field `name` and holds its control.
+    Held {
+        name: String,
+        child: Option<String>,
+    },
+    /// The loudest sample since the last frame: of a `meter` at a path inside, or of peaks
+    /// an instance inside it keeps, as `path.name`.
+    Peak {
+        name: String,
+        /// 0 left, 1 right; the louder when left out.
+        channel: Option<u8>,
+    },
+    /// The same, of what the device plays.
+    DevicePeak {
+        channel: Option<u8>,
+    },
+    /// The loudest sample of a channel of the audio input at the last poll, while it is open.
+    Input {
+        channel: usize,
+    },
+    Drag {
+        id: String,
+        part: DragPart,
+    },
+    Space {
+        key: String,
+        part: SpacePart,
+    },
+    /// 1 while the pointer is over the shape of `key`.
+    Hover {
+        key: String,
+    },
+    /// 1 while the key `pitch` is down on the sound of a tool of the project, or of its child
+    /// at the path `child`: what a clip, a key or its code plays. Only the new window has it.
+    Sounding {
+        pitch: u8,
+        child: Option<String>,
+    },
+    /// 1 while the pointer is over a control, the keys are on it or a drag holds it: the space
+    /// of the key `name`, or one whose drag turns the field `name`, so a fader shows the
+    /// number beside it.
+    Touched {
+        name: String,
+    },
+    Plus {
+        a: Num,
+        b: Num,
+    },
+    Minus {
+        a: Num,
+        b: Num,
+    },
+    Times {
+        a: Num,
+        b: Num,
+    },
+    Over {
+        a: Num,
+        b: Num,
+    },
+    Mod {
+        a: Num,
+        b: Num,
+    },
+    Pow {
+        a: Num,
+        b: Num,
+    },
+    Min {
+        a: Num,
+        b: Num,
+    },
+    Max {
+        a: Num,
+        b: Num,
+    },
+    Lt {
+        a: Num,
+        b: Num,
+    },
+    Gt {
+        a: Num,
+        b: Num,
+    },
+    Le {
+        a: Num,
+        b: Num,
+    },
+    Ge {
+        a: Num,
+        b: Num,
+    },
+    Eq {
+        a: Num,
+        b: Num,
+    },
+    Ne {
+        a: Num,
+        b: Num,
+    },
+    Snap {
+        a: Num,
+        b: Num,
+    },
+    Negate {
+        x: Num,
+    },
+    Abs {
+        x: Num,
+    },
+    Floor {
+        x: Num,
+    },
+    Round {
+        x: Num,
+    },
+    Sin {
+        x: Num,
+    },
+    Cos {
+        x: Num,
+    },
+    /// An amplitude in decibels, -120 at most down.
+    Decibels {
+        x: Num,
+    },
+    /// What moves from frame to frame: `key` is its live value as `sdk.ts` writes it, so the
+    /// same one drawn twice is one, as a signal used twice is.
+    Ease {
+        x: Num,
+        ease: Ease,
+        key: String,
+    },
 }
 
-impl Default for SpaceView {
-    fn default() -> Self {
-        Self {
-            left: 0.0,
-            top: 0.0,
-            zoom_x: 1.0,
-            zoom_y: 1.0,
-            unit_x: 1.0,
-            unit_y: 1.0,
-            width: 0.0,
-            height: 0.0,
-            fitted: false,
-        }
-    }
+/// How a live value follows another over time.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Ease {
+    /// Glides toward it, about two thirds of the way in `ms`.
+    Smooth { ms: f32 },
+    /// Rises with it at once and falls at most `per_second`.
+    Fall { per_second: f32 },
+    /// Rises with it at once and stays for `seconds`, then follows it.
+    Hold { seconds: f32 },
 }
 
-impl SpaceView {
-    /// Points per unit, across and down.
-    pub(crate) fn scale(&self) -> (f64, f64) {
-        (self.unit_x * self.zoom_x, self.unit_y * self.zoom_y)
-    }
-
-    fn part(&self, part: SpacePart) -> f64 {
-        let (across, down) = self.scale();
-        match part {
-            SpacePart::Left => self.left,
-            SpacePart::Top => self.top,
-            SpacePart::Right => self.left + self.width / across,
-            SpacePart::Bottom => self.top + self.height / down,
-            SpacePart::PointX => 1.0 / across,
-            SpacePart::PointY => 1.0 / down,
-        }
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DragPart {
+    StartX,
+    StartY,
+    Dx,
+    Dy,
+    X,
+    Y,
+    Active,
+    Alt,
 }
 
-/// What live values read, as the window has it now.
-pub(crate) struct Sources<'a> {
-    pub tick: f64,
-    /// The record, with each field it leaves out at its default.
-    pub state: &'a Value,
-    pub info: Option<&'a ToolInfo>,
-    /// Where each live control was put last.
-    pub played: Option<&'a BTreeMap<String, f32>>,
-    pub drag: Option<(&'a str, DragNumbers)>,
-    pub spaces: &'a HashMap<String, SpaceView>,
-    /// The key of the shape the pointer is over.
-    pub hovered: Option<&'a str>,
-    /// The controls the pointer or the keys are on, or a drag holds, as `Live::Touched` names
-    /// them.
-    pub touched: &'a [String],
-    pub feeds: &'a Feeds,
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SpacePart {
+    Left,
+    Top,
+    Right,
+    Bottom,
+    PointX,
+    PointY,
 }
 
-impl Sources<'_> {
-    pub(crate) fn number(&self, value: &Num) -> f64 {
-        number(value, self)
-    }
-
-    /// What a field of the record holds now.
-    pub(crate) fn field(&self, name: &str) -> Option<f32> {
-        crate::path::at(self.state, name).and_then(crate::tree::number_of)
-    }
-
-    /// Where a number input was put last, else where it starts.
-    pub(crate) fn input(&self, name: &str) -> Option<f32> {
-        let played = self.played.and_then(|played| played.get(name));
-        let (_, input) = self.info?.input(name)?;
-        played.copied().or(input.start())
-    }
-
-    /// The number `name` of the instance: a field as it plays, else a number input, else an
-    /// output.
-    fn own(&self, name: &str, fraction: bool) -> f64 {
-        let along = |value: f32, range: Option<ValueRange>| {
-            let range = range.filter(|_| fraction);
-            f64::from(range.map_or(value, |range| range.position(value)))
-        };
-        let field = self.info.map_or(self.field(name).is_some(), |info| {
-            info.field_at(name).is_some()
-        });
-        if field {
-            let played = self.feeds.played.get(name).map(|(played, _)| *played);
-            let value = played.unwrap_or_else(|| self.field(name).unwrap_or(0.0));
-            return along(value, field_range(self.info, name));
-        }
-        if let Some(value) = self.input(name) {
-            return along(value, input_range(self.info, name));
-        }
-        let output = self.feeds.played.get(name);
-        output.map_or(0.0, |(value, _)| f64::from(*value))
-    }
+/// How text shows a live number: in a unit, or a tick of the clock.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum Readout {
+    Unit(Unit),
+    Tick(TickReadout),
 }
 
-impl Leaves for Sources<'_> {
-    fn leaf(&self, live: &Live) -> f64 {
-        let truth = |holds: bool| f64::from(u8::from(holds));
-        let along = |(value, range): (f32, Option<ValueRange>), fraction: bool| {
-            let range = range.filter(|_| fraction);
-            f64::from(range.map_or(value, |range| range.position(value)))
-        };
-        let channel = |peaks: [f32; 2], channel: Option<u8>| {
-            f64::from(match channel {
-                Some(0) => peaks[0],
-                Some(_) => peaks[1],
-                None => peaks[0].max(peaks[1]),
-            })
-        };
-        match live {
-            Live::Tick => self.tick,
-            Live::Bpm => (self.feeds.clock.as_ref()).map_or(0.0, |clock| {
-                let tick = sound_core::Ticks(self.tick.max(0.0) as u64);
-                clock.tempo_map().change_at(tick).bpm.bpm()
-            }),
-            Live::Elapsed => self.feeds.time,
-            Live::Value {
-                name,
-                child: None,
-                fraction,
-            } => self.own(name, *fraction),
-            Live::Value {
-                name,
-                child: Some(child),
-                fraction,
-            } => {
-                let named = format!("{child}.{name}");
-                let field =
-                    (self.feeds.played.get(&named)).or_else(|| self.feeds.inside.get(&named));
-                field.map_or(0.0, |field| along(*field, *fraction))
-            }
-            Live::Held { name, child } => {
-                truth(self.feeds.held.contains(&named(child.as_deref(), name)))
-            }
-            Live::Peak {
-                name,
-                channel: which,
-            } => {
-                let peaks = self.feeds.peaks.get(name).copied().unwrap_or_default();
-                channel(peaks, *which)
-            }
-            Live::DevicePeak { channel: which } => channel(self.feeds.output, *which),
-            Live::Input { channel } => self
-                .feeds
-                .input
-                .get(*channel)
-                .copied()
-                .map_or(0.0, f64::from),
-            Live::Drag { id, part } => match self.drag {
-                Some((held, numbers)) if held == id => numbers.part(*part),
-                _ => DragNumbers::default().part(*part),
-            },
-            Live::Space { key, part } => self
-                .spaces
-                .get(key)
-                .copied()
-                .unwrap_or_default()
-                .part(*part),
-            Live::Hover { key } => truth(self.hovered == Some(key.as_str())),
-            Live::Touched { name } => {
-                let touched = self.touched.contains(name);
-                #[cfg(feature = "test-support")]
-                crate::feeds::tell_tests_shown(
-                    format!("touched:{name}"),
-                    f32::from(u8::from(touched)),
-                );
-                truth(touched)
-            }
-            _ => 0.0,
-        }
-    }
-
-    fn ease(&self, key: &str, ease: Ease, value: f64) -> f64 {
-        self.feeds.ease(key, ease, value)
-    }
-}
-
-/// How a number field turns on its knob: over its range, on a log scale for Hz.
-pub(crate) fn field_range(info: Option<&ToolInfo>, name: &str) -> Option<ValueRange> {
-    info?.field_at(name)?.range()
-}
-
-/// How a number input turns: over its range, on a log scale for Hz.
-pub(crate) fn input_range(info: Option<&ToolInfo>, name: &str) -> Option<ValueRange> {
-    match info?.input(name)? {
-        (_, Input::Number { min, max, unit, .. }) => {
-            Some(crate::tools::knob_range(*min, *max, *unit))
-        }
-        (_, Input::Bang { .. }) => None,
-    }
+/// How text shows a tick: as a place in the piece, as minutes and seconds, or as the time
+/// signature there.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TickReadout {
+    Position,
+    Time,
+    Signature,
+    /// The beats of a bar, and the note value of a beat, of the time signature there.
+    Beats,
+    Note,
 }
 
 /// The nearest whole number of `step`s; `value` itself for no step.
-pub(crate) fn snap(value: f64, step: f64) -> f64 {
+fn snap(value: f64, step: f64) -> f64 {
     if step > 0.0 {
         (value / step).round() * step
     } else {
@@ -409,24 +430,37 @@ pub(crate) fn snap(value: f64, step: f64) -> f64 {
 /// A number as a readout of `unit`.
 fn readout(value: f32, unit: Option<Unit>) -> String {
     match unit {
-        Some(Unit::Hz) => hertz_readout(value),
-        Some(Unit::Ms) => milliseconds_readout(value),
-        Some(Unit::Seconds) => seconds_readout(value),
-        Some(Unit::Db) => decibels_readout(value),
-        Some(Unit::Percent) => percent_readout(value),
-        Some(Unit::Semitones) => semitones_readout(value),
-        Some(Unit::Cents) => format!("{} ct", short(value)),
-        Some(Unit::Octaves) => format!("{} oct", short(value)),
+        Some(Unit::Hz) => readout::hertz(value),
+        Some(Unit::Ms) => readout::milliseconds(value),
+        Some(Unit::Seconds) => readout::seconds(value),
+        Some(Unit::Db) => readout::decibels(value),
+        Some(Unit::Percent) => readout::percent(value),
+        Some(Unit::Semitones) => readout::semitones(value),
+        Some(Unit::Cents) => format!("{} ct", readout::short(value)),
+        Some(Unit::Octaves) => format!("{} oct", readout::short(value)),
         Some(Unit::Pitch) => pitch_readout(f64::from(value)),
-        Some(Unit::Pan) => pan_readout(value),
-        None => short(value),
+        Some(Unit::Pan) => readout::pan(value),
+        None => readout::short(value),
     }
 }
 
 /// The unit the number `field` of a record from `min` to `max` reads in, as `sdk/fields.ts`
 /// names it: the unit its name ends in, a pan, or a share of 0 to 1 as a percent.
 pub fn field_unit(field: &str, min: f64, max: f64) -> Option<&'static str> {
-    crate::window::unit_of(field, &ValueRange::linear(min as f32, max as f32))
+    const UNITS: [(&str, &str); 5] = [
+        ("_hz", "hz"),
+        ("_db", "db"),
+        ("_ms", "ms"),
+        ("_seconds", "seconds"),
+        ("_percent", "percent"),
+    ];
+    let unit = UNITS.iter().find(|(end, _)| field.ends_with(end));
+    match unit {
+        Some((_, unit)) => Some(unit),
+        None if field.rsplit('.').next() == Some("pan") => Some("pan"),
+        None if min == 0.0 && max == 1.0 => Some("percent"),
+        None => None,
+    }
 }
 
 /// A live number as text shows it: in its unit, or a tick as a place in the piece (`5.3`), as
@@ -487,58 +521,41 @@ mod tests {
         serde_json::from_value(json).unwrap()
     }
 
+    /// A drag of 250 and a number `step` of 3.4; nothing else.
+    struct Fixed;
+
+    impl Leaves for Fixed {
+        fn leaf(&self, live: &Live) -> f64 {
+            match live {
+                Live::Drag {
+                    id,
+                    part: DragPart::Dx,
+                } if id == "move" => 250.0,
+                Live::Value { name, .. } if name == "step" => 3.4,
+                _ => 0.0,
+            }
+        }
+
+        fn ease(&self, _: &str, _: Ease, value: f64) -> f64 {
+            value
+        }
+    }
+
     #[test]
     fn a_drag_moves_what_binds_to_it_snapped_and_nothing_bound_to_another() {
-        let mut feeds = Feeds::default();
-        feeds.played.insert("step".to_string(), (3.4, None));
-        let spaces = HashMap::new();
-        let numbers = DragNumbers {
-            start_x: 960.0,
-            dx: 250.0,
-            active: true,
-            ..DragNumbers::default()
-        };
-        let sources = Sources {
-            tick: 0.0,
-            state: &Value::Null,
-            info: None,
-            played: None,
-            drag: Some(("move", numbers)),
-            spaces: &spaces,
-            hovered: None,
-            touched: &[],
-            feeds: &feeds,
-        };
         let moved = live(serde_json::json!({
             "op": "plus",
             "a": 480,
             "b": { "op": "snap", "a": { "op": "drag", "id": "move", "part": "dx" }, "b": 240 },
         }));
-        assert_eq!(sources.number(&moved), 720.0);
+        assert_eq!(number(&moved, &Fixed), 720.0);
         let other = live(serde_json::json!({ "op": "drag", "id": "resize", "part": "dx" }));
-        assert_eq!(sources.number(&other), 0.0);
+        assert_eq!(number(&other, &Fixed), 0.0);
         let lit = live(serde_json::json!({
             "op": "eq",
             "a": { "op": "floor", "x": { "op": "value", "name": "step", "fraction": false } },
             "b": 3,
         }));
-        assert_eq!(sources.number(&lit), 1.0);
-    }
-
-    #[test]
-    fn a_space_says_what_shows_of_it_in_its_units() {
-        let view = SpaceView {
-            left: 960.0,
-            top: 10.0,
-            zoom_x: 2.0,
-            unit_x: 0.05,
-            unit_y: 12.0,
-            width: 400.0,
-            height: 240.0,
-            ..SpaceView::default()
-        };
-        assert_eq!(view.part(SpacePart::Right), 960.0 + 400.0 / 0.1);
-        assert_eq!(view.part(SpacePart::Bottom), 30.0);
-        assert_eq!(view.part(SpacePart::PointX), 10.0);
+        assert_eq!(number(&lit, &Fixed), 1.0);
     }
 }

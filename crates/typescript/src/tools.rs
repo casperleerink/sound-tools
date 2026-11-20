@@ -26,7 +26,7 @@ use sound_signals::{
     ParameterSpec, Placed, Shown, Signals, SignalsUpdate, Values,
 };
 
-use sound_ui::shortcuts;
+use crate::shortcuts;
 
 use crate::behaviours::{self, Declaration, End, Key};
 use crate::bun::Bun;
@@ -463,6 +463,10 @@ impl Named<Field> {
     }
 }
 
+#[allow(
+    dead_code,
+    reason = "the window uses it once it does all the old app did"
+)]
 impl ToolInfo {
     /// Whether a card or a page of it takes the keys: for `onKey`, or for its actions.
     pub(crate) fn hears_keys(&self) -> bool {
@@ -2020,6 +2024,10 @@ pub(crate) fn scope_name(path: &str) -> String {
 
 /// Asks `owner` to keep the sound its child at `path` plays, or with no path what it plays
 /// itself, for a wave of its view. Whether it kept none: then it must run its behaviour again.
+#[allow(
+    dead_code,
+    reason = "the window uses it once it does all the old app did"
+)]
 pub(crate) fn show_sound(assets: &Assets, owner: &InstanceId, path: &str) -> bool {
     let mut scoped = SCOPED.lock().unwrap_or_else(PoisonError::into_inner);
     scoped.insert((assets.clone(), owner.clone(), path.to_string()))

@@ -20,7 +20,6 @@ use sound_core::{InstanceId, Sections, TempoMap};
 use sound_signals::Graph;
 
 use crate::tools::ToolInfo;
-use crate::tree::Op;
 use crate::{NoteMessage, behaviours};
 
 /// How long one step of a load, the start of Bun or a file, may take before Bun counts as
@@ -51,6 +50,10 @@ const LOG_LINES: usize = 200;
 pub(crate) type Skipped = BTreeMap<String, String>;
 
 /// What the window tells.
+#[allow(
+    dead_code,
+    reason = "the window uses it once it does all the old app did"
+)]
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Request<'a> {
@@ -63,27 +66,6 @@ pub(crate) enum Request<'a> {
         /// has the edits it sent after those.
         edits: u64,
     },
-    /// A view opens: its code makes its nodes once.
-    Mount {
-        card: u64,
-        instance: &'a InstanceId,
-        /// The last value of each watch of the instance, by name.
-        watches: &'a BTreeMap<String, f32>,
-        /// The room the window gives the view: the whole window, or the body of a card.
-        size: PageSize,
-        #[serde(flatten)]
-        clock: Clock,
-    },
-    /// The view has another room.
-    Resize {
-        card: u64,
-        size: PageSize,
-    },
-    /// The watches of an instance moved, and a binding of its cards reads them.
-    Watches {
-        instance: &'a InstanceId,
-        watches: &'a BTreeMap<String, f32>,
-    },
     /// The clock started or stopped, or its repeat or click changed: what bindings follow. Also
     /// before an event, so its handler reads where the playhead is.
     Clock {
@@ -95,15 +77,6 @@ pub(crate) enum Request<'a> {
     Song {
         tempo_map: &'a TempoMap,
         sections: &'a Sections,
-    },
-    /// A press, a release, a click, or a drag that ended, on a node: `payload` is what its
-    /// handler hears.
-    Event {
-        card: u64,
-        node: u64,
-        kind: EventKind,
-        payload: Value,
-        time: f64,
     },
     /// One step of the control loop of every instance whose tool has one.
     Frame {
@@ -150,15 +123,9 @@ pub(crate) enum Request<'a> {
         #[serde(flatten)]
         clock: Clock,
     },
-    Drop {
-        card: u64,
-    },
     /// The answer to a question of a tool: `openFile`, `render`, `openMenu`, `confirm`, `offers`
     /// or `numbers`.
-    Answer {
-        question: u64,
-        answer: Answer<'a>,
-    },
+    Answer { question: u64, answer: Answer<'a> },
     /// What the behaviour of an owner declares for its record and its children, as Bun was
     /// told them.
     Behaviour {
@@ -184,40 +151,6 @@ pub(crate) enum Request<'a> {
         action: &'a str,
         value: Option<Value>,
     },
-}
-
-/// What happened on a node, which names the handler that hears it.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum EventKind {
-    Press,
-    /// The button of a press went up, wherever the pointer is.
-    Release,
-    /// A left press and release on a node, with no drag between.
-    Click,
-    /// The pointer came over a div, or left it.
-    Hover,
-    End,
-    /// Text a field tells.
-    Commit,
-    /// Escape in a field.
-    Cancel,
-    /// An edit of a field's text, or a pick of a segmented control: the place of its option.
-    Change,
-    /// Files, or what a drag of a node carried, let go on a node.
-    Drop,
-    /// The power icon of an embedded card.
-    Power,
-    /// The close icon of an embedded card.
-    Close,
-    /// A key a div takes, while the focus is in it.
-    Key,
-    /// How far a drag or a key moved what code keeps, and on which axis of its drag.
-    Turn,
-    /// The title of an embedded card, which is a menu.
-    Title,
-    /// A pick in a select of the sidechain picker of an embedded card.
-    Sidechain,
 }
 
 /// A number a lane or a cable moves, as code gets it: its range, and how a knob travels it.
@@ -274,6 +207,10 @@ pub(crate) struct Offered {
 }
 
 /// An item of a menu code opens.
+#[allow(
+    dead_code,
+    reason = "the window uses it once it does all the old app did"
+)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MenuItemSpec {
@@ -308,13 +245,6 @@ pub(crate) struct ToldRecord<'a> {
     pub id: &'a InstanceId,
     pub tool: &'a str,
     pub state: Value,
-}
-
-/// The room a page has, in whole points.
-#[derive(Clone, Copy, PartialEq, Debug, Serialize)]
-pub(crate) struct PageSize {
-    pub width: u32,
-    pub height: u32,
 }
 
 /// Where the project plays, as the window's playhead shows it, and how the clock plays.
@@ -433,6 +363,10 @@ pub(crate) enum RecordEdit {
 }
 
 /// What the window hears of Bun after its load.
+#[allow(
+    dead_code,
+    reason = "the window uses it once it does all the old app did"
+)]
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Event {
@@ -440,16 +374,6 @@ pub(crate) enum Event {
     Framed,
     /// The tick of a tool, or a click on its card, failed: the first time.
     Failed { tool: String, message: String },
-    /// What changed on the nodes of a card, or why it failed. Read by [`read_line`].
-    #[serde(skip_deserializing)]
-    Ops {
-        card: u64,
-        ops: Result<Vec<Op>, String>,
-        /// The ops make all of it again, as after a new Bun.
-        mount: bool,
-        /// They answer a press or a drag, whose preview lets go with them.
-        event: bool,
-    },
     /// What the bindings of an instance read now: the window tells Bun at once only of that.
     Reads { instance: InstanceId, reads: Reads },
     /// The code of an instance changed its record or those of its children, as one edit
@@ -773,52 +697,6 @@ static NEXT_BUN: AtomicU64 = AtomicU64::new(0);
 
 static NEXT_OPENING: AtomicU64 = AtomicU64::new(0);
 
-static SENT_BYTES: AtomicU64 = AtomicU64::new(0);
-static SENT_UPDATES: AtomicU64 = AtomicU64::new(0);
-static SENT_EVENTS: AtomicU64 = AtomicU64::new(0);
-static HEARD_BATCHES: AtomicU64 = AtomicU64::new(0);
-static HEARD_BYTES: AtomicU64 = AtomicU64::new(0);
-static LAST_BUN_MICROS: AtomicU64 = AtomicU64::new(0);
-static LAST_APPLY_MICROS: AtomicU64 = AtomicU64::new(0);
-
-/// How many bytes this process told every Bun, for a test of what a frame costs.
-pub fn sent_bytes() -> u64 {
-    SENT_BYTES.load(Ordering::Relaxed)
-}
-
-/// How many times this process told every Bun something that changes what cards show (records,
-/// watches, the transport, a card that opens) and how many presses and drags it told, for a
-/// test that a drag does not cross to Bun.
-pub fn sent_updates_and_events() -> (u64, u64) {
-    (
-        SENT_UPDATES.load(Ordering::Relaxed),
-        SENT_EVENTS.load(Ordering::Relaxed),
-    )
-}
-
-/// How many batches of ops the windows of this process applied, for a measurement of how long
-/// one takes to come.
-pub fn heard_batches() -> u64 {
-    HEARD_BATCHES.load(Ordering::Relaxed)
-}
-
-/// How many bytes of ops this process heard from every Bun, for a measurement of their size.
-pub fn heard_bytes() -> u64 {
-    HEARD_BYTES.load(Ordering::Relaxed)
-}
-
-/// What the last batch of ops cost, in milliseconds: Bun's work for its request, and the
-/// window's to apply it.
-pub fn last_batch() -> (f64, f64) {
-    let millis = |micros: &AtomicU64| micros.load(Ordering::Relaxed) as f64 / 1000.0;
-    (millis(&LAST_BUN_MICROS), millis(&LAST_APPLY_MICROS))
-}
-
-pub(crate) fn count_batch(apply: Duration) {
-    HEARD_BATCHES.fetch_add(1, Ordering::Relaxed);
-    LAST_APPLY_MICROS.store(apply.as_micros() as u64, Ordering::Relaxed);
-}
-
 /// A number for one opening of a project, which every Bun of it runs for: the first, and those
 /// the window starts again after a change of the code. A project opened again in the same
 /// process, as by a test, is another opening.
@@ -997,23 +875,8 @@ impl Bun {
             }
             busy.pending += 1;
         }
-        let length = line.len() as u64;
         let sent = self.lines.try_send(line).is_ok();
-        if sent {
-            SENT_BYTES.fetch_add(length, Ordering::Relaxed);
-            match request {
-                Request::Records { .. }
-                | Request::Mount { .. }
-                | Request::Resize { .. }
-                | Request::Watches { .. }
-                | Request::Clock { .. }
-                | Request::Show { .. } => SENT_UPDATES.fetch_add(1, Ordering::Relaxed),
-                Request::Event { .. } | Request::Act { .. } => {
-                    SENT_EVENTS.fetch_add(1, Ordering::Relaxed)
-                }
-                _ => 0,
-            };
-        } else {
+        if !sent {
             done(&mut lock());
         }
         sent
@@ -1111,61 +974,14 @@ impl Bun {
     }
 
     /// The records a behaviour told Bun since the last call, to tell it again as they are.
+    #[allow(
+        dead_code,
+        reason = "the window uses it once it does all the old app did"
+    )]
     pub(crate) fn take_unconfirmed(&self) -> BTreeSet<InstanceId> {
         let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
         std::mem::take(&mut told.unconfirmed)
     }
-}
-
-/// The `type` of a line, which every line has.
-#[derive(Deserialize)]
-struct Kind<'a> {
-    #[serde(rename = "type", borrow)]
-    kind: std::borrow::Cow<'a, str>,
-}
-
-/// The ops of a card, as [`Event::Ops`].
-#[derive(Deserialize)]
-struct OpsLine<'a> {
-    card: u64,
-    #[serde(borrow)]
-    ops: Option<&'a serde_json::value::RawValue>,
-    error: Option<String>,
-    #[serde(default)]
-    mount: bool,
-    #[serde(default)]
-    event: bool,
-    #[serde(default)]
-    took: f64,
-}
-
-/// A line of Bun. Ops are read on their own road, here on the thread that hears Bun, not the
-/// window's: the first ops of a page of thousands of notes are megabytes.
-fn read_line(line: &str) -> serde_json::Result<Line> {
-    if serde_json::from_str::<Kind>(line)?.kind != "ops" {
-        return serde_json::from_str(line);
-    }
-    let OpsLine {
-        card,
-        ops,
-        error,
-        mount,
-        event,
-        took,
-    } = serde_json::from_str(line)?;
-    HEARD_BYTES.fetch_add(line.len() as u64, Ordering::Relaxed);
-    LAST_BUN_MICROS.store((took * 1000.0) as u64, Ordering::Relaxed);
-    let ops = match (ops, error) {
-        (_, Some(error)) => Err(error),
-        (Some(ops), None) => serde_json::from_str(ops.get()).map_err(|error| error.to_string()),
-        (None, None) => Ok(Vec::new()),
-    };
-    Ok(Line::Event(Event::Ops {
-        card,
-        ops,
-        mount,
-        event,
-    }))
 }
 
 /// Reads what Bun says until it stops, and passes it on to `said`.
@@ -1178,7 +994,7 @@ fn read(stdout: ChildStdout, said: &mpsc::Sender<Line>) {
                 break;
             }
         };
-        match read_line(&line) {
+        match serde_json::from_str(&line) {
             Ok(line) => {
                 if said.send(line).is_err() {
                     break;

@@ -6,6 +6,10 @@ use serde_json::{Map, Value};
 
 /// The instance inside the view's own that `path` names, if any, and the number in its record.
 /// A name of an instance holds no `[`, so a place in a list of the own record is told apart.
+#[allow(
+    dead_code,
+    reason = "the window uses it once it does all the old app did"
+)]
 pub(crate) fn split(path: &str) -> (Option<&str>, &str) {
     match path.split_once('.') {
         Some((child, number)) if !child.contains('[') => (Some(child), number),
@@ -28,6 +32,14 @@ fn child<'a>(value: &'a Value, part: &str) -> Option<&'a Value> {
 
 pub(crate) fn at<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     parts(path).try_fold(value, child)
+}
+
+/// A number a record holds, `"-inf"` for silence too, which JSON has no number for.
+pub(crate) fn number_of(value: &Value) -> Option<f32> {
+    match value.as_str() {
+        Some("-inf") => Some(f32::NEG_INFINITY),
+        _ => value.as_f64().map(|value| value as f32),
+    }
 }
 
 /// Puts `to` at `path`, or takes the number out where `to` is `None`. An object on the way that

@@ -139,6 +139,10 @@ pub fn timeline_state(clip: &Clip, title: &str) -> Result<Value, String> {
 }
 
 /// What the timeline `state` plays as a clip, one round of a loop, and its title.
+#[allow(
+    dead_code,
+    reason = "the window uses it once it does all the old app did"
+)]
 pub(crate) fn timeline_clip(state: &Value) -> Result<(Clip, String), String> {
     let record = record(state)?;
     let round = round(&record)?;
@@ -284,6 +288,10 @@ pub(crate) struct Timeline {
     waiting: Schedule<bool>,
 }
 
+#[allow(
+    dead_code,
+    reason = "the window uses it once it does all the old app did"
+)]
 pub(crate) enum TimelineUpdate {
     /// Its round, or where it is placed. The old round rides back in here.
     Player(NotePlayerUpdate),
