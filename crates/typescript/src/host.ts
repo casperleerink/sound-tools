@@ -48,8 +48,9 @@ Bun.plugin({
       const loader = path.endsWith(".tsx") ? "tsx" : "ts";
       if (!path.startsWith(`${realFolder}/`) || path.startsWith(join(realFolder, "sdk"))) return { contents: text, loader };
       // A name with no value: a type, which Bun leaves out unless the code uses it as a value, or gone.
+      // The list runs to the first `}` outside a comment.
       const empty: string[] = [];
-      const kept = text.replace(/import\s*\{([^}]*)\}\s*from\s*(["'])((?:\.\.?\/)+sdk)\2/g, (whole: string, list: string, quote: string, from: string) => {
+      const kept = text.replace(/import\s*\{((?:[^}/]|\/\/[^\n]*(?=\n)|\/\*[\s\S]*?\*\/|\/(?![/*]))*)\}\s*from\s*(["'])((?:\.\.?\/)+sdk)\2/g, (whole: string, list: string, quote: string, from: string) => {
         const parts = list.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, "").split(",").map((part) => part.trim());
         const known = parts.filter((part) => {
           const [name, local = name] = part.split(/\s+as\s+/);
