@@ -1225,3 +1225,55 @@ fn a_list_keeps_its_scroll_by_its_key_over_a_save_and_a_list_put_in_first() {
     }
     assert_eq!((top(&window, "a-0"), top(&window, "b-0")), (a, scrolled));
 }
+
+/// A menu of two shapes that checks the one its record names; picking `Square` changes nothing.
+const SHAPES: &str = r#"import { h, text, tool } from "./sdk";
+export const shapes = tool({
+  name: "shapes", title: "Shapes", when: "Never", doc: "A menu of shapes.", state: { shape: text({ default: "saw" }) },
+  view: (self, { update }) => (
+    <box key="shape" label="Shape" role="button" w={120} h={20} onPress={() => {}}>
+      <col overlay={{ open: "press" }} role="menu">
+        <box key="saw" label="Saw" role="menuitem" checked={self.state.shape === "saw"} w={100} h={20} onPress={() => update("Saw", (part) => void (part.state.shape = "saw"))} />
+        <box key="square" label="Square" role="menuitem" checked={self.state.shape === "square"} w={100} h={20} onPress={() => {}} />
+      </col>
+    </box>
+  ),
+});
+"#;
+
+/// A menu checks only what its code says, whatever was picked before.
+#[test]
+fn a_menu_checks_only_what_its_code_says_whatever_was_picked_before() {
+    let files = [
+        ("extensions/shapes.tsx", SHAPES),
+        ("state/shapes.json", r#"{"tool": "shapes", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "shapes");
+    let checked = |window: &rune::Runtime<State>| {
+        let controls = controls::collect(&window.state).controls;
+        ["Saw", "Square"].map(|label| control(&controls, label).checked)
+    };
+    for _ in 0..2 {
+        act(
+            &mut window.state,
+            json!({ "label": "Shape", "action": "press" }),
+        );
+        redraw(&mut window);
+        act(
+            &mut window.state,
+            json!({ "label": "Square", "action": "press" }),
+        );
+        redraw(&mut window);
+        act(
+            &mut window.state,
+            json!({ "label": "Shape", "action": "press" }),
+        );
+        redraw(&mut window);
+        assert_eq!(checked(&window), [Some(true), Some(false)]);
+        act(
+            &mut window.state,
+            json!({ "label": "Shape", "action": "press" }),
+        );
+        redraw(&mut window);
+    }
+}
