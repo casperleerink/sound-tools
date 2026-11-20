@@ -334,7 +334,7 @@ fn a_key_reaches_the_plugin_as_the_host_names_it() {
 }
 
 /// The plugin uses `a`. Every other key, and every key up, goes to the main window, so the
-/// computer keys play it and a note they started ends.
+/// computer keys play it and a note they started ends. A key held keeps saying it repeats.
 #[test]
 fn a_key_the_plugin_does_not_use_and_every_key_up_go_to_the_main_window() {
     let desk = desk(false);
@@ -342,21 +342,27 @@ fn a_key_the_plugin_does_not_use_and_every_key_up_go_to_the_main_window() {
         let event = event(R::Text(key.into()), Mods::default());
         super::key(&desk.host, &desk.events, ONE, &event, direction);
     };
-    typed("a", KeyDirection::Down);
-    typed("a", KeyDirection::Up);
-    typed("q", KeyDirection::Down);
-    typed("q", KeyDirection::Up);
+    typed("a", (KeyDirection::Down, false));
+    typed("a", (KeyDirection::Up, false));
+    typed("q", (KeyDirection::Down, false));
+    typed("q", (KeyDirection::Down, true));
+    typed("q", (KeyDirection::Up, false));
     let text = |key: &str| event(R::Text(key.into()), Mods::default());
+    let down = |repeat| Spare::Down {
+        key: text("q"),
+        repeat,
+    };
     assert_eq!(
         desk.windows.take_spare_keys(),
         [
             Spare::Up(text("a")),
-            Spare::Down(text("q")),
+            down(false),
+            down(true),
             Spare::Up(text("q"))
         ]
     );
     let told = desk.take_log();
-    assert_eq!(told.len(), 4, "the plugin hears every key: {told:?}");
+    assert_eq!(told.len(), 5, "the plugin hears every key: {told:?}");
 }
 
 /// The plugin lets go of its view before the window goes, and the window stays open for the

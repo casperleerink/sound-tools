@@ -136,7 +136,7 @@ pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
     // What a plugin's window does not use: the shortcuts, then the computer keys.
     for spare in state.plugin_windows.take_spare_keys() {
         match &spare {
-            Spare::Down(key) => super::keys::on_key(state, key, tx),
+            Spare::Down { key, repeat } => super::keys::key_down(state, key, *repeat, tx),
             Spare::Up(key) => super::keys::on_key_up(state, key, tx),
             Spare::LetGo => {
                 state.let_go_of_keys();

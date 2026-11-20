@@ -249,3 +249,45 @@ fn a_long_notice_fits_bottom_right_in_three_lines_and_a_dismiss_takes_it_away() 
     assert_eq!(window.state.session.notice(), None);
     assert!(window.find("notice-error").is_none());
 }
+
+/// A key held down does the app's action once: Space does not start and stop the piece, nor
+/// Cmd-K turn the computer keys on and off. Undo goes on.
+#[test]
+fn a_held_key_does_the_apps_action_once_but_undo_goes_on() {
+    let (_scratch, mut window) = window();
+    let space = KeyEvent {
+        key: Key::Text(" ".into()),
+        mods: Mods::default(),
+    };
+    window.key(space.clone());
+    for _ in 0..3 {
+        window.repeat_key(space.clone());
+        redraw(&mut window);
+    }
+    frames(&mut window, 0.1);
+    assert!(window.state.playing);
+    let keys = KeyEvent {
+        key: Key::Command('k'),
+        mods: MAIN_MODIFIER,
+    };
+    window.key(keys.clone());
+    window.repeat_key(keys);
+    redraw(&mut window);
+    redraw(&mut window);
+    assert!(window.state.incoming.live.computer_keys());
+
+    for _ in 0..2 {
+        act(
+            &mut window.state,
+            json!({ "label": "Mute Track 2", "action": "toggle" }),
+        );
+    }
+    let undo = KeyEvent {
+        key: Key::Command('z'),
+        mods: MAIN_MODIFIER,
+    };
+    window.key(undo.clone());
+    window.repeat_key(undo);
+    redraw(&mut window);
+    assert_eq!(undo_label(&window.state), None);
+}
