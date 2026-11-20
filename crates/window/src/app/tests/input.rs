@@ -2,6 +2,7 @@
 //! play the chosen track, R and the Record button record them and a simulated input into the
 //! tracks as one step each, the click sounds, and the notice of an update.
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -295,4 +296,60 @@ fn an_update_that_did_not_install_says_why_and_offers_its_page() {
     control(&controls, "Download");
     click(&mut window, "notice-update-button");
     assert_eq!(window.take_url_requests(), ["https://example.com/release"]);
+}
+
+/// Pictures to look at: the transport while an armed audio track records, with a notice of
+/// the input device, and the notice of an update. `SNAPS=<folder> cargo nextest run -p
+/// sound-window --run-ignored only recording_pictures`.
+#[test]
+#[ignore = "writes pictures to look at"]
+fn recording_pictures() {
+    let Ok(folder) = std::env::var("SNAPS") else {
+        return;
+    };
+    let scratch = new_project();
+    let song = scratch.path().join("song");
+    for (path, contents) in AUDIO_TRACK {
+        let path = song.join("state/song").join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
+    let mut window = window_of(&song);
+    let microphone = Microphone::default();
+    window.state.incoming.live = (window.state.session)
+        .background(|project| Input::new(project, microphone.devices(), Arc::new(|| {})));
+    window.state.session.dismiss_notice();
+    act(
+        &mut window.state,
+        json!({ "label": "Arm Audio 1", "action": "toggle" }),
+    );
+    press(&mut window, "r");
+    until(&mut window, "the take", |state| state.session.recording());
+    while window.state.session.status().frames < 48_000 {
+        microphone.write_until(window.state.session.status().frames + 2_048);
+        redraw(&mut window);
+    }
+    window.state.session.report(
+        "The chosen audio input is not there or did not open, so MacBook Pro Microphone is used.",
+    );
+    window.state.incoming.ready = Some(runtime::update::Ready {
+        version: runtime::update::Version::parse("0.9.0").unwrap(),
+        action: runtime::update::Action::Restart,
+    });
+    let png = PathBuf::from(folder).join("recording.png");
+    let state = window.state;
+    let spec = rune::AppSpec {
+        min_size: Some(MIN_SIZE),
+        poll: Some(poll),
+        setup: Some(setup),
+        on_key: Some(on_key),
+        fonts: &crate::FONTS,
+        families: ("Inter Display", "ui-monospace"),
+        ..rune::AppSpec::new("song", (1470.0, 920.0), || unreachable!(), view)
+    };
+    rune::App::new(spec)
+        .args(["--snap".to_string(), png.display().to_string()])
+        .init(move || state)
+        .run();
+    assert!(png.exists());
 }
