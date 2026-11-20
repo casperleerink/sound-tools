@@ -28,12 +28,14 @@ test("three returns added have three names, each a silent send from every track,
   expect(f.memory.returnsOpen).toBe(true);
 });
 
-test("an audio track added records the first input", () => {
+test("an audio track added records the first input; the next is audio-2", () => {
   const f = fakeSong({ children: [] });
   editsOf(f.song).tracks.add("audio");
   expect(named(f, "audio-1").state.title).toBe("Audio 1");
   expect(named(f, "audio-1").children[0]).toEqual({ name: "rec", tool: "recorder", state: { channels: [0] } });
   expect(f.steps).toEqual(["Add an audio track"]);
+  editsOf(f.song).tracks.add("audio");
+  expect(named(f, "audio-2").state.title).toBe("Audio 2");
 });
 
 test("a track is coloured, and deleted with the sends into it, its solo, its sidechains and what chose it", () => {

@@ -66,6 +66,13 @@ export function cannotRender(each: Child | undefined): string | undefined {
 }
 
 /** What a view and the keys do to the tracks of the song: each change one undo step. */
+/** The first free name of an audio track: `audio-1`, then `audio-2`. */
+const audioName = (names: readonly string[]) => {
+  let number = 1;
+  while (names.includes(`audio-${number}`)) number++;
+  return `audio-${number}` as const;
+};
+
 export const trackEdits = (song: Song) => {
   const { memory, update } = song;
   const rows = () => rowsOf(song.children, song.state.order);
@@ -84,7 +91,7 @@ export const trackEdits = (song: Song) => {
         if (kind === "instrument") {
           addInstrumentTrack(draft, `Track ${rows().filter((each) => each.tool === "track").length + 1}`);
         } else if (kind === "audio") {
-          const name = freeName(names, "audio-1") as `audio-${string}`;
+          const name = audioName(names);
           const audio = rows().filter((each) => each.tool === "tape").length + 1;
           draft.children.push({ name, tool: tape, state: { colour, title: `Audio ${audio}` }, children: [{ name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }, ...sendsInto(draft)] });
           draft.state.order = [...rows().map((each) => each.name), name];
@@ -282,7 +289,7 @@ export const trackEdits = (song: Song) => {
       update("Render to audio track", (draft) => {
         const owner = draft.children.find((child) => child.name === name);
         if (owner?.tool !== "track" && owner?.tool !== "tape") return;
-        const audio = freeName(draft.children.map((child) => child.name), "audio-1") as `audio-${string}`;
+        const audio = audioName(draft.children.map((child) => child.name));
         // The lanes and LFOs of its faders go along; an envelope hears notes, which an audio track has none of.
         const automation = owner.state.automation.filter(({ target, lane }) =>
           (target.startsWith("mix.") || target.startsWith("send-")) && owner.children.some((child) => child.name === lane && (child.tool === "lane" || child.tool === "lfo")));

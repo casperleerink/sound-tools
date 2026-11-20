@@ -123,10 +123,10 @@ fn files_dropped_on_the_timeline_land_on_their_row_and_tick_as_one_undo_step_eac
         );
         redraw(window);
     };
-    // Rows: t00, t01, audio-1, then audio-1-2, the one dropped on. Bar 3 is tick 7680.
+    // Rows: t00, t01, audio-1, then audio-2, the one dropped on. Bar 3 is tick 7680.
     drop(&mut window, &sound, 7680 + 300, 3.5);
-    assert_eq!(start(&window.state, "audio-1-2/region"), 7680);
-    let region = record(&window.state, "song/audio-1-2/region.json");
+    assert_eq!(start(&window.state, "audio-2/region"), 7680);
+    let region = record(&window.state, "song/audio-2/region.json");
     assert_eq!(region["state"]["asset"], "kick.wav");
     drop(&mut window, &tune, 7680 + 100, 1.5);
     assert_eq!(start(&window.state, "t01/clip"), 7680);
@@ -134,11 +134,32 @@ fn files_dropped_on_the_timeline_land_on_their_row_and_tick_as_one_undo_step_eac
     assert_eq!(clip["state"]["notes"][0]["pitch"], 60);
     act(&mut window.state, json!({ "action": "undo" }));
     assert_eq!(start(&window.state, "t01/clip"), Value::Null);
-    assert_eq!(start(&window.state, "audio-1-2/region"), 7680);
+    assert_eq!(start(&window.state, "audio-2/region"), 7680);
     act(&mut window.state, json!({ "action": "undo" }));
-    assert_eq!(start(&window.state, "audio-1-2/region"), Value::Null);
-    let audio_track = window.state.project().root().join("state/song/audio-1-2");
+    assert_eq!(start(&window.state, "audio-2/region"), Value::Null);
+    let audio_track = window.state.project().root().join("state/song/audio-2");
     assert!(audio_track.exists());
+}
+
+#[test]
+fn a_track_of_another_instrument_is_added_as_one_undo_step() {
+    let (_scratch, mut window) = song();
+    act(
+        &mut window.state,
+        json!({ "key": "add-track-kind", "action": "open" }),
+    );
+    act(
+        &mut window.state,
+        json!({ "label": "Sampler track", "action": "press" }),
+    );
+    redraw(&mut window);
+    let synth = |state: &State| {
+        let file = state.project().root().join("state/song/track/synth.json");
+        file.exists().then(|| record(state, "song/track/synth.json")["tool"].clone())
+    };
+    assert_eq!(synth(&window.state), Some(json!("sampler")));
+    act(&mut window.state, json!({ "action": "undo" }));
+    assert_eq!(synth(&window.state), None);
 }
 
 #[test]
