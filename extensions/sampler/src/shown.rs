@@ -24,6 +24,45 @@ pub(crate) fn wave(state: &SamplerState, context: &FeedContext<'_>) -> Vec<f32> 
     (context.wave(asset.asset_name(), &edges)).unwrap_or_default()
 }
 
+/// See the feed `envelope`.
+pub(crate) fn envelope(state: &SamplerState, context: &FeedContext<'_>) -> Vec<f32> {
+    let Some(asset) = &state.sample else {
+        return Vec::new();
+    };
+    let Cached::Plays(info) = sound_media::cached(context.assets(), asset) else {
+        return Vec::new();
+    };
+    let length = info.seconds();
+    context.curve([0.0, length], POINTS, |seconds| {
+        envelope_at(state, f64::from(seconds), length)
+    })
+}
+
+/// The level of a held note at `seconds` of a file of `length`, as the card draws it: silent
+/// before the start, straight up to full over the attack, straight down to the sustain over the
+/// decay, and held there to the end.
+fn envelope_at(state: &SamplerState, seconds: f64, length: f64) -> f32 {
+    let start = state.start_seconds;
+    let end = state.end_seconds.unwrap_or(length);
+    let (attack, decay) = (
+        f64::from(state.attack_seconds),
+        f64::from(state.decay_seconds),
+    );
+    let sustain = state.sustain.clamp(0.0, 1.0);
+    let into = seconds - start;
+    if into < 0.0 || seconds > end.max(start + attack + decay) {
+        return 0.0;
+    }
+    if into < attack {
+        return (into / attack) as f32;
+    }
+    if into < attack + decay {
+        let part = ((into - attack) / decay) as f32;
+        return 1.0 + (sustain - 1.0) * part;
+    }
+    sustain
+}
+
 /// What its card knows that is no record.
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct Facts {
@@ -115,5 +154,31 @@ fn instrument(entry: &'static Entry) -> Instrument {
         downloaded,
         download: entry.download_bytes,
         error,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The handles of the card sit on these corners: the top of the attack and the sustain after
+    /// the decay, both from the start line.
+    #[test]
+    fn the_envelope_rises_from_the_start_and_holds_the_sustain_to_the_end() {
+        let state = SamplerState {
+            start_seconds: 0.1,
+            end_seconds: Some(1.0),
+            attack_seconds: 0.1,
+            decay_seconds: 0.2,
+            sustain: 0.5,
+            ..SamplerState::default()
+        };
+        let at = |seconds| envelope_at(&state, seconds, 2.0);
+        assert_eq!(at(0.05), 0.0);
+        assert!((at(0.15) - 0.5).abs() < 1e-6);
+        assert!((at(0.2) - 1.0).abs() < 1e-6);
+        assert!((at(0.3) - 0.75).abs() < 1e-6);
+        assert_eq!(at(0.8), 0.5);
+        assert_eq!(at(1.5), 0.0);
     }
 }

@@ -54,9 +54,21 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
     markdown: include_str!("../agent-doc.md"),
 };
 
-const FRAMES: &str = "The frames of the table of oscillator 1 (frames_2: of 2), at most 12 evenly chosen, first to last, each one cycle of `points` samples (96 unless the binding says) from -1 to 1, frame after frame.";
-const FRAME: &str = "The frame oscillator 1 (frame_2: 2) plays at its position, a mix of the two frames it is between: one cycle of `points` samples (96 unless the binding says) from -1 to 1.";
+const FRAMES: &str = "The table of oscillator 1 (frames_2: of 2) as `rects` draw it, 0 to 1 across and up: at most 12 of its frames evenly chosen, each one cycle as a line of thin rects, the first at the front low on the left and the last at the back, higher and to the right; `points` across (96 unless the binding says).";
+const FRAME: &str = "The frame oscillator 1 (frame_2: 2) plays at its position, a mix of the two frames it is between, as `rects` draw it where `frames` puts that position.";
 const RESPONSE: &str = "The response of filter 1 (response_2: 2) for a quiet sound: the gain in dB at each of `points` places (157 unless the binding says), evenly in octaves above 20 Hz from 0 to 9.97 (20 kHz) unless the binding shows another range; flat while it is off.";
+
+const ENVELOPE: &str = "The amp envelope (envelope_2, _3: env 2, env 3) as a card draws it, at each of `points` places (157 unless the binding says), evenly from 0 to 3.36 unless the binding shows another range: the level of a held note, 0 to 1. The attack, the decay and the release each take as much across as their knob has turned, from 0 to 1, one after the other, bent by their curves; the note holds for 0.36 between the decay and the release.";
+const LFO: &str = "Two cycles of the shape of LFO 1 (lfo_2: 2), -1 to 1, at each of `points` places (96 unless the binding says) from 0 to 2 cycles.";
+
+/// See the feed `envelope_1`.
+fn shown_envelope(
+    envelope: &state::Adsr,
+    context: &sound_core::feeds::FeedContext<'_>,
+) -> Vec<f32> {
+    let width = f64::from(3.0 + shown::ENVELOPE_HOLD);
+    context.curve([0.0, width], 157, |x| shown::envelope_at(envelope, x))
+}
 
 /// Registers the wavetable tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
@@ -81,6 +93,21 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         })
         .feed("response_2", RESPONSE, |state, context| {
             shown::response(&state.filter_2, context)
+        })
+        .feed("envelope_1", ENVELOPE, |state, context| {
+            shown_envelope(&state.amp_env, context)
+        })
+        .feed("envelope_2", ENVELOPE, |state, context| {
+            shown_envelope(&state.env_2, context)
+        })
+        .feed("envelope_3", ENVELOPE, |state, context| {
+            shown_envelope(&state.env_3, context)
+        })
+        .feed("lfo_1", LFO, |state, context| {
+            shown::lfo_line(state.lfo_1.shape, context)
+        })
+        .feed("lfo_2", LFO, |state, context| {
+            shown::lfo_line(state.lfo_2.shape, context)
         })
         .facts(|_, _| shown::Facts::new());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;

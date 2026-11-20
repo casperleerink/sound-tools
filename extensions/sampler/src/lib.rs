@@ -330,6 +330,11 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
             "The loudest sample, 0 to 1, of each of `points` equal stretches (96 unless the binding says) of its file, across the seconds of it the binding shows (all of it unless it says); empty without a file or while it is read.",
             shown::wave,
         )
+        .feed(
+            "envelope",
+            "The level of a held note, 0 to 1, at each of `points` places (96 unless the binding says) across the seconds of its file the binding shows (all of it unless it says): up over the attack from the start, down to the sustain over the decay, held to the end; empty without a file that plays.",
+            shown::envelope,
+        )
         .facts(shown::Facts::of);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     registry.agent_doc(EXTENSION, SFZ_AGENT_DOC)?;

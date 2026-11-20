@@ -22,6 +22,7 @@ mod window;
 
 use std::collections::BTreeMap;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, AssetError, AssetName, Assets, BehaviourContext, BehaviourError, InputEndpoint,
@@ -63,7 +64,9 @@ const STATE_EXTENSION: &str = "bin";
 
 /// In the order a picker prefers them for a plugin installed in both: CLAP gives a parameter in
 /// its own units, so a pin and a lane hold 1000 Hz, where VST 3 gives 0 to 1.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum PluginFormat {
     Clap,
@@ -162,21 +165,23 @@ impl From<StateAsset> for String {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PluginRecord {
     pub format: PluginFormat,
     /// The id its maker gave it, such as `com.u-he.diva`; for VST 3 the class id.
     pub plugin_id: String,
-    /// The plugin's own state, opaque bytes.
+    /// The plugin's own state, opaque bytes: the name of `assets/plugin-state/<name>.bin`.
+    #[schemars(with = "String")]
     pub state_asset: StateAsset,
     /// Pins, by the plugin's id of each parameter. A pin wins over the state asset, and what
     /// the plugin changes of it itself is written back here.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schemars(with = "BTreeMap<String, Pin>")]
     pub parameters: BTreeMap<u32, Pin>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Pin {
     /// Only for the reader: the id counts, so a plugin that renames it still finds it.
@@ -259,6 +264,8 @@ pub fn register(registry: &mut Registry, plugins: Plugins) -> Result<(), Registr
     registry
         .tool::<PluginRecord>(EXTENSION)?
         .behaviour(move |state, context| apply(&plugins, state, context))
+        // Its numbers are the plugin's, which no schema lists: a card finds them in its facts.
+        .schema(&[])
         .facts(move |record, context| facts::Facts::of(&shown, record, context.instance()));
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
