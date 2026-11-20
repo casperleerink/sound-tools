@@ -228,12 +228,14 @@ impl State {
         chain
     }
 
-    /// The press of the focused element of a view, when it has `onPress`.
-    fn focused_press(&self, focused: Option<&str>) -> Option<crate::tree::Press> {
+    /// The press of the focused element of a view, when it has `onPress`, and whether it turns
+    /// on and off in place: a switch or a step.
+    fn focused_press(&self, focused: Option<&str>) -> Option<(crate::tree::Press, bool)> {
         let focused = focused?;
         (controls::collect(self).controls.into_iter()).find_map(|control| {
+            let turns = matches!(control.role.as_deref(), Some("switch" | "gridcell"));
             match (control.key == focused, control.target) {
-                (true, Target::View(press)) if press.pressed => Some(press),
+                (true, Target::View(press)) if press.pressed => Some((press, turns)),
                 _ => None,
             }
         })
@@ -361,9 +363,10 @@ impl State {
 }
 
 /// A key that reaches the views before Rune presses what has the keys there, as the old app
-/// had it: Space is the keymap's wherever the focus is, so it plays; Enter presses the focused
-/// element that has a press, however it got the focus, with `clicks: 0`, so its code tells a
-/// press of the keys from a click.
+/// had it: Space is the keymap's wherever the focus is, so it plays, but a switch or a step the
+/// keys moved onto it turns, as the old step grid did; Enter presses the focused element that
+/// has a press, however it got the focus. Either presses with `clicks: 0`, so its code tells a
+/// press of the keys from a click. A text field that types keeps both (`on_key`).
 pub(crate) fn in_views(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
     let Mods {
         cmd,
@@ -375,23 +378,23 @@ pub(crate) fn in_views(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
     if cmd || ctrl || alt || shift {
         return false;
     }
-    match &key.key {
-        Key::Text(text) if text == " " => on_key(state, key, tx),
-        Key::Enter => match state.focused_press(tx.focused()) {
-            Some(press) => {
-                if !tx.key_repeat() {
-                    let keys = Pointer {
-                        clicks: 0,
-                        ..Pointer::default()
-                    };
-                    state.press(&press, "press", Some(serde_json::json!(keys)));
-                }
-                true
-            }
-            None => false,
-        },
-        _ => false,
+    let space = matches!(&key.key, Key::Text(text) if text == " ");
+    if !space && key.key != Key::Enter {
+        return false;
     }
+    let pressed = match state.focused_press(tx.focused()) {
+        Some((press, turns)) if !space || (turns && tx.focus_visible()) => press,
+        _ if space => return on_key(state, key, tx),
+        _ => return false,
+    };
+    if !tx.key_repeat() {
+        let keys = Pointer {
+            clicks: 0,
+            ..Pointer::default()
+        };
+        state.press(&pressed, "press", Some(serde_json::json!(keys)));
+    }
+    true
 }
 
 pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {

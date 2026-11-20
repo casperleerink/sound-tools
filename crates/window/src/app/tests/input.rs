@@ -161,6 +161,34 @@ fn r_records_the_computer_keys_on_the_first_track_as_one_step_and_undo_waits_for
     assert_eq!(children_of(&window.state, "song/t00", "timeline"), clips);
 }
 
+/// With the computer keys on, Space is no note: it ends a take as it pauses, and the take is a
+/// clip. A clip clicked before keeps the keys and takes no Space.
+#[test]
+fn with_the_computer_keys_on_space_ends_a_take() {
+    let scratch = new_project();
+    let mut window = window_of(&scratch.path().join("song"));
+    let clips = children_of(&window.state, "song/t00", "timeline");
+    let (x, y) = window.find("clip-t00/bass").unwrap();
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    window.pointer_up(x, y);
+    redraw(&mut window);
+    assert_eq!(focused(&window).as_deref(), Some("clip-t00/bass"));
+    press(&mut window, "cmd-k");
+    assert!(window.state.incoming.live.computer_keys());
+    press(&mut window, "r");
+    release(&mut window, "r");
+    until(&mut window, "the take", |state| state.session.recording());
+    press(&mut window, "a");
+    release(&mut window, "a");
+    press(&mut window, "space");
+    until(&mut window, "the clip of the take", |state| {
+        children_of(state, "song/t00", "timeline").len() > clips.len()
+    });
+    assert!(!window.state.session.recording());
+    assert!(!window.state.playing);
+}
+
 /// An audio input with no device, into which the test writes a steady tone.
 #[derive(Clone, Default)]
 pub(super) struct Microphone {

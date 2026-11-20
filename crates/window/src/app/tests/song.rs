@@ -263,6 +263,50 @@ fn enter_presses_what_has_the_keys_however_it_got_them_and_space_plays_wherever_
     assert!(window.find("roll-t00-bass").is_some());
 }
 
+/// Space plays, then pauses: what was clicked last does not take it.
+fn space_plays_and_pauses(window: &mut rune::Runtime<State>, after: &str) {
+    for playing in [true, false] {
+        key(window, rune::Key::Text(" ".into()));
+        redraw(window);
+        assert_eq!(window.state.playing, playing, "Space after {after}");
+    }
+}
+
+/// The audit's rule: after a click on a clip, on a toggle of a track's head or on the empty
+/// timeline, Space plays and pauses; the clicked toggle stays as the click left it.
+#[test]
+fn space_plays_and_pauses_after_a_click_on_a_clip_a_head_or_the_timeline() {
+    let (_scratch, mut window) = song();
+    let [x, y, w, h] = rect(&window, "clip-t00/bass");
+    press_at(&mut window, (x + w / 2.0, y + h / 2.0));
+    assert_eq!(super::focused(&window).as_deref(), Some("clip-t00/bass"));
+    space_plays_and_pauses(&mut window, "a clip");
+    let muted = |window: &rune::Runtime<State>| {
+        record(&window.state, "song/t00/mix.json")["state"]["mute"].clone()
+    };
+    let [x, y, w, h] = rect(&window, "mute-t00");
+    press_at(&mut window, (x + w / 2.0, y + h / 2.0));
+    assert_eq!(muted(&window), true);
+    space_plays_and_pauses(&mut window, "Mute");
+    assert_eq!(muted(&window), true);
+    // Right of the first track's clip, where no clip is.
+    let [x, y, w, h] = rect(&window, "clip-t00/bass");
+    press_at(&mut window, (x + w + 200.0, y + h / 2.0));
+    space_plays_and_pauses(&mut window, "the timeline");
+}
+
+/// The old rule: a chosen clip deleted with the keys, Space still plays.
+#[test]
+fn delete_removes_the_chosen_clip_and_space_still_plays() {
+    let (_scratch, mut window) = song();
+    let [x, y, w, h] = rect(&window, "clip-t00/bass");
+    press_at(&mut window, (x + w / 2.0, y + h / 2.0));
+    key(&mut window, rune::Key::Delete);
+    redraw(&mut window);
+    assert_eq!(start(&window.state, "t00/bass"), Value::Null);
+    space_plays_and_pauses(&mut window, "a delete");
+}
+
 /// The heads of the tracks scroll with the timeline: a wheel over the clips moves a head as far
 /// as its clips.
 #[test]

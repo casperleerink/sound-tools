@@ -1003,7 +1003,9 @@ fn two_devices_with_the_same_inner_keys_keep_a_focus_and_a_press_each() {
         (Value::Null, json!(true))
     );
     focus(&mut window, "t00/chain/a:step-2");
-    focus(&mut window, "t00/chain/b:step-2");
+    // Moved onto by the keys, as Tab does: Space turns a step only then.
+    window.update(|_, tx| tx.focus("t00/chain/b:step-2", true));
+    redraw(&mut window);
     keys(&mut window, "space");
     assert_eq!(
         (on(&window, "a"), on(&window, "b")),
