@@ -24,7 +24,8 @@ pub(super) fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>
     }
     if let (Some(value), Some(key)) = (&b.value, key) {
         let lives = &scope.state.lives;
-        e = e.a11y_value(lives.said_live(scope.state, scope.instance, key, value));
+        let meter = b.role.as_deref() == Some("meter");
+        e = e.a11y_value(lives.said_live(scope.state, scope.instance, key, value, meter));
     }
     let (Some(element), Some(key)) = (&b.key, key) else {
         return e;
