@@ -1,27 +1,20 @@
-//! Shared components. Each file is one component; the gallery shows every variant.
+//! Shared components. Each file is one component.
 
 pub mod automated;
 pub mod button;
-pub mod empty_state;
 pub mod icon;
 pub mod indicator;
 pub mod kbd;
-pub mod notice;
 pub(crate) mod paint;
 
 pub mod cell;
-pub mod curves;
 pub mod device_card;
 pub mod display;
-pub mod dynamics_display;
 pub mod gesture;
 pub mod knob;
-pub mod limiter_display;
 pub mod meter;
-pub mod pad;
 pub mod segmented_control;
 pub mod select;
-pub mod slider;
 pub mod text_input;
 pub mod toggle;
 pub mod typed;

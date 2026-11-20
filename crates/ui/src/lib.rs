@@ -1,5 +1,5 @@
-//! Sound Tools UI SDK: design tokens, shared components and the bridge from a live project to
-//! GPUI views. `README.md` in this crate is the guide for writing a view.
+//! The GPUI components and bridge that `sound-agent` and `plugin-host` still draw with. It goes
+//! when they have no toolkit.
 
 pub mod assets;
 pub mod components;
@@ -7,8 +7,6 @@ pub mod control_edit;
 pub mod device_edit;
 pub mod devices;
 pub mod focus;
-pub mod global_keys;
-pub mod import;
 pub mod lanes;
 pub mod metering;
 pub mod names;
@@ -17,12 +15,10 @@ pub mod render;
 pub mod renders;
 pub mod scale;
 pub mod session;
-pub mod shortcuts;
 pub mod spare_keys;
 pub mod theme;
 pub mod typography;
 pub mod views;
-pub mod waveforms;
 
 gpui::actions!(
     sound_tools,
@@ -40,19 +36,16 @@ pub use devices::{
     extension_is_enabled,
 };
 pub use focus::KeyboardFocus;
-pub use global_keys::{GlobalKey, GlobalKeys};
 pub use lanes::Lanes;
 pub use metering::{Metering, PeaksReader, SharedPeaks, every_poll, on_every_poll};
 pub use recording::{FinishedTake, LiveNote, LiveNotes, LiveSound, LiveTake, Recording};
 pub use render::{RenderProgram, Rendered, render};
 pub use scale::{ControlSize, radius};
 pub use session::{ClickSwitch, GestureFollower, Loop, POLL_INTERVAL, Playhead, Session, SpanOf};
-pub use shortcuts::Shortcuts;
 pub use spare_keys::{SpareKey, SpareKeys};
 pub use theme::{ActiveTheme, Theme};
 pub use typography::{TextVariant, Typography};
 pub use views::Views;
-pub use waveforms::Waveforms;
 
 /// Register the theme and fonts. Call inside `Application::run`, before opening windows.
 pub fn init(cx: &mut gpui::App) {
