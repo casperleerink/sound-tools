@@ -159,6 +159,20 @@ fn tab_reaches_the_point_you_are_at_the_arrows_move_and_enter_goes() {
     key(&mut window, Key::Up);
     key(&mut window, Key::Enter);
     assert_eq!(current(&window), changed);
+
+    // Shift-F10 opens the menu of the row's line; Escape gives the keys back to the row.
+    window.key(KeyEvent {
+        key: Key::Function(10),
+        mods: Mods {
+            shift: true,
+            ..Mods::default()
+        },
+    });
+    redraw(&mut window);
+    control(&chrome_controls(&window.state), "Rename");
+    key(&mut window, Key::Escape);
+    assert!(!shows(&window, "history-menu-menu"));
+    assert_eq!(focused(&window), Some(row(changed)));
 }
 
 #[test]
@@ -330,6 +344,51 @@ fn a_long_line_shows_six_changes_then_fifty_more_each_time() {
     assert!(!shows(&window, "history-more"));
 }
 
+/// Whether `key` shows inside the list's scroll view.
+fn in_view(window: &rune::Runtime<State>, key: &str) -> bool {
+    let elements = window.elements();
+    let rect = |key: &str| {
+        let found = elements.iter().find(|e| e.key.as_deref() == Some(key));
+        found.map(|e| e.rect).unwrap_or_else(|| panic!("no {key}"))
+    };
+    let (row, view) = (rect(key), rect("history-rows"));
+    row[1] >= view[1] && row[1] + row[3] <= view[1] + view[3]
+}
+
+#[test]
+fn going_to_a_version_far_down_brings_where_you_are_into_view() {
+    let scratch = new_project();
+    let mut window = history(&scratch);
+    let start = current(&window);
+    let other = edit(&mut window, "Change the cutoff", 300.0);
+    go_to(&mut window, start);
+    for step in 0..40 {
+        edit(&mut window, "Change the cutoff", 400.0 + f64::from(step));
+    }
+    // Below what shows: an agent reaches it.
+    act(
+        &mut window.state,
+        json!({ "key": "history-more", "action": "press" }),
+    );
+    redraw(&mut window);
+    let other_card = card(line(&window, other).start);
+    let here = row(current(&window));
+    tab_to(&mut window, &here);
+    // Forty newer points folded it away: the last row shows it.
+    key(&mut window, Key::End);
+    key(&mut window, Key::Enter);
+    key(&mut window, Key::End);
+    key(&mut window, Key::Up);
+    settle(&mut window);
+    assert_eq!(focused(&window), Some(other_card));
+    assert!(!in_view(&window, &here));
+
+    key(&mut window, Key::Enter);
+    settle(&mut window);
+    assert_eq!(current(&window), other);
+    assert!(in_view(&window, &row(other)));
+}
+
 #[test]
 fn an_edit_while_the_tab_shows_comes_in_on_top_as_where_you_are() {
     let scratch = new_project();
@@ -388,4 +447,64 @@ fn an_agent_goes_renames_and_merges_by_label() {
         json!({ "label": "Show more changes", "action": "press" }),
     );
     assert!(why.is_err());
+}
+
+/// Writes a project to `$SHAPE` with the history the pictures show: four named versions, work
+/// taken back with undo and a version folded away by hand, as the old pictures had. Run with
+/// `SHAPE=<folder> cargo nextest run -p sound-window --run-ignored only history_shape`.
+#[test]
+#[ignore = "writes a project to look at"]
+fn history_shape() {
+    let Ok(folder) = std::env::var("SHAPE") else {
+        return;
+    };
+    let folder = std::path::PathBuf::from(folder);
+    runtime::templates::write(&folder, &TEMPLATE).unwrap();
+    // In the folder itself, not a copy.
+    let mut state = State::open(Options {
+        folder,
+        headless: true,
+        play: None,
+        main: None,
+        act: Some(Vec::new()),
+    })
+    .unwrap();
+    let synth = InstanceId::new(SYNTH).unwrap();
+    let edit = |state: &mut State, label: &str, field: &str, value: f64| {
+        let session = &mut state.session;
+        session.set(label, &synth, &[(field, value)]).unwrap();
+        session.project().history().unwrap().current()
+    };
+    let name = |state: &mut State, name: &str| {
+        let history = state.project().history().unwrap();
+        let start = history.line_of(history.current()).unwrap().unwrap().start;
+        state
+            .session
+            .edit(|project| project.rename_version(start, name));
+        start
+    };
+    let start = state.project().history().unwrap().current();
+    edit(&mut state, "Change the cutoff", "cutoff_hz", 900.0);
+    edit(&mut state, "Change the resonance", "resonance", 0.4);
+    let sketch = edit(&mut state, "Change the cutoff", "cutoff_hz", 1200.0);
+    edit(&mut state, "Change the resonance", "resonance", 0.6);
+    name(&mut state, "First sketch");
+    state.session.go_to(sketch);
+    edit(&mut state, "Change the cutoff", "cutoff_hz", 400.0);
+    let tail = edit(&mut state, "Change the cutoff", "cutoff_hz", 300.0);
+    edit(&mut state, "Change the resonance", "resonance", 0.8);
+    name(&mut state, "Longer tail");
+    state.session.go_to(start);
+    edit(&mut state, "Change the cutoff", "cutoff_hz", 1800.0);
+    let aside = name(&mut state, "Tiny box");
+    state.session.edit(|project| project.set_aside(aside, true));
+    state.session.go_to(tail);
+    edit(&mut state, "Change the resonance", "resonance", 0.2);
+    edit(&mut state, "Change the cutoff", "cutoff_hz", 250.0);
+    edit(&mut state, "Change the cutoff", "cutoff_hz", 200.0);
+    state.session.undo();
+    state.session.undo();
+    edit(&mut state, "Change the resonance", "resonance", 0.1);
+    edit(&mut state, "Change the cutoff", "cutoff_hz", 350.0);
+    name(&mut state, "Darker room");
 }

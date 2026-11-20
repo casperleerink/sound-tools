@@ -176,7 +176,7 @@ impl State {
     }
 
     /// A press on `item`: a change goes there, a line to its latest point.
-    fn go(&mut self, item: Item, tx: &mut Tx) -> Result<()> {
+    fn go(&mut self, item: Item) -> Result<()> {
         let point = match item {
             Item::Change(point) => Some(point),
             Item::Card(start)
@@ -199,7 +199,6 @@ impl State {
         if !self.session.go_to(point) {
             bail!("{}", self.session.notice().unwrap_or_default());
         }
-        tx.scroll_into_view(Item::Change(point).key());
         Ok(())
     }
 
@@ -303,9 +302,8 @@ pub(super) fn follow(state: &mut State) -> bool {
 
 /// The action `action` of a control of the tab, as an agent runs it.
 pub(super) fn run(state: &mut State, act: Act, action: &str, value: Option<Value>) -> Result<()> {
-    let tx = &mut Tx::default();
     match (act, action) {
-        (Act::Item(item), "press") => state.go(item, tx),
+        (Act::Item(item), "press") => state.go(item),
         (Act::Item(item), "open") => state.open_menu(item, None),
         (Act::Pick(pick), "press") => state.pick(pick),
         (Act::Name, "commit") => {
@@ -464,7 +462,7 @@ pub(super) fn controls(state: &State) -> Vec<Control> {
             let menu = each.item.line(open).is_some();
             let actions: &[&str] = if menu { &["press", "open"] } else { &["press"] };
             Control {
-                checked: (each.role == "option").then_some(each.here),
+                checked: matches!(each.item, Item::Change(_)).then_some(each.here),
                 expanded: menu.then(|| tab.menu.as_ref().is_some_and(|m| m.opener == each.item)),
                 ..control(
                     each.item.key(),
@@ -527,7 +525,11 @@ pub(super) fn overlays(state: &State) -> Vec<El> {
     }
     let mut layer = Vec::new();
     built.build(&state.theme.kit, &mut layer);
-    layer
+    // The keys go back to the row itself: the place it opened at goes with the menu.
+    let opener = menu.opener.key();
+    (layer.into_iter())
+        .map(|e| e.focus_return(opener.clone()))
+        .collect()
 }
 
 fn view(tab: &History, state: &State) -> El {
@@ -565,6 +567,7 @@ fn view(tab: &History, state: &State) -> El {
                     .label("History")
                     .focus_group()
                     .w_full()
+                    .px(theme.space(2))
                     .items_stretch()
                     .pb(theme.space(4))
                     .children(rows),
@@ -744,7 +747,6 @@ impl<'a> Rows<'a> {
             let item = Item::Card(card.line.start);
             rows.push(
                 self.item(item, label(item), "option", false)
-                    .mx(self.space(2))
                     .px(self.space(3))
                     .py(10.0)
                     .radius(self.state.theme.kit.radius.lg)
@@ -756,7 +758,6 @@ impl<'a> Rows<'a> {
         if let Some(words) = folded_words(tab.show_folded_away, self.shown.folded_away.len()) {
             rows.push(
                 self.item(Item::FoldedAway, words.clone(), "button", false)
-                    .mx(self.space(2))
                     .mt(self.space(2))
                     .px(self.space(3))
                     .py(self.space(2))
@@ -783,12 +784,12 @@ impl<'a> Rows<'a> {
             .focus_selected(here)
             .focus_ring(1.5, -1.5, self.state.theme.color("focus"))
             .items_stretch()
-            .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+            .on_press(move |s: &mut State| {
                 // What refused is the session's notice already.
-                s.go(item, tx).ok();
+                s.go(item).ok();
                 s.handled();
             });
-        if role == "option" {
+        if let Item::Change(_) = item {
             e = e.checked(here);
         }
         if let Item::Card(start) = item {
@@ -803,7 +804,7 @@ impl<'a> Rows<'a> {
                 s.handled();
             });
         }
-        // Its menu goes back to it as it closes.
+        // Where an agent's menu opens.
         match &self.state.panel.history.menu {
             Some(menu) if menu.opener == item => col()
                 .key(format!("{MENU}-trigger"))
@@ -814,17 +815,17 @@ impl<'a> Rows<'a> {
     }
 
     fn on_card(&self, row: El) -> El {
-        row.mx(self.space(2)).px(self.space(3)).fill(self.card)
+        row.px(self.space(3)).fill(self.card)
     }
 
     /// The bar of the line's colour down the left of its changes.
     fn bar(&self, color: Color, content: El) -> El {
-        col()
-            .ml(3.0)
-            .pl(6.0)
+        row()
+            .pl(3.0)
+            .gap(6.0)
             .items_stretch()
-            .border_sides([0.0, 0.0, 0.0, 2.0], color.alpha(0.45))
-            .child(content)
+            .child(el().w(2.0).fill(color.alpha(0.45)))
+            .child(content.grow(1.0).min_w(0.0))
     }
 
     fn undone_help(&self, row: El) -> El {
@@ -905,8 +906,8 @@ impl<'a> Rows<'a> {
             .color(self.body)
             .truncate()
             .min_w(0.0)
-            .on_background_press_tx(move |s: &mut State, tx: &mut Tx| {
-                s.go(item, tx).ok();
+            .on_background_press(move |s: &mut State| {
+                s.go(item).ok();
                 s.handled();
             });
         Some(
