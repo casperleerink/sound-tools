@@ -14,7 +14,7 @@ use crate::lives::{Lives, Shown, Shows};
 use super::field::{kept, typed};
 use super::semantics::{delegates_enter, semantics};
 use super::shapes::drawing;
-use super::{BoxNode, Node, Place, Scope, Scroll, Size, TextNode, live_place, plane};
+use super::{BoxNode, Node, Pad, Place, Scope, Scroll, Size, TextNode, live_place, plane};
 
 /// The name of every binding the views shown now make, of their memos too, whether Rune builds
 /// them again or not: what [`crate::lives::Lives::keep`] keeps.
@@ -76,7 +76,7 @@ fn walk(scope: &Scope, node: &Node, bind: &mut impl FnMut(Shows)) {
                 plane: plane.map(|(_, key)| scope.key(key)).or(scope.plane.clone()),
                 parent: match plane {
                     Some(_) => None,
-                    None => b.place.as_ref().map(Place::origin).or(scope.parent.clone()),
+                    None => b.parent_of_children(scope.parent.as_ref()),
                 },
                 ..scope.clone()
             };
@@ -86,7 +86,7 @@ fn walk(scope: &Scope, node: &Node, bind: &mut impl FnMut(Shows)) {
             let placed = b
                 .place
                 .as_ref()
-                .and_then(|place| scope.placed_shows(place, b.size()));
+                .and_then(|place| scope.placed_shows(place, b.size(), b.inside()));
             (placed.into_iter())
                 .chain(live_place(b.at.as_ref(), b.size(), b.opacity.as_ref()))
                 .collect()
@@ -113,7 +113,7 @@ fn walk(scope: &Scope, node: &Node, bind: &mut impl FnMut(Shows)) {
                 bind(Shows::Drawn(moving));
             }
             let placed = (d.place.as_ref())
-                .and_then(|place| scope.placed_shows(place, (Some(&d.w), Some(&d.h))));
+                .and_then(|place| scope.placed_shows(place, (Some(&d.w), Some(&d.h)), d.inside()));
             let size = d.place.is_none().then_some((Some(&d.w), Some(&d.h)));
             (placed.into_iter())
                 .chain(live_place(
@@ -181,7 +181,10 @@ pub(super) fn build(scope: &Scope, node: &Node) -> El {
         Node::Shapes(shapes) => {
             let e = drawing(scope, shapes);
             match &shapes.place {
-                Some(place) => scope.put(e, place, (Some(&shapes.w), Some(&shapes.h))),
+                Some(place) => {
+                    let size = (Some(&shapes.w), Some(&shapes.h));
+                    scope.put(e, place, size, shapes.inside())
+                }
                 None => e,
             }
         }
@@ -270,14 +273,10 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
     if let Some(grow) = b.grow {
         e = e.grow(grow);
     }
-    if let Some(step) = b.pad {
-        e = e.padding(theme.space(step));
-    }
-    if let Some(step) = b.px {
-        e = e.px(theme.space(step));
-    }
-    if let Some(step) = b.py {
-        e = e.py(theme.space(step));
+    match b.pad {
+        Some(Pad::All(step)) => e = e.padding(theme.space(step)),
+        Some(Pad::Sides([across, down])) => e = e.px(theme.space(across)).py(theme.space(down)),
+        None => {}
     }
     if let Some(step) = b.gap {
         e = e.gap(theme.space(step));
@@ -296,11 +295,11 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
     }
     // Before `inset`, which pins it to more edges than `at` does.
     e = match &b.place {
-        Some(place) => scope.put(e, place, b.size()),
+        Some(place) => scope.put(e, place, b.size(), b.inside()),
         None => e,
     };
     e = scope.placed(e, b.at.as_ref(), b.size(), b.opacity.as_ref());
-    if let Some([left, top, right, bottom]) = b.inset {
+    if let (Some([left, top, right, bottom]), None) = (b.inset, &b.place) {
         e = e.pin(left, top, right, bottom);
     }
     if b.clip {
@@ -374,7 +373,7 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
     }
     let inside = Scope {
         in_control: scope.in_control || delegates_enter(b),
-        parent: b.place.as_ref().map(Place::origin).or(scope.parent.clone()),
+        parent: b.parent_of_children(scope.parent.as_ref()),
         ..here
     };
     if inside.plane.is_some() {

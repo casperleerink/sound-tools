@@ -6,14 +6,14 @@ import type { Page } from "../../../song/view";
 import { GUTTER, HEAD } from "../../../song/view";
 import { Button } from "../../button";
 import { Dot } from "../../dot";
-import { keysOf } from "../../kbd";
 import { Menu } from "../../menu";
 import { Select } from "../../select";
 import { ExpressionLane } from "./expression";
 import { PianoKeys } from "./keys";
 import { Readout } from "./readout";
 import { noteItems, RollPlane } from "./roll";
-import { HEADER, LANE, playheadOf, rollOf, type Roll } from "./roll-view";
+import { HEADER, LANE, playing, rollOf, type Roll } from "./roll-view";
+import { Playhead } from "../time";
 import { VelocityLane } from "./velocity";
 
 /** The clip `clip`, `row/name`, whose notes it edits; it fills the height the page gives it. */
@@ -42,7 +42,7 @@ export const Editor = ({ page, clip }: EditorProps) => {
         <RollPlane roll={roll} />
       </row>
       <row w="full" h={LANE} border="border" borderSides={[1, 0, 0, 0]}>
-        <col w={HEAD} h="full" px={3} justify="center" border="border" borderSides={[0, 1, 0, 0]}>
+        <col w={HEAD} h="full" pad={[3, 0]} justify="center" border="border" borderSides={[0, 1, 0, 0]}>
           <Select id="editor-lane" label="Lane under the notes" w={HEAD - 24} menuW={220} search options={laneOptions(roll)} value={lane} onChange={(picked) => (page.song.memory.lane = picked)} />
         </col>
         <box w={GUTTER} />
@@ -57,11 +57,11 @@ const Name = ({ roll }: { roll: Roll }) => {
   const title = roll.state.title ?? "";
   const track = titleOf(roll.track);
   return (
-    <row key="clip-name" label="Rename the clip" role="button" value={title || track} w={HEAD} h={HEADER} px={3} gap={2} align="center" hover="fill/50" border="border" borderSides={[0, 1, 0, 0]}>
+    <row key="clip-name" label="Rename the clip" role="button" value={title || track} w={HEAD} h={HEADER} pad={[3, 0]} gap={2} align="center" hover="fill/50" border="border" borderSides={[0, 1, 0, 0]}>
       <Dot color={roll.colour} />
       {title ? <text style="heading" color="text" truncate>{title}</text> : null}
       <text style={title ? "label" : "heading"} color={title ? "text-secondary" : "text"} truncate>{track}</text>
-      <row overlay={{ open: "press", side: "bottom", align: "start", gap: -HEADER + 4 }} w={HEAD - 8} h={HEADER - 8} px={2} align="center" radius="md" fill="raised" border="focus" shadow="md">
+      <row overlay={{ open: "press", side: "bottom", align: "start", gap: -HEADER + 4 }} w={HEAD - 8} h={HEADER - 8} pad={[2, 0]} align="center" radius="md" fill="raised" border="focus" shadow="md">
         <field key="clip-name-typed" label="Name of the clip" value={title} placeholder={track} style="heading" w={HEAD - 24} focus onCommit={(typed) => typed !== null && typed.trim() !== title && roll.page.edits.clips.rename(roll.clip, typed)} />
       </row>
     </row>
@@ -72,12 +72,11 @@ const Name = ({ roll }: { roll: Roll }) => {
 const Ruler = ({ roll }: { roll: Roll }) => {
   const { key, bars, state, page } = roll;
   const snap = page.song.memory.snap;
-  const { at, inside } = playheadOf(roll);
   return (
     <box key={`${key}-ruler`} label="Bars of the clip" grow={1} h={HEADER} clip plane={{ x: key }} onPress={(p) => page.song.clock.jump(state.start + nearestOf(p.x, snap))}>
-      {memo(`ruler-${key}`, [roll.runs, state.start, roll.end, roll.across], () => {
+      {memo(`ruler-${key}`, [roll.runs, state.start, roll.end], () => {
         // A beat says its number once the zoom leaves it room for one.
-        const beats = live.plane(key).zoom.ge(BEAT_ROOM / (BEAT * roll.across));
+        const beats = live.plane(key).zoom.ge(BEAT_ROOM / BEAT);
         return (
           <box>
             {bars.map(({ tick, bar }, index) => [
@@ -93,7 +92,7 @@ const Ruler = ({ roll }: { roll: Roll }) => {
           </box>
         );
       })}
-      <box place={[at, HEADER / 2]} w={1} h={HEADER} fill="text" opacity={inside} inert />
+      <Playhead plane={`${key}-ruler`} {...playing(roll)} />
     </box>
   );
 };
@@ -105,9 +104,9 @@ const BEAT_ROOM = 80;
 const Buttons = ({ roll }: { roll: Roll }) => {
   const { song, edits } = roll.page;
   const large = song.memory.editorLarge;
-  const keys = (action: string) => keysOf(song.shortcut(action));
+  const keys = (action: string) => song.shortcut(action);
   return (
-    <row h={HEADER} px={2} gap={1} align="center">
+    <row h={HEADER} pad={[2, 0]} gap={1} align="center">
       <Button id="editor-size" label={large ? "Make the note editor smaller" : "Make the note editor larger"} icon={large ? "chevron-down" : "chevron-up"} variant="ghost" size="sm"
         tip={large ? "Smaller" : "Larger"} keys={keys("editor_size")} onPress={() => (song.memory.editorLarge = !large)} />
       <Menu id="note-actions" label="Quantize, humanize, legato" variant="ghost" size="sm" tip="Quantize, humanize, legato" w={220} items={noteItems(roll)} />

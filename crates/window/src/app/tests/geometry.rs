@@ -21,7 +21,7 @@ export const lanes = tool({
         <box key="ruler" label="Ruler" w={400} h={20} plane={{ x: "song" }}>
           <box key="bar-2" label="Bar 2" place={[3840, 10]} w={4} h={10} fill="text" onPress={hear} />
         </box>
-        <box key="song" label="Song" w={400} h={160} plane={{ x: 0.1, y: 1, zoom: [0.25, 8] }} drag={{ x: true, y: true, id: "band" }} onPress={hear} onDragEnd={hear}>
+        <box key="song" label="Song" w={400} h={160} plane={{ x: 0.1, y: 1, zoom: [0.025, 0.8] }} drag={{ x: true, y: true, id: "band" }} onPress={hear} onDragEnd={hear}>
           {[0, 1, 2].map((i) => {
             const d = live.drag(`clip-${i}`);
             return <box key={`clip-${i}`} label={`Clip ${i + 1}`} place={[d.dx.plus(i * 3840), d.dy.plus(i * 40), 1920, 30]} fill="fill"
@@ -306,7 +306,7 @@ fn a_pinch_zooms_about_the_pointer_moving_what_is_placed_and_builds_again_in_rus
     let after = window.state.planes.units(&format!("{PREFIX}song"), at);
     assert!((before[0] - after[0]).abs() < 0.01, "{before:?} {after:?}");
     let view = window.state.planes.view(&format!("{PREFIX}song")).unwrap();
-    assert_eq!(view.zoom, 2.0);
+    assert!((view.zoom - 0.2).abs() < 1e-6, "{view:?}");
     assert_eq!(rect(&window, "clip-0")[2], 384.0);
     assert_eq!(
         window.state.planes.builds.get(),
@@ -343,7 +343,7 @@ fn a_pinch_zooms_about_the_pointer_moving_what_is_placed_and_builds_again_in_rus
             .view(&format!("{PREFIX}song"))
             .unwrap()
             .zoom,
-        8.0
+        0.8
     );
 }
 
@@ -367,7 +367,8 @@ fn what_is_far_is_not_built_but_an_agent_sees_it_and_shows_it() {
     window.frame(1.0 / 60.0);
     redraw(&mut window);
     let view = window.state.planes.view(&format!("{PREFIX}song")).unwrap();
-    assert_eq!((view.left, view.zoom), (95000.0, 2.0));
+    assert_eq!(view.left, 95000.0);
+    assert!((view.zoom - 0.2).abs() < 1e-6, "{view:?}");
     let [x, ..] = rect(&window, "far");
     assert_eq!(x - rect(&window, "song")[0], 200.0);
     let report = window.state.report();
@@ -394,7 +395,7 @@ fn the_keys_scroll_and_zoom_a_plane_that_has_them() {
     });
     redraw(&mut window);
     let view = window.state.planes.view(&format!("{PREFIX}song")).unwrap();
-    assert_eq!(view.zoom, 1.25);
+    assert!((view.zoom - 0.125).abs() < 1e-6, "{view:?}");
     key(&mut window, rune::Key::PageDown);
     let view = window.state.planes.view(&format!("{PREFIX}song")).unwrap();
     // What is placed ends at 110, and a view of room after it.
@@ -485,7 +486,7 @@ export const range = tool({
   name: "range", title: "Range", when: "Never", doc: "A range.", state: {}, sound: () => input,
   view: () => (
     <row w={200} h={100}>
-      <box key="bands" label="Bands" grow={1} h="full" plane={{ x: [1000, 3000], y: [-24, 24], zoom: [1, 4] }}>
+      <box key="bands" label="Bands" grow={1} h="full" plane={{ x: [1000, 3000], y: [-24, 24], zoom: [0.1, 0.4] }}>
         <box key="band" label="Band" place={[2000, 0]} w={10} h={10} onPress={() => {}} />
       </box>
     </row>
@@ -520,7 +521,7 @@ export const follows = tool({
   name: "follows", title: "Follows", when: "Never", doc: "Follows.", state: {}, sound: () => input,
   view: (_, { show }) => (
     <col w={400}>
-      <box key="song" label="Song" w={400} h={100} plane={{ x: 0.1, y: 1, zoom: [0.25, 8], follow: live.playhead }}>
+      <box key="song" label="Song" w={400} h={100} plane={{ x: 0.1, y: 1, zoom: [0.025, 0.8], follow: live.playhead }}>
         <box key="far" label="Far" place={[96000, 0, 960, 30]} />
       </box>
       <box key="fit" label="Fit" w={20} h={20} onPress={() => show("song", { x: [9600, 11520] })} />
@@ -613,7 +614,7 @@ fn code_shows_a_range_of_a_plane_zoomed_as_far_as_it_zooms() {
     );
     redraw(&mut window);
     let view = window.state.planes.view(FOLLOWING).unwrap();
-    assert_eq!((view.left, view.zoom), (0.0, 0.25));
+    assert_eq!((view.left, view.zoom), (0.0, 0.025));
 }
 
 /// A ruler in a memo, as the song draws its bars once for many runs.
@@ -621,7 +622,7 @@ const KEPT_PLANE: &str = r#"import { h, input, memo, tool } from "./sdk";
 export const kept = tool({
   name: "kept", title: "Kept", when: "Never", doc: "Kept.", state: {}, sound: () => input,
   view: () => memo("ruler", [], () => (
-    <box key="ruler" label="Ruler" w={400} h={20} plane={{ x: 0.1, zoom: [0.25, 8] }}>
+    <box key="ruler" label="Ruler" w={400} h={20} plane={{ x: 0.1, zoom: [0.025, 0.8] }}>
       <box key="bar-2" label="Bar 2" place={[3840, 0, 10, 10]} />
     </box>
   )),

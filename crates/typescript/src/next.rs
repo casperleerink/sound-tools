@@ -62,7 +62,7 @@ pub(crate) fn card_files(extensions: &Path) -> Vec<String> {
         .flatten()
         .flatten();
     let mut files: Vec<String> = (entries.filter_map(|entry| entry.file_name().into_string().ok()))
-        .filter(|name| name.ends_with(".tsx"))
+        .filter(|name| name.ends_with(".tsx") && !name.contains(".test."))
         .map(|name| format!("{CARDS}/{name}"))
         .collect();
     files.sort();
@@ -1301,12 +1301,12 @@ impl Tools {
         name: &str,
         tick: Ticks,
     ) -> f64 {
-        let id = match child {
-            Some(path) => instance.child(path).ok(),
-            None => Some(instance.clone()),
-        };
-        let Some(id) = id else {
-            return 0.0;
+        let (id, name) = match child {
+            Some(path) => match instance.child(path) {
+                Ok(id) => (id, name),
+                Err(_) => return 0.0,
+            },
+            None => crate::path::number_at(project, instance, name),
         };
         let at = crate::feeds::Moment::at(tick);
         if let Some((value, _)) = crate::feeds::lane_value(project, &id, name, at) {
@@ -2101,4 +2101,21 @@ fn watching(
 fn inside(path: &str, field: &str) -> bool {
     path.strip_prefix(field)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(['.', '[']))
+}
+
+#[cfg(test)]
+mod card_file_tests {
+    #![allow(clippy::unwrap_used)]
+
+    #[test]
+    fn a_test_beside_the_cards_is_no_card() {
+        let extensions = tempfile::tempdir().unwrap();
+        let cards = extensions.path().join(super::CARDS);
+        std::fs::create_dir_all(&cards).unwrap();
+        for name in ["eq.tsx", "eq.test.tsx"] {
+            std::fs::write(cards.join(name), "").unwrap();
+        }
+        let files = super::card_files(extensions.path());
+        assert_eq!(files, vec![format!("{}/eq.tsx", super::CARDS)]);
+    }
 }

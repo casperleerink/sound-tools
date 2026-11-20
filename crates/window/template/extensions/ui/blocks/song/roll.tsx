@@ -1,10 +1,10 @@
 import { h, live, memo, type Color, type Frozen, type Note, type Pointer } from "../../../sdk";
 import { noteCommand, noteKey, pitchName, STRENGTHS, SWINGS, type NoteCommand } from "../../../song/notes";
 import { BEAT, placeOf } from "../../../song/time";
-import { keysOf } from "../../kbd";
 import { MenuList, type Item } from "../../menu";
 import { EmptyState } from "../empty-state";
-import { barsOf, BEFORE, END, MOVE, PITCH, playheadOf, SHORTEST, signatureOf, START, zoomOf, type Roll } from "./roll-view";
+import { barsOf, BEFORE, END, MOVE, PITCH, playing, SHORTEST, signatureOf, START, ZOOM, type Roll } from "./roll-view";
+import { Playhead } from "../time";
 
 /** The fewest points between two lines of the grid: closer, they do not show. How many ticks wide the ends of a note are that resize it. */
 const [ROOM, HANDLE] = [6, 90];
@@ -21,10 +21,10 @@ export const RollPlane = ({ roll }: { roll: Roll }) => {
   const [left, upper] = [marquee.x.plus(marquee.dx.min(0)), marquee.y.plus(marquee.dy.min(0))];
   const inRows = (p: Pointer) => ({ ...p, y: p.y + top });
   // Held at the clip's ends, so a playhead outside the clip moves no roll.
-  const follow = playheadOf(roll).at.max(0).min(roll.length);
+  const follow = playing(roll).at.max(0).min(roll.length);
   return (
     <box grow={1} h="full">
-      <box key={key} label="Notes" w="full" h="full" clip plane={{ x: roll.across, y: PITCH, zoom: zoomOf(roll), follow }} drag={{ x: true, y: true }}
+      <box key={key} label="Notes" w="full" h="full" clip plane={{ x: roll.across, y: PITCH, zoom: ZOOM, follow }} drag={{ x: true, y: true }}
         onPress={(p) => !p.right && edits.pressEmpty(inRows(p))} onDragEnd={(p) => edits.marquee(inRows(p))}>
         <Grid roll={roll} />
         {barsOf(state.notes).map(([bar, notes]) =>
@@ -33,7 +33,7 @@ export const RollPlane = ({ roll }: { roll: Roll }) => {
           )),
         )}
         <box place={[left, upper, marquee.dx.abs(), marquee.dy.abs()]} radius="sm" fill="focus/15" border="focus" opacity={marquee.active} inert />
-        <Playhead roll={roll} />
+        <Playhead plane={key} {...playing(roll)} />
         <MenuList id="note-menu" label="Note menu" items={noteItems(roll)} open="menu" w={220} />
       </box>
       {state.notes.length === 0 && (
@@ -50,10 +50,9 @@ const Grid = ({ roll }: { roll: Roll }) => {
   const { key, top, end, length, state, bars, colour } = roll;
   const snap = roll.page.song.memory.snap;
   const loop = state.loop ? state.notes.map(noteKey).join(",") : "";
-  return memo(`grid-${key}`, [top, end, length, snap, roll.runs, roll.across, loop, colour], () => {
+  return memo(`grid-${key}`, [top, end, length, snap, roll.runs, loop, colour], () => {
     const width = end + BEFORE;
-    const zoom = live.plane(key).zoom;
-    const shown = (step: number) => zoom.ge(ROOM / (step * roll.across));
+    const shown = (step: number) => live.plane(key).zoom.ge(ROOM / step);
     const lines = (ticks: number[]) => ticks.flatMap((tick) => [tick + BEFORE, 0, tick + BEFORE, 128]);
     const every = (step: number, over: number) => Array.from({ length: Math.ceil(end / step) }, (_, at) => at * step).filter((tick) => tick % over !== 0);
     const area = [-BEFORE, -top, width, 128] as const;
@@ -96,7 +95,7 @@ function noteParts(roll: Roll, note: Frozen<Note>, index: number) {
       onPress={press} onDragEnd={(p) => (side === "start" ? edits.resizeStart(p) : edits.resize(p))} />
   );
   return (
-    <box key={key} label={`Note ${name}`} role="button" checked={chosen} value={note.velocity}
+    <box key={key} label={`Note ${name}`} role="button" value={chosen}
       place={[x, y, length, (PITCH - 1) / PITCH]} radius="sm"
       fill={chosen ? "text" : (`${colour}/${shade}` as Color)} border={colour} drag={{ x: true, y: true, snap: [snap, 1], from: [note.start, row], id: chosen ? MOVE : key }}
       onPress={press} onDragEnd={(p) => (!chosen && edits.choose(note), edits.move(p))}>
@@ -106,17 +105,12 @@ function noteParts(roll: Roll, note: Frozen<Note>, index: number) {
   );
 }
 
-/** Where the piece plays, while it plays inside the clip. */
-const Playhead = ({ roll }: { roll: Roll }) => {
-  const { at, inside } = playheadOf(roll);
-  return <box place={[at, 64 - roll.top]} w={1} h={128 * PITCH} fill="text" opacity={inside} inert />;
-};
 
 /** The note menu: what to do with the chosen notes, or with all while none is, with the keys that do the same. */
 export function noteItems(roll: Roll): Item[] {
   const { song } = roll.page;
   const { memory } = song;
-  const keys = (action: string) => keysOf(song.shortcut(action));
+  const keys = (action: string) => song.shortcut(action);
   const run = (command: NoteCommand, action: string, text: string, danger?: true): Item => ({ text, keys: keys(action), onPress: () => void noteCommand(song, command), ...(danger ? { danger } : {}) });
   const chosen = roll.state.notes.some((note) => roll.chosen.has(noteKey(note)));
   const first: Item[] = chosen

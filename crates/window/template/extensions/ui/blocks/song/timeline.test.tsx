@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { act, apply, find, h, press, render, type Op, type Self } from "../../../sdk";
+import { act, apply, find, h, press, render, type Self } from "../../../sdk";
 import { song } from "../../../song";
 import { clipOf, regionOf, tapeOf, trackOf } from "../../../song/fake";
 import { BAR, BEAT } from "../../../song/time";
@@ -17,7 +17,7 @@ function opened(self: Song) {
   return render(song, self);
 }
 /** The value the changes `ops` set at the end of `path`, of the last that does. */
-const setAt = (ops: Op[], ...path: (string | number)[]) => ops.findLast(([at]) => path.every((step, index) => at.at(index - path.length) === step))?.[1];
+const setAt = (ops: ReturnType<typeof act>, ...path: (string | number)[]) => ops.findLast(([at]) => path.every((step, index) => at.at(index - path.length) === step))?.[1];
 test("a clip moves on the snap: sixteenths, then bars, then to the tick with snap off, and off the grid with cmd", () => {
   opened(two());
   expect(setAt(act("clip-t00/a", "drag", { dx: 1000 }), "start")).toBe(960);
@@ -47,11 +47,11 @@ test("a clip dragged onto an audio track stays on its own track", () => {
 test("a drag over empty space chooses the clips and regions it covers, shift adds", () => {
   opened(two());
   act("song", "drag", { x: BEAT, y: 0.5, dx: BAR, dy: 1 });
-  expect([find("clip-t00/a"), find("clip-t01/b"), find("clip-audio-1/r")]).toMatchObject([{ checked: true }, { checked: true }, { checked: false }]);
+  expect([find("clip-t00/a"), find("clip-t01/b"), find("clip-audio-1/r")]).toMatchObject([{ value: true }, { value: true }, { value: false }]);
   act("song", "drag", { x: 0, y: 2.5, dx: 100, dy: 0, shift: true });
-  expect([find("clip-t00/a"), find("clip-audio-1/r")]).toMatchObject([{ checked: true }, { checked: true }]);
+  expect([find("clip-t00/a"), find("clip-audio-1/r")]).toMatchObject([{ value: true }, { value: true }]);
   press("song");
-  expect(find("clip-t00/a")).toMatchObject({ checked: false });
+  expect(find("clip-t00/a")).toMatchObject({ value: false });
 });
 
 test("a double click on empty space of a track adds a bar long clip in the cell under it, chosen; on an audio track none", () => {
@@ -60,7 +60,7 @@ test("a double click on empty space of a track adds a bar long clip in the cell 
   const ops = act("song", "press", { clicks: 2, x: 5000, y: 1.5 });
   expect(apply(self, ops).children[1]!.children.at(-1)).toMatchObject({ tool: "timeline", state: { start: 4800, length: BAR } });
   render(song, apply(self, ops));
-  expect(find("clip-t01/clip")).toMatchObject({ checked: true });
+  expect(find("clip-t01/clip")).toMatchObject({ value: true });
   expect(act("song", "press", { clicks: 2, x: 5000, y: 2.5 })).toEqual([]);
 });
 
@@ -83,11 +83,11 @@ test("a double click on a clip opens its notes below; escape puts its track's pa
 test("a clip's menu opens on a right press, shows the keys, and renames the clip in place", () => {
   const self = two();
   opened(self);
-  expect(find("menu-t00/a-Cut")).toBeUndefined();
+  expect(find("menu-clip-t00/a-Cut")).toBeUndefined();
   press("clip-t00/a", { right: true });
-  expect(find("Cut")).toMatchObject({ key: "menu-t00/a-Cut" });
-  expect(JSON.stringify(find("menu-t00/a-Copy"))).toContain("⌘C");
-  press("menu-t00/a-Rename");
+  expect(find("Cut")).toMatchObject({ key: "menu-clip-t00/a-Cut" });
+  expect(JSON.stringify(find("menu-clip-t00/a-Copy"))).toContain("⌘C");
+  press("menu-clip-t00/a-Rename");
   const ops = act("clip-name-t00/a", "commit", "Verse");
   expect(setAt(ops, "title")).toBe("Verse");
   render(song, apply(self, ops));
@@ -97,7 +97,7 @@ test("a clip's menu opens on a right press, shows the keys, and renames the clip
 test("a region has no rename in its menu", () => {
   opened(two());
   press("clip-audio-1/r", { right: true });
-  expect([find("menu-audio-1/r-Cut"), find("menu-audio-1/r-Rename")]).toMatchObject([{ label: "Cut" }, undefined]);
+  expect([find("menu-clip-audio-1/r-Cut"), find("menu-clip-audio-1/r-Rename")]).toMatchObject([{ label: "Cut" }, undefined]);
 });
 
 test("the end of a chosen clip resizes it on the snap, its start keeps its notes where they are", () => {

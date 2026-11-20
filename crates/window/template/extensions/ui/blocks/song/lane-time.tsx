@@ -10,8 +10,8 @@ import { laneItems, laneOf, type LaneRow } from "./lanes";
 
 /** Room over the top of a lane's travel and under its bottom, a share of its row, so a point there shows whole. */
 const PAD = 0.12;
-/** How tall the line of a band's edge is to grab, in rows. */
-const EDGE = 10 / ROW;
+/** How tall the line of a band's edge is to grab, in points. */
+const EDGE = 10;
 /** A point's mark, with a ring of the background round its dot, and a bend's handle, in points. */
 const [MARK, DOT] = [11, 8];
 
@@ -43,7 +43,7 @@ export const LaneTime = ({ page, row }: { page: Page; row: LaneRow }) => {
   const open = song.memory.point?.track === row.track.name && song.memory.point.lane === row.lane;
   const chosen = open ? song.memory.point!.ticks : [];
   const runs = song.clock.tempo_map.time_signatures;
-  return memo(`lane-time-${lane.id}`, [row.top, row.height, end, lane.mover?.tool, JSON.stringify(lane.mover?.state), song.memory.snap, open, chosen.join(), lane.colour, row.target, JSON.stringify(runs)], () => {
+  return memo(`lane-time-${lane.id}`, [row.top, row.height, end, lane.mover?.tool, lane.mover?.state, song.memory.snap, open, chosen.join(), lane.colour, row.target, runs], () => {
     const key = `lane-${lane.id}`;
     const at = placesOf(row);
     const marquee = live.drag(key);
@@ -127,12 +127,12 @@ const Points = ({ page, row, points, open, chosen, say }: { page: Page; row: Lan
         // Each point is a few hundred bytes of the tree: only a chosen one says what it holds as it drags; the others in a tip.
         const value = shown(laneValue(travel, 1 - down), unit);
         return (
-          <box key={key} label={`Point at ${say(point.tick)}, ${value}`} role="button" checked={isChosen}
+          <box key={key} label={`Point at ${say(point.tick)}, ${value}`} role="button" value={isChosen}
             place={[moved.dx.plus(point.tick), moved.dy.plus(at.y(down))]} w={MARK} h={MARK} radius="full" fill={isChosen ? "text" : colour} border="background" hover="text/40"
-            drag={{ x: [earliest, latest], y: [fine(-top * at.tall), fine((1 - bottom) * at.tall)], ...(snap > 0 ? { snap: [snap, 0] as [number, number] } : {}), ...(together && isChosen ? { id: `points-${id}` } : {}) }}
+            drag={{ x: [earliest, latest], y: [fine(-top * at.tall), fine((1 - bottom) * at.tall)], snap: snap > 0 ? [snap, 0] : undefined, ...(together && isChosen ? { id: `points-${id}` } : {}) }}
             onPress={(p) => lanes.pressPoint(track, name, point.tick, p)} onDragEnd={(p) => lanes.movePoint(track, name, point.tick, at.inLane(p))}>
             {isChosen ? (
-              <row at={[MARK, -24]} h={22} px={2} align="center" radius="md" fill="raised" border="border-strong" inert>
+              <row at={[MARK, -24]} h={22} pad={[2, 0]} align="center" radius="md" fill="raised" border="border-strong" inert>
                 <Readout lane={laneOf(row)} down={moved.dy.over(at.tall).plus(down)} />
               </row>
             ) : <Tooltip text={value} />}
@@ -188,15 +188,15 @@ const Band = ({ page, row }: { page: Page; row: LaneRow }) => {
     const step = (by: number) => page.edits.lanes.band(row.track.name, row.lane, end, { dy: -by * 0.01 });
     return (
       <box key={keys[end]} label={`${end === "low" ? "Low" : "High"} of the ${mover.tool === "lfo" ? "LFO" : "envelope"} of ${name}`} role="slider" value={mover.state[end]}
-        place={[0, (end === "low" ? low : high).minus(EDGE / 2), page.end, EDGE]} drag={{ y: [-down * at.tall, (1 - down) * at.tall] }} hover={`${colour}/15` as Color}
+        place={[0, end === "low" ? low : high, page.end, 0]} inset={[0, -EDGE / 2, 0, -EDGE / 2]} drag={{ y: [-down * at.tall, (1 - down) * at.tall] }} hover={`${colour}/15` as Color}
         onDragEnd={(p) => page.edits.lanes.band(row.track.name, row.lane, end, at.inLane(p))} actions={{ increment: step, decrement: (by) => step(-by) }}>
-        <box at={[0, (EDGE * ROW) / 2 - 0.75]} w="full" h={1.5} fill={colour} opacity={wave.length > 0 ? 0.5 : 1} />
+        <box at={[0, EDGE / 2 - 0.75]} w="full" h={1.5} fill={colour} opacity={wave.length > 0 ? 0.5 : 1} />
       </box>
     );
   };
   // What each edge holds, at the left of the window.
   const said = (end: "low" | "high") => (
-    <row place={[live.plane(PLANE).left.max(0), (end === "low" ? low : high).minus(end === "high" ? 16 / ROW : 0), 1, 16 / ROW]} px={2} align="center" inert>
+    <row place={[live.plane(PLANE).left.max(0), end === "low" ? low : high, 1, 0]} inset={end === "high" ? [0, -16, 0, 0] : [0, 0, 0, -16]} pad={[2, 0]} align="center" inert>
       <text style="label" color="text-muted" w={80}>{unit === undefined ? shown(mover.state[end]) : shown(mover.state[end], unit)}</text>
     </row>
   );

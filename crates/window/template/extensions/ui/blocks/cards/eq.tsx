@@ -3,7 +3,7 @@ import theme from "../../../theme.json";
 import { Cell } from "../../cell";
 import { Curve } from "../../curve";
 import { Display, drawingOf, FREQUENCY_TICKS, OCTAVES } from "../../display";
-import { cardBinder } from "../../field";
+import { binder } from "../../field";
 import { Handle } from "../../handle";
 import { Knob } from "../../knob";
 import { Segmented } from "../../segmented";
@@ -25,8 +25,8 @@ const hasGain = (shape: string | null | undefined) => shape !== "low_cut" && sha
  * band the knobs show above it, then that band's frequency, gain, Q and shape; behind More each
  * band's switch and the output.
  */
-export const card: Card<"eq"> = (self, ctx) => {
-  const field = cardBinder<"eq">(self, ctx);
+export const card: Card<"eq", { expanded: boolean; band: Band }> = (self, ctx) => {
+  const field = binder(self, ctx);
   const { memory } = ctx;
   const { w, h: tall } = drawingOf(6, true);
   const bands = BANDS.filter((band) => band < self.state.bands.length);
@@ -72,6 +72,6 @@ export const card: Card<"eq"> = (self, ctx) => {
         <Cell text="Bands" span={2}><row gap={1}>{bands.map((band) => <Toggle {...field.toggle(`bands[${band}].on`, `Band ${band + 1}`)} text={String(band + 1)} />)}</row></Cell>,
         <Knob {...field.number("output_gain_db", "Output")} bipolar />,
       ]}
-      expanded={memory.expanded === true} onExpand={() => (memory.expanded = memory.expanded !== true)} />
+      expanded={(memory.expanded ?? false)} onExpand={() => (memory.expanded = !memory.expanded)} />
   );
 };

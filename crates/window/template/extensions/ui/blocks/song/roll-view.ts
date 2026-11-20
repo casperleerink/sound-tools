@@ -56,8 +56,7 @@ export function rollOf(page: Page, clip: string) {
     colour: colourOf(track),
     chosen: new Set(song.memory.notes),
     edits: page.edits.notes(clip),
-    /** The time signatures as text, which a memo compares. */
-    runs: JSON.stringify(runs),
+    runs,
     /** The lines of the bars of the song from before the clip to past it, in its ticks, and their numbers. */
     bars: barStarts(runs, state.start + length + PAST).flatMap((tick, index) => (tick >= state.start - BEFORE ? [{ tick: tick - state.start, bar: index + 1 }] : [])),
     hear: (pitch: number) => song.play(pitch, { child: track.name as `audio-${string}`, seconds: 0.3 }),
@@ -66,7 +65,7 @@ export function rollOf(page: Page, clip: string) {
 export type Roll = NonNullable<ReturnType<typeof rollOf>>;
 
 /** How far the roll zooms, about where it opened. */
-export const zoomOf = (roll: Roll): [number, number] => [FARTHEST / roll.across, CLOSEST / roll.across];
+export const ZOOM: [number, number] = [FARTHEST, CLOSEST];
 
 /** The notes of the clip with their places in its list, a list each bar: a memo a bar, so an edit draws one bar again. */
 export function barsOf(notes: readonly Frozen<Note>[]) {
@@ -82,11 +81,11 @@ export function barsOf(notes: readonly Frozen<Note>[]) {
 export const signatureOf = (roll: Roll, notes: readonly { note: Frozen<Note>; index: number }[]) =>
   notes.map(({ note, index }) => `${index}=${noteKey(note)}${roll.chosen.has(noteKey(note)) ? "*" : ""}`).join(",");
 
-/** 1 while the playhead is inside the clip, and where it is in the clip's ticks: a looping clip's round. */
-export function playheadOf(roll: Roll) {
+/** Where the playhead is in the clip's ticks, a looping clip's round, and 1 while it is inside the clip: a `Playhead`'s `at` and `opacity`. */
+export function playing(roll: Roll) {
   const { start } = roll.state;
   const into = live.playhead.minus(start);
   return roll.state.loop
-    ? { at: into.max(0).mod(roll.length), inside: live.playhead.ge(start) }
-    : { at: into, inside: live.playhead.ge(start).times(live.playhead.lt(start + roll.length)) };
+    ? { at: into.max(0).mod(roll.length), opacity: live.playhead.ge(start) }
+    : { at: into, opacity: live.playhead.ge(start).times(live.playhead.lt(start + roll.length)) };
 }

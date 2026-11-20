@@ -46,6 +46,7 @@ struct Found {
 /// What a plane shows: where it is in its units, and how far it is zoomed across.
 struct Camera {
     axes: [Axis; 2],
+    /// The least and most points per unit across.
     zoom_range: Option<[f32; 2]>,
     /// Its left and top, in its units.
     at: [f32; 2],
@@ -148,13 +149,13 @@ impl Planes {
         let camera = cameras.get(key)?;
         let [left, top] = [at(&cameras, key, 0, 0), at(&cameras, key, 1, 0)];
         let size = laid(camera.size);
-        let zoom = owner(&cameras, key, 0).map_or(1.0, |owner| cameras[owner].zoom);
+        let across = per(&cameras, key, 0, 0);
         Some(View {
             left,
-            right: left + size[0] / per(&cameras, key, 0, 0),
+            right: left + size[0] / across,
             top,
             bottom: top + size[1] / per(&cameras, key, 1, 0),
-            zoom,
+            zoom: across.abs(),
         })
     }
 
@@ -167,15 +168,17 @@ impl Planes {
     }
 
     /// Where an element `place` puts in a plane of `per` points per unit is, in points from its
-    /// parent at `parent`: `place` [x, y, w, h], or a mark [x, y] of `size` points centred there.
+    /// parent at `parent`: `place` [x, y, w, h], or a mark [x, y] of `size` points centred there,
+    /// `inset` points in from its edges.
     pub(crate) fn points(
         [px, py]: [f32; 2],
         place: &[f32],
         size: [Option<f32>; 2],
-        parent: Option<[f32; 2]>,
+        parent: Option<([f32; 2], [f32; 2])>,
+        [left, top, right, bottom]: [f32; 4],
     ) -> [f32; 4] {
-        let [ox, oy] = parent.unwrap_or_default();
-        match *place {
+        let ([ox, oy], [shift_x, shift_y]) = parent.unwrap_or_default();
+        let [x, y, w, h] = match *place {
             [x, y, w, h] => {
                 // An axis that runs backwards, such as a range [1, 0] down, has fewer points
                 // per unit than none: the place reaches back from its start.
@@ -188,7 +191,13 @@ impl Planes {
                 [(x - ox) * px - w / 2.0, (y - oy) * py - h / 2.0, w, h]
             }
             _ => [0.0; 4],
-        }
+        };
+        [
+            x + left - shift_x,
+            y + top - shift_y,
+            (w - left - right).max(0.0),
+            (h - top - bottom).max(0.0),
+        ]
     }
 
     /// Takes the plane `key` as its view now gives it, keeping where it is.
@@ -243,14 +252,12 @@ impl Planes {
             },
         });
         camera.zoom_range = spec.zoom.map(|[a, b]| [a.min(b), a.max(b)]);
-        if let Some([low, high]) = camera.zoom_range {
-            camera.zoom = camera.zoom.clamp(low, high);
-        }
         for (size, given) in camera.size.iter_mut().zip(given) {
             if *size == 0.0 {
                 *size = given.unwrap_or_default();
             }
         }
+        camera.keep_zoom();
         camera.open();
     }
 
@@ -261,6 +268,7 @@ impl Planes {
             return;
         };
         camera.size = size;
+        camera.keep_zoom();
         camera.open();
         drop(cameras);
         if let Some([x, y]) = self.asked.borrow_mut().remove(key) {
@@ -312,7 +320,7 @@ impl Planes {
         let Some(owner) = owner(&cameras, key, 0).map(str::to_string) else {
             return false;
         };
-        let Some([low, high]) = cameras[&owner].zoom_range else {
+        let Some([low, high]) = cameras[&owner].factors() else {
             return false;
         };
         let before = per(&cameras, &owner, 0, 0);
@@ -575,6 +583,27 @@ impl Planes {
 }
 
 impl Camera {
+    /// Its zoom within its range, once it knows the points per unit it has unzoomed.
+    fn keep_zoom(&mut self) {
+        let known = self.size[0] > 0.0 || !matches!(self.axes[0], Axis::Range(..));
+        if let (Some([low, high]), true) = (self.factors(), known) {
+            self.zoom = self.zoom.clamp(low, high);
+        }
+    }
+
+    /// Its zoom range as factors of the points per unit it has unzoomed.
+    fn factors(&self) -> Option<[f32; 2]> {
+        let [low, high] = self.zoom_range?;
+        let unzoomed = match self.axes[0] {
+            Axis::Points => 1.0,
+            Axis::Scale(scale) => scale,
+            Axis::Range(from, to) => laid(self.size)[0] / (to - from),
+            Axis::Shared(..) => return None,
+        }
+        .abs();
+        Some([low / unzoomed, high / unzoomed])
+    }
+
     /// Once its size is known: a range shows where it opens.
     fn open(&mut self) {
         if self.opened || self.size[0] <= 0.0 {
@@ -703,15 +732,24 @@ fn laid(size: [f32; 2]) -> [f32; 2] {
 impl Scope<'_> {
     /// Places `e` at `place` in the plane around it, from its parent: `size` are the points of
     /// a mark. It moves every frame its place or its plane's zoom moves.
-    pub(super) fn put(&self, e: El, place: &Place, size: (Option<&Num>, Option<&Num>)) -> El {
-        let Some(shows) = self.placed_shows(place, size) else {
+    pub(super) fn put(
+        &self,
+        e: El,
+        place: &Place,
+        size: (Option<&Num>, Option<&Num>),
+        inset: [f32; 4],
+    ) -> El {
+        let Some(shows) = self.placed_shows(place, size, inset) else {
             return e;
         };
         // Sized as it is now as well: Rune lays out and focuses only what has a size.
         let [.., w, h] = self.rect(place, size);
         let per = (self.plane.as_deref()).map_or([1.0; 2], |plane| self.state.planes.per(plane));
+        let [left, top, right, bottom] = inset;
         let e = match place {
-            Place::Box(_) => e.w(w * per[0]).h(h * per[1]),
+            Place::Box(_) => e
+                .w((w * per[0] - left - right).max(0.0))
+                .h((h * per[1] - top - bottom).max(0.0)),
             Place::Mark(_) => {
                 let e = if size.0.is_some() { e.w(w * per[0]) } else { e };
                 if size.1.is_some() { e.h(h * per[1]) } else { e }
@@ -725,6 +763,7 @@ impl Scope<'_> {
         &self,
         place: &Place,
         size: (Option<&Num>, Option<&Num>),
+        inset: [f32; 4],
     ) -> Option<Shows> {
         let plane = self.plane.as_ref()?;
         let size = match place {
@@ -736,6 +775,7 @@ impl Scope<'_> {
             place: place.clone(),
             size,
             parent: self.parent.clone(),
+            inset,
         })
     }
 

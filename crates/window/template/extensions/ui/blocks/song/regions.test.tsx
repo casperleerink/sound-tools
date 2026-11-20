@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { act, find, h, press, render, type Op, type Self } from "../../../sdk";
+import { act, find, h, press, render, type Self } from "../../../sdk";
 import { song } from "../../../song";
 import { regionOf, tapeOf, trackOf } from "../../../song/fake";
 import { BAR, BEAT } from "../../../song/time";
@@ -17,7 +17,7 @@ function opened(self: Song) {
   render((_self: { name: string; children: never[] }) => <box />, { name: "other", children: [] });
   return render(song, self);
 }
-const setAt = (ops: Op[], name: string) => ops.findLast(([at]) => at.at(-1) === name)?.[1];
+const setAt = (ops: ReturnType<typeof act>, name: string) => ops.findLast(([at]) => at.at(-1) === name)?.[1];
 type Placed = { place: unknown[]; lines?: { points: { node: unknown } }[]; rects?: { rects: { node: unknown } }[] };
 
 test("an audio clip draws the wave of its file across what it plays, read by the window for what shows", () => {

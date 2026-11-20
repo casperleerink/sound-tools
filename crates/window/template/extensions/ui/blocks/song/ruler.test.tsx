@@ -15,7 +15,7 @@ function ruler(fake: ReturnType<typeof fakeSong>, keys: Record<string, string> =
 
 test("a right press on the ruler offers what it can add there, and a pick adds it", () => {
   const f = fakeSong({ children: [] }, { piece: { sections: [{ bar: 1, name: "Intro" }] } });
-  ruler(f, { delete_mark: "backspace" });
+  ruler(f, { delete_mark: "⌫" });
   press("ruler", { x: 100, right: true });
   // At bar 1 a section and the first tempo are there already, and no time signature change can be: shown, but no press.
   const offered = ["Add a time signature change", "Add a section", "Add a tempo change"].map((text) => find(text));
@@ -49,7 +49,7 @@ test("the repeat's bar turns the repeat off and on, and its ends land on beats, 
   expect(f.clock.repeat).toEqual({ from: 2 * BAR + BEAT, to: 2 * BAR + 2 * BEAT });
   press("Repeat");
   expect([f.clock.repeat, f.memory.repeatRange]).toEqual([null, { from: 2 * BAR + BEAT, to: 2 * BAR + 2 * BEAT }]);
-  expect(find("Repeat")).toMatchObject({ checked: false });
+  expect(find("Repeat")).toMatchObject({ value: false });
   expect(f.steps).toEqual([]);
 });
 
@@ -76,7 +76,7 @@ test("zoomed out, every second, fourth, eighth … bar number shows, 40 points a
     }
   };
   walk(find("ruler-numbers"));
-  const zoomOf = (bars: number) => 40 / (bars * BAR * 0.025);
+  const zoomOf = (bars: number) => 40 / (bars * BAR);
   expect([1, 2, 3, 5, 9].map((bar) => needs.get(bar))).toEqual([null, zoomOf(1), zoomOf(2), zoomOf(4), null]);
 });
 

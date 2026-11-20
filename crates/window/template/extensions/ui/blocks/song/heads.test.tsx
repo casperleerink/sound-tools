@@ -40,7 +40,7 @@ test("a track's mark picks one of the fourteen colours, its own ticked", () => {
   const colours = find("Colour of Track 1") as { children: { children?: unknown[] }[] };
   const list = colours.children.find((child) => "role" in child && child.role === "menu");
   expect(list?.children?.length).toBe(14);
-  expect(find("colour-t00-Blue")).toMatchObject({ checked: true });
+  expect(find("colour-t00-Blue")).toMatchObject({ value: true });
   expect(press("colour-t00-Mauve")).toEqual([[["children", 0, "state", "colour"], "mauve"]]);
 });
 
@@ -98,7 +98,7 @@ test("the returns and the master stay under the heads, out of the plane that scr
 test("the master's toggle shows the mixer in place of the panel, and hides it", () => {
   opened(three());
   press("mixer-toggle");
-  expect([find("strip-master"), find("close-panel"), find("Hide the mixer")]).toMatchObject([{ key: "strip-master" }, undefined, { checked: true }]);
+  expect([find("strip-master"), find("close-panel"), find("Hide the mixer")]).toMatchObject([{ key: "strip-master" }, undefined, { value: true }]);
   press("mixer-toggle");
   expect(find("strip-master")).toBeUndefined();
 });

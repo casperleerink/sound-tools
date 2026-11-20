@@ -1,18 +1,11 @@
 import { expect, test } from "bun:test";
-import { act, find, h, press, render, type Card, type FieldInfo } from "../../sdk";
+import { act, find, h, press, render, type Card, type Facts } from "../../sdk";
 import { card } from "./cards/drum-pad";
 
-// The record's fields and the facts as the window gives them: the kit's pads are in no record.
-const num = (name: string, min: number, max: number, unit: string, more: object = {}) =>
-  ({ name, label: name, kind: "number", min, max, scale: "linear", integer: false, unit, default: 0, ...more }) as FieldInfo;
-const PAD = { name: "", label: "Pad", kind: "group", fields: [
-  num("volume_db", -48, 12, "db"), num("pitch_semitones", -24, 24, "semitones"), num("decay_ms", 10, 10000, "ms", { scale: "log", default: 600 }), num("pan", -1, 1, "pan"),
-  { name: "choke", label: "Choke", kind: "switch", default: false },
-] } as FieldInfo;
-const FIELDS = [{ name: "pads", label: "Pads", kind: "map", item: PAD } as FieldInfo];
+// The facts as the window gives them: the kit's pads are in no record.
 const KIT = ["Kick", "Rim", "Snare", "Clap", "Snare 2", "Tom 1", "Hat", "Tom 2", "Pedal hat", "Tom 3", "Open hat", "Tom 4", "Tom 5", "Crash", "Tom 6", "Ride"];
 const kit = { volume_db: 0, pitch_semitones: 0, decay_ms: 300, pan: 0 };
-const padsOf = (record: Record<string, Record<string, unknown>>) =>
+const padsOf = (record: Record<string, Record<string, unknown>>): Facts<"drum-pad">["pads"] =>
   KIT.map((name, index) => {
     const own = record[String(36 + index)] ?? {};
     const sample = own.sample as string | undefined;
@@ -22,10 +15,10 @@ const padsOf = (record: Record<string, Record<string, unknown>>) =>
       ...kit, decay_ms: index === 1 ? 70 : 300, choke: index === 6, ...own, kit: { ...kit, decay_ms: index === 1 ? 70 : 300 },
     };
   });
-const SOUNDS = ["kick", "rim", "snare", "clap", "hat"].map((value) => ({ value, name: value.charAt(0).toUpperCase() + value.slice(1) }));
+const SOUNDS: Facts<"drum-pad">["sounds"] = ["kick", "rim", "snare", "clap", "hat"].map((value) => ({ value, name: value.charAt(0).toUpperCase() + value.slice(1) }));
 const open = (record: Record<string, Record<string, unknown>> = {}, held: string[] = []) => {
   render((() => <box />) as Card, { name: "other", state: {}, children: [] });
-  return render(card, { name: "drums", state: { pads: record }, children: [] } as never, { facts: { title: "Drum pad", fields: FIELDS, pads: padsOf(record), sounds: SOUNDS }, held } as never);
+  return render(card, { tool: "drum-pad", state: { pads: record } }, { facts: { pads: padsOf(record), sounds: SOUNDS }, held });
 };
 
 test("drum pad: sixteen pads named for what they play, the first at the bottom left; each says a file it plays or misses", () => {
@@ -70,7 +63,7 @@ test("drum pad: a file dropped on a pad makes it play the file, as one step, and
 
 test("drum pad: Choose file in the list loads the chosen file on the chosen pad", async () => {
   render((() => <box />) as Card, { name: "other", state: {}, children: [] });
-  render(card, { name: "drums", state: { pads: {} }, children: [] } as never, { facts: { title: "Drum pad", fields: FIELDS, pads: padsOf({}), sounds: SOUNDS }, answers: { openFile: "loop.wav" } } as never);
+  render(card, { tool: "drum-pad" }, { facts: { pads: padsOf({}), sounds: SOUNDS }, answers: { openFile: "loop.wav" } });
   press("Drum pad pad 3");
   press("Choose file…");
   await Promise.resolve();

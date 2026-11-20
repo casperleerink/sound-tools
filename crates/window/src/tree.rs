@@ -87,8 +87,8 @@ pub(crate) struct BoxNode {
     pub(crate) key: Option<String>,
     pub(crate) label: Option<String>,
     pub(crate) role: Option<String>,
-    pub(crate) checked: Option<bool>,
-    pub(crate) value: Option<Value>,
+    /// What it shows: `true` or `false` is a switch's state, which `--tree` says as `checked`.
+    value: Option<Value>,
     #[serde(default)]
     pub(crate) press: bool,
     /// It has `onEnter`: a press held over it paints it.
@@ -106,9 +106,7 @@ pub(crate) struct BoxNode {
     w: Option<Size>,
     h: Option<Size>,
     grow: Option<f32>,
-    pad: Option<u32>,
-    px: Option<u32>,
-    py: Option<u32>,
+    pad: Option<Pad>,
     gap: Option<u32>,
     align: Option<String>,
     justify: Option<String>,
@@ -202,6 +200,52 @@ impl BoxNode {
     }
 }
 
+/// Steps of the spacing scale on every side, or across and down.
+#[derive(Deserialize, Clone, Copy)]
+#[serde(untagged)]
+pub(crate) enum Pad {
+    All(u32),
+    Sides([u32; 2]),
+}
+
+/// Where a placed parent is in the plane's units, and the points its box sits in from there.
+pub(crate) type Parent = ([Num; 2], [f32; 2]);
+
+/// Points in from the left, top, right and bottom edges of a place: `inset` of a placed element.
+fn inside(inset: Option<[Option<f32>; 4]>) -> [f32; 4] {
+    inset.unwrap_or_default().map(Option::unwrap_or_default)
+}
+
+impl BoxNode {
+    /// A switch's state.
+    pub(crate) fn checked(&self) -> Option<bool> {
+        self.value.as_ref().and_then(Value::as_bool)
+    }
+
+    /// What it shows, but a switch's state.
+    pub(crate) fn value(&self) -> Option<&Value> {
+        self.value.as_ref().filter(|value| !value.is_boolean())
+    }
+
+    pub(crate) fn inside(&self) -> [f32; 4] {
+        inside(self.inset)
+    }
+
+    /// What its children are placed from: its place, else its parent's.
+    fn parent_of_children(&self, parent: Option<&Parent>) -> Option<Parent> {
+        let [left, top, ..] = self.inside();
+        (self.place.as_ref())
+            .map(|place| (place.origin(), [left, top]))
+            .or(parent.cloned())
+    }
+}
+
+impl ShapesNode {
+    pub(crate) fn inside(&self) -> [f32; 4] {
+        inside(self.inset)
+    }
+}
+
 impl TextNode {
     fn shows(&self, value: &Num) -> Shows {
         Shows::Text {
@@ -267,7 +311,8 @@ pub(crate) enum Bound {
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum BoundWire {
-    Within([f32; 2]),
+    /// `null` for no end on that side.
+    Within([Option<f32>; 2]),
     Free(serde::de::IgnoredAny),
 }
 
@@ -275,7 +320,10 @@ impl From<BoundWire> for Bound {
     fn from(wire: BoundWire) -> Self {
         match wire {
             // A view may give the bounds swapped.
-            BoundWire::Within([a, b]) => Self::Within(a.min(b), a.max(b)),
+            BoundWire::Within([Some(a), Some(b)]) => Self::Within(a.min(b), a.max(b)),
+            BoundWire::Within([a, b]) => {
+                Self::Within(a.unwrap_or(f32::NEG_INFINITY), b.unwrap_or(f32::INFINITY))
+            }
             BoundWire::Free(_) => Self::Free,
         }
     }
@@ -380,6 +428,8 @@ pub(crate) struct ShapesNode {
     h: Num,
     place: Option<Place>,
     units: Option<[shapes::Span; 2]>,
+    /// Placed: points in from the edges of its place.
+    inset: Option<[Option<f32>; 4]>,
     trim: Option<[Num; 2]>,
     #[serde(default)]
     lines: Vec<Lines>,
@@ -437,8 +487,9 @@ struct Scope<'a> {
     in_control: bool,
     /// The key in the window of the plane around it.
     plane: Option<String>,
-    /// The place of its parent, when that is placed in the plane: its children are placed from it.
-    parent: Option<[Num; 2]>,
+    /// The place of its parent, when that is placed in the plane, and the points its box sits in
+    /// from there: its children are placed from it.
+    parent: Option<Parent>,
     /// The place of the placed element nearest around it, or its own: what a drag snaps.
     placed: Option<[Num; 2]>,
     /// The key in the window of what opens the menu around it, or its own.

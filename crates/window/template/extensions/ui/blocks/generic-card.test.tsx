@@ -18,7 +18,7 @@ test("a number is a knob in its unit, a yes or no a switch, a few short options 
     { name: "sync", label: "Sync", kind: "switch", default: true }, choice("shape", "Shape", ["Saw", "Square"]), choice("feel", "Feel", ["Straight", "Dotted", "Triplet"]),
   ]);
   expect(find("Dev Cutoff")).toMatchObject({ role: "slider" });
-  expect(find("Dev Sync")).toMatchObject({ role: "switch", checked: true });
+  expect(find("Dev Sync")).toMatchObject({ role: "switch", value: true });
   expect(find("Dev Shape")).toMatchObject({ role: "radiogroup" });
   press("More of Dev");
   expect(find("Dev Feel")).toMatchObject({ role: "button" });

@@ -1,7 +1,7 @@
 import { h, live, memo, type Color } from "../../../sdk";
 import type { Mark } from "../../../song/model";
 import { barNear, nearestOf } from "../../../song/time";
-import { ACROSS, GUTTER, HEAD, PLANE, TEMPO, type Page } from "../../../song/view";
+import { GUTTER, HEAD, PLANE, TEMPO, type Page } from "../../../song/view";
 import { Shades } from "./shades";
 import { bpmText, pointed, TimeMenu } from "./time-menu";
 
@@ -25,7 +25,7 @@ export const TempoLane = ({ page }: { page: Page }) => {
   const view = live.plane(PLANE);
   return (
     <row w="full" h={TEMPO} border="border" borderSides={[0, 0, 1, 0]}>
-      <row w={HEAD} h="full" px={3} gap={1} align="center" border="border" borderSides={[0, 1, 0, 0]}>
+      <row w={HEAD} h="full" pad={[3, 0]} gap={1} align="center" border="border" borderSides={[0, 1, 0, 0]}>
         <text style="label" color="text">Tempo</text>
         <row grow={1} gap={1} justify="end" align="center">
           <text live={live.bpm} digits={0} style="number" color="text-secondary" />
@@ -49,7 +49,7 @@ export const TempoLane = ({ page }: { page: Page }) => {
               if (memory.mark?.kind === "tempo" && memory.mark.tick === change.tick) return null;
               return (
                 <box place={[change.tick, y > 16 ? y - 15 : y + 2, to - change.tick, 14]} clip inert>
-                  <text at={[view.left.minus(change.tick).max(0).times(view.zoom.times(ACROSS)).plus(12), -1]} style="label" color="text-muted">{bpmText(change.bpm)}</text>
+                  <text at={[view.left.minus(change.tick).max(0).times(view.zoom).plus(12), -1]} style="label" color="text-muted">{bpmText(change.bpm)}</text>
                 </box>
               );
             })}
@@ -64,14 +64,14 @@ export const TempoLane = ({ page }: { page: Page }) => {
           const first = change.tick === 0;
           const ink: Color = chosen ? "text" : "text-secondary";
           const pill = (
-            <row at={[12, -1]} h={18} px={1} align="center" radius="sm" fill="background" border="border-strong">
+            <row at={[12, -1]} h={18} pad={[1, 0]} align="center" radius="sm" fill="background" border="border-strong">
               <text style="label" color="text">{`${bpmText(change.bpm)} bpm`}</text>
             </row>
           );
           const set = (by: number) => edits.marks.moveMark(mark, 0, change.bpm + by);
           return (
             <box key={key} label={first ? "Tempo at the start" : `Tempo at bar ${bar}`} role="slider" value={change.bpm} hoverGroup place={[moved.dx.plus(change.tick), moved.dy.plus(yOf(change.bpm))]} w={15} h={15}
-              drag={first ? { y: true } : { x: [1 - change.tick, 1e7], y: true, ...(memory.snap > 0 ? { snap: [memory.snap, 0] as [number, number], from: [change.tick, 0] as [number, number] } : {}) }}
+              drag={first ? { y: true } : { x: [1 - change.tick, null], y: true, snap: memory.snap > 0 ? [memory.snap, 0] : undefined, from: memory.snap > 0 ? [change.tick, 0] : undefined }}
               onPress={(p) => (p.right ? pointed(page, p.x, first ? null : mark) : first ? edits.marks.press({ x: 0, clicks: 1 }) : p.alt ? edits.marks.remove(mark) : edits.marks.pressMark(mark, p))}
               onDragEnd={(p) => edits.marks.moveMark(mark, first ? 0 : p.dx, p.dy === 0 ? undefined : Math.round(change.bpm - p.dy * perPoint))}
               actions={{ increment: set, decrement: (by) => set(-by) }}>

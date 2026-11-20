@@ -14,7 +14,7 @@ export const TypeIn = ({ id, label, value, unit, range, w, h: tall, drag, onDrag
 }) => (
   <row key={`${id}-value`} label={`Type ${label}`} role="button" w={w} justify="center" drag={drag} onDragEnd={onDragEnd}>
     {children}
-    <row overlay={{ open: "press", side: "bottom", align: "center", gap: -tall }} w={w} h={tall} px={1} align="center" radius="md" fill="raised" border="focus" shadow="md">
+    <row overlay={{ open: "press", side: "bottom", align: "center", gap: -tall }} w={w} h={tall} pad={[1, 0]} align="center" radius="md" fill="raised" border="focus" shadow="md">
       <field key={`${id}-typed`} label={`${label} value`} value={shown(value, unit)} style="number" align="center" w={w - 8} focus onCommit={(text) => {
         if (text === null) return;
         const typed = typedOver(text, value, range, unit);

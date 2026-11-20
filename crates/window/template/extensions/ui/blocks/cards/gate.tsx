@@ -1,6 +1,6 @@
 import { h, live, type Card } from "../../../sdk";
 import { Display } from "../../display";
-import { cardBinder } from "../../field";
+import { binder } from "../../field";
 import { Handle } from "../../handle";
 import { Knob } from "../../knob";
 import { DeviceCard } from "../device-card";
@@ -14,8 +14,8 @@ const LEVELS: [number, number] = [-80, 0];
  * whose handle drags sideways; the level it hears and how far it turns down; then threshold and
  * range, attack and release, transient and sustain; behind More the hold.
  */
-export const card: Card<"gate"> = (self, ctx) => {
-  const field = cardBinder<"gate">(self, ctx);
+export const card: Card<"gate", { expanded: boolean }> = (self, ctx) => {
+  const field = binder(self, ctx);
   const { w, h: tall } = curveArea();
   const threshold = field.number("threshold_db", "Threshold");
   // Under the threshold it turns down by its range: what comes out is under the drawing up to the bottom plus the range.
@@ -32,6 +32,6 @@ export const card: Card<"gate"> = (self, ctx) => {
         <Knob {...field.number("sustain_db", "Sustain")} bipolar />,
       ]}
       more={[<Knob {...field.number("hold_ms", "Hold")} />]}
-      expanded={ctx.memory.expanded === true} onExpand={() => (ctx.memory.expanded = ctx.memory.expanded !== true)} />
+      expanded={(ctx.memory.expanded ?? false)} onExpand={() => (ctx.memory.expanded = !ctx.memory.expanded)} />
   );
 };

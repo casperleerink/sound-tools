@@ -40,7 +40,9 @@ pub(crate) enum Shows {
         plane: String,
         place: Place,
         size: [Option<Num>; 2],
-        parent: Option<[Num; 2]>,
+        parent: Option<crate::tree::Parent>,
+        /// Points in from the edges of its place: left, top, right, bottom.
+        inset: [f32; 4],
     },
     Lists(Listed),
     /// The live numbers of a drawing's lines and rects: while one moves, the view builds again.
@@ -106,7 +108,7 @@ struct Units {
     place: [f32; 4],
     mark: bool,
     size: [Option<f32>; 2],
-    parent: Option<[f32; 2]>,
+    parent: Option<([f32; 2], [f32; 2])>,
 }
 
 /// What a binding reads: something that may move in any frame, or only drags, planes, and the
@@ -252,11 +254,12 @@ impl Lives {
                 place,
                 size,
                 parent,
+                ..
             } => {
                 recorder.reads.borrow_mut().scales.push(plane.clone());
                 (place.numbers().iter())
                     .chain(size.iter().flatten())
-                    .chain(parent.iter().flatten())
+                    .chain(parent.iter().flat_map(|(at, _)| at))
                     .collect()
             }
             Shows::Lists(listed) => {
@@ -462,7 +465,7 @@ impl Lives {
             ) => {
                 let value = number(value, &sources);
                 let text = match digits {
-                    Some(digits) => format!("{value:.digits$}"),
+                    Some(digits) => fixed(value, *digits),
                     None => text_of(value, *unit, Some(state.project().clock())),
                 };
                 let mut widest = widest.borrow_mut();
@@ -491,6 +494,7 @@ impl Lives {
                     place,
                     size,
                     parent,
+                    inset,
                 },
                 Shown::Rect(shown),
             ) => {
@@ -504,7 +508,9 @@ impl Lives {
                         place: read,
                         mark: numbers.len() == 2,
                         size: size.each_ref().map(|size| size.as_ref().map(of)),
-                        parent: parent.as_ref().map(|at| at.each_ref().map(of)),
+                        parent: parent
+                            .as_ref()
+                            .map(|(at, shift)| (at.each_ref().map(of), *shift)),
                     }
                 });
                 binding.units.set(Some(units));
@@ -515,7 +521,7 @@ impl Lives {
                 let per = (self.scales.borrow().iter())
                     .find(|(key, _)| key == plane)
                     .map_or_else(|| state.planes.per(plane), |(_, per)| *per);
-                shown.set(Planes::points(per, place, units.size, units.parent));
+                shown.set(Planes::points(per, place, units.size, units.parent, *inset));
             }
             (Shows::Drawn(numbers), Shown::Drawn(built)) => {
                 let now: Vec<f32> = numbers.iter().map(of).collect();
@@ -713,5 +719,32 @@ impl Leaves for Sources<'_> {
             }
         }
         kept.value
+    }
+}
+
+/// `value` with `digits` after the point, a minus sign before a negative one as a readout has
+/// it, and none before a zero.
+fn fixed(value: f64, digits: usize) -> String {
+    let text = format!("{value:.digits$}");
+    match text.strip_prefix('-') {
+        Some(rest)
+            if rest
+                .chars()
+                .any(|digit| digit.is_ascii_digit() && digit != '0') =>
+        {
+            format!("\u{2212}{rest}")
+        }
+        Some(rest) => rest.to_string(),
+        None => text,
+    }
+}
+
+#[cfg(test)]
+mod fixed_tests {
+    #[test]
+    fn a_number_with_digits_has_a_minus_sign_and_no_negative_zero() {
+        assert_eq!(super::fixed(-4.25, 1), "\u{2212}4.2");
+        assert_eq!(super::fixed(-0.001, 2), "0.00");
+        assert_eq!(super::fixed(3.0, 0), "3");
     }
 }

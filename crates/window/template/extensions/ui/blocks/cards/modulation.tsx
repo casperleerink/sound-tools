@@ -1,7 +1,7 @@
 import { h, live, type Card } from "../../../sdk";
 import { Choice } from "../../choice";
 import { Display, drawingOf } from "../../display";
-import { cardBinder } from "../../field";
+import { binder } from "../../field";
 import { Handle } from "../../handle";
 import { Knob } from "../../knob";
 import { DeviceCard } from "../device-card";
@@ -26,9 +26,9 @@ const [LINE, LAGGED] = [sine(2, false), sine(3, true)];
  * peak of each (depth up, spread sideways), the mode above; then rate, depth, feedback and mix;
  * behind More the spread.
  */
-export const card: Card<"modulation"> = (self, ctx) => {
-  const field = cardBinder<"modulation">(self, ctx);
-  const expanded = ctx.memory.expanded === true;
+export const card: Card<"modulation", { expanded: boolean }> = (self, ctx) => {
+  const field = binder(self, ctx);
+  const expanded = ctx.memory.expanded ?? false;
   const { w, h: tall } = drawingOf(4, true);
   const [depth, spread] = [field.number("depth", "Depth"), field.number("spread", "Spread")];
   const swing = live.field("depth").times(SWING);
@@ -51,7 +51,7 @@ export const card: Card<"modulation"> = (self, ctx) => {
         <Knob {...field.number("feedback", "Feedback")} unit="percent" />,
         <Knob {...field.number("mix", "Mix")} unit="percent" />,
       ]}
-      more={[<Knob {...spread} unit="percent" />]}
+      more={[<Knob {...spread} said={`${Math.round(spread.value * 180)}°`} />]}
       expanded={expanded} onExpand={() => (ctx.memory.expanded = !expanded)} />
   );
 };

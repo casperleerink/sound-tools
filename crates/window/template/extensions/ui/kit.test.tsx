@@ -2,8 +2,10 @@ import { expect, test } from "bun:test";
 import { act, find, h, live, press, render, type Card, type FieldInfo } from "../sdk";
 import { Choice } from "./choice";
 import { decibelTicks, Display, FREQUENCY_TICKS } from "./display";
-import { cardBinder } from "./field";
+import { binder } from "./field";
+import { Clip } from "./blocks/time";
 import { Handle } from "./handle";
+import { Knob } from "./knob";
 import { Pad } from "./pad";
 import { Readout } from "./readout";
 import { Waveform } from "./waveform";
@@ -23,7 +25,7 @@ const [W, H] = [400, 100];
 /** A handle on band 1's frequency and gain, as a card binds it. */
 const draw = (held: string[] = [], props: { onChange?: boolean } = {}) =>
   render(((self, ctx) => {
-    const field = cardBinder(self, ctx);
+    const field = binder(self, ctx);
     const [x, y] = [field.number("bands[0].frequency_hz"), { ...field.number("bands[0].gain_db"), travel: { min: -18, max: 18 } }];
     return <Handle id="band-1" label="Band 1" w={W} h={H} x={x} y={y} number="1"
       onChange={props.onChange ? (hz, db) => field.change("Change frequency and gain", { "bands[0].frequency_hz": hz, "bands[0].gain_db": db }) : undefined} />;
@@ -50,7 +52,7 @@ test("arrows nudge its first number, a double click sets both to their defaults"
   draw();
   expect(act("Band 1", "increment", 1)[0]![1]).toBeGreaterThan(1000);
   render(((self, ctx) => {
-    const field = cardBinder(self, ctx);
+    const field = binder(self, ctx);
     return <Handle id="h" label="H" w={W} h={H} x={field.number("bands[0].frequency_hz")} y={field.number("bands[0].gain_db")} />;
   }) as Card, { name: "eq", state: { bands: [{ frequency_hz: 300, gain_db: 4, on: true, shape: "bell" }] }, children: [] }, { facts: { title: "EQ", fields: FIELDS } });
   expect(act("H", "reset")).toEqual([[["state", "bands", 0, "frequency_hz"], 1000], [["state", "bands", 0, "gain_db"], 0]]);
@@ -65,10 +67,10 @@ test("a number a lane holds does not drag, and the other one still does", () => 
 
 test("a card's binder reads and writes inside lists, names its steps and refuses what a lane holds", () => {
   render(((self, ctx) => {
-    const field = cardBinder(self, ctx);
+    const field = binder(self, ctx);
     const on = field.toggle("bands[0].on");
     const shape = field.choice("bands[0].shape", "Shape");
-    return <col><Choice {...shape} /><box key={on.id} label={on.label} role="switch" checked={on.on} onPress={on.onToggle} /></col>;
+    return <col><Choice {...shape} /><box key={on.id} label={on.label} role="switch" value={on.on} onPress={on.onToggle} /></col>;
   }) as Card, { name: "eq", state: structuredClone(STATE), children: [] }, { facts: { title: "EQ", fields: FIELDS } });
   expect(find("EQ Shape")).toMatchObject({ role: "radiogroup" });
   expect(press("EQ Shape Notch")).toEqual([[["state", "bands", 0, "shape"], "notch"]]);
@@ -105,4 +107,27 @@ test("a readout says a live value under its name, and a pad takes a dropped file
   act("Kick", "drop", { audio: ["snare.wav"] });
   expect(dropped).toEqual(["snare.wav"]);
   expect(JSON.stringify(find("Kick"))).toContain("triangle-alert");
+});
+
+test("a knob says words for its value at rest; a disabled one takes no change", () => {
+  const knob = (disabled: boolean) => (() => <Knob id="ratio" label="Ratio" value={4} min={1} max={100} said="4:1" disabled={disabled} onChange={() => {}} />) as Card;
+  render(knob(false), { name: "k", state: {}, children: [] });
+  expect(JSON.stringify(find("Ratio"))).toContain('"text":"4:1"');
+  expect(() => act("Ratio", "set", 8)).not.toThrow();
+  render(knob(true), { name: "k", state: {}, children: [] });
+  expect(find("Ratio")).toMatchObject({ role: "slider", value: "4:1" });
+  expect(() => act("Ratio", "set", 8)).toThrow("has no set");
+});
+
+test("a clip lands on its snap when dragged, and the arrows move it a step within its bounds", () => {
+  const moved: number[] = [];
+  render((() => (
+    <box key="time" label="Time" w={400} h={64} plane={{ x: 0.1, y: 64 }}>
+      <Clip id="clip" label="Clip Verse" place={[480, 0, 960, 1]} drag={{ x: [-480, null], snap: [240, 1] }} onMove={(p) => moved.push(p.dx)} />
+    </box>
+  )) as Card, { name: "t", state: {}, children: [] });
+  act("Clip Verse", "drag", { dx: 130 });
+  act("Clip Verse", "increment", 1);
+  act("Clip Verse", "decrement", 10);
+  expect(moved).toEqual([240, 240, -480]);
 });

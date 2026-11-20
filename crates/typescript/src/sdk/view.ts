@@ -4,12 +4,12 @@
 
 import type theme from "../theme.json";
 import type { Clock, Offer as Offered } from "./clock";
-import type { ToolFacts, ToolFeeds } from "./feeds";
+import { cards, type ToolFacts, type ToolFeeds } from "./feeds";
 import type { Fields, Inputs, Note, Unit, ValuesOf } from "./fields";
 import type { IconName } from "./icons";
-import type { Tools } from "./records";
+import { defaultStates, type Tools } from "./records";
 import { registry, type ChildTools, type Context, type FilledStateOfTool, type OwnedChild, type ProjectTool, type ToolSpec } from "./tools";
-import { Live, splitPath, type LiveNode, type Num } from "./values";
+import { Live, type LiveNode, type Num } from "./values";
 
 // Design tokens: every name comes from theme.json, so a misspelled one is a type error.
 type Theme = typeof theme;
@@ -41,8 +41,12 @@ export const live = {
   elapsed: new Live({ op: "elapsed" }),
   /** The tempo where the piece plays, in beats a minute. */
   bpm: new Live({ op: "bpm" }),
-  /** A number field of the record as it plays (what a lane or a drag's `plays` puts in it, else the record), or of an instance inside as `"t01/mix.gain_db"`. */
-  field: (name: string): Live => new Live({ op: "value", ...splitPath(name), fraction: false }),
+  /**
+   * A number of the record as it plays (what a lane or a drag's `plays` puts in it, else the
+   * record), by its path as a lane names it: `cutoff_hz`, `bands[0].gain_db`, `osc_1.position`;
+   * or of an instance inside, `t01/mix.gain_db`: a path starts with a child only when one has that name.
+   */
+  field: (path: string): Live => new Live({ op: "value", name: path, fraction: false }),
   /**
    * What the instance at `path` inside this one publishes as `name`, or this one when left out:
    * a number, `live.feed("peak", "t01/mix")`, one of a list, `live.feed("sounding.60")`, or a
@@ -52,7 +56,7 @@ export const live = {
     (name: FeedNames<number> | `${FeedNames<number[]>}.${number}`, path?: string): Live;
     (name: FeedNames<number[]>, path?: string): FeedList;
   },
-  /** What the plane `key` of this view shows now, in its units, and how far it is zoomed: 1 as it opened. */
+  /** What the plane `key` of this view shows now, in its units, and its `zoom`: points per unit across now. `place={[view.left, …]}` stays at its left edge. */
   plane: (key: string) => ({ left: planePart(key, "left"), right: planePart(key, "right"), top: planePart(key, "top"), bottom: planePart(key, "bottom"), zoom: planePart(key, "zoom") }),
   /** The drag `id` (an element's key, or its `drag.id`) now, in its units: how far it moved, where it began (`x`, `y`), 1 while it is and while Alt is held; 0 once its record took it. */
   drag: (id: string) => ({ dx: dragPart(id, "dx"), dy: dragPart(id, "dy"), x: dragPart(id, "startX"), y: dragPart(id, "startY"), active: dragPart(id, "active"), alt: dragPart(id, "alt") }),
@@ -88,15 +92,15 @@ type Axis = number | [from: number, to: number] | string;
 export type Plane = {
   x?: Axis;
   y?: Axis;
+  /** The least and most points per unit across. */
   zoom?: [min: number, max: number];
   /** A place across it keeps in view while it moves, such as `live.playhead`: the plane pages on when it leaves. A scroll or zoom by hand stops that until it shows again, or rests and moves again. */
   follow?: Num;
 };
-/** In units of the plane around it, at any depth: `[x, y]` a mark, its `w` and `h` points centred on it; `[x, y, w, h]` a box. */
-type Place = [x: Num, y: Num] | [x: Num, y: Num, w: Num, h: Num];
+type Inset = [left: number | null, top: number | null, right: number | null, bottom: number | null];
 
-/** Where a drag may go along an axis: anywhere, or the least and most of the move, in units. */
-type Along = true | [min: number, max: number];
+/** Where a drag may go along an axis: anywhere, or the least and most of the move, in units, `null` for no end. */
+type Along = true | [min: number | null, max: number | null];
 /** A drag along one axis or both. */
 export type Drag = ({ x: Along; y?: Along } | { x?: Along; y: Along }) & {
   /** Grid steps in units: `from` lands on the grid. Cmd held skips it. */
@@ -130,10 +134,8 @@ type Interactive =
       /** What it is called, such as "Mute Track 2": an agent acts on it by this name. */
       label: string;
       role?: Role;
-      /** A switch's state. */
-      checked?: boolean;
-      /** What it shows, such as -6 for a fader in dB, or what plays while a lane moves it. */
-      value?: number | string | Live;
+      /** What it shows, such as -6 for a fader in dB, or what plays while a lane moves it; a switch's state, `true` or `false`. */
+      value?: number | string | boolean | Live;
       onPress?: (p: Pointer) => void;
       actions?: Actions;
       /** `live.drag(key)` follows it every frame and `onDragEnd` hears where it stopped. A press that went past a few points is a drag and never also presses. */
@@ -147,27 +149,29 @@ type Interactive =
 
 /** Points, or its parent's. A live `w` or `h` places it at `at` (0, 0 when left out), out of the flow, and needs the other in points. */
 type Size = { w?: number | "full"; h?: number | "full" } | { w: Num; h: Num };
+/**
+ * Placed in the plane around it, out of the flow, in its units at any depth: `[x, y]` a mark,
+ * its `w` and `h` points centred there; `[x, y, w, h]` a box, sized by its place. Outside a plane it is a problem.
+ */
+type Placed = ({ place?: undefined } & Size) | { place: [x: Num, y: Num]; w?: Num; h?: Num } | { place: [x: Num, y: Num, w: Num, h: Num]; w?: never; h?: never };
 
-export type BoxProps = Interactive & Size & {
+export type BoxProps = Interactive & Placed & {
   key?: string;
   label?: string;
   role?: Role;
   grow?: number;
-  pad?: Space;
-  px?: Space;
-  py?: Space;
+  /** Steps of the spacing scale on every side, or `[across, down]`. */
+  pad?: Space | [x: Space, y: Space];
   gap?: Space;
   /** Where its children sit across: stretched to fill it when left out. */
   align?: "start" | "center" | "end";
   justify?: "center" | "between" | "end";
   /** Placed at [left, top] points in its parent, out of the flow. */
   at?: [Num, Num];
-  /** Placed in the plane around it, out of the flow. Outside a plane it is a problem. */
-  place?: Place;
   /** Gives it units of its own, which `place` inside it uses. */
   plane?: Plane;
-  /** Pinned to its parent's edges: [left, top, right, bottom] points, `null` for free. */
-  inset?: [number | null, number | null, number | null, number | null];
+  /** Pinned to its parent's edges: [left, top, right, bottom] points, `null` for free. Placed: points in from the edges of its place, below 0 out. */
+  inset?: Inset;
   /** The most points tall it grows; past it, what does not fit is cut, or scrolls with `scroll`. */
   maxH?: number;
   clip?: boolean;
@@ -227,8 +231,8 @@ type Span = number | [from: number, to: number];
  * lines' length draws, end to end, such as the arc of a knob.
  */
 export type ShapesProps = { key?: string; at?: [Num, Num]; units?: [Span, Span]; lines?: Lines[]; rects?: Rects[]; opacity?: Num; trim?: [Num, Num] } & (
-  | { w: Num; h: Num; place?: [x: Num, y: Num] }
-  | { place: [x: Num, y: Num, w: Num, h: Num]; w?: never; h?: never }
+  | { w: Num; h: Num; place?: [x: Num, y: Num]; inset?: never }
+  | { place: [x: Num, y: Num, w: Num, h: Num]; w?: never; h?: never; inset?: Inset }
 );
 /** One line of text the composer types, such as a name or a value: Enter or a press elsewhere gives `onCommit` what it says, Escape gives it `null`. Inside a `menu` or `listbox` overlay, what it says picks the items shown by their labels. */
 export type FieldProps = {
@@ -293,11 +297,12 @@ type CardState<T> = T extends keyof Tools ? FilledStateOfTool<T> : Record<string
 /**
  * A card of a device without a view: `Card<"eq">` is the project's card of the built-in tool
  * `eq`, exported as `card` from `ui/blocks/cards/eq.tsx`; `Card` is the generic card of the
- * others, from `ui/blocks/generic-card.tsx`. It gets what a tool's view gets.
+ * others, from `ui/blocks/generic-card.tsx`. It gets what a tool's view gets; `M` is what its
+ * `memory` holds, which starts empty.
  */
-export type Card<T extends keyof Tools | undefined = undefined> = (
+export type Card<T extends keyof Tools | undefined = undefined, M extends object = Record<string, unknown>> = (
   self: Drawn<CardState<T>, {}, T>,
-  ctx: Context<CardState<T>, Inputs, Record<string, unknown>, {}>,
+  ctx: Context<CardState<T>, Inputs, Partial<M>, {}>,
 ) => Node;
 
 /** A device the window offers to put in a child, with what it takes: notes it plays, or sound it changes. */
@@ -315,7 +320,7 @@ export interface ViewContext<_State, _I extends Inputs, M> {
   held(name: string): boolean;
   /** The devices the window offers to put in a child: built-in ones, plugins and the tools of the project. `addOffer` puts one. */
   catalog: readonly Offer[];
-  /** The key the action `name` of its tool has now, such as `"cmd-r"`, or `null` while it has none. */
+  /** The key the action `name` of its tool has now, as this system draws it: `⇧⌘R` on a Mac, `Ctrl+Shift+R` elsewhere; `null` while it has none. */
   shortcut(name: string): string | null;
   /** Shows a range of the plane `key` of its view, in its units: zoomed across so `x` fills it, as far as it zooms; scrolled down to the middle of `y`. Once the plane shows, if it does not yet. */
   show(key: string, range: { x?: [from: number, to: number]; y?: [from: number, to: number] }): void;
@@ -350,15 +355,22 @@ type Handlers = {
   onCommit?: (text: string | null) => void;
   actions?: Actions;
 };
-type Scope = { handlers: Map<string, Handlers>; memos: string[] };
-type Entry = Scope & { deps: unknown[]; v: number; node: Node };
+/** What one part of a view declared: its handlers by key, and the memos it calls. `memo` is the memo it is, none at the root. */
+type Scope = { handlers: Map<string, Handlers>; memos: string[]; memo?: string };
+/**
+ * A memo's part: its deps and node as last built, and `build` of the newest run that called it,
+ * with that run's number. Its `handlers` are of the run `bound`.
+ */
+type Entry = Scope & { deps: unknown[]; v: number; node: Node; build: () => Node; run: number; bound: number; parent?: string };
 /** What a view of one instance keeps between its runs. */
-type Instance = { cache: Map<string, Entry>; root: Scope; last: Node; builds: number };
+type Instance = { cache: Map<string, Entry>; root: Scope; last: Node; builds: number; runs: number };
 
 const instances = new Map<string, Instance>();
 let scope: Scope = { handlers: new Map(), memos: [] };
 let current: Instance | undefined;
 let fresh: Record<string, { v: number; node: Node }> = {};
+/** While a kept part is built again only for its handlers: a memo inside builds nothing. */
+let rebinding = false;
 
 const flat = (c: Child, out: Node[] = []): Node[] => {
   if (Array.isArray(c)) for (const each of c) flat(each, out);
@@ -388,21 +400,60 @@ export function Fragment({ children }: { children?: Child }): Node {
   return { t: "box", children: flat(children) };
 }
 
-/** Builds `build` again only when one of `deps` changed (by `Object.is`); else the window keeps what it has. `key` is unique in the view. */
+/**
+ * Builds `build` again only when one of `deps` changed; else the window keeps what it has. Deps
+ * compare as data: lists and plain objects by what they hold, anything else (a function, a `Live`)
+ * by identity. A kept part's handlers are those of the newest run. `key` is unique in the view.
+ */
 export function memo(key: string, deps: unknown[], build: () => Node): Node {
   const at = current;
   if (!at) return build();
-  scope.memos.push(key);
   const old = at.cache.get(key);
-  if (old && old.deps.length === deps.length && old.deps.every((d, i) => Object.is(d, deps[i]))) return { t: "memo", key };
+  if (rebinding) {
+    if (old) Object.assign(old, { build, run: at.runs });
+    return { t: "memo", key };
+  }
+  scope.memos.push(key);
+  if (old && old.deps.length === deps.length && old.deps.every((d, i) => same(d, deps[i]))) {
+    Object.assign(old, { build, run: at.runs, parent: scope.memo });
+    return { t: "memo", key };
+  }
   const outer = scope;
-  scope = { handlers: new Map(), memos: [] };
+  scope = { handlers: new Map(), memos: [], memo: key };
   const node = build();
-  const entry = { ...scope, deps, v: ++at.builds, node };
+  const entry = { ...scope, deps, v: ++at.builds, node, build, run: at.runs, bound: at.runs, parent: outer.memo };
   scope = outer;
   at.cache.set(key, entry);
   fresh[key] = { v: entry.v, node };
   return { t: "memo", key };
+}
+
+/** Whether two deps are the same: data by what it holds, anything else by identity. */
+function same(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((each, i) => same(each, b[i]));
+  if (Array.isArray(b) || !plain(a) || !plain(b)) return false;
+  const [x, y] = [a as Record<string, unknown>, b as Record<string, unknown>];
+  const keys = Object.keys(x);
+  return keys.length === Object.keys(y).length && keys.every((k) => Object.hasOwn(y, k) && same(x[k], y[k]));
+}
+const plain = (value: object) => [Object.prototype, null].includes(Object.getPrototypeOf(value));
+
+/** The handlers of the kept part `key` as the newest run makes them: built again from its parent down, the window's node untouched. */
+function rebind(at: Instance, key: string): Entry | undefined {
+  const entry = at.cache.get(key);
+  if (!entry || entry.bound === at.runs) return entry;
+  if (entry.run !== at.runs && (entry.parent === undefined || !rebind(at, entry.parent))) return entry;
+  const [outer, was] = [scope, current];
+  [scope, current, rebinding] = [{ handlers: new Map(), memos: [], memo: key }, at, true];
+  try {
+    entry.build();
+    Object.assign(entry, { handlers: scope.handlers, bound: at.runs });
+  } finally {
+    [scope, current, rebinding] = [outer, was, false];
+  }
+  return entry;
 }
 
 /** A change to records in a test: the path to a value, and the value. */
@@ -415,7 +466,7 @@ type Draw = (self: Drawn<unknown>, ctx: Context<any>) => Node;
 function instanceOf(id: string): Instance {
   let known = instances.get(id);
   if (!known) {
-    known = { cache: new Map(), root: { handlers: new Map(), memos: [] }, last: { t: "box", children: [] }, builds: 0 };
+    known = { cache: new Map(), root: { handlers: new Map(), memos: [] }, last: { t: "box", children: [] }, builds: 0, runs: 0 };
     instances.set(id, known);
   }
   return known;
@@ -423,6 +474,7 @@ function instanceOf(id: string): Instance {
 
 function run(id: string, draw: Draw, self: Drawn<unknown>, ctx: Context<any>): Tree {
   const at = instanceOf(id);
+  at.runs++;
   current = at;
   fresh = {};
   scope = at.root = { handlers: new Map(), memos: [] };
@@ -443,7 +495,11 @@ function run(id: string, draw: Draw, self: Drawn<unknown>, ctx: Context<any>): T
   return { root: at.last, memos: fresh, drop };
 }
 
-const handlersOf = (at: Instance, key: string) => at.root.handlers.get(key) ?? [...at.cache.values()].find((e) => e.handlers.has(key))?.handlers.get(key);
+const handlersOf = (at: Instance, key: string) => {
+  if (at.root.handlers.has(key)) return at.root.handlers.get(key);
+  const holder = [...at.cache.entries()].find(([, entry]) => entry.handlers.has(key))?.[0];
+  return holder === undefined ? undefined : rebind(at, holder)?.handlers.get(key);
+};
 const pointer = (p: Partial<Pointer> = {}): Pointer => ({ x: 0, y: 0, dx: 0, dy: 0, clicks: 1, right: false, shift: false, alt: false, cmd: false, ...p });
 
 /** Runs an action of `key`: `press`, `drag`, `drop`, `enter` and `commit` its handlers, else one of its `actions`. Throws when it has none. */
@@ -462,14 +518,14 @@ function perform(at: Instance | undefined, key: string, action: string, value: V
 
 /** What an `update` sees of a record: its state and, when it read them, its children. */
 type Part = { state?: unknown; children?: readonly { name: string }[] };
-/** The number at `path` of `part`, as `held` names it: `cutoff_hz`, `pads.36.volume_db`, `t01/mix.gain_db`. */
+/** The number at `path` of `part`, as `live.field` names it: `cutoff_hz`, `pads.36.volume_db`, `t01/mix.gain_db`. */
 function numberAt(part: Part, path: string): unknown {
-  const { child, name } = splitPath(path);
-  let at: any = part;
-  for (const step of child?.split("/") ?? []) at = at?.children?.find((each: { name: string }) => each.name === step);
-  at = at?.state;
-  for (const step of name.split(/[.[\]]+/).filter(Boolean)) at = at?.[step];
-  return at;
+  const dot = path.indexOf(".");
+  const steps = dot < 0 ? [] : path.slice(0, dot).split("/");
+  let child: any = part;
+  for (const step of steps) child = child?.children?.find((each: { name: string }) => each.name === step);
+  const [at, name]: [any, string] = child === undefined || steps.length === 0 ? [part, path] : [child, path.slice(dot + 1)];
+  return name.split(/[.[\]]+/).filter(Boolean).reduce((value, step) => value?.[step], at?.state);
 }
 /** Throws when a change from `before` to `after` moves a number a lane plays: it is not the code's to change. */
 function refuseHeld(held: readonly string[], before: Part, after: Part) {
@@ -513,20 +569,31 @@ let tested: Tested | undefined;
 
 /**
  * Runs the view of a tool, or a `Card`, on `self` as the window does, and keeps it for `find`,
- * `press` and `act`. `held` names the numbers a lane moves; `facts` are its own, a child's are in
- * `self`; `answers` are what `confirm` and `openFile` get. Its memory lasts while it is the same.
+ * `press` and `act`. A card of a built-in tool takes `{ tool, state }`: its facts and the
+ * defaults its state leaves out are the tool's. `held` names the numbers a lane moves; `facts`
+ * are its own, a child's are in `self`; `answers` are what `confirm` and `openFile` get. Its
+ * memory lasts while it is the same.
  */
 export function render<T extends ProjectTool>(tool: T, self: Given<Self<T>>, options?: Options<Facts<T>>): Node;
+export function render<T extends keyof Tools, M extends object>(card: Card<T, M>, self: { tool: T; name?: string; state?: Partial<FilledStateOfTool<T>> }, options?: Options<Facts<T>>): Node;
 export function render<C extends (self: any, ctx: any) => Node>(card: C, self: Given<Parameters<C>[0]>, options?: Options<Parameters<C>[0]["facts"]>): Node;
-export function render(drawn: ProjectTool | Draw, given: unknown, { held = [], facts, answers = {} }: Options<Facts> = {}): Node {
+export function render(drawn: ProjectTool | ((self: any, ctx: any) => Node), given: unknown, { held = [], facts, answers = {} }: Options<Facts> = {}): Node {
   const spec = typeof drawn === "function" ? undefined : registry.tools.get(String(drawn));
   const draw = (typeof drawn === "function" ? drawn : spec?.view) as Draw | undefined;
   if (!draw) throw new Error(`${String(drawn)} has no view`);
   const same = tested?.draw === draw;
   if (!same) instances.delete(TESTED);
   const memory = same ? tested!.memory : (spec?.memory?.() ?? {});
-  const { name, children } = given as { name: string; children: readonly Kid[] };
-  const self = { ...(given as object), children: told(children), facts: { title: spec?.title ?? name, fields: [], ...facts } } as unknown as Drawn<unknown>;
+  const { tool, name = tool ?? "", state, children = [] } = given as { tool?: string; name?: string; state?: object; children?: readonly Kid[] };
+  const card = tool === undefined ? undefined : (cards[tool] as Facts | undefined);
+  if (tool !== undefined && !card) throw new Error(`${tool} is no built-in tool`);
+  const self = {
+    ...(given as object),
+    name,
+    state: card ? { ...defaultStates[tool!], ...state } : state,
+    children: told(children),
+    facts: { ...(card ?? { title: spec?.title ?? name, fields: [] }), ...facts },
+  } as unknown as Drawn<unknown>;
   tested = { draw, spec, self, memory, held, answers, ops: [], acting: false };
   return redraw(tested);
 }
@@ -583,9 +650,21 @@ function contextOf(at: Tested): Context<any> {
   return {
     get state() { return tested!.self.state; }, get children() { return tested!.self.children; }, memory: at.memory, update, held: (name: string) => at.held.includes(name), clock, time: 0,
     send: nothing, play: nothing, select: nothing, addOffer: nothing, openWindow: nothing, show: nothing, catalog: [],
-    shortcut: (name: string) => at.spec?.actions?.[name]?.keys?.[0] ?? null,
+    shortcut: (name: string) => drawnKey(at.spec?.actions?.[name]?.keys?.[0]),
     openFile: async () => at.answers.openFile ?? null, confirm: async () => at.answers.confirm ?? false, render: async () => null, exportNotes: async () => false,
   } as unknown as Context<any>;
+}
+
+const SIGNS: Record<string, string> = {
+  cmd: "⌘", shift: "⇧", alt: "⌥", ctrl: "⌃", enter: "↩", backspace: "⌫", delete: "⌦", escape: "⎋", space: "Space", tab: "⇥",
+  up: "↑", down: "↓", left: "←", right: "→", pageup: "⇞", pagedown: "⇟", home: "↖", end: "↘",
+};
+/** A key as the window draws it on a Mac, `cmd-shift-z` as `⇧⌘Z`: what `shortcut` gives in a test. */
+function drawnKey(chord: string | undefined): string | null {
+  if (chord === undefined) return null;
+  const parts = chord.split(/-(?!$)/);
+  const held = ["ctrl", "alt", "shift", "cmd"].filter((each) => parts.slice(0, -1).includes(each));
+  return [...held, parts.at(-1)!].map((part) => SIGNS[part] ?? part.toUpperCase()).join("");
 }
 
 /** Presses `key` as a pointer does, at `p` in its units: a right press opens its `menu`. The changes it asked for. */
@@ -662,7 +741,12 @@ function moved(path: Node[], p: Partial<Pointer> = {}): Partial<Pointer> {
     const step = drag.snap?.[axis];
     return !step || p.cmd ? d : Math.round((from(axis) + d) / step) * step - from(axis);
   };
-  const bounded = (d: number, along: Along | undefined) => (along === undefined ? 0 : along === true ? d : Math.min(Math.max(d, Math.min(...along)), Math.max(...along)));
+  const bounded = (d: number, along: Along | undefined) => {
+    if (along === undefined) return 0;
+    if (along === true) return d;
+    const [low, high] = along.every((end) => end !== null) ? [Math.min(...along), Math.max(...along)] : along;
+    return Math.min(Math.max(d, low ?? -Infinity), high ?? Infinity);
+  };
   return { ...p, dx: bounded(snapped(p.dx ?? 0, 0), drag.x), dy: bounded(snapped(p.dy ?? 0, 1), drag.y) };
 }
 

@@ -2,7 +2,7 @@ import { h, live, Live, type Card } from "../../../sdk";
 import theme from "../../../theme.json";
 import { Cell } from "../../cell";
 import { Display, drawingOf } from "../../display";
-import { cardBinder } from "../../field";
+import { binder } from "../../field";
 import { Handle, type HandleAxis } from "../../handle";
 import { Knob } from "../../knob";
 import { Segmented } from "../../segmented";
@@ -25,8 +25,8 @@ const MOST = Math.floor((1 - 2 * LEFT) / SHORTEST);
  * sideways, feedback up), the feel above while it syncs to the tempo; then the time (a note while
  * it syncs), sync, feedback and mix; behind More the cuts and ping-pong.
  */
-export const card: Card<"delay"> = (self, ctx) => {
-  const field = cardBinder<"delay">(self, ctx);
+export const card: Card<"delay", { expanded: boolean }> = (self, ctx) => {
+  const field = binder(self, ctx);
   const { w, h: tall } = drawingOf(4, true);
   const { sync } = self.state;
   const [time, feedback] = [field.number("time_ms", "Time"), field.number("feedback", "Feedback")];
@@ -71,6 +71,6 @@ export const card: Card<"delay"> = (self, ctx) => {
         <Knob {...field.number("mix", "Mix")} unit="percent" />,
       ]}
       more={[cuts]}
-      expanded={ctx.memory.expanded === true} onExpand={() => (ctx.memory.expanded = ctx.memory.expanded !== true)} />
+      expanded={(ctx.memory.expanded ?? false)} onExpand={() => (ctx.memory.expanded = !ctx.memory.expanded)} />
   );
 };

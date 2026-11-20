@@ -135,7 +135,7 @@ export function list<const I extends Field | Fields>(
   return { kind: "list", item: field as ItemOf<I>, ...options };
 }
 
-/** The lists `pattern` made: the view of a tool that has none shows each as a row of steps. */
+/** The lists `pattern` made. */
 const patterns = new WeakSet<Field>();
 export const isPattern = (field: Field): field is ListField<NumberField> => patterns.has(field);
 

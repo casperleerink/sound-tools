@@ -1,15 +1,15 @@
-import { h, hearsNotes, live, Live, memo, type Color, type Num } from "../../../sdk";
+import { h, hearsNotes, live, Live, memo, type Color } from "../../../sdk";
 import { lengthAt, lengthOf } from "../../../song/clips";
 import { colourOf, itemAt, muted, rowOfKey, titleOf, words } from "../../../song/model";
 import { cannotRender } from "../../../song/tracks";
 import { BAR, barStarts, beatRuns, placeOf, type Runs } from "../../../song/time";
-import { ACROSS, GUTTER, laneGroups, PLANE, ROW, trackAt, trackY, ZOOM, type Page, type Row, type Track } from "../../../song/view";
+import { GUTTER, laneGroups, PLANE, ROW, TIME, trackAt, trackY, type Page, type Row, type Track } from "../../../song/view";
 import { Button } from "../../button";
-import { keysOf } from "../../kbd";
 import { MenuList, type Item } from "../../menu";
 import { TextField } from "../../text-field";
 import { Tooltip } from "../../tooltip";
 import { EmptyState } from "../empty-state";
+import { Clip, Grid, INSET, Playhead } from "../time";
 import { DIM, renders } from "./heads";
 import { LaneTimes } from "./lanes";
 import { lostOf, RegionHandles, RegionWave, trimsOf, type Region } from "./regions";
@@ -20,8 +20,8 @@ export type TimelineProps = { page: Page };
 
 /** The drags the chosen clips share: a move of all of them, and a resize of their ends or their starts. */
 const [MOVE, RESIZE, RESIZE_START] = ["move", "resize", "resize-start"];
-/** How wide a clip's edges are to the pointer, in points, and how far a clip is in from its row's edges. */
-const [EDGE, INSET] = [6, 4];
+/** How wide a clip's edges are to the pointer, in points. */
+const EDGE = 6;
 /** What the pointer over a clip that does not play reads. */
 const UNPLAYED = "Not played: the instrument makes its own notes";
 
@@ -33,53 +33,45 @@ const UNPLAYED = "Not played: the instrument makes its own notes";
  */
 export const Timeline = ({ page }: TimelineProps) => {
   const { song, rows, tracks, end, height, low } = page;
-  const view = live.plane(PLANE);
   const marquee = live.drag(PLANE);
   const chosen = new Set(song.memory.selected);
   // The clip a hint offers to start with: the first instrument track, while the song has no clip.
   const hinted = tracks.some((each) => each.children.some((child) => child.tool === "timeline")) ? undefined : tracks.find((each) => each.tool === "track")?.name;
   const bounds = boundsOf(page, chosen);
-  // What the tempo changes and time signatures are, as text: a memo compares it, not the object a run makes.
-  const tempo = JSON.stringify(song.clock.tempo_map);
   return (
     <col grow={1} h="full">
       <row grow={1} w="full">
         <box w={GUTTER} h="full" />
-        <box key={PLANE} label="Timeline" grow={1} h="full" plane={{ x: ACROSS, y: ROW, zoom: ZOOM, follow: live.playhead }} drag={{ x: true, y: true }}
+        <box key={PLANE} label="Timeline" grow={1} h="full" plane={{ ...TIME, follow: live.playhead }} drag={{ x: true, y: true }}
           onPress={(p) => {
-            const { rows, tracks, edits } = page;
             const row = rows.find((each) => p.y >= each.top && p.y < each.top + each.height);
             if (p.right) return;
-            if (p.clicks === 2 && row?.kind === "track") edits.clips.add({ x: p.x, y: tracks.indexOf(row.track) });
-            else edits.clips.clear();
+            if (p.clicks === 2 && row?.kind === "track") page.edits.clips.add({ x: p.x, y: tracks.indexOf(row.track) });
+            else page.edits.clips.clear();
           }}
           onDragEnd={(p) => {
-            const { rows, tracks, edits } = page;
             const [from, to] = [trackY(rows, tracks, p.y), trackY(rows, tracks, p.y + p.dy)];
-            edits.clips.marquee({ ...p, y: from, dy: to - from });
+            page.edits.clips.marquee({ ...p, y: from, dy: to - from });
           }}
           onDrop={(d) => {
-            const { rows, tracks, edits } = page;
             const at = { x: d.x, y: trackAt(rows, tracks, d.y) };
-            if (d.parts.length > 0) edits.clips.dropNotes(d.parts, at);
-            if (d.audio.length > 0) edits.clips.dropAudio(d.audio, at);
+            if (d.parts.length > 0) page.edits.clips.dropNotes(d.parts, at);
+            if (d.audio.length > 0) page.edits.clips.dropAudio(d.audio, at);
           }}>
           <box place={[0, 0, end, height + 1]} />
           <Shades page={page} id="timeline" tall={height} />
-          <Grid runs={song.clock.tempo_map.time_signatures} tempo={tempo} end={end} height={height} />
+          <SongGrid runs={song.clock.tempo_map.time_signatures} end={end} height={height} />
           {rows.map((row) =>
-            row.kind === "track" ? <TrackTime page={page} row={row} tempo={tempo} chosen={chosen} bounds={bounds} hint={hinted === row.track.name ? "Double-click to add a clip" : row.track.tool === "tape" ? "Drop an audio file here" : ""} /> : null,
+            row.kind === "track" ? <TrackTime page={page} row={row} chosen={chosen} bounds={bounds} hint={hinted === row.track.name ? "Double-click to add a clip" : row.track.tool === "tape" ? "Drop an audio file here" : ""} /> : null,
           )}
           {laneGroups(rows).map((lanes) => <LaneTimes page={page} rows={lanes} />)}
           <box place={[marquee.x.min(marquee.x.plus(marquee.dx)), marquee.y.min(marquee.y.plus(marquee.dy)), marquee.dx.abs(), marquee.dy.abs()]} radius="sm" fill="fill" border="border-strong" opacity={marquee.active} />
           <MenuList id="timeline-menu" label="Menu of the timeline" items={emptyMenu(page)} open="menu" />
+          <Playhead plane={PLANE} />
         </box>
       </row>
       <box key="timeline-foot" label="Under the tracks" w="full" h={low} border="border" borderSides={[1, 0, 0, 0]} onPress={() => page.edits.clips.clear()} />
       {tracks.length === 0 && <EmptySong page={page} />}
-      <box inset={[GUTTER, 0, 0, 0]} clip inert>
-        <box key="playhead" inset={[0, 0, null, 0]} w={1} fill="text" at={[live.playhead.minus(view.left).times(view.zoom.times(ACROSS)), 0]} />
-      </box>
     </col>
   );
 };
@@ -97,16 +89,16 @@ type Bounds = ReturnType<typeof boundsOf>;
 const emptyMenu = (page: Page): Item[] => {
   const { song } = page;
   return [
-    { text: "Add a clip at the playhead", icon: "plus", keys: keysOf(song.shortcut("add_clip")), onPress: () => void page.edits.clips.addAtPlayhead() },
-    { text: "Paste", icon: "copy", keys: keysOf(song.shortcut("paste_clips")), ...(song.memory.clipboard ? {} : { disabled: "Nothing is copied" }), onPress: () => void page.edits.clips.paste() },
-    { text: "Choose all clips", keys: keysOf(song.shortcut("select_all_clips")), onPress: () => page.edits.clips.all() },
+    { text: "Add a clip at the playhead", icon: "plus", keys: song.shortcut("add_clip"), onPress: () => void page.edits.clips.addAtPlayhead() },
+    { text: "Paste", icon: "copy", keys: song.shortcut("paste_clips"), ...(song.memory.clipboard ? {} : { disabled: "Nothing is copied" }), onPress: () => void page.edits.clips.paste() },
+    { text: "Choose all clips", keys: song.shortcut("select_all_clips"), onPress: () => page.edits.clips.all() },
   ];
 };
 
 /** The menu of a clip or a region, which works on all the chosen: the keys of each, and what only a menu does. */
 function itemMenu(page: Page, key: string, region: boolean): Item[] {
   const { song } = page;
-  const command = (text: string, command: "cut" | "copy" | "duplicate" | "delete", action: string, icon: Item["icon"]): Item => ({ text, icon, keys: keysOf(song.shortcut(action)), onPress: () => void page.edits.clips.command(command) });
+  const command = (text: string, command: "cut" | "copy" | "duplicate" | "delete", action: string, icon: Item["icon"]): Item => ({ text, icon, keys: song.shortcut(action), onPress: () => void page.edits.clips.command(command) });
   const track = rowOfKey(key);
   const owner = page.tracks.find((each) => each.name === track);
   const why = cannotRender(owner);
@@ -127,27 +119,11 @@ function itemMenu(page: Page, key: string, region: boolean): Item[] {
   ];
 }
 
-/** The grid: a line at each bar, fewer as the song zooms out, and at each beat zoomed in; the window thins them, the view runs for none of it. */
-const Grid = ({ runs, tempo, end, height }: { runs: Runs; tempo: string; end: number; height: number }) =>
-  memo("grid", [tempo, end, height], () => {
-    const view = live.plane(PLANE);
-    const bars = barStarts(runs, end);
-    // Bars an odd multiple of 2^k apart show while they are at least 24 points apart.
-    const levels = [0, 1, 2, 3, 4].map((level) => ({
-      shown: level === 4 ? Live.of(1) : view.zoom.ge(24 / (BAR_POINTS * 2 ** level)),
-      ticks: bars.filter((_, bar) => (level === 4 ? bar % 16 === 0 : bar % 2 ** (level + 1) === 2 ** level)),
-    }));
-    const beats = beatTicks(runs, bars);
-    const lines = (ticks: readonly number[]) => ticks.flatMap((tick) => [tick, 0, tick, height]);
-    return (
-      <box>
-        <shapes place={[0, 0, end, height]} opacity={view.zoom.ge(0.5).times(0.5)} lines={[{ color: "border", width: 1, points: lines(beats) }]} />
-        {levels.map(({ shown, ticks }) => <shapes place={[0, 0, end, height]} opacity={shown} lines={[{ color: "border", width: 1, points: lines(ticks) }]} />)}
-      </box>
-    );
-  });
-/** A bar of 4/4 in points at zoom 1. */
-const BAR_POINTS = 96;
+/** The grid of the song's bars, which its time signatures place. */
+const SongGrid = ({ runs, end, height }: { runs: Runs; end: number; height: number }) => {
+  const bars = barStarts(runs, end);
+  return <Grid plane={PLANE} end={end} tall={height} bar={BAR} bars={bars} beats={beatTicks(runs, bars)} />;
+};
 /** The ticks of the beats that are not bars. */
 function beatTicks(runs: Runs, bars: readonly number[]) {
   const steps = beatRuns(runs);
@@ -163,7 +139,7 @@ function beatTicks(runs: Runs, bars: readonly number[]) {
  * The clips or the regions of one track on its row: one memo, so an edit of a clip draws its row
  * again and no other. The chosen move, copy and resize as one.
  */
-const TrackTime = ({ page, row, tempo: tempoKey, chosen, bounds, hint }: { page: Page; row: Row; tempo: string; chosen: ReadonlySet<string>; bounds: Bounds; hint: string }) => {
+const TrackTime = ({ page, row, chosen, bounds, hint }: { page: Page; row: Row; chosen: ReadonlySet<string>; bounds: Bounds; hint: string }) => {
   const { song } = page;
   const { memory } = song;
   const track = row.track;
@@ -176,7 +152,7 @@ const TrackTime = ({ page, row, tempo: tempoKey, chosen, bounds, hint }: { page:
   const keys = ["cut_clips", "copy_clips", "duplicate_clips", "delete_clips"].map((action) => song.shortcut(action)).join(" ");
   const quiet = memory.recording !== null || track.children.some((child) => child.tool === "timeline" || child.tool === "region");
   const naming = memory.renamingClip !== null && rowOfKey(memory.renamingClip) === track.name ? memory.renamingClip : null;
-  return memo(`time-${track.name}`, [track.children, colour, tempoKey, row.top, here.join(" "), here.length > 0 ? JSON.stringify(bounds) : null, here.length > 0 ? chosen.size : 0, memory.snap, dim, under, keys, quiet ? "" : hint, naming], () => (
+  return memo(`time-${track.name}`, [track.children, colour, tempo, row.top, here, here.length > 0 ? bounds : null, here.length > 0 ? chosen.size : 0, memory.snap, dim, under, keys, quiet ? "" : hint, naming], () => (
     <box>
       <box place={[0, row.top, page.end, 1]} border="border" borderSides={[0, 0, 1, 0]} />
       {!quiet && hint !== "" && (
@@ -192,7 +168,7 @@ const TrackTime = ({ page, row, tempo: tempoKey, chosen, bounds, hint }: { page:
         return [<Item page={page} track={track} itemKey={key} name={item.tool === "timeline" ? item.state.title || "" : item.state.asset.replace(/\.[^.]+$/, "")} region={item.tool === "region" ? item : undefined} start={item.state.start} length={length}
           notes={item.tool === "timeline" ? item.state.notes : []} top={row.top} under={under} chosen={chosen.has(key)} bounds={bounds} colour={colour} dim={dim} />];
       })}
-      <Take page={page} track={track} y={row.top + INSET / ROW} tall={(ROW - 2 * INSET) / ROW} />
+      <Take page={page} track={track} top={row.top} />
     </box>
   ));
 };
@@ -234,32 +210,29 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
   const trims = region && trimsOf(page, key, region, start, length, memory.snap || 1);
   const x = resizes ? moved.dx.plus(begin.dx).plus(start) : moved.dx.plus(start);
   const width = resizes ? end.dx.minus(begin.dx).plus(length) : Live.of(length);
-  const y = moved.dy.plus(top + INSET / ROW);
+  const y = moved.dy.plus(top);
   const step = memory.snap || 1;
   const called = region ? `Audio clip ${words(name)}` : name ? `Clip ${name}` : `Clip at ${placeOf(page.song.clock.tempo_map.time_signatures, start).slice(0, 2).join(".")} on ${titleOf(track)}`;
-  // A clip's edge is EDGE points wide at any zoom.
-  const edge = Live.of(EDGE / ACROSS).over(live.plane(PLANE).zoom);
-  const drag = {
-    x: [-(chosen ? bounds.start : start), 1e9] as [number, number],
-    y: (chosen ? [bounds.up, bounds.down] : [-top, page.rows.findLast((each) => each.kind === "track")!.top - top]) as [number, number],
-    snap: [step, 1] as [number, number],
-    from: [start, top] as [number, number],
-    ...(chosen ? { id: MOVE } : {}),
-  };
+  const shortest = memory.snap || 240;
   return (
     <box>
-      {chosen && <box place={[start, top + INSET / ROW, length, (ROW - 2 * INSET) / ROW]} radius="md" fill="fill" border="border-strong" opacity={moved.alt.times(moved.active).times(dim)} />}
+      {chosen && <box place={[start, top, length, 1]} inset={[0, INSET, 0, INSET]} radius="md" fill="fill" border="border-strong" opacity={moved.alt.times(moved.active).times(dim)} />}
       {chosen && under > 0 && <box place={[x, moved.dy.plus(top + 1), width, under]} fill="selected" />}
-      <box key={`clip-${key}`} label={called} role="button" checked={chosen} place={[x, y, width, (ROW - 2 * INSET) / ROW]} radius="md" fill="fill" hover="fill" border={chosen ? "text" : "border-strong"} opacity={dim} clip
-        drag={drag}
+      <Clip id={`clip-${key}`} label={called} chosen={chosen} place={[x, y, width, 1]} opacity={dim} keys={false} menu={itemMenu(page, key, region !== undefined)}
+        drag={{
+          x: [-(chosen ? bounds.start : start), null],
+          y: chosen ? [bounds.up, bounds.down] : [-top, page.rows.findLast((each) => each.kind === "track")!.top - top],
+          snap: [step, 1],
+          from: [start, top],
+          ...(chosen ? { id: MOVE } : {}),
+        }}
         onPress={(p) => page.edits.clips.press(key, p)}
-        onDragEnd={(p) => {
-          const { song, rows, tracks, edits } = page;
-          if (!song.memory.selected.includes(key)) edits.clips.choose([key]);
-          const row = tracks.findIndex((each) => each.name === track.name);
-          edits.clips.move({ dx: p.dx, dy: trackAt(rows, tracks, top + p.dy + 0.5) - row, alt: p.alt });
+        onMove={(p) => {
+          const { rows, tracks, edits } = page;
+          if (!memory.selected.includes(key)) edits.clips.choose([key]);
+          edits.clips.move({ dx: p.dx, dy: trackAt(rows, tracks, top + p.dy + 0.5) - tracks.indexOf(track), alt: p.alt });
         }}>
-        {notes.length > 0 && <Miniature itemKey={key} chosen={chosen} notes={notes} x={moved.dx.plus(start)} y={y} length={length} titled={name !== ""} colour={colour} />}
+        {notes.length > 0 && <Miniature itemKey={key} chosen={chosen} notes={notes} start={start} top={top} length={length} titled={name !== ""} colour={colour} />}
         {memory.renamingClip === key ? (
           <box at={[4, 4]}>
             <TextField id={`clip-name-${key}`} label={`Name of ${called}`} value={name} focus size="sm" w={140}
@@ -268,19 +241,16 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
         ) : (
           name !== "" && <text at={[8, 6]} style="label" color="text-secondary" truncate>{name}</text>
         )}
-        {region && <RegionWave region={region} path={key} x={moved.dx.plus(start)} y={y} length={length} tall={(ROW - 2 * INSET) / ROW} colour={colour} />}
+        {region && <RegionWave region={region} path={key} x={moved.dx.plus(start)} y={y} length={length} colour={colour} />}
         {dim < 1 && !muted(track) && <Tooltip text={UNPLAYED} />}
-        {resizes && (
-          <box>
-            <box key={`clip-end-${key}`} label={`End of ${called}`} place={[x.plus(width).minus(edge), y, edge, (ROW - 2 * INSET) / ROW]}
-              drag={{ x: trims ? trims.end.x : [-(length - (memory.snap || 240)), 1e9], snap: [step, 1], from: [start + length, top], id: RESIZE }} onDragEnd={trims ? trims.end.onDragEnd : (p) => page.edits.clips.resizeEnd(p)} />
-            <box key={`clip-start-${key}`} label={`Start of ${called}`} place={[x, y, edge, (ROW - 2 * INSET) / ROW]}
-              drag={{ x: trims ? trims.start.x : [-start, length - (memory.snap || 240)], snap: [step, 1], from: [start, top], id: RESIZE_START }} onDragEnd={trims ? trims.start.onDragEnd : (p) => page.edits.clips.resizeStart(p)} />
-          </box>
-        )}
-        <MenuList id={`menu-${key}`} label={`Menu of ${called}`} items={itemMenu(page, key, region !== undefined)} open="menu" w={260} />
-      </box>
-      {region && resizes && <RegionHandles page={page} itemKey={key} region={region} words={called} x={x} y={y} width={width} tall={(ROW - 2 * INSET) / ROW} />}
+        {resizes && [
+          <box key={`clip-end-${key}`} label={`End of ${called}`} inset={[null, 0, 0, 0]} w={EDGE}
+            drag={{ x: trims ? trims.end.x : [-(length - shortest), null], snap: [step, 1], from: [start + length, top], id: RESIZE }} onDragEnd={trims ? trims.end.onDragEnd : (p) => page.edits.clips.resizeEnd(p)} />,
+          <box key={`clip-start-${key}`} label={`Start of ${called}`} inset={[0, 0, null, 0]} w={EDGE}
+            drag={{ x: trims ? trims.start.x : [-start, length - shortest], snap: [step, 1], from: [start, top], id: RESIZE_START }} onDragEnd={trims ? trims.start.onDragEnd : (p) => page.edits.clips.resizeStart(p)} />,
+        ]}
+      </Clip>
+      {region && resizes && <RegionHandles page={page} itemKey={key} region={region} words={called} x={x} y={y} width={width} />}
     </box>
   );
 };
@@ -289,8 +259,9 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
  * A clip's notes as the old timeline drew them: a bar each, between its lowest and highest pitch
  * and at least an octave, under its title while it has one. Drawn again only when its notes change.
  */
-const Miniature = ({ itemKey, chosen, notes, x, y, length, titled, colour }: { itemKey: string; chosen: boolean; notes: ItemProps["notes"]; x: Num; y: Num; length: number; titled: boolean; colour: Color }) =>
-  memo(`notes-${itemKey}`, [notes, length, titled, colour, chosen, JSON.stringify([x, y])], () => {
+const Miniature = ({ itemKey, chosen, notes, start, top, length, titled, colour }: { itemKey: string; chosen: boolean; notes: ItemProps["notes"]; start: number; top: number; length: number; titled: boolean; colour: Color }) =>
+  memo(`notes-${itemKey}`, [notes, start, top, length, titled, colour, chosen], () => {
+    const moved = live.drag(chosen ? MOVE : `clip-${itemKey}`);
     const tall = ROW - 2 * INSET;
     const pitches = notes.map((note) => note.pitch);
     const [lowest, highest] = [Math.min(...pitches), Math.max(...pitches)];
@@ -300,7 +271,7 @@ const Miniature = ({ itemKey, chosen, notes, x, y, length, titled, colour }: { i
     const thick = Math.min(Math.max(step, 2), 4);
     const bottom = tall - 8 - ((shown - range) / 2) * step;
     const rects = notes.flatMap((note) => [note.start, bottom - (note.pitch - lowest + 0.5) * step - thick / 2, note.length, thick]);
-    return <shapes place={[x, y, length, tall / ROW]} units={[length, tall]} rects={[{ color: colour, rects }]} />;
+    return <shapes place={[moved.dx.plus(start), moved.dy.plus(top), length, 1]} inset={[0, INSET, 0, INSET]} units={[length, tall]} rects={[{ color: colour, rects }]} />;
   });
 
 /** What the timeline says while the song has no track. */

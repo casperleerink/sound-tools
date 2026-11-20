@@ -57,11 +57,7 @@ pub(crate) fn grab(state: &mut State, instance: &InstanceId, values: &[(&str, f6
 
 /// What a lane plays into the number `path` of `instance` at `tick`, if one does.
 fn lane_played(project: &Project, instance: &InstanceId, path: &str, tick: Ticks) -> Option<f32> {
-    // As `live.field` reads a path: `t00/mix.gain_db` is `gain_db` of the child `t00/mix`.
-    let (child, name) = match path.split_once('.') {
-        Some((child, name)) if !child.contains('[') => (instance.child(child).ok()?, name),
-        _ => (instance.clone(), path),
-    };
+    let (child, name) = sound_typescript::path::number_at(project, instance, path);
     let mut values = Vec::new();
     project.lanes(&child)?.values_at(tick, &mut values);
     let (_, value) = values.into_iter().find(|(each, _)| **each == *name)?;

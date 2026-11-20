@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { act, apply, find, press, render, type Node, type Op, type Self } from "../../../sdk";
+import { act, apply, find, press, render, type Node, type Self } from "../../../sdk";
 import { host } from "../../../sdk/view";
 import { editsOf } from "../../../song/edits";
 import { fakeSong, trackOf } from "../../../song/fake";
@@ -38,7 +38,7 @@ const keysIn = (node: Node | undefined): string[] =>
 /** Whether `key` shows only under the pointer: inside a part with `reveal`. */
 const quiet = (key: string, within: Node | undefined): boolean =>
   !!within && "children" in within && Array.isArray(within.children) && within.children.some((kid) => ("reveal" in kid && kid.reveal && keysIn(kid).includes(key)) || quiet(key, kid));
-const step = (ops: Op[]) => ops.map(([path, value]) => [path.join("."), value]);
+const step = (ops: ReturnType<typeof act>) => ops.map(([path, value]) => [path.join("."), value]);
 
 test("M shows the mixer under the tracks in place of a panel, and its close hides it", () => {
   render(song, songOf([track("t00", "Drums")]));
@@ -64,8 +64,8 @@ test("a strip per track in their order in the part that scrolls; the returns and
 test("a click on a strip's name chooses its track and keeps the mixer; a double click shows its panel", () => {
   mixer(songOf([track("t00", "Drums"), track("t01", "Bass")]));
   press("strip-name-t01");
-  expect([find("strip-name-t01"), find("mixer")]).toMatchObject([{ checked: true }, {}]);
-  expect(find("strip-name-t00")).toMatchObject({ checked: false });
+  expect([find("strip-name-t01"), find("mixer")]).toMatchObject([{ value: true }, {}]);
+  expect(find("strip-name-t00")).toMatchObject({ value: false });
   press("strip-name-t00", { clicks: 2 });
   expect(find("mixer")).toBeUndefined();
   expect(find("strip-t00")).toBeDefined();
@@ -85,7 +85,7 @@ test("the fader is on the fader's scale: 0 dB well up, a drag to its foot silenc
 
 test("an arrow up from silence steps off the bottom; typed -inf silences, typed 3 dB sets it", () => {
   mixer(songOf([track("t00", "Drums", fader("-inf"))]));
-  const [[, up]] = act("fader-t00", "increment", 1) as [Op];
+  const [, up] = act("fader-t00", "increment", 1)[0]!;
   expect(up).toBeLessThan(-60);
   expect(up).toBeGreaterThan(-120);
   mixer(songOf([track("t00", "Drums", fader(-6))]));

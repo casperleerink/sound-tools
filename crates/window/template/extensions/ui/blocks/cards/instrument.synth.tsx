@@ -4,7 +4,7 @@ import { Cell } from "../../cell";
 import { Choice } from "../../choice";
 import { Curve } from "../../curve";
 import { Display, drawingOf } from "../../display";
-import { cardBinder } from "../../field";
+import { binder } from "../../field";
 import { Handle } from "../../handle";
 import { Knob } from "../../knob";
 import { shown, travelled, type Range } from "../../value";
@@ -30,10 +30,10 @@ const stage = (time: Range, start: number): Range => {
  * moves decay and sustain), the wave above it; cutoff, resonance, character and gain; behind
  * More the four knobs of the envelope.
  */
-export const card: Card<"instrument.synth"> = (self, ctx) => {
-  const field = cardBinder<"instrument.synth">(self, ctx);
+export const card: Card<"instrument.synth", { expanded: boolean }> = (self, ctx) => {
+  const field = binder(self, ctx);
   const { memory } = ctx;
-  const expanded = memory.expanded === true;
+  const expanded = memory.expanded ?? false;
   const { w, h: tall } = drawingOf(4, true);
   const [attack, decay, sustain, release] = [field.number("attack_seconds", "Attack"), field.number("decay_seconds", "Decay"), field.number("sustain", "Sustain"), field.number("release_seconds", "Release")];
   const peak = travelled(attack.value, attack);

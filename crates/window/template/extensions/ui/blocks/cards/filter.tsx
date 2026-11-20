@@ -3,7 +3,7 @@ import { Cell } from "../../cell";
 import { Choice } from "../../choice";
 import { Curve } from "../../curve";
 import { Display, drawingOf, FREQUENCY_TICKS, heightOf, OCTAVES } from "../../display";
-import { cardBinder } from "../../field";
+import { binder } from "../../field";
 import { Handle } from "../../handle";
 import { Knob } from "../../knob";
 import { DeviceCard } from "../device-card";
@@ -19,8 +19,8 @@ const TYPES: Record<string, string> = { low_pass: "Low", band_pass: "Band", high
 const onThePeak = ([none = 0, full = 1]: readonly number[]) => ({ min: (DB[1] - none) / (full - none), max: (DB[0] - none) / (full - none) });
 
 /** The filter: its response with a handle at the cutoff (resonance up), its type above, then cutoff, resonance, drive and mix; behind More the slope, character and LFO. */
-export const card: Card<"filter"> = (self, ctx) => {
-  const field = cardBinder<"filter">(self, ctx);
+export const card: Card<"filter", { expanded: boolean }> = (self, ctx) => {
+  const field = binder(self, ctx);
   const { w, h: tall } = drawingOf(4, true);
   const type = field.choice("type", "Type");
   const [cutoff, resonance] = [field.number("cutoff_hz", "Cutoff"), field.number("resonance", "Resonance")];
@@ -41,6 +41,6 @@ export const card: Card<"filter"> = (self, ctx) => {
         <Knob {...field.number("lfo_rate_hz", "LFO rate")} />,
         <Knob {...field.number("lfo_depth_octaves", "LFO depth")} unit="octaves" />,
       ]}
-      expanded={ctx.memory.expanded === true} onExpand={() => (ctx.memory.expanded = ctx.memory.expanded !== true)} />
+      expanded={(ctx.memory.expanded ?? false)} onExpand={() => (ctx.memory.expanded = !ctx.memory.expanded)} />
   );
 };

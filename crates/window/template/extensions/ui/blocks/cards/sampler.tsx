@@ -3,7 +3,7 @@ import theme from "../../../theme.json";
 import { Button } from "../../button";
 import { Cell } from "../../cell";
 import { Display, drawingOf } from "../../display";
-import { cardBinder, type Bound } from "../../field";
+import { binder, type Bound } from "../../field";
 import { Handle } from "../../handle";
 import { Knob } from "../../knob";
 import { MenuList, type Group, type Item } from "../../menu";
@@ -27,11 +27,11 @@ const megabytes = (bytes: number) => `${Math.round(bytes / 1e6)} MB`;
  * display or chosen becomes the sample. A library or SFZ instrument has its own pitch and
  * envelope: the card has only its gain.
  */
-export const card: Card<"sampler"> = (self, ctx) => {
-  const field = cardBinder<"sampler">(self, ctx);
+export const card: Card<"sampler", { expanded: boolean }> = (self, ctx) => {
+  const field = binder(self, ctx);
   const { memory, update } = ctx;
   const { state, facts } = self;
-  const expanded = memory.expanded === true;
+  const expanded = memory.expanded ?? false;
   const { w, h: tall } = drawingOf(6);
   const file = state.sample ? (facts.file ?? { name: state.sample, state: "unknown" as const }) : null;
   const length = file?.state === "plays" ? (file.seconds ?? 0) : 0;
@@ -158,7 +158,7 @@ export const card: Card<"sampler"> = (self, ctx) => {
   const named = instrument?.name ?? (state.sfz ? (facts.sfz ?? state.sfz) : (state.sample ?? "Audio file…"));
   const picker = (
     <Cell span={2} text="Instrument">
-      <row key="instrument" label={`${field.title} instrument`} role="button" value={named} w={2 * CELL - 8} h={24} px={2} gap={1} align="center" justify="between" radius="md" fill="fill" hover="fill">
+      <row key="instrument" label={`${field.title} instrument`} role="button" value={named} w={2 * CELL - 8} h={24} pad={[2, 0]} gap={1} align="center" justify="between" radius="md" fill="fill" hover="fill">
         <text style="label" color="text" truncate>{named}</text>
         <icon name="chevron-down" size={14} color="text-muted" />
         <MenuList id="instrument" label={`${field.title} instrument`} items={[...own, ...groups]} w={280} search />
@@ -168,7 +168,6 @@ export const card: Card<"sampler"> = (self, ctx) => {
   const gain = <Knob {...field.number("gain_db", "Gain")} unit="db" bipolar />;
   if (state.library || state.sfz) return <DeviceCard id="card" title={field.title} display={display} cells={[<col w={2 * CELL} gap={1}>{picker}{gain}</col>]} />;
 
-  const quiet = (dim: boolean, child: Node): Node => (dim ? <box w={CELL} opacity={0.4}>{child}</box> : child);
   const toggle = (path: "loop" | "reverse", text: string, span: number) => {
     const on = state[path] === true;
     return <Cell span={span}><Toggle id={path} label={`${field.title} ${text}`} text={text} on={on} w={span * CELL - 8} onToggle={() => field.change(`Change ${text.toLowerCase()}`, { [path]: !on })} /></Cell>;
@@ -187,8 +186,8 @@ export const card: Card<"sampler"> = (self, ctx) => {
     <DeviceCard id="card" title={field.title} display={display}
       cells={[head, <Knob {...field.number("release_seconds", "Release")} unit="seconds" />, gain]}
       more={[
-        quiet(!plays, <Knob {...startAt} />), quiet(!plays, <Knob {...endAt} />),
-        <col w={2 * CELL} gap={1}><row>{toggle("loop", "Loop", 1)}{quiet(!plays || !state.loop, <Knob {...loopAt} />)}</row>{toggle("reverse", "Reverse", 2)}</col>,
+        <Knob {...startAt} disabled={!plays} />, <Knob {...endAt} disabled={!plays} />,
+        <col w={2 * CELL} gap={1}><row>{toggle("loop", "Loop", 1)}<Knob {...loopAt} disabled={!plays || !state.loop} /></row>{toggle("reverse", "Reverse", 2)}</col>,
         <Knob {...attack} unit="seconds" />, <Knob {...sustain} unit="percent" />, <Knob {...decay} unit="seconds" />, <Knob {...field.number("tune" as never, "Tune")} unit="semitones" bipolar />,
       ]}
       expanded={expanded} onExpand={() => (memory.expanded = !expanded)} />

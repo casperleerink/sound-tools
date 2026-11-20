@@ -1,11 +1,11 @@
-import { defaultStates, h, live, type Card, type Drag, type Node, type Pointer } from "../../../sdk";
+import { defaultStates, h, live, type Card, type Drag, type FilledStateOfTool, type Node, type Pointer } from "../../../sdk";
 import theme from "../../../theme.json";
 import { Button } from "../../button";
 import { Cell } from "../../cell";
 import { Choice } from "../../choice";
 import { Curve } from "../../curve";
 import { Display, drawingOf, FREQUENCY_TICKS, OCTAVES } from "../../display";
-import { cardBinder, type Bound } from "../../field";
+import { binder, type Binder, type Bound, type PathsOf } from "../../field";
 import { Handle } from "../../handle";
 import { Knob } from "../../knob";
 import { Select } from "../../select";
@@ -27,7 +27,7 @@ const RESONANCE_TRAVEL: Range = { min: -2.36, max: 1.17 };
 const ENVELOPES = [["amp_env", "Amp"], ["env_2", "Env 2"], ["env_3", "Env 3"]] as const;
 const LFOS = [["lfo_1", "LFO 1"], ["lfo_2", "LFO 2"]] as const;
 const PAGES = ["Osc", "Voice", "Filter", "Env", "LFO", "Matrix"] as const;
-type State = typeof defaultStates.wavetable;
+type State = FilledStateOfTool<"wavetable">;
 type Group = "osc_1" | "osc_2" | "sub" | "unison" | "filter_1" | "filter_2" | "routing" | "amp_env" | "env_2" | "env_3" | "lfo_1" | "lfo_2" | "voicing" | "matrix";
 
 /** The travel of a time whose stage starts at `start` across the envelope drawing, as the feed lays it out: `time`'s own range, moved along. */
@@ -60,12 +60,6 @@ const differs = (page: (typeof PAGES)[number], state: State, initial: State) => 
   }
 };
 
-/**
- * `osc_1.position` as `live.field` reads a number of a group of the tool's own record: it takes
- * `osc_1.` for a child named `osc_1`, so the drawing would show 0. A lane of it does not show here.
- */
-const own = <B extends Bound>(bound: B): B => (bound.path ? { ...bound, path: bound.path.replace(/^([^.[]+)\.([^.[]+)$/, "$1[$2]") } : bound);
-
 /** Columns of two cells, as given: tops first, then bottoms, as the card lays one width out. */
 const stacked = (columns: [Node, Node?][]): Node[] => [...columns.map(([top]) => top), ...columns.flatMap(([, bottom]) => (bottom ? [bottom] : []))];
 
@@ -75,15 +69,14 @@ const stacked = (columns: [Node, Node?][]): Node[] => [...columns.map(([top]) =>
  * one page at a time: Osc, Voice, Filter, Env, LFO and Matrix, a dot on each that differs from a
  * new one. Every value has one control: those the folded card shows are on no page.
  */
-export const card: Card<"wavetable"> = (self, ctx) => {
-  const field = cardBinder<"wavetable">(self, ctx);
+export const card: Card<"wavetable", { expanded: boolean; lfo: number; page: number; envelope: number }> = (self, ctx) => {
+  const field = binder(self, ctx);
   const { memory, update } = ctx;
   const state = self.state as unknown as State;
-  const expanded = memory.expanded === true;
-  // Octaves, semitones, voices and a route's amount take no lane, which `number`'s type leaves out.
-  const number = (path: string, text: string, object = "") => ({ ...field.number(path as never, object ? `${object} ${text.toLowerCase()}` : text), text });
-  const choice = (path: string, text: string, object = "") => field.choice(path, object ? `${object} ${text.toLowerCase()}` : text);
-  const toggle = (path: string, text: string, what: string, span = 1) => {
+  const expanded = memory.expanded ?? false;
+  const number = (path: PathsOf<State, number>, text: string, object = "") => ({ ...field.number(path, object ? `${object} ${text.toLowerCase()}` : text), text });
+  const choice = (path: PathsOf<State, string | number>, text: string, object = "") => field.choice(path, object ? `${object} ${text.toLowerCase()}` : text);
+  const toggle = (path: PathsOf<State, boolean>, text: string, what: string, span = 1) => {
     const bound = field.toggle(path, what);
     return <Cell span={span}><Toggle {...bound} text={text} w={span * CELL - 8} /></Cell>;
   };
@@ -91,7 +84,7 @@ export const card: Card<"wavetable"> = (self, ctx) => {
   /** The table of oscillator `n` with its frames, the bright one where it plays; a drag up and down anywhere on it moves its position. */
   const oscillator = (n: 1 | 2) => {
     const { w, h: tall } = drawingOf(4, true);
-    const osc = `osc_${n}`;
+    const osc = `osc_${n}` as const;
     const position = number(`${osc}.position`, "Position", `Osc ${n}`);
     const tables = choice(`${osc}.table`, "Table", `Osc ${n}`);
     const names = new Map((self.facts.tables ?? []).map((table) => [table.value as string | number, table.name]));
@@ -100,14 +93,14 @@ export const card: Card<"wavetable"> = (self, ctx) => {
     return (
       <Display strip={<Select {...tables} options={options} w={140} menuW={200} />}>
         <shapes at={[0, 0]} w={w} h={tall} units={[[0, 1], [1, 0]]} rects={[{ color: "text/24", rects: live.feed(`frames${suffix}`) }, { color: "text", rects: live.feed(`frame${suffix}`) }]} />
-        <Area axis={own(position)} w={w} h={tall} />
+        <Area axis={position} w={w} h={tall} />
       </Display>
     );
   };
 
   /** The rest of an oscillator: on, level, the tuning, the pan, and the effect and its amount. */
   const voices = (n: 1 | 2): Node[] => {
-    const [osc, name] = [`osc_${n}`, `Osc ${n}`];
+    const [osc, name] = [`osc_${n}` as const, `Osc ${n}`];
     return [
       ...stacked([
         [toggle(`${osc}.on`, name, name), <Knob {...number(`${osc}.gain`, "Level", name)} unit="percent" />],
@@ -123,7 +116,7 @@ export const card: Card<"wavetable"> = (self, ctx) => {
 
   /** A filter's switch, drive and slope over its type and character. */
   const filter = (n: 1 | 2): Node => {
-    const [path, name] = [`filter_${n}`, `Filter ${n}`];
+    const [path, name] = [`filter_${n}` as const, `Filter ${n}`];
     return (
       <col w={4 * CELL} gap={1}>
         <row>{toggle(`${path}.on`, name, name)}<Knob {...number(`${path}.drive_db`, "Drive", name)} unit="db" /><Cell span={2} text="Slope"><Choice {...choice(`${path}.slope`, "Slope", name)} /></Cell></row>
@@ -132,26 +125,27 @@ export const card: Card<"wavetable"> = (self, ctx) => {
     );
   };
   const filterHandle = (n: 1 | 2, w: number, tall: number) => {
-    const [path, name] = [`filter_${n}`, `Filter ${n}`];
+    const [path, name] = [`filter_${n}` as const, `Filter ${n}`];
     const [cutoff, resonance] = [number(`${path}.cutoff_hz`, "Cutoff", name), number(`${path}.resonance`, "Resonance", name)];
     return (
       <Handle id={`${path}-handle`} label={`${field.title} ${name} cutoff and resonance`} w={w} h={tall} number={String(n)} chosen={n === 1} dimmed={!(state[path as Group] as { on: boolean }).on}
-        x={own(cutoff)} y={{ ...own(resonance), travel: RESONANCE_TRAVEL }}
+        x={cutoff} y={{ ...resonance, travel: RESONANCE_TRAVEL }}
         onChange={(hz, amount) => field.change(`Change ${name} cutoff and resonance`, { [`${path}.cutoff_hz`]: hz, [`${path}.resonance`]: amount })} />
     );
   };
 
   const pages = (): Section[] => {
     const { w, h: tall } = drawingOf(4, true);
-    const [envelope, envelopeName] = ENVELOPES[Number(memory.envelope ?? 0)] ?? ENVELOPES[0];
-    const [lfo, lfoName] = LFOS[Number(memory.lfo ?? 0)] ?? LFOS[0];
+    const [envelope, envelopeName] = ENVELOPES[(memory.envelope ?? 0)] ?? ENVELOPES[0];
+    const [lfo, lfoName] = LFOS[memory.lfo ?? 0] ?? LFOS[0];
     const [attack, decay, sustain, release] = [number(`${envelope}.attack_seconds`, "Attack", envelopeName), number(`${envelope}.decay_seconds`, "Decay", envelopeName), number(`${envelope}.sustain`, "Sustain", envelopeName), number(`${envelope}.release_seconds`, "Release", envelopeName)];
     const peak = travelled(attack.value, attack);
     const held = peak + travelled(decay.value, decay) + HOLD;
     const top = (1 - LEVEL[1]) / (LEVEL[0] - LEVEL[1]);
     const bottom = -LEVEL[1] / (LEVEL[0] - LEVEL[1]);
     const lfoState = state[lfo] as { sync: boolean };
-    const mono = (state.voicing as { mode: string }).mode === "mono";
+    const mono = state.voicing.mode === "mono";
+    const glide = number("voicing.glide_seconds", "Glide", "");
     const initial = defaultStates.wavetable as State;
     const page = (name: (typeof PAGES)[number], cells: Node[]): Section => ({ name, cells, changed: differs(name, state, initial) });
     return [
@@ -160,7 +154,7 @@ export const card: Card<"wavetable"> = (self, ctx) => {
         ...stacked([
           [<Knob {...number("sub.gain", "Sub", "")} unit="percent" />, <Cell text="Octave"><Choice {...choice("sub.octave", "Octave", "Sub")} /></Cell>],
           [<Knob {...number("unison.voices", "Unison", "")} step={1} />, <Knob {...number("unison.amount", "Spread", "Unison")} unit="percent" />],
-          [<Cell><Toggle id="voicing.mode" label={`${field.title} Mono`} text="Mono" on={mono} onToggle={() => field.change(`Turn mono ${mono ? "off" : "on"}`, { "voicing.mode": mono ? "poly" : "mono" })} /></Cell>, <Knob {...number("voicing.glide_seconds", "Glide", "")} unit="seconds" />],
+          [<Cell><Toggle id="voicing.mode" label={`${field.title} Mono`} text="Mono" on={mono} onToggle={() => field.change(`Turn mono ${mono ? "off" : "on"}`, { "voicing.mode": mono ? "poly" : "mono" })} /></Cell>, <Knob {...glide} unit="seconds" said={glide.value === 0 ? "Off" : undefined} />],
           // Mono plays one voice, so its number does nothing then.
           ...(mono ? [] : [[<Knob {...number("voicing.polyphony", "Voices", "")} step={1} />] as [Node]]),
         ]),
@@ -177,12 +171,12 @@ export const card: Card<"wavetable"> = (self, ctx) => {
         filter(2),
       ]),
       page("Env", [
-        <Display strip={<Choice id="envelope-shown" label={`${field.title} envelope shown`} options={ENVELOPES.map(([, text], value) => ({ value, text }))} value={Number(memory.envelope ?? 0)} onChange={(to) => (memory.envelope = to)} />}>
-          <Curve heights={live.feed(`envelope_${Number(memory.envelope ?? 0) + 1}` as "envelope_1")} w={w} h={tall} across={[LEFT, RIGHT]} range={LEVEL} />
-          <Handle id="attack" label={`${field.title} ${envelopeName} attack point`} w={w} h={tall} x={{ ...own(attack), travel: stage(attack, 0) }} y={top} />
-          <Handle id="decay" label={`${field.title} ${envelopeName} decay and sustain`} w={w} h={tall} x={{ ...own(decay), travel: stage(decay, peak) }} y={{ ...own(sustain), travel: { min: LEVEL[1], max: LEVEL[0] } }}
+        <Display strip={<Choice id="envelope-shown" label={`${field.title} envelope shown`} options={ENVELOPES.map(([, text], value) => ({ value, text }))} value={(memory.envelope ?? 0)} onChange={(to) => (memory.envelope = Number(to))} />}>
+          <Curve heights={live.feed(`envelope_${(memory.envelope ?? 0) + 1}` as "envelope_1")} w={w} h={tall} across={[LEFT, RIGHT]} range={LEVEL} />
+          <Handle id="attack" label={`${field.title} ${envelopeName} attack point`} w={w} h={tall} x={{ ...attack, travel: stage(attack, 0) }} y={top} />
+          <Handle id="decay" label={`${field.title} ${envelopeName} decay and sustain`} w={w} h={tall} x={{ ...decay, travel: stage(decay, peak) }} y={{ ...sustain, travel: { min: LEVEL[1], max: LEVEL[0] } }}
             onChange={(seconds, level) => field.change(`Change ${envelopeName} decay and sustain`, { [`${envelope}.decay_seconds`]: seconds, [`${envelope}.sustain`]: level })} />
-          <Handle id="release" label={`${field.title} ${envelopeName} release point`} w={w} h={tall} x={{ ...own(release), travel: stage(release, held) }} y={bottom} />
+          <Handle id="release" label={`${field.title} ${envelopeName} release point`} w={w} h={tall} x={{ ...release, travel: stage(release, held) }} y={bottom} />
         </Display>,
         ...stacked([
           [<Knob {...attack} unit="seconds" />, <Knob {...number(`${envelope}.attack_curve`, "Curve", `${envelopeName} attack`)} unit="percent" />],
@@ -192,7 +186,7 @@ export const card: Card<"wavetable"> = (self, ctx) => {
         ]),
       ]),
       page("LFO", [
-        <Display strip={[<Choice id="lfo-shown" label={`${field.title} LFO shown`} options={LFOS.map(([, text], value) => ({ value, text }))} value={Number(memory.lfo ?? 0)} onChange={(to) => (memory.lfo = to)} />, <Select {...choice(`${lfo}.shape`, "Shape", lfoName)} w={110} />]} zero={0.5}>
+        <Display strip={[<Choice id="lfo-shown" label={`${field.title} LFO shown`} options={LFOS.map(([, text], value) => ({ value, text }))} value={memory.lfo ?? 0} onChange={(to) => (memory.lfo = to)} />, <Select {...choice(`${lfo}.shape`, "Shape", lfoName)} w={110} />]} zero={0.5}>
           <Curve heights={live.feed(lfo)} w={w} h={tall} across={[0, 2]} range={[1.3, -1.3]} filled={false} />
         </Display>,
         <col w={2 * CELL} gap={1}>{toggle(`${lfo}.sync`, "Sync", `${lfoName} sync`, 2)}{toggle(`${lfo}.retrigger`, "Retrigger", `${lfoName} retrigger`, 2)}</col>,
@@ -211,7 +205,7 @@ export const card: Card<"wavetable"> = (self, ctx) => {
         [<Knob {...number("osc_1.position", "Position", "Osc 1")} unit="percent" />, <Knob {...number("gain", "Gain")} unit="percent" />],
         [<Knob {...number("filter_1.cutoff_hz", "Cutoff", "Filter 1")} unit="hz" />, <Knob {...number("filter_1.resonance", "Resonance", "Filter 1")} unit="percent" />],
       ])}
-      sections={pages()} page={Number(memory.page ?? 0)} onPage={(page) => (memory.page = page)}
+      sections={pages()} page={memory.page ?? 0} onPage={(page) => (memory.page = page)}
       expanded={expanded} onExpand={() => (memory.expanded = !expanded)} />
   );
 };
@@ -237,7 +231,7 @@ type Route = { source: string; destination: string; amount: number };
 const matrixMost = (fields: readonly { name: string; kind: string; maxItems?: number | null }[]) => fields.find((each) => each.name === "matrix")?.maxItems ?? 8;
 
 /** One row per route: its source, its destination and its amount, and a way to take it out; then a way to add one while there is room. A longer list scrolls. */
-const Matrix = ({ field, routes, most, update }: { field: ReturnType<typeof cardBinder<"wavetable">>; routes: readonly Route[]; most: number; update: (label: string, change: (draft: { state: object }) => void) => void }) => {
+const Matrix = ({ field, routes, most, update }: { field: Binder<State>; routes: readonly Route[]; most: number; update: (label: string, change: (draft: { state: object }) => void) => void }) => {
   const matrix = (draft: { state: object }) => (draft.state as { matrix: Route[] }).matrix;
   return (
     <col key="routes" label={`${field.title} routes`} w={360} h={2 * theme.size.row} gap={1} scroll="y">

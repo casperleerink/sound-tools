@@ -1,6 +1,5 @@
-import { h, live, type Drag, type Live, type Pointer, type Unit } from "../sdk";
+import { h, live, Live, type Drag, type Pointer, type Unit } from "../sdk";
 import theme from "../theme.json";
-import { played } from "./field";
 import { TypeIn } from "./type-in";
 import { Tooltip } from "./tooltip";
 import { fitted, liveShownAt, liveTravelled, liveValueAt, stepped, travelled, valueAt, type Range } from "./value";
@@ -43,6 +42,10 @@ export type KnobProps = Range & {
   held?: Live;
   /** A small dial without its name, as in a mixer's strip: its value under it, or `beside` it, `w` wide. */
   small?: { beside?: boolean; w: number; quiet?: boolean };
+  /** Words for its value at rest, such as `"Off"`, `"4:1"` or `"90°"`: a drag shows the number. */
+  said?: string;
+  /** Shown dimmed, and it takes no change: what it sets is off. */
+  disabled?: boolean;
   onChange: (value: number) => void;
 };
 
@@ -51,19 +54,35 @@ export type KnobProps = Range & {
  * ten times finer), arrows step it, a double click or Backspace sets `initial`, and a click on
  * the value or Enter types one. The arc is the one bright line and follows the drag.
  */
-export const Knob = ({ id, path, label, text, value, initial, unit, bipolar = false, held, small, onChange, ...range }: KnobProps) => {
+export const Knob = ({ id, path, label, text, value, initial, unit, bipolar = false, held, small, said, disabled = false, onChange, ...range }: KnobProps) => {
   const at = travelled(value, range);
   const set = (next: number) => onChange(fitted(next, range));
   // A drag from the value line turns the knob too.
   const turned = live.drag(id).dy.plus(live.drag(`${id}-value`).dy).over(-TRAVEL).plus(at);
   // A number of a record shows what plays: its own drag, a handle on it, a lane. A fader's -inf plays as -100 dB, so it shows its drag.
-  const playing = path !== undefined && range.scale !== "fader" ? live.field(played(path)) : undefined;
+  const playing = path !== undefined && range.scale !== "fader" ? live.field(path) : undefined;
   const dragged = held ? liveTravelled(held, range) : playing ? liveTravelled(playing, range) : turned;
   const drag: Drag = { y: [-(1 - at) * TRAVEL, at * TRAVEL], ...(path === undefined ? {} : { plays: { [path]: liveValueAt(turned, range) } }) };
   const dragEnd = ({ dy }: Pointer) => onChange(valueAt(at - dy / TRAVEL, range));
   const actions = { set, increment: (by: number) => onChange(stepped(value, by, range)), decrement: (by: number) => onChange(stepped(value, -by, range)), ...(initial === undefined ? {} : { reset: () => set(initial) }) };
   const readout = held ?? playing ?? liveShownAt(dragged, range);
-  const number = unit === undefined ? <text style="number" color="text" live={readout} /> : <text style="number" color="text" live={readout} unit={unit} />;
+  const shown = unit === undefined ? <text style="number" color="text" live={readout} /> : <text style="number" color="text" live={readout} unit={unit} />;
+  const moving = live.drag(id).active.max(live.drag(`${id}-value`).active);
+  const number = said === undefined ? shown : (
+    <box>
+      <text style="number" color="text" opacity={moving.negate().plus(1)}>{said}</text>
+      <box at={[0, 0]} opacity={moving}>{shown}</box>
+    </box>
+  );
+  if (disabled) {
+    return (
+      <col key={id} label={label} role="slider" value={said ?? value} w={small ? small.w : CELL} h={small ? SMALL + LINE : ROW} align="center" opacity={0.4}>
+        <Dial at={Live.of(at)} bipolar={bipolar} size={small ? SMALL : DIAL} />
+        {!small && <text style="label" color="text-secondary" w={CELL - 4} align="center" truncate>{text ?? label}</text>}
+        {said === undefined ? shown : <text style="number" color="text">{said}</text>}
+      </col>
+    );
+  }
   if (small) {
     const line = (
       <TypeIn id={id} label={label} value={value} unit={unit} range={range} w={small.w} h={LINE + 4} drag={drag} onDragEnd={dragEnd} onChange={set}>

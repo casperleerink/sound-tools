@@ -1,6 +1,7 @@
 import { h, live, type Color } from "../../../sdk";
 import { controllerName, LANE_NAMES, pointsOf, type NoteLane } from "../../../song/notes";
-import { LANE, playheadOf, type Roll } from "./roll-view";
+import { LANE, playing, type Roll } from "./roll-view";
+import { Playhead } from "../time";
 
 type PointLane = Exclude<NoteLane, "velocity">;
 
@@ -19,7 +20,6 @@ export const ExpressionLane = ({ roll, lane }: { roll: Roll; lane: PointLane }) 
   const heights = points.map((point) => down(point.value));
   const path = points.length === 0 ? [] : [0, heights[0]!, ...points.flatMap((point, at) => [point.at, heights[at]!]), roll.end, heights.at(-1)!];
   const segments = path.flatMap((_, at) => (at % 2 === 0 && at + 3 < path.length ? path.slice(at, at + 4) : []));
-  const { at, inside } = playheadOf(roll);
   return (
     <box key={key} label={`${name} lane`} grow={1} h={LANE - 1} clip plane={{ x: roll.key, y: [-0.12, 1.12] }}
       onPress={(p) => p.clicks === 2 && roll.edits.addPoint(lane, p)}>
@@ -34,11 +34,11 @@ export const ExpressionLane = ({ roll, lane }: { roll: Roll; lane: PointLane }) 
         );
       })}
       {points.length === 0 && (
-        <row place={[0, 0, roll.end, 1]} px={3} align="center" inert>
+        <row place={[0, 0, roll.end, 1]} pad={[3, 0]} align="center" inert>
           <text style="label" color="text-muted">Double-click to add a point</text>
         </row>
       )}
-      <box place={[at, 0.5]} w={1} h={1000} fill="text" opacity={inside} inert />
+      <Playhead plane={key} {...playing(roll)} />
     </box>
   );
 };

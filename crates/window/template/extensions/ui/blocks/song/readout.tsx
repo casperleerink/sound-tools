@@ -29,7 +29,7 @@ export const Readout = ({ roll }: { roll: Roll }) => {
     return sum.plus(inside.times(at.minus(run.from).mod(run.ticks)));
   }, Live.of(0));
   return (
-    <row h={HEADER} px={2} gap={1} align="center" border="border" borderSides={[0, 0, 0, 1]}>
+    <row h={HEADER} pad={[2, 0]} gap={1} align="center" border="border" borderSides={[0, 0, 0, 1]}>
       {chosen.length > 1 && <text style="label" color="text-muted">{`${chosen.length} notes`}</text>}
       <Typed id="pitch" word="Pitch" text={pitchName(note.pitch)} onCommit={(text) => edits.typePitch(text)}>
         <text style="number" color="text" live={Live.of(note.pitch).minus(move.dy).clamp(0, 127)} unit="pitch" />
@@ -52,10 +52,10 @@ export const Readout = ({ roll }: { roll: Roll }) => {
 
 /** A value with the word that names it: a press, or Enter, types it in its place; text that says what it said changes nothing. */
 const Typed = ({ id, word, text, onCommit, children }: { id: string; word: string; text: string; onCommit: (text: string) => void; children?: Child }) => (
-  <row key={`note-${id}`} label={`Type the ${word.toLowerCase()}`} role="button" value={text} h={24} px={2} gap={2} align="center" radius="sm" hover="fill">
+  <row key={`note-${id}`} label={`Type the ${word.toLowerCase()}`} role="button" value={text} h={24} pad={[2, 0]} gap={2} align="center" radius="sm" hover="fill">
     <text style="label" color="text-muted">{word}</text>
     <row align="center">{children}</row>
-    <row overlay={{ open: "press", side: "bottom", align: "start", gap: -24 }} h={24} px={1} align="center" radius="md" fill="raised" border="focus" shadow="md">
+    <row overlay={{ open: "press", side: "bottom", align: "start", gap: -24 }} h={24} pad={[1, 0]} align="center" radius="md" fill="raised" border="focus" shadow="md">
       <field key={`note-${id}-typed`} label={`${word} of the note`} value={text} style="number" w={72} focus onCommit={(typed) => typed !== null && typed.trim() !== text && onCommit(typed.trim())} />
     </row>
   </row>

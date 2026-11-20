@@ -3,7 +3,7 @@ import { act, find, h, press, render, type Drawn, type Node } from "../../../sdk
 import { clipOf, laneOf, tapeOf, trackOf } from "../../../song/fake";
 import { actions } from "../../../song/keys";
 import { memory as fresh, type Song } from "../../../song/model";
-import { ACROSS, HEAD, laneGroups, pageOf, PLANE, ROW } from "../../../song/view";
+import { HEAD, laneGroups, pageOf, PLANE, TIME } from "../../../song/view";
 import { LaneHeads, LaneTimes } from "./lanes";
 
 type Self = Parameters<typeof pageOf>[0];
@@ -19,7 +19,7 @@ const Lanes = (self: Drawn<unknown>, ctx: Song) => {
   return (
     <row>
       <box key="heads" label="Tracks" w={HEAD} h={600} plane={{ y: PLANE }}>{laneGroups(page.rows).map((rows) => <LaneHeads page={page} rows={rows} />)}</box>
-      <box key={PLANE} label="Timeline" w={1000} h={600} plane={{ x: ACROSS, y: ROW }}>{laneGroups(page.rows).map((rows) => <LaneTimes page={page} rows={rows} />)}</box>
+      <box key={PLANE} label="Timeline" w={1000} h={600} plane={TIME}>{laneGroups(page.rows).map((rows) => <LaneTimes page={page} rows={rows} />)}</box>
     </row>
   ) as Node;
 };
@@ -54,8 +54,8 @@ test("a track's lanes show under it: a head that says what each moves and what p
   shown();
   expect(find("lane-name-t00-lane-vol")).toMatchObject({ label: "Menu of the Volume lane of Track 1" });
   expect(find("lane-name-t00-lane-cut")).toMatchObject({ label: "Menu of the Synth · Cutoff lane of Track 1" });
-  expect(JSON.stringify(find("lane-head-t00-lane-vol"))).toContain('"live":{"op":"value","child":"t00/mix","name":"gain_db"');
-  expect(find("point-t00-lane-vol-3840")).toMatchObject({ label: "Point at 2.1, 0 dB", role: "button", checked: false });
+  expect(JSON.stringify(find("lane-head-t00-lane-vol"))).toContain('"live":{"op":"value","name":"t00/mix.gain_db"');
+  expect(find("point-t00-lane-vol-3840")).toMatchObject({ label: "Point at 2.1, 0 dB", role: "button", value: false });
   expect(find("Add a lane to Track 1")).toBeDefined();
   // A line bends from beside a chosen point, and a flat one not at all.
   expect(find("bend-t00-lane-vol-3840")).toBeUndefined();
@@ -71,7 +71,7 @@ test("a track's lanes show under it: a head that says what each moves and what p
 
 test("a lane's menu, from its name or a right press on it, moves its number with an LFO and takes the lane away; an audio track has no envelope", () => {
   shown();
-  expect(find("lane-menu-t00-lane-vol-Moved by points")).toMatchObject({ checked: true });
+  expect(find("lane-menu-t00-lane-vol-Moved by points")).toMatchObject({ value: true });
   expect(find("lane-menu-audio-1-lane-vol-Moved by an envelope")).toBeUndefined();
   act("lane-menu-t00-lane-vol-Moved by an LFO", "press");
   expect(childOf("t00", "lfo-mix-gain-db")?.tool).toBe("lfo");
@@ -118,7 +118,7 @@ test("a double click on a lane adds a point on the snap where it was, chosen", (
   press("lane-t00-lane-vol", { x: 500, y: yOf(1, 0.5), clicks: 2 });
   expect(pointsOf("t00", "lane-vol")[1]?.tick).toBe(480);
   expect(Math.round(pointsOf("t00", "lane-vol")[1]!.value * 10) / 10).toBe(-12.6);
-  expect(find("point-t00-lane-vol-480")).toMatchObject({ checked: true });
+  expect(find("point-t00-lane-vol-480")).toMatchObject({ value: true });
 });
 
 test("a point drags on the snap and in its unit, between its neighbours; alt-click removes it", () => {
@@ -127,7 +127,7 @@ test("a point drags on the snap and in its unit, between its neighbours; alt-cli
   act("point-t00-lane-vol-3840", "drag", { dx: 500, dy: 0.076 });
   expect(pointsOf("t00", "lane-vol")[1]).toMatchObject({ tick: 4320, curve: 0.5 });
   expect(pointsOf("t00", "lane-vol")[1]!.value).toBe(-3.6);
-  expect(find("point-t00-lane-vol-4320")).toMatchObject({ label: "Point at 2.1.3, −3.6 dB", checked: true });
+  expect(find("point-t00-lane-vol-4320")).toMatchObject({ label: "Point at 2.1.3, −3.6 dB", value: true });
   act("point-t00-lane-vol-4320", "drag", { dx: 10 * BAR });
   expect(pointsOf("t00", "lane-vol")[1]?.tick).toBe(2 * BAR - 1);
   press("point-t00-lane-vol-0", { alt: true });
@@ -137,7 +137,7 @@ test("a point drags on the snap and in its unit, between its neighbours; alt-cli
 test("a drag over a lane chooses the points it covers, they drag as one, delete takes them; an alt-drag erases", () => {
   shown();
   act("lane-t00-lane-vol", "drag", { x: 3000, dx: 6000 });
-  expect([find("point-t00-lane-vol-3840"), find("point-t00-lane-vol-7680"), find("point-t00-lane-vol-0")]).toMatchObject([{ checked: true }, { checked: true }, { checked: false }]);
+  expect([find("point-t00-lane-vol-3840"), find("point-t00-lane-vol-7680"), find("point-t00-lane-vol-0")]).toMatchObject([{ value: true }, { value: true }, { value: false }]);
   act("point-t00-lane-vol-7680", "drag", { dx: 240 });
   expect(pointsOf("t00", "lane-vol").map((point) => point.tick)).toEqual([0, 4080, 7920, 3 * BAR]);
   actions.delete_point!.run(last!);

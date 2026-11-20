@@ -1,7 +1,6 @@
 import { h } from "../../../sdk";
 import type { Mark } from "../../../song/model";
 import type { Page } from "../../../song/view";
-import { keysOf } from "../../kbd";
 import { MenuList, type Item } from "../../menu";
 
 // What the ruler and the tempo lane share: their menu.
@@ -28,6 +27,6 @@ export const TimeMenu = ({ page, id, label }: { page: Page; id: string; label: s
     { text: "Add a section", icon: "section", ...(at.section === null ? { disabled: HERE } : {}), onPress: () => at.section !== null && edits.marks.addSection(at.section) },
   ];
   const removed = at.removed;
-  if (removed) items.push({ text: `Remove the ${NAMES[removed.kind]}`, icon: "trash-2", danger: true, line: true, keys: keysOf(song.shortcut("delete_mark")), onPress: () => edits.marks.remove(removed) });
+  if (removed) items.push({ text: `Remove the ${NAMES[removed.kind]}`, icon: "trash-2", danger: true, line: true, keys: song.shortcut("delete_mark"), onPress: () => edits.marks.remove(removed) });
   return <MenuList id={id} label={label} items={items} open="menu" w={240} />;
 };

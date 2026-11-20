@@ -152,7 +152,7 @@ export const steps = tool({
       {Array.from({ length: 16 }, (_, i) => {
         const on = self.state.on[i] ?? false;
         const flip = () => update("Change", (draft) => void (draft.state.on = Array.from({ length: 16 }, (_, j) => (j === i ? !on : (self.state.on[j] ?? false)))));
-        return <box key={`step-${i}`} label={`Step ${i + 1}`} role="switch" checked={on} w={16} h={24} radius="sm" fill={on ? "text" : "fill"} onPress={flip} actions={{ toggle: flip }} />;
+        return <box key={`step-${i}`} label={`Step ${i + 1}`} role="switch" value={on} w={16} h={24} radius="sm" fill={on ? "text" : "fill"} onPress={flip} actions={{ toggle: flip }} />;
       })}
     </row>
   ),
@@ -200,7 +200,7 @@ export const sequence = tool({
   },
   view: (self) => (
     <row gap={1}>
-      {Array.from({ length: 16 }, (_, i) => <box key={`step-${i}`} label={`Step ${i + 1}`} role="switch" checked={i === self.state.at} w={16} h={24} fill={i === self.state.at ? "text" : "fill"} onPress={() => {}} />)}
+      {Array.from({ length: 16 }, (_, i) => <box key={`step-${i}`} label={`Step ${i + 1}`} role="switch" value={i === self.state.at} w={16} h={24} fill={i === self.state.at ? "text" : "fill"} onPress={() => {}} />)}
     </row>
   ),
 });
@@ -712,7 +712,14 @@ fn a_peak_held_three_seconds_shows_in_decibels_then_drops() {
     state.session.background(|project| project.engine().stop());
     let shown = |state: &State| shown_texts(state).concat();
     let held = shown(&state);
-    assert!(held.parse::<f64>().is_ok_and(|db| db > -60.0), "{held}");
+    // A level below 0 dB reads with a minus sign, not a hyphen.
+    let db = held.strip_prefix('\u{2212}').map(|rest| format!("-{rest}"));
+    assert!(
+        db.unwrap_or_else(|| held.clone())
+            .parse::<f64>()
+            .is_ok_and(|db| db > -60.0),
+        "{held}"
+    );
     for step in 1..=30 {
         frame(&mut state, 1.0 + f64::from(step) / 60.0);
     }
@@ -720,7 +727,7 @@ fn a_peak_held_three_seconds_shows_in_decibels_then_drops() {
     for step in 31..=240 {
         frame(&mut state, 1.0 + f64::from(step) / 60.0);
     }
-    assert_eq!(shown(&state), "-120.0");
+    assert_eq!(shown(&state), "\u{2212}120.0");
 }
 
 /// A tool whose control loop holds a note once, or that has no loop: on its child `synth`, or

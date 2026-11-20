@@ -14,11 +14,10 @@ import { BAR } from "./time";
 
 /** The plane the ruler, the timeline and the lanes share across, and the heads down. */
 export const PLANE = "song";
-/** Points per tick at zoom 1: a bar is 96 points. Zoom goes from a tenth to eight times. */
-export const ACROSS = 0.025;
-export const ZOOM: [min: number, max: number] = [0.1, 8];
 /** The heads' column, a track's row, the row that adds a lane, a return's and the master's row. */
 export const [HEAD, ROW, ADD_LANE, LOW_ROW] = [176, 64, 40, 40];
+/** The plane `PLANE`: across, points per tick as it opens (a bar is 96 points), from a tenth to eight times that; down, a track's row. */
+export const TIME = { x: 0.025, y: ROW, zoom: [0.0025, 0.2] as [min: number, max: number] };
 /** The ruler, the tempo lane under it while it shows, and the room left of bar 1. */
 export const [RULER, TEMPO, GUTTER] = [44, 32, 8];
 /** What shows below: a track's panel, the mixer, and the note editor at its shortest and its line over it. */
@@ -98,7 +97,7 @@ export const chosenTrack = (memory: Memory) =>
   trackBelow(memory) ?? (memory.selected[0] === undefined ? null : rowOfKey(memory.selected[0])) ?? (memory.below?.kind === "mixer" ? memory.track : null);
 
 /** What every block of the page gets: the song, its edits, and its rows worked out once a run. */
-function laidOut(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song: Song) {
+export function pageOf(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song: Song) {
   const strips = ordered(self.children.filter(isStrip), self.state.order);
   const tracks = strips.filter(isRow);
   const returns = strips.filter((each) => each.tool === "bus");
@@ -119,16 +118,8 @@ function laidOut(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song: Song)
   };
 }
 
-const pages = new WeakMap<object, Page>();
-/** The page of a song: one object, of the newest run, so a handler a memo kept from an earlier run reads the song as it is now. */
-export function pageOf(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song: Song): Page {
-  const page = laidOut(self, song);
-  const kept = pages.get(song.memory);
-  if (!kept) pages.set(song.memory, page);
-  return kept ? Object.assign(kept, page) : page;
-}
 /** What every block of the song's page gets. */
-export type Page = ReturnType<typeof laidOut>;
+export type Page = ReturnType<typeof pageOf>;
 
 /** What a device is called, as the window offers it: a plugin by the name it was offered under (`format:id`), else its tool in words. */
 export function deviceName(catalog: readonly Offer[], { tool, state }: { tool: unknown; state: unknown }): string {

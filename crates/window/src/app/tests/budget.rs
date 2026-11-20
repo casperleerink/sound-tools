@@ -22,7 +22,7 @@ export const clips = tool({
       <box key="ruler" label="Ruler" w={1200} h={24} plane={{ x: "song" }}>
         {Array.from({ length: 64 }, (_, b) => <box place={[b * BAR, 12]} w={1} h={12} fill="text" />)}
       </box>
-      <box key="song" label="Song" w={1200} h={700} plane={{ x: 0.03, y: 1, zoom: [0.1, 8] }}>
+      <box key="song" label="Song" w={1200} h={700} plane={{ x: 0.03, y: 1, zoom: [0.003, 0.24] }}>
         {Array.from({ length: 64 }, (_, r) => memo(`row-${r}`, [r], () => (
           <box>{Array.from({ length: 8 }, (_, k) => r + 64 * k).filter((i) => i < 500).map((i) => {
             const d = live.drag(`c${i}`);
@@ -49,7 +49,7 @@ export const notes = tool({
   state: { moved: number({ min: -1e9, max: 1e9, default: 0 }) },
   view: (self, { update }) => (
     <col w={1200}>
-      <box key="roll" label="Notes" w={1200} h={700} plane={{ x: 0.08, y: 12, zoom: [0.1, 16] }}>
+      <box key="roll" label="Notes" w={1200} h={700} plane={{ x: 0.08, y: 12, zoom: [0.008, 1.28] }}>
         {Array.from({ length: 125 }, (_, bar) => memo(`bar-${bar}`, [bar], () => (
           <box>{Array.from({ length: 16 }, (_, k) => bar * 16 + k).map((i) => {
             const d = live.drag(`n${i}`), pitch = 36 + ((i * 7) % 48);

@@ -4,7 +4,6 @@ import { colourOf, muted, sendsOf, titleOf } from "../../../song/model";
 import { MIXER, sendOf, type Page, type Strip as Each } from "../../../song/view";
 import { Button } from "../../button";
 import { Dot } from "../../dot";
-import { keysOf } from "../../kbd";
 import { Knob } from "../../knob";
 import { clearsOf } from "../../meter";
 import { SHORTEST_FADER, STRIP, Strip, VALUE_LINE } from "../../strip";
@@ -33,7 +32,7 @@ export const Mixer = ({ page }: MixerProps) => {
   const column = (each: Each | undefined) => {
     const name = each?.name ?? "master";
     const chosen = page.song.memory.track === name;
-    const deps = [fader, chosen, each && titleOf(each), each && colourOf(each), each && muted(each), JSON.stringify(each ? sends(each) : []), JSON.stringify(each ? each.children.find((child) => child.name === "mix")?.state : page.self.children.find((child) => child.name === "master")?.state),
+    const deps = [fader, chosen, each && titleOf(each), each && colourOf(each), each && muted(each), each ? sends(each) : [], each ? each.children.find((child) => child.name === "mix")?.state : page.self.children.find((child) => child.name === "master")?.state,
       page.song.state.solo.includes(name), page.song.memory.armed.includes(name), page.song.held(`${name}/mix.gain_db`), page.song.held(`${name}/mix.pan`), sent.map((back) => page.song.held(`${name}/send-${back.name}.gain_db`)).join(), clearsOf(`meter-${name}`), sent.length];
     return memo(`mixer-${name}`, deps, () => <Column page={page} each={each} sent={sent} fader={fader} />);
   };
@@ -42,7 +41,7 @@ export const Mixer = ({ page }: MixerProps) => {
     <col key="mixer" label="Mixer" w="full" h="full" fill="background" scroll="y">
       <row w="full" h={tall} align="start">
         {sent.length > 0 && (
-          <col w={NAMES} px={3} gap={1}>
+          <col w={NAMES} pad={[3, 0]} gap={1}>
             <box h={PAD + OVER + fader + UNDER} />
             {sent.map((back) => <row h={SEND} align="center"><text style="label" color="text-secondary" truncate>{titleOf(back)}</text></row>)}
           </col>
@@ -52,15 +51,15 @@ export const Mixer = ({ page }: MixerProps) => {
           {page.tracks.map((each, at) => <box place={[4 + at * (COLUMN + GAP), PAD, COLUMN, tall - 2 * PAD]}>{column(each)}</box>)}
         </box>
         {page.returns.length > 0 && (
-          <row h="full" px={1} py={2} gap={1} border="border-strong" borderSides={[0, 0, 0, 1]}>
+          <row h="full" pad={[1, 2]} gap={1} border="border-strong" borderSides={[0, 0, 0, 1]}>
             {page.returns.map((each) => column(each))}
           </row>
         )}
-        <row h="full" px={1} py={2} gap={1} border="border-strong" borderSides={[0, 0, 0, 1]}>
+        <row h="full" pad={[1, 2]} gap={1} border="border-strong" borderSides={[0, 0, 0, 1]}>
           {column(undefined)}
         </row>
         <row pad={2}>
-          <Button id="close-mixer" label="Hide the mixer" icon="x" variant="ghost" size="sm" tip="Hide the mixer" keys={keysOf(page.song.shortcut("mixer"))} onPress={() => page.edits.tracks.toggleMixer()} />
+          <Button id="close-mixer" label="Hide the mixer" icon="x" variant="ghost" size="sm" tip="Hide the mixer" keys={page.song.shortcut("mixer")} onPress={() => page.edits.tracks.toggleMixer()} />
         </row>
       </row>
     </col>
@@ -74,8 +73,8 @@ const Column = ({ page, each, sent, fader }: { page: Page; each: Each | undefine
   const chosen = page.song.memory.track === name;
   const press = (clicks: number) => (each ? (clicks === 2 ? page.edits.tracks.openPanel(each.name) : choose(page.song, [], each.name)) : clicks === 2 && page.edits.tracks.openMaster());
   return (
-    <col w={COLUMN} px={1} gap={1} radius="lg" fill="surface" border="border-strong">
-      <row key={`strip-name-${name}`} label={`Choose ${title} strip`} role="tab" checked={chosen} h={NAME} px={2} gap={2} align="center" radius="md" fill={chosen ? "selected" : undefined} hover="fill" onPress={(p) => press(p.clicks)}>
+    <col w={COLUMN} pad={[1, 0]} gap={1} radius="lg" fill="surface" border="border-strong">
+      <row key={`strip-name-${name}`} label={`Choose ${title} strip`} role="tab" value={chosen} h={NAME} pad={[2, 0]} gap={2} align="center" radius="md" fill={chosen ? "selected" : undefined} hover="fill" onPress={(p) => press(p.clicks)}>
         <Dot color={each && (muted(each) ? "text-muted" : colourOf(each))} />
         <text style="heading" color={chosen ? "text" : "text-secondary"} truncate>{title}</text>
       </row>
@@ -84,7 +83,7 @@ const Column = ({ page, each, sent, fader }: { page: Page; each: Each | undefine
         const send = sendsOf(each).includes(`send-${back.name}`) ? sendOf(page, each.name, back.name) : undefined;
         const to = titleOf(back);
         return (
-          <row h={SEND} px={2} align="center">
+          <row h={SEND} pad={[2, 0]} align="center">
             {send && <Knob {...send} id={`send-${name}-${back.name}`} label={`${to} send of ${title}`} small={{ beside: true, w: STRIP - 36, quiet: true }} initial={-Infinity} />}
           </row>
         );

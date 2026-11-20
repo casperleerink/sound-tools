@@ -14,7 +14,7 @@ const steps = (count: number): Step[] => Array.from({ length: count }, (_, i) =>
 
 test("a press on a step turns it through its code", () => {
   const heard = draw(steps(16));
-  expect(find("Kick step 2")).toMatchObject({ role: "gridcell", checked: false });
+  expect(find("Kick step 2")).toMatchObject({ role: "gridcell", value: false });
   act("Kick step 2", "press");
   expect(heard).toEqual(["toggle 1"]);
 });
