@@ -1386,6 +1386,25 @@ fn a_drag_on_a_step_sets_how_hard_it_plays_and_never_also_presses_it() {
     assert_eq!(kit_record(&window.state)["on"], true);
 }
 
+/// Escape or the window losing the keys while the mouse is held on an element lets go of it
+/// without pressing it.
+#[test]
+fn a_press_cancelled_while_held_does_nothing() {
+    let (_scratch, mut window) = kit();
+    let (x, y) = window.find("t00/chain/kit:step").unwrap();
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    key(&mut window, rune::Key::Escape);
+    window.pointer_up(x, y);
+    redraw(&mut window);
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    window.window_focus(false);
+    window.pointer_up(x, y);
+    redraw(&mut window);
+    assert_eq!(kit_record(&window.state)["on"], Value::Null);
+}
+
 #[test]
 fn an_overlay_closes_on_escape_on_a_press_outside_and_on_a_pick_from_a_menu() {
     let (_scratch, mut window) = kit();

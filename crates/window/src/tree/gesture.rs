@@ -217,7 +217,8 @@ pub(super) fn pointer(scope: &Scope, mut e: El, b: &BoxNode, key: &str, press: &
                     // Rune presses it after this: the release is this press, or the end of a drag.
                     s.dragged = Some(key.clone());
                     let Some(drag) = gesture.drag.as_ref().filter(|_| gesture.far) else {
-                        if !gesture.far && (press.pressed || press.opens) {
+                        // Escape, the window losing the keys or a modal opening lets go of it.
+                        if !gesture.far && !d.cancelled() && (press.pressed || press.opens) {
                             let start = [d.start_x, d.start_y];
                             let window = [d.window_point()[0] - d.dx, d.window_point()[1] - d.dy];
                             let [x, y] = units(s, plane.as_deref(), window, start);
