@@ -312,9 +312,18 @@ fn a_number_shows_what_a_cable_plays_into_it_and_not_its_record() {
         &[
             ("extensions/swayer.ts", SWAYER),
             ("extensions/sway.ts", SWAY),
-            ("state/swayer/instance.json", r#"{"tool": "swayer", "state": {}}"#),
-            ("state/swayer/sway.json", r#"{"tool": "sway", "state": {"rate": 4}}"#),
-            ("state/swayer/strip.json", r#"{"tool": "utility", "state": {}}"#),
+            (
+                "state/swayer/instance.json",
+                r#"{"tool": "swayer", "state": {}}"#,
+            ),
+            (
+                "state/swayer/sway.json",
+                r#"{"tool": "sway", "state": {"rate": 4}}"#,
+            ),
+            (
+                "state/swayer/strip.json",
+                r#"{"tool": "utility", "state": {}}"#,
+            ),
         ],
     );
     assert_eq!(problems(&opened), []);

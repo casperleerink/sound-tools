@@ -286,5 +286,7 @@ fn a_press_on_a_view_that_drew_the_same_tree_again_reads_the_record_as_it_is() {
     ]);
     opened.press("counter", "count");
     opened.press("counter", "count");
-    opened.until("two presses", |opened| opened.record("counter")["count"] == 2);
+    opened.until("two presses", |opened| {
+        opened.record("counter")["count"] == 2
+    });
 }

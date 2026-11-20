@@ -1381,3 +1381,79 @@ fn a_newer_template_for_code_the_project_changed_shows_a_notice() {
     );
     assert_eq!(std::fs::read_to_string(folder.join(song)).unwrap(), ours);
 }
+
+/// A transport of its own: its presses play, pause, stop and jump the clock, and its label
+/// reads whether it plays.
+const DECK: &str = r#"import { h, tool } from "./sdk";
+export const deck = tool({
+  name: "deck", title: "Deck", when: "Never", doc: "Moves the clock.", state: {},
+  view: (_, { clock }) => (
+    <col>
+      <box key="play" label={clock.playing ? "Playing" : "Stopped"} w={120} h={20} onPress={() => (clock.playing ? clock.pause() : clock.play())} />
+      <box key="stop" label="Halt" w={120} h={20} onPress={() => clock.stop()} />
+      <box key="jump" label="Bar 3" w={120} h={20} onPress={() => clock.jump(7680)} />
+      <box key="later" label="Later" w={120} h={20} onPress={() => clock.jump(0, { atTick: 1920 })} />
+    </col>
+  ),
+});
+"#;
+
+/// Code plays, pauses, stops and jumps the clock, and what it shows follows.
+#[test]
+fn a_transport_of_code_moves_the_clock_and_its_view_reads_it() {
+    let files = [
+        ("extensions/deck.tsx", DECK),
+        ("state/deck.json", r#"{"tool": "deck", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "deck");
+    let tick = |window: &rune::Runtime<State>| window.state.session.status().playhead_tick.0;
+    act(
+        &mut window.state,
+        json!({ "label": "Stopped", "action": "press" }),
+    );
+    for _ in 0..30 {
+        polled(&mut window);
+    }
+    assert!(window.state.session.status().playing);
+    assert!(labels(&window.state).contains(&"Playing".to_string()));
+    act(
+        &mut window.state,
+        json!({ "label": "Playing", "action": "press" }),
+    );
+    polled(&mut window);
+    let paused = tick(&window);
+    assert!(!window.state.session.status().playing && paused > 0);
+    act(
+        &mut window.state,
+        json!({ "label": "Bar 3", "action": "press" }),
+    );
+    polled(&mut window);
+    assert_eq!(tick(&window), 7680);
+    act(
+        &mut window.state,
+        json!({ "label": "Halt", "action": "press" }),
+    );
+    polled(&mut window);
+    assert!(!window.state.session.status().playing);
+    // A jump at a tick waits for the playhead to get there.
+    act(
+        &mut window.state,
+        json!({ "label": "Stopped", "action": "press" }),
+    );
+    polled(&mut window);
+    act(
+        &mut window.state,
+        json!({ "label": "Later", "action": "press" }),
+    );
+    let mut ticks = vec![tick(&window)];
+    while ticks.len() < 120 && ticks.windows(2).all(|pair| pair[0] <= pair[1]) {
+        polled(&mut window);
+        ticks.push(tick(&window));
+    }
+    let back = ticks.windows(2).position(|pair| pair[1] < pair[0]);
+    let jumped = back.map(|at| (ticks[at], ticks[at + 1]));
+    assert!(
+        jumped.is_some_and(|(from, to)| from <= 1920 && to < 200),
+        "{ticks:?}"
+    );
+}
