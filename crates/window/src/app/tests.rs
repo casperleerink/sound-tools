@@ -1603,10 +1603,16 @@ fn a_project_without_its_generic_card_says_so_in_plain_words() {
     assert!(matches!(state.drawn(&synth), Some(Drawn::NoCard(why)) if why.contains("no card")));
 }
 
+/// Takes out the project's cards of built-in tools: the generic card draws every device.
+pub(super) fn without_cards(folder: &Path) {
+    std::fs::remove_dir_all(folder.join("extensions/ui/blocks/cards")).unwrap();
+}
+
 #[test]
 fn a_generic_card_that_hangs_is_blamed_alone_and_the_tools_go_on() {
     let scratch = new_project();
     let folder = scratch.path().join("song");
+    without_cards(&folder);
     std::fs::write(
         folder.join("extensions/ui/blocks/generic-card.tsx"),
         "export const card = () => { while (true) {} };\n",
@@ -1654,6 +1660,7 @@ fn enter_on_a_fader_types_its_value_and_the_keys_stay_with_it() {
 fn with_card(body: &str) -> (tempfile::TempDir, State) {
     let scratch = new_project();
     let folder = scratch.path().join("song");
+    without_cards(&folder);
     std::fs::write(
         folder.join("extensions/ui/blocks/generic-card.tsx"),
         format!("import {{ h, type Card }} from \"../../sdk\";\nexport const card: Card = () => {body};\n"),
