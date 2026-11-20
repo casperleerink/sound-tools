@@ -1,5 +1,5 @@
 //! The Agents section of Settings: each provider in a card, from setting it up to signed in.
-//! The section is [`agents_settings`], ready for the Settings page; what it shows is
+//! The section is [`agents_settings`], on the Settings page; what it shows is
 //! `sound_agent::Agents::sections`, drawn as it is.
 
 use rune::{El, TextEdit, Tx, col, icon, row, text, text_input};

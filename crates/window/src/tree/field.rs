@@ -255,6 +255,7 @@ impl State {
         fields.by_key.values().any(|typed| typed.edit.focused)
             || self.transport.has_keys()
             || (self.panel.agent.as_ref()).is_some_and(|agent| agent.typing())
+            || self.typing_in_settings()
     }
 
     /// Enter (`keep`) or Escape in the field `key`: its code hears what it says, or `null`, and

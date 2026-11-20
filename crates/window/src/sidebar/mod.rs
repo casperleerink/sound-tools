@@ -263,6 +263,23 @@ fn sidebar(state: &State) -> Option<&Sidebar> {
     agent.downcast_ref()
 }
 
+/// The Agents section of the Settings page: None without an agent sidebar.
+pub(crate) fn agents_section(state: &State) -> Option<El> {
+    sidebar(state).map(|sidebar| settings::agents_settings(state, sidebar))
+}
+
+/// The controls of the Agents section, for `--tree` and `--act`.
+pub(crate) fn agents_section_controls(state: &State) -> Vec<Control> {
+    sidebar(state).map_or_else(Vec::new, |sidebar| {
+        settings::controls(sidebar.chat.agents(), &sidebar.settings)
+    })
+}
+
+/// Whether a field of the Agents section has the keys.
+pub(crate) fn agents_section_typing(state: &State) -> bool {
+    sidebar(state).is_some_and(|sidebar| sidebar.settings.typing())
+}
+
 /// Runs `f` on the sidebar and the project it works on: the one place the window hands the
 /// chat its project.
 fn with_chat<R>(state: &mut State, f: impl FnOnce(&mut Sidebar, &mut Project) -> R) -> Option<R> {
@@ -347,6 +364,9 @@ impl Act {
         if let Act::AskTheAgent = self {
             return state.agent_keys(false, tx.unwrap_or(&mut Tx::default()));
         }
+        if let Act::OpenSettings = self {
+            return state.open_settings_on_agents(tx.unwrap_or(&mut Tx::default()));
+        }
         let focus = with_chat(state, |sidebar, project| sidebar.act(self, project)).flatten();
         if let (Some(tx), Some(focus)) = (tx, focus) {
             match focus {
@@ -410,7 +430,6 @@ impl Sidebar {
                 self.chat.dismiss_went_back();
                 Some(composer)
             }
-            Act::OpenSettings => None,
             Act::NewThread => {
                 self.menu = None;
                 self.chat.new_thread(project);
@@ -473,7 +492,8 @@ impl Sidebar {
                 .settings
                 .copy(self.chat.agents(), provider)
                 .map(Focus::Copy),
-            Act::AskTheAgent => None,
+            // The window's: `Act::run` takes them.
+            Act::AskTheAgent | Act::OpenSettings => None,
         }
     }
 }

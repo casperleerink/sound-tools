@@ -30,6 +30,12 @@ fn kept(scratch: &tempfile::TempDir) -> State {
     state
 }
 
+/// `state` without the agent sidebar, so Settings opens on Audio.
+fn without_agent(mut state: State) -> State {
+    state.panel.agent = None;
+    state
+}
+
 /// `c` with cmd, and shift when `shift`.
 fn chord(window: &mut rune::Runtime<State>, c: char, shift: bool) {
     let mods = Mods {
@@ -201,9 +207,10 @@ fn an_agent_opens_the_menu_and_picks_by_label_and_an_entry_that_is_off_does_noth
         json!({ "label": "Settings…", "action": "press" }),
     );
     assert!(!state.project_menu.open);
+    // With an agent sidebar the page opens on Agents, as the GPUI app did.
     assert_eq!(
         state.settings.page.as_ref().map(|page| page.section),
-        Some(Section::Audio)
+        Some(Section::Agents)
     );
 }
 
@@ -222,7 +229,7 @@ fn settings_lists_the_devices_each_time_it_opens_and_escape_gives_the_keys_back(
     let scratch = new_project();
     let outputs = Arc::new(Mutex::new(vec![device("speakers", "Speakers")]));
     let listed = Arc::new(AtomicUsize::new(0));
-    let mut state = kept(&scratch);
+    let mut state = without_agent(kept(&scratch));
     state.settings.list = Arc::new({
         let (outputs, listed) = (outputs.clone(), listed.clone());
         move || {
@@ -265,7 +272,7 @@ fn settings_lists_the_devices_each_time_it_opens_and_escape_gives_the_keys_back(
 fn a_picked_device_is_kept_for_the_machine_and_a_missing_one_says_what_plays() {
     let scratch = new_project();
     let file = scratch.path().join("support/audio-devices.json");
-    let mut state = kept(&scratch);
+    let mut state = without_agent(kept(&scratch));
     state.settings = super::super::settings::Settings::new(
         Arc::new(|| DeviceList {
             outputs: vec![
@@ -480,7 +487,7 @@ fn audio_picture() {
         return;
     };
     let scratch = new_project();
-    let mut state = kept(&scratch);
+    let mut state = without_agent(kept(&scratch));
     let file = scratch.path().join("support/audio-devices.json");
     let chosen = runtime::app::ChosenDevices {
         output: Some("interface".into()),

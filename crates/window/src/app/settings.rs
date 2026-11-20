@@ -94,11 +94,6 @@ pub(crate) enum Act {
     Search,
 }
 
-/// The Agents section, which the agent sidebar fills: `crate::sidebar::settings::agents_settings`.
-fn agents(_: &State) -> Option<El> {
-    None
-}
-
 impl Settings {
     /// `file` None keeps the chosen devices for as long as the window; `playing` names the
     /// output that plays.
@@ -131,7 +126,7 @@ impl Settings {
 
 impl State {
     fn sections(&self) -> impl Iterator<Item = Section> {
-        let agents = agents(self).map(|_| Section::Agents);
+        let agents = crate::sidebar::agents_section(self).map(|_| Section::Agents);
         agents
             .into_iter()
             .chain([Section::Audio, Section::Shortcuts])
@@ -156,6 +151,19 @@ impl State {
         self.list_devices();
         tx.focus_when_shown(BACK, true);
         self.handled();
+    }
+
+    /// Opens the page on Agents, as the agent sidebar's Open Settings does.
+    pub(crate) fn open_settings_on_agents(&mut self, tx: &mut Tx) {
+        self.open_settings(tx);
+        self.show_section(Section::Agents);
+    }
+
+    /// Whether a field of the Agents section has the keys, while it shows.
+    pub(crate) fn typing_in_settings(&self) -> bool {
+        let agents =
+            (self.settings.page.as_ref()).is_some_and(|page| page.section == Section::Agents);
+        agents && crate::sidebar::agents_section_typing(self)
     }
 
     pub(crate) fn close_settings(&mut self, tx: &mut Tx) {
@@ -292,7 +300,7 @@ pub(super) fn view(state: &State) -> Option<El> {
     let page = state.settings.page.as_ref()?;
     let theme = &state.theme;
     let body = match page.section {
-        Section::Agents => agents(state).unwrap_or_else(el),
+        Section::Agents => crate::sidebar::agents_section(state).unwrap_or_else(el),
         Section::Audio => audio::view(state, page),
         Section::Shortcuts => shortcuts::view(state, page),
     };
@@ -429,7 +437,7 @@ pub(super) fn controls(state: &State) -> Vec<Control> {
         ..control(section.key(), section.name(), "tab", Act::Show(section))
     }));
     match page.section {
-        Section::Agents => {}
+        Section::Agents => controls.extend(crate::sidebar::agents_section_controls(state)),
         Section::Audio => controls.extend(audio::controls(state, page)),
         Section::Shortcuts => controls.extend(shortcuts::controls(state, page)),
     }

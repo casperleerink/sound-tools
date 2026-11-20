@@ -617,3 +617,41 @@ fn a_step_that_runs_shows_its_words_on_the_working_line() {
     assert!(window.find("agent-working-1").is_none());
     assert!(window.find("agent-worked-for-1").is_some());
 }
+
+#[test]
+fn open_settings_opens_the_settings_page_on_the_agents_and_its_cards_work() {
+    let (_scratch, mut window) = window("agent-no-agent");
+    act(
+        &mut window.state,
+        json!({ "label": sound_agent::OPEN_SETTINGS, "action": "press" }),
+    );
+    redraw(&mut window);
+    let page = window.state.settings.page.as_ref().expect("the page");
+    assert_eq!(page.section, super::super::settings::Section::Agents);
+    let controls = chrome_controls(&window.state);
+    let cards: Vec<&str> = (controls.iter())
+        .map(|control| control.key.as_str())
+        .filter(|key| key.starts_with("agent-"))
+        .collect();
+    assert!(!cards.is_empty(), "the agents' cards list their buttons");
+    for key in cards {
+        assert!(window.find(key).is_some(), "{key} is listed but not drawn");
+    }
+}
+
+#[test]
+fn settings_opens_on_the_agents_whose_fields_take_the_keys_from_the_shortcuts() {
+    let (_scratch, mut window) = window("agent-empty");
+    chord(&mut window, ',');
+    let page = window.state.settings.page.as_ref().expect("the page");
+    assert_eq!(page.section, super::super::settings::Section::Agents);
+    click(&mut window, "agent-services-search");
+    typed(&mut window, " ");
+    chord(&mut window, 'k');
+    assert!(!window.state.playing, "Space typed, not played");
+    assert!(
+        !window.state.session.transport().keys,
+        "cmd-K is no shortcut there"
+    );
+    assert!(window.state.settings.page.is_some());
+}
