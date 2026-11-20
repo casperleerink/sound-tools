@@ -7,7 +7,9 @@ use serde::{Deserialize, Deserializer};
 use sound_core::Clock;
 
 use crate::readout;
+
 pub use crate::tools::Unit;
+pub use sound_core::facts::unit_of_name as field_unit;
 
 /// How close an ease comes before it is there, or a smooth one would move for a minute.
 const SETTLED: f64 = 1e-6;
@@ -461,25 +463,6 @@ fn readout(value: f32, unit: Option<Unit>) -> String {
         Some(Unit::Pitch) => pitch_readout(f64::from(value)),
         Some(Unit::Pan) => readout::pan(value),
         None => readout::short(value),
-    }
-}
-
-/// The unit the number `field` of a record from `min` to `max` reads in, as `sdk/fields.ts`
-/// names it: the unit its name ends in, a pan, or a share of 0 to 1 as a percent.
-pub fn field_unit(field: &str, min: f64, max: f64) -> Option<&'static str> {
-    const UNITS: [(&str, &str); 5] = [
-        ("_hz", "hz"),
-        ("_db", "db"),
-        ("_ms", "ms"),
-        ("_seconds", "seconds"),
-        ("_percent", "percent"),
-    ];
-    let unit = UNITS.iter().find(|(end, _)| field.ends_with(end));
-    match unit {
-        Some((_, unit)) => Some(unit),
-        None if field.rsplit('.').next() == Some("pan") => Some("pan"),
-        None if min == 0.0 && max == 1.0 => Some("percent"),
-        None => None,
     }
 }
 

@@ -7,6 +7,7 @@
 mod binding;
 mod composite;
 mod editing;
+mod feeds;
 mod generated;
 mod history;
 mod json_tools;

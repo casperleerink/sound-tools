@@ -27,6 +27,7 @@ mod processor;
 use schemars::JsonSchema;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
+use sound_core::feeds::{AUDIBLE_OCTAVES, db, hz_at};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
     RegistryError, Scale, State, lanes, ranges,
@@ -321,7 +322,13 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<EqState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Eq::AUTOMATION.parameters());
+        .schema(Eq::AUTOMATION.parameters())
+        .feed("response", "Its response: pairs of x, octaves above 20 Hz (0 to 9.97, 20 kHz), and y, the gain of a steady sine in dB; all of it unless the binding shows another range.", |state, context| {
+            let rate = context.sample_rate as f32;
+            context.curve(AUDIBLE_OCTAVES, 157, |octaves| {
+                db(response(state, hz_at(octaves), rate))
+            })
+        });
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

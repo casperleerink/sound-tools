@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sound_core::{
     BehaviourContext, BehaviourError, EventInput, EventTap, InputEndpoint, JsonTool, JsonToolDoc,
-    Ports, PrepareConfig, ProcessContext, Processor, State, Tappable, ToolSchema, Watch,
+    Ports, PrepareConfig, ProcessContext, Processor, Registry, State, Tappable, ToolSchema, Watch,
 };
 use sound_notes::{NOTES_INPUT, NoteEvent, Schedule};
 use sound_signals::Number;
@@ -90,6 +90,61 @@ pub(crate) fn json_tool() -> JsonTool {
         required_children: Vec::new(),
         end: None,
     }
+}
+
+/// Its feeds and facts: the input it records and the take that runs, as the window's input
+/// gives them, see [`sound_core::feeds::Sources`].
+pub(crate) fn register_feeds(registry: &mut Registry) {
+    registry
+        .shows::<RecorderState>()
+        .feed(
+            "input",
+            "The level now of the audio input channels it records, 0 to 1; 0 while the input is closed.",
+            |_, context| {
+                (context.sources())
+                    .input_level(context.instance())
+                    .unwrap_or(0.0)
+            },
+        )
+        .feed(
+            "take",
+            "The sound of the take that runs: the loudest sample, 0 to 1, of each of `points` equal stretches (96 unless the binding says) across the ticks after it began the binding shows (up to now unless it says); empty while none runs.",
+            |_, context| {
+                let (sources, id) = (context.sources(), context.instance());
+                let Some(from) = sources.taking(id) else {
+                    return Vec::new();
+                };
+                let now = context.tick.0.saturating_sub(from.0) as f64;
+                let [from, to] = context.range_or([0.0, now]);
+                (sources.take_wave(id, from, to, context.points_or(96))).unwrap_or_default()
+            },
+        )
+        .feed(
+            "notes",
+            "The notes of the take that runs, four numbers each: ticks after it began, pitch, length in ticks (up to now while held), 1; empty while none runs.",
+            |_, context| {
+                (context.sources())
+                    .take_notes(context.instance())
+                    .unwrap_or_default()
+            },
+        )
+        .facts(|_, context| Facts {
+            taking: (context.sources().taking(context.instance()))
+                .map(|from| Taking { from: from.0 }),
+        });
+}
+
+/// What a view of a recorder knows that is no record.
+#[derive(Serialize, JsonSchema)]
+struct Facts {
+    /// The take that runs; null while none does.
+    taking: Option<Taking>,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct Taking {
+    /// The tick it began at.
+    from: u64,
 }
 
 /// The record of the recorder, for the SDK.

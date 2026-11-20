@@ -47,6 +47,18 @@ pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};
 pub use timeline::timeline_state;
 pub use tools::forget_gone;
 
+/// Registers the feeds and facts of the tools this crate defines, and the keys down on the
+/// sound of every instance. Call it before the project opens.
+pub fn register_feeds(registry: &mut Registry) {
+    region::register_feeds(registry);
+    recorder::register_feeds(registry);
+    registry.every_instance_feed(
+        "sounding",
+        "1 for each of the 128 keys down on its sound now, else 0: `sounding.60` is middle C.",
+        next::sounding,
+    );
+}
+
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
 use crate::tools::{Sounds, ToolInfo, Tools};
 

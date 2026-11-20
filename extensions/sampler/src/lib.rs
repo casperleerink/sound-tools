@@ -31,6 +31,7 @@ pub mod instrument;
 pub mod library;
 mod processor;
 pub mod sfz;
+mod shown;
 
 use std::sync::Arc;
 
@@ -318,7 +319,18 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         .behaviour(apply)
         .rebinds_on_assets(sound_media::AUDIO_FOLDER)
         .rebinds_on_assets(INSTRUMENTS_FOLDER)
-        .schema(Sampler::AUTOMATION.parameters());
+        .schema(Sampler::AUTOMATION.parameters())
+        .feed(
+            "position",
+            "Where the last note it started is now, in seconds of its file; 0 before one.",
+            |_, context| context.peaks(POSITION)[0],
+        )
+        .feed(
+            "wave",
+            "The loudest sample, 0 to 1, of each of `points` equal stretches (96 unless the binding says) of its file, across the seconds of it the binding shows (all of it unless it says); empty without a file or while it is read.",
+            shown::wave,
+        )
+        .facts(shown::Facts::of);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     registry.agent_doc(EXTENSION, SFZ_AGENT_DOC)?;
     registry.agent_doc(EXTENSION, LIBRARY_AGENT_DOC)?;

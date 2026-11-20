@@ -21,11 +21,11 @@ use serde::de::Error as _;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sound_core::{
-    AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, InstanceId, OutputEndpoint, Project,
-    ProjectError, Registry, RegistryError, Scale, State, ranges,
+    AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
+    RegistryError, Scale, State, ranges,
 };
 use sound_media::AudioAsset;
-use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Pitch, Velocity};
+use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Pitch};
 
 use processor::{DrumPad, DrumUpdate};
 pub use processor::{FADE_SECONDS, RAMP_SECONDS, VOICES, pad_gains};
@@ -35,17 +35,6 @@ pub use sounds::{
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "drum-pad";
-
-/// Plays pad `pad`, 0 to 15, of the Drum pad `id` now, as a click on it does. Not an edit:
-/// nothing is saved.
-pub fn hit(
-    project: &mut Project,
-    id: &InstanceId,
-    pad: usize,
-    velocity: Velocity,
-) -> Result<(), ProjectError> {
-    project.send::<DrumPad>(id, PROCESSOR, DrumUpdate::hit(pad, velocity))
-}
 
 /// How many pads there are: a 4 by 4 grid.
 pub const PADS: usize = 16;
@@ -555,18 +544,75 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         .tool::<DrumPadState>(EXTENSION)?
         .behaviour(apply)
         .rebinds_on_assets(sound_media::AUDIO_FOLDER)
-        .schema(DrumPad::AUTOMATION.parameters());
+        .schema(DrumPad::AUTOMATION.parameters())
+        .feed(
+            "levels",
+            "How loud each pad sounded since the last frame, 0 to 1: 16 numbers, pad 0 (note 36, bottom left) first.",
+            |_, context| {
+                (0..PADS)
+                    .map(|pad| {
+                        let [left, right] = context.peaks(&peaks_name(pad));
+                        left.max(right)
+                    })
+                    .collect::<Vec<f32>>()
+            },
+        )
+        .facts(|state, context| Facts::of(state, context.assets()));
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
 
-/// The name of the peaks of pad `pad`, which say how loud it sounds for the card.
-pub fn peaks_name(pad: usize) -> String {
-    format!("pad-{}", note_of(pad))
+/// What its card knows that is no record.
+#[derive(Serialize, JsonSchema)]
+struct Facts {
+    /// Pad 0 (note 36, bottom left) first.
+    pads: Vec<PadFacts>,
+    /// The sounds of the kit, in the order a list shows them.
+    sounds: Vec<SoundFacts>,
 }
 
-/// The name of the processor, for [`sound_core::Project::send`]: a click on a pad plays it.
-pub const PROCESSOR: &str = "drums";
+#[derive(Serialize, JsonSchema)]
+struct PadFacts {
+    note: u8,
+    /// What the card writes on it, see [`Pad::name`].
+    name: String,
+    /// The file it plays; null for a sound of the kit.
+    file: Option<sound_media::FileFacts>,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct SoundFacts {
+    /// As a record writes it.
+    value: &'static str,
+    name: &'static str,
+}
+
+impl Facts {
+    fn of(state: &DrumPadState, assets: &sound_core::Assets) -> Self {
+        let pads = (state.pads.iter().enumerate())
+            .map(|(pad, settings)| PadFacts {
+                note: note_of(pad),
+                name: settings.name(pad),
+                file: match &settings.source {
+                    Source::Sample(asset) => Some(sound_media::FileFacts::of(assets, asset)),
+                    Source::Sound(_) => None,
+                },
+            })
+            .collect();
+        let sounds = (Sound::ALL.into_iter())
+            .map(|sound| SoundFacts {
+                value: sound.key(),
+                name: sound.name(),
+            })
+            .collect();
+        Self { pads, sounds }
+    }
+}
+
+/// The name of the peaks of pad `pad`, which say how loud it sounds.
+fn peaks_name(pad: usize) -> String {
+    format!("pad-{}", note_of(pad))
+}
 
 /// Runs for every valid state, from every source. It makes no sound and reads no file: the
 /// sound each pad needs is taken from those made before, or asked of the thread that makes them,
@@ -592,7 +638,7 @@ fn apply(state: &DrumPadState, context: &mut BehaviourContext<'_>) -> Result<(),
     for problem in problems {
         context.problem(problem);
     }
-    let drums = context.processor(PROCESSOR, || DrumPad::new(peaks))?;
+    let drums = context.processor("drums", || DrumPad::new(peaks))?;
     context.update(drums, DrumUpdate::kit(pads, state))?;
     context.input(NOTES_INPUT, InputEndpoint::new(drums, DrumPad::NOTES));
     context.automation(drums, DrumPad::AUTOMATION);

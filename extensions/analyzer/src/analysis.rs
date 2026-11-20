@@ -1,4 +1,4 @@
-//! What the card shows, worked out on the interface thread from the frames the analyzer wrote
+//! What the feeds show, worked out on the thread that draws from the frames the analyzer wrote
 //! into its scope: the spectrum, the momentary loudness and the note. The measuring is that of
 //! `--analyze` ([`sound_media::analysis`]), so the card and an agent's report agree. The peaks
 //! of the meter come from the processor's `Peaks`, which miss no sample.
@@ -7,15 +7,15 @@ use std::ops::Range;
 
 use sound_core::ValueRange;
 use sound_media::analysis::{
-    Momentary, Pitch, PitchSettings, PitchTracker, PowerSpectrum, WINDOW, lufs, nearest_note,
+    Momentary, Pitch, PitchSettings, PitchTracker, PowerSpectrum, WINDOW, lufs,
 };
 
 /// Columns of the spectrum across the display, from 20 Hz to 20 kHz as a filter's response.
-pub const COLUMNS: usize = 96;
+pub(crate) const COLUMNS: usize = 96;
 /// Where a frequency is across the display: on a scale of ratios, as a filter's response.
 const RESPONSE_ACROSS: ValueRange = ValueRange::logarithmic(20., 20_000.);
 /// The bottom of the spectrum, in dB. Under it is silence.
-pub const FLOOR_DB: f32 = -90.0;
+pub(crate) const FLOOR_DB: f32 = -90.0;
 /// A column falls this fast once the sound in it is gone, so the spectrum moves calmly.
 const FALL_DB_PER_SECOND: f32 = 30.0;
 /// How long a note stays once the sound has none, so it does not blink between notes.
@@ -33,13 +33,13 @@ const SILENCE: [[f32; 2]; 1024] = [[0.0; 2]; 1024];
 
 /// What the card shows, besides the peaks.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Reading {
+pub(crate) struct Reading {
     /// The level of each column of the spectrum in dB, from [`FLOOR_DB`] up.
-    pub spectrum: [f32; COLUMNS],
+    pub(crate) spectrum: [f32; COLUMNS],
     /// The loudness of the last 400 ms, in LUFS. `None` for silence.
-    pub loudness: Option<f32>,
+    pub(crate) loudness: Option<f32>,
     /// The note the sound plays, a MIDI note number with its fraction: 69 is A4 at 440 Hz.
-    pub note: Option<f64>,
+    pub(crate) note: Option<f64>,
 }
 
 impl Default for Reading {
@@ -52,13 +52,7 @@ impl Default for Reading {
     }
 }
 
-/// The name of the nearest note and how far off it a note is, in cents: `("A4", 3)`.
-pub fn tuning(note: f64) -> (String, i64) {
-    let (nearest, cents) = nearest_note(note);
-    (sound_notes::Pitch::nearest(nearest).name(), cents)
-}
-
-pub struct Analysis {
+pub(crate) struct Analysis {
     rate: f32,
     /// The last [`WINDOW`] frames of each channel, oldest first.
     history: [Vec<f32>; 2],
@@ -80,7 +74,7 @@ pub struct Analysis {
 }
 
 impl Analysis {
-    pub fn new(sample_rate: u32) -> Self {
+    pub(crate) fn new(sample_rate: u32) -> Self {
         let rate = f64::from(sample_rate);
         let bin_hz = rate / WINDOW as f64;
         let bins = WINDOW / 2 + 1;
@@ -110,12 +104,12 @@ impl Analysis {
         }
     }
 
-    pub fn reading(&self) -> &Reading {
+    pub(crate) fn reading(&self) -> &Reading {
         &self.reading
     }
 
     /// Hears the frames that came since the last call.
-    pub fn hear(&mut self, frames: &[[f32; 2]]) {
+    pub(crate) fn hear(&mut self, frames: &[[f32; 2]]) {
         if !frames.is_empty() {
             (self.waiting, self.silence) = (0.0, 0);
             self.take(frames);
@@ -161,7 +155,7 @@ impl Analysis {
 
     /// The spectrum and the note of the last frames heard, `seconds` after the last look.
     /// Whether that changed the reading.
-    pub fn look(&mut self, seconds: f32) -> bool {
+    pub(crate) fn look(&mut self, seconds: f32) -> bool {
         let before = self.reading.clone();
         if !self.heard {
             self.hear_silence(seconds);
@@ -230,13 +224,13 @@ mod tests {
     }
 
     #[test]
-    fn the_tuner_reads_440_hz_as_a4_and_a_sharp_note_in_cents() {
+    fn the_tuner_reads_440_hz_as_a4_and_a_sharp_note_with_its_cents() {
         let note = analyse(&sine(440.0, 0.5, 0.5)).reading.note.unwrap();
-        assert_eq!(tuning(note), ("A4".to_string(), 0));
+        assert!((note - 69.0).abs() < 0.005, "{note}");
         // 30 cents above C3.
         let hz = 440.0 * 2_f64.powf((48.3 - 69.0) / 12.0);
         let note = analyse(&sine(hz, 0.5, 0.5)).reading.note.unwrap();
-        assert_eq!(tuning(note), ("C3".to_string(), 30));
+        assert!((note - 48.3).abs() < 0.005, "{note}");
     }
 
     /// EBU Tech 3341: a 1 kHz sine at -23 dBFS in both channels is -23 LUFS.

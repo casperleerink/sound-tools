@@ -16,6 +16,7 @@ mod effects;
 mod eq;
 mod events;
 mod export;
+mod feeds;
 mod filter;
 mod latency;
 mod launcher;

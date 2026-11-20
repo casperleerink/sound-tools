@@ -9,6 +9,7 @@ mod backend;
 #[cfg(unix)]
 mod bridge;
 mod clap;
+mod facts;
 mod host;
 #[cfg(target_os = "windows")]
 mod library;
@@ -254,9 +255,11 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 };
 
 pub fn register(registry: &mut Registry, plugins: Plugins) -> Result<(), RegistryError> {
+    let shown = plugins.clone();
     registry
         .tool::<PluginRecord>(EXTENSION)?
-        .behaviour(move |state, context| apply(&plugins, state, context));
+        .behaviour(move |state, context| apply(&plugins, state, context))
+        .facts(move |record, context| facts::Facts::of(&shown, record, context.instance()));
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

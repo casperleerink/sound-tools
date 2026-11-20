@@ -167,12 +167,38 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
     markdown: include_str!("../agent-doc.md"),
 };
 
+/// The widest place of [`image`], twice as wide as the speakers.
+const WIDEST: f32 = 2.0;
+
+/// See the feed `image`. A column of the matrix is where one input channel goes; it is heard
+/// at the part of it on the right less the part on the left.
+fn image(state: &UtilityState) -> Vec<f32> {
+    let [[left_left, left_right], [right_left, right_right]] = matrix(state);
+    let place = |left: f32, right: f32| {
+        // Infinite where the two sides cancel: as wide as it shows.
+        let heard = left != 0.0 || right != 0.0;
+        heard.then(|| ((right - left) / (left + right)).clamp(-WIDEST, WIDEST))
+    };
+    let places = [place(left_left, right_left), place(left_right, right_right)];
+    let mut places = places.into_iter().flatten();
+    let Some(first) = places.next() else {
+        return Vec::new();
+    };
+    let (low, high) = places.fold((first, first), |(low, high), x| (low.min(x), high.max(x)));
+    vec![low, high]
+}
+
 /// Registers the utility tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<UtilityState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Utility::AUTOMATION.parameters());
+        .schema(Utility::AUTOMATION.parameters())
+        .feed(
+            "image",
+            "Where its sound is heard in the stereo field: the leftmost and the rightmost place of its input channels, -1 the left speaker, 1 the right, up to ±2 for a sound wider than the speakers. Empty while it sends out nothing.",
+            |state, _| image(state),
+        );
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
