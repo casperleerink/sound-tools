@@ -22,14 +22,17 @@ use sound_signals::{Signals, SignalsUpdate};
 
 pub use crate::bun::Waker;
 use crate::bun::{
-    Answer, Bun, Clock, Event, Played, RecordEdit, Request, Runs, Skipped, Telling, Transport,
-    TransportOp, record_key,
+    Answer, Bun, Clock, Event, Heard, Played, RecordEdit, Request, Runs, Skipped, Telling,
+    Transport, TransportOp, record_key,
 };
 use crate::project::{
     changes_of, control_update, every_instance, find, played, told_to_bun, watch,
 };
-use crate::tools::{Choice, Field, SOUNDING_TAP, ToolInfo, feed_child, feed_processor};
-use crate::{Extensions, FOLDER, Launched};
+use crate::recorder::{ARM, PROCESSOR as RECORDING, RECORD, RECORDER, Recorder, RecorderUpdate};
+use crate::tools::{
+    Choice, Field, NOTES_TAP, SOUNDING_TAP, ToolInfo, feed_child, feed_processor,
+};
+use crate::{Extensions, FOLDER, Launched, NoteMessage};
 
 /// The file of a project's design tokens, in `extensions/`. A project that has one is a project
 /// of the new window: it gets `sdk/view.ts` and its agent docs.
@@ -81,6 +84,17 @@ pub enum Drawn {
     NoCard(String),
 }
 
+/// A take a `recorder` made, for the `onTake` of its parent: the record of the child that would
+/// keep it, a `timeline` of notes or a `region` of sound, whose files are written.
+#[derive(Clone, Debug)]
+pub struct Take {
+    pub recorder: InstanceId,
+    /// A name of the files it wrote, for the child that keeps it.
+    pub name: String,
+    pub tool: &'static str,
+    pub state: Value,
+}
+
 pub struct Tools {
     folder: PathBuf,
     opening: u64,
@@ -123,6 +137,13 @@ pub struct Tools {
     loads: u64,
     /// How many trees came, for a test that a frame runs no view.
     view_runs: u64,
+    /// The clock of the last step of the control loops, which other requests carry too.
+    clock: Option<Clock>,
+    /// Takes that ended while no Bun ran, for the next one to keep.
+    held_takes: Vec<Take>,
+    /// The tap of what reached the notes of each instance whose tool has `onNotes`, and how
+    /// far it was read.
+    taps: HashMap<InstanceId, (EventTap<NoteEvent>, u64)>,
     waker: Waker,
 }
 
@@ -171,6 +192,9 @@ impl Tools {
             performed_on: BTreeSet::new(),
             loads: 0,
             view_runs: 0,
+            clock: None,
+            held_takes: Vec::new(),
+            taps: HashMap::new(),
             waker,
         };
         if let Some(bun) = bun {
@@ -339,6 +363,7 @@ impl Tools {
                 ..Transport::default()
             },
         };
+        self.clock = Some(clock);
         let told = self.told_transport.map(|told| told.followed());
         if told != Some(clock.transport.followed()) && bun.send(&Request::Clock { clock }) {
             self.told_transport = Some(clock.transport);
@@ -406,7 +431,106 @@ impl Tools {
             self.report(project);
         }
         self.tell(project);
+        self.hear_taps(project);
         changed
+    }
+
+    /// Gives `take` to the `onTake` of the parent of its recorder. While no Bun runs it waits
+    /// for the next one. Gives what to tell the composer: why it was not kept, or that it waits.
+    pub fn take(&mut self, project: &mut Project, take: Take) -> Option<String> {
+        let parent = take.recorder.parent();
+        let keeps = (parent.as_ref())
+            .and_then(|parent| self.info_of(project, parent))
+            .is_some_and(|info| info.on_take);
+        let (Some(parent), true) = (parent, keeps) else {
+            return Some(format!(
+                "The take of {} was not kept: nothing keeps what it records yet. Ask the agent for it.",
+                take.recorder
+            ));
+        };
+        self.tell(project);
+        let request = Request::Take {
+            instance: played(project, &parent),
+            recorder: take.recorder.name(),
+            name: &take.name,
+            tool: take.tool,
+            state: &take.state,
+            clock: self.clock_now(project),
+        };
+        if self.bun.as_ref().is_some_and(|bun| bun.send(&request)) {
+            return None;
+        }
+        let notice = format!(
+            "The take of {} waits for the code of the project to run again.",
+            take.recorder
+        );
+        self.held_takes.push(take);
+        Some(notice)
+    }
+
+    /// The clock of the last step of the control loops, or the start of the song before one.
+    fn clock_now(&self, project: &Project) -> Clock {
+        self.clock.unwrap_or_else(|| Clock {
+            time: 0.0,
+            transport: Transport {
+                bpm: project.project_file().tempo_map.change_at(Ticks(0)).bpm.bpm(),
+                bar: 1,
+                beat: 1,
+                ..Transport::default()
+            },
+        })
+    }
+
+    /// Gives what reached the notes of every instance whose tool has `onNotes` since the last
+    /// poll to that code. A tap written over before it was read is a problem of its tool. While
+    /// no Bun runs it waits, so what plays during a reload is heard once the new Bun is there.
+    fn hear_taps(&mut self, project: &mut Project) {
+        let Some(bun) = self.bun.clone() else {
+            return;
+        };
+        let taps: Vec<(InstanceId, EventTap<NoteEvent>)> = (project.instances())
+            .filter(|(_, tool)| find(&self.tools, tool).is_some_and(|info| info.notes))
+            .filter_map(|(id, _)| Some((id.clone(), project.tap::<NoteEvent>(id, NOTES_TAP)?)))
+            .collect();
+        let mut read = std::mem::take(&mut self.taps);
+        let rate = f64::from(project.clock().sample_rate());
+        let mut heard = Vec::new();
+        for (id, tap) in taps {
+            // A new tap, of a new instance or of a tool that hears notes again, from its start.
+            let from = (read.remove(&id))
+                .filter(|(kept, _)| kept.is(&tap))
+                .map_or(0, |(_, from)| from);
+            heard.clear();
+            let tapped = tap.read(from, &mut heard);
+            self.taps.insert(id.clone(), (tap, tapped.next));
+            if tapped.missed > 0 {
+                let message = format!(
+                    "onNotes missed {} note events: the window was too busy to hear them in time",
+                    tapped.missed
+                );
+                if let Some(problem) = self.problem_of(project, &id, &message)
+                    && !self.problems.contains(&problem)
+                {
+                    self.problems.push(problem);
+                    self.report(project);
+                }
+            }
+            if heard.is_empty() {
+                continue;
+            }
+            let events: Vec<Heard> = (heard.iter())
+                .map(|(frame, event)| Heard {
+                    event: NoteMessage::from(*event),
+                    at: *frame as f64 / rate,
+                })
+                .collect();
+            self.tell(project);
+            bun.send(&Request::Notes {
+                instance: played(project, &id),
+                events: &events,
+                clock: self.clock_now(project),
+            });
+        }
     }
 
     /// Waits until Bun did all it was told and the window heard it, and polls, until nothing
@@ -539,8 +663,13 @@ impl Tools {
         });
         self.tools = tools.into_iter().map(Rc::new).collect();
         self.problems = problems;
-        self.report(project);
         self.listen(bun);
+        for take in std::mem::take(&mut self.held_takes) {
+            if let Some(notice) = self.take(project, take) {
+                self.problems.push(crate::folder_problem(notice));
+            }
+        }
+        self.report(project);
         true
     }
 
@@ -652,8 +781,15 @@ impl Tools {
                 value,
                 at,
             } => {
-                let at = at.map(|at| frame_of(project, at));
                 let played = self.played_on(project, &instance, child.as_deref());
+                if let Ok(id) = &played
+                    && project.tool_of(id) == Some(RECORDER)
+                {
+                    let sent = record_on(project, id, &name, value, at);
+                    self.performed(project, &instance, child.as_deref(), sent);
+                    return false;
+                }
+                let at = at.map(|at| frame_of(project, at));
                 if let Ok(id) = &played {
                     self.performed_on.insert((id.clone(), None));
                 }
@@ -1175,6 +1311,35 @@ fn drawn(mut tree: Value, before: Option<Drawn>, bun: u64) -> Drawn {
     }
     let root = Rc::new(tree.get_mut("root").map(Value::take).unwrap_or_default());
     Drawn::View { root, memos }
+}
+
+/// Turns the input `record` or `arm` of the recorder `id` on or off as `value` says, as a
+/// performer does: nothing is saved.
+fn record_on(
+    project: &mut Project,
+    id: &InstanceId,
+    name: &str,
+    value: Option<f32>,
+    at: Option<f64>,
+) -> Result<(), String> {
+    let update = match (name, value, at) {
+        (RECORD, Some(value), at) => {
+            let at = at.map(|at| performed_frame(project, Some(at)));
+            RecorderUpdate::Record(value > 0.0, at)
+        }
+        (ARM, Some(value), None) => RecorderUpdate::Arm(value > 0.0),
+        (ARM, Some(_), Some(_)) => {
+            return Err(
+                "is a recorder armed with an `at`: arming opens the input at once, so send `arm` without one".to_string(),
+            );
+        }
+        _ => {
+            return Err(format!(
+                "is a recorder: it takes only the number inputs `record` and `arm`, not {name:?}"
+            ));
+        }
+    };
+    (project.send::<Recorder>(id, RECORDING, update)).map_err(|error| error.to_string())
 }
 
 /// The frame of engine time at `seconds` of it.

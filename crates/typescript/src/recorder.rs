@@ -142,10 +142,6 @@ pub(crate) struct Recorder {
 /// How many sends for later a recorder or a timeline keeps: past that one plays at once.
 pub(crate) const MAX_WAITING: usize = 16;
 
-#[allow(
-    dead_code,
-    reason = "the window uses it once it does all the old app did"
-)]
 pub(crate) enum RecorderUpdate {
     /// A performer turned `record` on or off: from the frame of engine time it names, or now.
     Record(bool, Option<u64>),
