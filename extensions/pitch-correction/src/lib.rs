@@ -277,7 +277,22 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<PitchCorrectionState>(EXTENSION)?
         .behaviour(apply)
-        .schema(PitchCorrection::AUTOMATION.parameters());
+        .schema(PitchCorrection::AUTOMATION.parameters())
+        .feed(
+            "heard",
+            "The note it hears, a MIDI note number with its fraction (69 is A4 at 440 Hz); 0 while it hears none.",
+            |_, context| context.watched(Meters::HEARD),
+        )
+        .feed(
+            "target",
+            "The note it moves the voice to, a MIDI note number; 0 while it hears none.",
+            |_, context| context.watched(Meters::TARGET),
+        )
+        .feed(
+            "correction",
+            "How far it moves the voice now, in semitones, up positive.",
+            |_, context| context.watched(Meters::CORRECTION),
+        );
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

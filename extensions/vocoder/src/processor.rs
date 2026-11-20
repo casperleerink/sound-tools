@@ -31,8 +31,15 @@ const BINS: usize = SIZE / 2 + 1;
 const MAX_BANDS: usize = 64;
 
 /// Where the bands start and end.
-pub const LOWEST_HZ: f32 = 100.0;
-pub const HIGHEST_HZ: f32 = 12_000.0;
+const LOWEST_HZ: f32 = 100.0;
+const HIGHEST_HZ: f32 = 12_000.0;
+
+/// The lower edge of band `band` of `bands`, the upper one of the band before: they are spaced
+/// evenly in octaves.
+pub(crate) fn band_edge_hz(bands: usize, band: usize) -> f32 {
+    let step = (HIGHEST_HZ / LOWEST_HZ).powf(1.0 / bands as f32);
+    LOWEST_HZ * step.powi(band as i32)
+}
 
 /// The track's level in a band is taken as at least this, -60 dB: a band where the track is
 /// quieter is not raised to the level of the voice, so its noise stays down.
@@ -193,14 +200,13 @@ impl Layout {
         }
         (self.bands, self.formant, self.sample_rate) = (bands, formant, sample_rate);
         let bin_hz = sample_rate / SIZE as f32;
-        let step = (HIGHEST_HZ / LOWEST_HZ).powf(1.0 / bands as f32);
         // Each band is at least one bin wide: at the bottom a band is narrower than a bin.
         let mut from = 0;
         for (band, range) in self.track.iter_mut().take(bands).enumerate() {
             let to = match band + 1 == bands {
                 true => BINS,
                 false => {
-                    let edge = LOWEST_HZ * step.powi(band as i32 + 1) / bin_hz;
+                    let edge = band_edge_hz(bands, band + 1) / bin_hz;
                     (edge.round() as usize).max(from + 1).min(BINS - 1)
                 }
             };

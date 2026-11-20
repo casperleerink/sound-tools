@@ -149,12 +149,47 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
     markdown: include_str!("../agent-doc.md"),
 };
 
+/// The levels its curve shows, in dBFS: the range of the threshold.
+const LEVELS: [f64; 2] = [-60.0, 0.0];
+
+/// The curve of a steady sound from `from` to `to` dBFS: down by the range under the threshold,
+/// a step up at it.
+fn transfer(state: &GateState, [from, to]: [f64; 2]) -> Vec<f32> {
+    let (from, to) = (from as f32, to as f32);
+    let threshold = state.threshold_db.clamp(from, to);
+    let out = |input: f32, heard: f32| input + static_gain_db(state, heard);
+    [
+        (from, out(from, from)),
+        (threshold, out(threshold, threshold.next_down())),
+        (threshold, out(threshold, threshold)),
+        (to, out(to, to)),
+    ]
+    .into_iter()
+    .flat_map(|(input, output)| [input, output])
+    .collect()
+}
+
 /// Registers the gate tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<GateState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Gate::AUTOMATION.parameters());
+        .schema(Gate::AUTOMATION.parameters())
+        .feed(
+            "level",
+            "The loudest it heard since the last frame, in dBFS (-120 for silence).",
+            |_, context| context.peak_db(Meters::LEVEL),
+        )
+        .feed(
+            "reduction",
+            "The most it turned the sound down since the last frame, in dB, 0 or more.",
+            |_, context| context.peaks(Meters::REDUCTION)[0],
+        )
+        .feed(
+            "transfer",
+            "Its curve, four corners: pairs of x, the level in, and y, the level out of a steady sound, both dBFS; x from -60 to 0 unless the binding shows another range.",
+            |state, context| transfer(state, context.range_or(LEVELS)),
+        );
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

@@ -18,6 +18,22 @@ use crate::clock::{Clock, Ticks};
 use crate::event_tap::{EventTap, Tappable};
 use crate::scope::Scope;
 
+/// What a level feed in dB gives for silence, which has no level in dB.
+pub const SILENT_DB: f32 = -120.0;
+
+/// An amplitude in dBFS, [`SILENT_DB`] or more.
+pub fn db(amplitude: f32) -> f32 {
+    (20.0 * amplitude.log10()).max(SILENT_DB)
+}
+
+/// What a response feed spans across: octaves above 20 Hz, up to 20 kHz.
+pub const AUDIBLE_OCTAVES: [f64; 2] = [0.0, 9.965_784];
+
+/// The frequency `octaves` above 20 Hz: where a point of a response feed is.
+pub fn hz_at(octaves: f32) -> f32 {
+    20.0 * octaves.exp2()
+}
+
 /// What a feed gives for one frame.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Feed {
@@ -171,6 +187,13 @@ impl<'a> FeedContext<'a> {
         })
     }
 
+    /// The loudest of both channels of [`Self::peaks`] `name`, in dBFS, [`SILENT_DB`] for
+    /// silence.
+    pub fn peak_db(&self, name: &str) -> f32 {
+        let [left, right] = self.peaks(name);
+        db(left.max(right))
+    }
+
     /// The watch the instance keeps as `name`, 0 without one.
     pub fn watched(&self, name: &str) -> f32 {
         self.project.watched(self.instance, name).unwrap_or(0.0)
@@ -250,6 +273,13 @@ impl<'a> FeedContext<'a> {
         let points = self.points_or(points).max(2);
         let step = (to - from) / (points - 1) as f64;
         (0..points).map(move |point| from + step * point as f64)
+    }
+
+    /// A curve as pairs of `x, y`: `y` of each place of [`Self::across`].
+    pub fn curve(&self, default: [f64; 2], points: usize, y: impl Fn(f32) -> f32) -> Vec<f32> {
+        (self.across(default, points))
+            .flat_map(|x| [x as f32, y(x as f32)])
+            .collect()
     }
 }
 

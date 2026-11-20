@@ -20,10 +20,12 @@ mod processor;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sound_core::feeds::db;
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
     RegistryError, Scale, State, ranges,
 };
+use sound_dsp::amplitude;
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
 pub use processor::{LATENCY, Saturator, auto_gain, response, transfer};
@@ -152,7 +154,21 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<SaturatorState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Saturator::AUTOMATION.parameters());
+        .schema(Saturator::AUTOMATION.parameters())
+        .feed(
+            "transfer",
+            "Its curve: pairs of x, the level of a steady sound in, and y, its level out, both dBFS; x from -48 to 6 unless the binding shows another range.",
+            |state, context| {
+                context.curve([-48.0, 6.0], 61, |input| {
+                    db(transfer(state, amplitude(input)).abs())
+                })
+            },
+        )
+        .feed(
+            "auto_gain",
+            "What it turns the saturated sound down by so a sine at -12 dBFS keeps its level, in dB.",
+            |state, _| db(auto_gain(state.curve, state.drive_db)),
+        );
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
