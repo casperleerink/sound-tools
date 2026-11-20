@@ -31,7 +31,10 @@ fn order(state: &State) -> Value {
 
 /// The middle of the element `key`'s drawn rect, from its left by `across` of its width.
 fn point(window: &rune::Runtime<State>, key: &str, across: f32) -> (f32, f32) {
-    let [x, y, w, h] = window.presented(key).unwrap_or_else(|| panic!("no {key}")).0;
+    let [x, y, w, h] = window
+        .presented(key)
+        .unwrap_or_else(|| panic!("no {key}"))
+        .0;
     (x + w * across, y + h / 2.0)
 }
 
@@ -82,7 +85,9 @@ fn level(window: &mut rune::Runtime<State>, from: f64, seconds: f64) -> f64 {
     for step in 1..=(seconds * 60.0) as u32 {
         frame(state, from + f64::from(step) / 60.0);
         let levels = state.lives.levels();
-        let db = (levels.iter()).find(|(name, _)| name == "song/t00/mix").map(|(_, db)| *db);
+        let db = (levels.iter())
+            .find(|(name, _)| name == "song/t00/mix")
+            .map(|(_, db)| *db);
         loudest = loudest.max(db.unwrap_or(f64::NEG_INFINITY));
     }
     state.session.background(|project| project.engine().stop());
@@ -91,7 +96,8 @@ fn level(window: &mut rune::Runtime<State>, from: f64, seconds: f64) -> f64 {
 
 #[test]
 fn power_off_on_an_effect_that_mutes_lets_the_track_sound() {
-    let (_scratch, mut window) = with_effects(&[("mute", r#"{"tool": "utility", "state": {"mute": true}}"#)]);
+    let (_scratch, mut window) =
+        with_effects(&[("mute", r#"{"tool": "utility", "state": {"mute": true}}"#)]);
     let muted = level(&mut window, 0.0, 1.0);
     assert!(muted < -90.0, "{muted}");
     // Power shows while the pointer is on the card.
