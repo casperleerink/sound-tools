@@ -38,6 +38,7 @@ use crate::project::{
     changes_of, control_update, every_instance, find, played, told_to_bun, watch,
 };
 use crate::recorder::{ARM, PROCESSOR as RECORDING, RECORD, RECORDER, Recorder, RecorderUpdate};
+use crate::timeline::{self, Timeline, TimelineUpdate};
 use crate::tools::{Choice, Field, NOTES_TAP, SOUNDING_TAP, ToolInfo, feed_child, feed_processor};
 use crate::{Extensions, FOLDER, Launched, NoteMessage};
 
@@ -989,10 +990,16 @@ impl Tools {
                 at,
             } => {
                 let played = self.played_on(project, &instance, child.as_deref());
-                if let Ok(id) = &played
-                    && project.tool_of(id) == Some(RECORDER)
-                {
-                    let sent = record_on(project, id, &name, value, at);
+                let performed = match &played {
+                    Ok(id) if project.tool_of(id) == Some(RECORDER) => {
+                        Some(record_on(project, id, &name, value, at))
+                    }
+                    Ok(id) if project.tool_of(id) == Some(timeline::NAME) => {
+                        Some(launch_on(project, id, &name, value, at))
+                    }
+                    _ => None,
+                };
+                if let Some(sent) = performed {
                     self.performed(project, &instance, child.as_deref(), sent);
                     return false;
                 }
@@ -1346,11 +1353,11 @@ impl Tools {
         path: &str,
     ) -> Result<Vec<u8>, String> {
         let child = self.child_of(project, instance, path)?;
-        let state = (project.tool_of(&child) == Some(crate::timeline::NAME))
+        let state = (project.tool_of(&child) == Some(timeline::NAME))
             .then(|| crate::project::state_of(project, &child))
             .flatten()
             .ok_or_else(|| format!("{path:?}, which is no timeline of {instance}"))?;
-        let (clip, title) = crate::timeline::timeline_clip(&state)
+        let (clip, title) = timeline::timeline_clip(&state)
             .map_err(|error| format!("{path:?}, which cannot play: {error}"))?;
         let tempo_map = &project.project_file().tempo_map;
         let bpm = tempo_map.change_at(clip.start).bpm.bpm();
@@ -1749,6 +1756,25 @@ fn drawn(mut tree: Value, before: Option<Drawn>, bun: u64) -> Drawn {
     }
     let root = Rc::new(tree.get_mut("root").map(Value::take).unwrap_or_default());
     Drawn::View { root, memos }
+}
+
+/// Starts or stops the timeline `id` as a number into its input `launch` does, now or at the
+/// engine time `at`: nothing is saved.
+fn launch_on(
+    project: &mut Project,
+    id: &InstanceId,
+    name: &str,
+    value: Option<f32>,
+    at: Option<f64>,
+) -> Result<(), String> {
+    let Some(value) = value.filter(|_| name == timeline::LAUNCH) else {
+        return Err(format!(
+            "is a timeline: it takes only the number input `launch`, not {name:?}"
+        ));
+    };
+    let at = at.map(|at| performed_frame(project, Some(at)));
+    let update = TimelineUpdate::Launch(timeline::launched(value), at);
+    (project.send::<Timeline>(id, timeline::PROCESSOR, update)).map_err(|error| error.to_string())
 }
 
 /// Turns the input `record` or `arm` of the recorder `id` on or off as `value` says, as a

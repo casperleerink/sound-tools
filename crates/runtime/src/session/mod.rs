@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use plugin_host::Plugins;
 use sound_core::{
-    EngineStatus, InputEndpoint, InstanceId, PlayedLanes, PointId, Project, ProjectEdit,
-    ProjectError, ProjectEvent, Ticks,
+    EngineStatus, InstanceId, PlayedLanes, PointId, Project, ProjectEdit, ProjectError,
+    ProjectEvent, Ticks,
 };
 pub use sound_typescript::next::Waker;
 use sound_typescript::next::{Clock, Transport};
@@ -359,11 +359,6 @@ impl Session {
     pub fn selected_span(&self) -> Option<(Ticks, Ticks)> {
         self.selected()?;
         self.span.filter(|(from, to)| from < to)
-    }
-
-    /// Where live notes go: see [`crate::notes_inputs`].
-    pub fn live_notes(&self) -> Vec<InputEndpoint> {
-        crate::notes_inputs(&self.project, self.selected())
     }
 
     /// The numbers a lane moves of each instance of `shown`, which a hand does not change, by

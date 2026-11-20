@@ -5,8 +5,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
 use midi::{ComputerKeys, Latency, Lost, PortError, Ports};
-use sound_core::{InputEndpoint, InstanceId, Project};
-use sound_notes::NOTES_INPUT;
+use sound_core::{InstanceId, Project};
 
 use super::{Happened, Input, Waker};
 
@@ -31,7 +30,7 @@ impl Input {
     /// Takes what the engine reported about the MIDI input and wires the live notes to where
     /// they go now, see [`Input::poll`].
     pub(super) fn poll_keyboard(&mut self, project: &mut Project, selected: Option<&InstanceId>) {
-        let destinations = notes_inputs(project, selected);
+        let destinations = crate::notes_inputs(project, selected);
         let Some(keyboard) = self.keyboard.as_mut() else {
             return;
         };
@@ -118,28 +117,6 @@ impl Input {
             input.send(played);
         }
     }
-}
-
-/// The `notes` of `selected` or of the nearest parent of it that has them; with nothing
-/// selected, those of every instance at the top that has them, as a parent gives its notes to
-/// each of its children that plays them.
-fn notes_inputs(project: &Project, selected: Option<&InstanceId>) -> Vec<InputEndpoint> {
-    let Some(selected) = selected else {
-        let top = project
-            .instances()
-            .filter(|(id, _)| !id.as_str().contains('/'));
-        return top
-            .filter_map(|(id, _)| project.input_port(id, NOTES_INPUT))
-            .collect();
-    };
-    let mut at = Some(selected.clone());
-    while let Some(id) = at {
-        if let Some(port) = project.input_port(&id, NOTES_INPUT) {
-            return vec![port];
-        }
-        at = id.parent();
-    }
-    Vec::new()
 }
 
 /// The thread that reads every MIDI port of the machine into the keyboard. It ends with this.
