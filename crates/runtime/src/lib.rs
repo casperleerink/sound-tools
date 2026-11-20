@@ -4,8 +4,8 @@
 
 pub mod app;
 pub mod cli;
+pub mod input;
 pub mod log_file;
-pub mod recorder;
 pub mod report;
 pub mod templates;
 pub mod update;
