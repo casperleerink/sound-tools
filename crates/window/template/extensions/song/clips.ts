@@ -1,11 +1,12 @@
 // What the song does to its clips and regions: choose them, add, move, copy, cut, paste,
 // duplicate, delete and resize them, each with the automation under it.
 // The timeline's plane: x in ticks of the song, y in rows of the timeline, its tracks in `order`.
-import type { Dropped, FilledStateOfTool, Frozen, Pointer, StateOfTool } from "../sdk";
+import type { Dropped, FilledStateOfTool, Frozen, Pointer } from "../sdk";
 import { freeName, splitTarget } from "../track";
 import { emptied, laid, laneAt, lift, type AutomationPoint } from "./lanes";
 import { itemAt, itemsOf, nameFrom, rowOfKey, rowsOf, type Child, type Draft, type RowKind, type Song } from "./model";
 import { BAR, barAt, BEAT, cellOf, stepOf, ticksAcross } from "./time";
+import { addInstrumentTrack } from "./tracks";
 
 type Clip = FilledStateOfTool<"timeline">;
 type Region = FilledStateOfTool<"region">;
@@ -266,11 +267,8 @@ export type ClipCommand = "cut" | "copy" | "duplicate" | "delete";
 /** The parts of a MIDI file, as a drop gives them. */
 type Parts = Dropped["parts"];
 
-/** Adds an instrument track called `title` after the others, with `clips` on it: its name. */
-export type AddTrack = (draft: Draft, title: string, clips?: { name: string; state: StateOfTool<"timeline"> }[]) => string;
-
 /** What a view and the keys do to the clips and regions of the song: each change one undo step. */
-export const clipEdits = (song: Song, addTrack: AddTrack) => {
+export const clipEdits = (song: Song) => {
   const { memory } = song;
   const rows = () => rowsOf(song.children, song.state.order);
   const tick = () => Math.round(song.clock.tick);
@@ -457,7 +455,7 @@ export const clipEdits = (song: Song, addTrack: AddTrack) => {
           owner.children.push({ name, tool: "timeline", state: { start, notes: only.notes } });
           added = [`${owner.name}/${name}`];
         } else {
-          added = parts.map((part) => `${addTrack(draft, part.name || "Notes", [{ name: "clip", state: { start, notes: part.notes } }])}/clip`);
+          added = parts.map((part) => `${addInstrumentTrack(draft, part.name || "Notes", [{ name: "clip", state: { start, notes: part.notes } }])}/clip`);
         }
       });
       choose(song, added);

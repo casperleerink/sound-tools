@@ -7,10 +7,10 @@ import { markEdits } from "./marks";
 import type { Song } from "./model";
 import { noteEdits } from "./notes";
 import { regionEdits } from "./regions";
-import { addInstrumentTrack, trackEdits } from "./tracks";
+import { trackEdits } from "./tracks";
 
 export const editsOf = (song: Song) => ({
-  clips: clipEdits(song, addInstrumentTrack),
+  clips: clipEdits(song),
   regions: regionEdits(song),
   /** The notes of the clip `key`, `row/clip`. */
   notes: (key: string) => noteEdits(song, key),
