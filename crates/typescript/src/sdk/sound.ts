@@ -85,7 +85,9 @@ type GraphOutput = { mono: number } | { left: number; right: number };
 /**
  * A stream of samples: one value per sample, per channel, per voice. Combine signals with the
  * methods here and the functions below. A signal used in two places is one: one oscillator
- * heard twice, with one memory.
+ * heard twice, with one memory. Code cannot read one: `if (x)` or `x.eq(1) ? a : b` always
+ * takes the first way. To choose between two signals, compare (1 or 0) and `mix`:
+ * `mix(b, a, x.eq(1))` is `a` where `x` is 1, else `b`.
  */
 export class Signal {
   /** 0 in the sound, else the `spectral` whose bins made it. */

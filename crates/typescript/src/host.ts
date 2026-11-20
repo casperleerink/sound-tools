@@ -1378,7 +1378,7 @@ function checkView(spec: Spec): unknown {
   }
   if (next) {
     const checked = `check ${spec.name}`;
-    if (spec.view) next.host.run(checked, spec.view, { name: spec.name, state, children: [] }, context);
+    if (spec.view) next.host.run(checked, spec.view, { name: spec.name, state, children: [], facts: { title: spec.title, fields: [] } }, context);
     next.host.forget(checked);
     return [];
   }
