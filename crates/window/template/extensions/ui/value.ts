@@ -43,7 +43,7 @@ const top = ({ min, max, step }: Range) => (step && Number.isFinite(min) ? min +
 /** `value` in whole `step`s from `min`, within the range: what every `set`, key and typed value goes through. A fader's is in tenths of a dB. */
 export const fitted = (value: number, range: Range): number => {
   const { min, step, scale } = range;
-  const stepped = scale === "fader" && Number.isFinite(value) ? Math.round(value * 10) / 10 : step && Number.isFinite(value) ? clean(min + Math.round((value - min) / step) * step) : value;
+  const stepped = scale === "fader" && Number.isFinite(value) ? Math.round(value * 10) / 10 : step && Number.isFinite(value) ? clean(min + Math.round((value - min) / step) * step) : Number.isFinite(value) ? clean(value) : value;
   return Math.min(Math.max(stepped, min), top(range));
 };
 

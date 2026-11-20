@@ -1,7 +1,13 @@
 import { h, live, Live, tool, type Child, type Declaration } from "./sdk";
 import { Button } from "./ui/button";
 import { Cell } from "./ui/cell";
-import { Display, displayWidth, DISPLAY_HEIGHT } from "./ui/display";
+import { Bar } from "./ui/bar";
+import { Choice } from "./ui/choice";
+import { Curve } from "./ui/curve";
+import { decibelTicks, Display, displayWidth, drawingOf, DISPLAY_HEIGHT, FREQUENCY, FREQUENCY_TICKS, OCTAVES } from "./ui/display";
+import { Handle } from "./ui/handle";
+import { Readout } from "./ui/readout";
+import { Waveform } from "./ui/waveform";
 import { Dot } from "./ui/dot";
 import { Fader } from "./ui/fader";
 import { control, type NumberLike } from "./ui/field";
@@ -185,7 +191,7 @@ export const gallery = tool({
             <DeviceCard
               id="card"
               title="Filter"
-              display={<Display caption={shown(memory.values.cutoff ?? 0, "hz")}><Curve /></Display>}
+              display={<Display caption={shown(memory.values.cutoff ?? 0, "hz")}><LowPass /></Display>}
               cells={[
                 knob("drive", "Drive", { min: 0, max: 1, unit: "percent" }),
                 knob("mix", "Mix", { min: 0, max: 1, unit: "percent", initial: 1 }),
@@ -197,6 +203,9 @@ export const gallery = tool({
               onExpand={() => (memory.expanded = !memory.expanded)}
             />
             </Frame>
+          </Section>
+          <Section title="Card kit">
+            <CardKit values={memory.values} bound={bound} wave={memory.wave} onWave={(wave) => (memory.wave = wave)} />
           </Section>
           <Section title="Feeds">
             <Feeds />
@@ -247,12 +256,30 @@ const Grid = ({ children }: { children?: Child }) => (
 );
 
 /** A low pass curve, the one bright line of the display, filled softly below. */
-const Curve = () => {
-  const [w, tall] = [displayWidth(4), DISPLAY_HEIGHT];
-  const points: number[] = [];
-  const y = (x: number) => tall * 0.35 + Math.max(0, x - w * 0.55) ** 2 / 90;
-  for (let x = 0; x < w; x += 4) points.push(x, y(x), x + 4, y(x + 4));
-  return <shapes at={[0, 0]} w={w} h={tall} lines={[{ color: "text", width: 1.5, points, fill: "text/5" }]} />;
+const LowPass = () => {
+  const heights = Array.from({ length: 49 }, (_, i) => -(Math.max(0, i - 26) ** 2) / 20);
+  return <Curve heights={heights} {...drawingOf(4)} across={[0, 48]} range={[6, -30]} />;
+};
+
+/** A response with a handle on two numbers (a bell at its frequency and gain), the scale of a display, a bar, a wave that is missing, a choice above the drawing and a readout. */
+const CardKit = ({ values, bound, wave, onWave }: { values: Record<string, number>; bound: (id: string, label: string, field: NumberLike) => ReturnType<typeof control>; wave: Wave; onWave: (wave: Wave) => void }) => {
+  const { w, h: tall } = drawingOf(4, true);
+  const [hz, db] = [bound("kit-hz", "Frequency", { ...FREQUENCY, unit: "hz", default: 1000 }), bound("kit-db", "Gain", { min: -15, max: 15, unit: "db", default: 0 })];
+  // A bell, drawn here from its numbers: a card draws the device's `response` feed instead.
+  const bell = Array.from({ length: 97 }, (_, i) => (values["kit-db"] ?? 0) * Math.exp(-(((i / 96) * OCTAVES[1] - Math.log2((values["kit-hz"] ?? 1000) / 20)) ** 2)));
+  return (
+    <row gap={4} align="end">
+    <Display strip={<Choice id="kit-wave" label="Wave" options={WAVES} value={wave} onChange={onWave} />} across={FREQUENCY_TICKS} up={decibelTicks([-18, 18], 6)} zero={0.5}>
+      <Curve heights={bell} w={w} h={tall} across={OCTAVES} range={[18, -18]} />
+      <Handle id="kit-band" label="Band 1" w={w} h={tall} x={hz} y={{ ...db, travel: { min: -18, max: 18 } }} number="1" caption={`${shown(hz.value, "hz")} · ${shown(db.value, "db")}`} />
+    </Display>
+    <Display columns={6} caption="A file the card cannot find">
+      <Waveform wave={live.feed("wave")} seconds={[0, 1]} file={{ name: "kick.wav", state: "missing" }} {...drawingOf(6)} />
+    </Display>
+    <box w={12} h={DISPLAY_HEIGHT} radius="sm" fill="well" clip><Bar value={live.feed("loudness", "scope")} range={[-60, 0]} w={12} h={DISPLAY_HEIGHT} color="sound" hold /></box>
+    <Readout id="kit-loudness" label="Loudness" text="Loudness" value={live.feed("loudness", "scope")} digits={1} />
+    </row>
+  );
 };
 
 /** What the children publish while the song plays, drawn without the view: a number, a list as a filled line, and the notes of a take as rects. */
