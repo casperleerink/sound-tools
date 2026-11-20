@@ -1,4 +1,4 @@
-"""The benchmark projects. Each is made by the runtime of the commit under test, then filled with
+"""The benchmark projects. Each is made by `sound-tools` of the commit under test, then filled with
 state files and the tool files of that same commit."""
 
 import json
@@ -61,7 +61,7 @@ def drums(bars=BARS):
 
 
 def daw(folder, source):
-    """The song of the DAW template of `source` in the project the runtime made: its tools, its
+    """The song of the DAW template of `source` in the project `sound-tools` made: its tools, its
     master, its audio track, and how it reaches the device. Its first track is left out."""
     template = source / "templates/daw"
     shutil.copytree(template / "extensions", folder / "extensions", dirs_exist_ok=True)
@@ -274,11 +274,11 @@ def automate(folder):
         write(path, record)
 
 
-def make(runtime, source, folder, name, env):
-    """Makes project `name` in `folder` with `runtime`, from the sources of `source`."""
+def make(program, source, folder, name, env):
+    """Makes project `name` in `folder` with `program`, from the sources of `source`."""
     shutil.rmtree(folder, ignore_errors=True)
     folder.mkdir(parents=True)
-    made = subprocess.run([runtime, folder, "--headless"], input="quit\n", env=env, capture_output=True, text=True)
+    made = subprocess.run([program, folder, "--headless"], input="quit\n", env=env, capture_output=True, text=True)
     if made.returncode != 0 or not (folder / "project.json").exists():
         raise SystemExit(f"could not make {name}:\n{made.stdout}{made.stderr}")
     daw(folder, source)
