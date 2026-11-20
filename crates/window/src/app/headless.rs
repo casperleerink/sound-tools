@@ -98,8 +98,21 @@ impl State {
             .iter()
             .map(|problem| format!("{}: {}", problem.path, problem.message))
             .collect();
+        let selected = self.interface.selected(&self.project);
+        let span = self.interface.selected_span(&self.project);
+        let transport = &self.interface.transport;
+        let asked = self.waiting.asked.front().map(|asked| {
+            json!({ "message": asked.message, "detail": asked.detail, "confirm": asked.confirm })
+        });
         json!({
             "controls": controls,
+            "actions": self.shown_actions(),
+            "dialog": asked,
+            "selected": selected.map(|id| json!({ "instance": id, "span": span.map(|span| [span.start.0, span.end.0]) })),
+            "repeat": transport.looped.on.then(|| [transport.looped.range.start.0, transport.looped.range.end.0]),
+            "click": transport.click,
+            "computer_keys": transport.keys,
+            "write_automation": transport.automation,
             "playing": self.playing,
             "playhead": self.playhead.0,
             "time": self.time(),

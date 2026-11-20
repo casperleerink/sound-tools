@@ -1,7 +1,7 @@
 //! What the Bun host of a project reads of it and does to it: the watch of `extensions/`, the
-//! records and watches its code gets, and the edits and controls it sends.
+//! records its code gets, and the edits and controls it sends.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -11,7 +11,6 @@ use sound_core::{Changes, InstanceId, Problem, Project};
 use sound_signals::SignalsUpdate;
 
 use crate::bun::{Played, RecordEdit};
-use crate::feeds::played_name;
 use crate::tools::{Input, ToolInfo};
 use crate::{FOLDER, OWNED};
 
@@ -127,12 +126,9 @@ pub(crate) fn state_of(project: &Project, id: &InstanceId) -> Option<serde_json:
     serde_json::from_str(&project.state_json(id)?).ok()
 }
 
-/// An instance as its code gets it, with its watches as they are now.
-pub(crate) fn played<'a>(project: &Project, id: &'a InstanceId) -> Played<'a> {
-    Played {
-        instance: id,
-        watches: watches_of(project, id),
-    }
+/// An instance as its code gets it.
+pub(crate) fn played<'a>(_: &Project, id: &'a InstanceId) -> Played<'a> {
+    Played { instance: id }
 }
 
 /// Every instance of `project`, as changed records when a Bun starts: it holds none.
@@ -146,23 +142,6 @@ pub(crate) fn told_to_bun(project: &Project, tools: &[Rc<ToolInfo>], id: &Instan
     let ours =
         |id: &InstanceId| (project.tool_of(id)).is_some_and(|tool| find(tools, tool).is_some());
     ours(id) || id.ancestors().any(|owner| ours(&owner))
-}
-
-/// The watches of `id` as its code reads them: its own, and those of each instance inside it
-/// by its path from `id`, as `<child>.<watch>` or `<child>/<grandchild>.<watch>`, such as what
-/// a looping timeline plays.
-fn watches_of(project: &Project, id: &InstanceId) -> BTreeMap<String, f32> {
-    let inside = (project.instances()).filter(|(inner, _)| inner.is_inside(id));
-    let children = inside.flat_map(|(inner, _)| {
-        let path = &inner.as_str()[id.as_str().len() + 1..];
-        let watches = project.watches(inner).into_iter();
-        watches.map(move |(name, watch)| (format!("{path}.{name}"), watch))
-    });
-    let watches = project.watches(id).into_iter().chain(children);
-    // What a cable plays is read as it plays, by live values, and tells Bun nothing.
-    let (played, inside) = (played_name(""), format!(".{}", played_name("")));
-    let watches = watches.filter(|(name, _)| !name.starts_with(&played) && !name.contains(&inside));
-    watches.map(|(name, watch)| (name, watch.get())).collect()
 }
 
 /// The changes of `edits` that the code of `instance` of the tool `info` made, on the records as

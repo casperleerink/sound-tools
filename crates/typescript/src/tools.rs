@@ -468,11 +468,6 @@ impl Named<Field> {
     reason = "the window uses it once it does all the old app did"
 )]
 impl ToolInfo {
-    /// Whether a card or a page of it takes the keys: for `onKey`, or for its actions.
-    pub(crate) fn hears_keys(&self) -> bool {
-        self.keys || !self.actions.0.is_empty()
-    }
-
     /// Whether its action `name` runs wherever the focus is.
     pub(crate) fn acts_everywhere(&self, name: &str) -> bool {
         let mut actions = self.actions.0.iter();
@@ -2022,12 +2017,12 @@ pub(crate) fn scope_name(path: &str) -> String {
     format!("scope:{path}")
 }
 
-/// Asks `owner` to keep the sound its child at `path` plays, or with no path what it plays
-/// itself, for a wave of its view. Whether it kept none: then it must run its behaviour again.
 #[allow(
     dead_code,
     reason = "the window uses it once it does all the old app did"
 )]
+/// Asks `owner` to keep the sound its child at `path` plays, or with no path what it plays
+/// itself, for a wave of its view. Whether it kept none: then it must run its behaviour again.
 pub(crate) fn show_sound(assets: &Assets, owner: &InstanceId, path: &str) -> bool {
     let mut scoped = SCOPED.lock().unwrap_or_else(PoisonError::into_inner);
     scoped.insert((assets.clone(), owner.clone(), path.to_string()))

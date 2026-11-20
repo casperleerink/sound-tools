@@ -26,9 +26,10 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
                 .padding(theme.space(4))
                 .child(tree::code_failed(state, main)),
             // A device's card on its own has the page's margin.
-            Some(drawn) if state.cards.contains_key(main) => el()
-                .padding(theme.space(4))
-                .child(tree::view(state, main, "", drawn)),
+            Some(drawn) if (state.tools.as_ref()).is_some_and(|tools| tools.draws_card(main)) => {
+                el().padding(theme.space(4))
+                    .child(tree::view(state, main, "", drawn))
+            }
             Some(drawn) => tree::view(state, main, "", drawn),
             None => el(),
         },
@@ -69,8 +70,10 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
         .children(notice);
     let overlays = tree::overlays(state)
         .into_iter()
-        .chain(problems::list(state));
-    rune_kit::root(base, overlays)
+        .chain(problems::list(state))
+        .chain(super::dialog::view(state));
+    // On the root, which hears the key ups when nothing has the focus.
+    rune_kit::root(base, overlays).on_key_up(super::keys::on_key_up)
 }
 
 fn title_row(state: &State) -> El {

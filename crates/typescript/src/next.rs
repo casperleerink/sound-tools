@@ -7,6 +7,7 @@
 //! Any change in `extensions/`, a crash or a hang of Bun starts a new Bun.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -17,18 +18,22 @@ use notify::RecommendedWatcher;
 use serde_json::{Map, Value, json};
 use sound_core::EventTap;
 use sound_core::feeds::FeedContext;
-use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEdit, ProjectEvent, Ticks};
+use sound_core::{
+    Changes, GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEdit, ProjectEvent, Sections,
+    TempoMap, Ticks,
+};
 use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
 
 /// Opens the own window of an instance, or brings it forward: the app's, for `openWindow` of
 /// code. `Err` says why there is none.
 pub type WindowOpener = Box<dyn Fn(&Project, &InstanceId) -> Result<(), String>>;
+
+pub use crate::bun::{Answer, Clock, Transport, Waker};
 use crate::bun::{
-    Answer, Bun, Event, Played, RecordEdit, Request, Runs, Skipped, Telling, TransportOp,
-    record_key,
+    Bun, Event, Played, RecordEdit, Request, Runs, Skipped, Telling, TransportOp, record_key,
 };
-pub use crate::bun::{Clock, Transport, Waker};
+use crate::devices::{Group, Offer, Takes};
 use crate::project::{
     changes_of, control_update, every_instance, find, played, told_to_bun, watch,
 };
@@ -42,6 +47,29 @@ pub const THEME: &str = "theme.json";
 /// The file of a project of the new window that draws the card of a device whose tool has no
 /// view, from the fields of its record. Bun loads it with the tools.
 pub const GENERIC_CARD: &str = "ui/blocks/generic-card.tsx";
+
+/// The folder of a project's cards of built-in tools: `<tool>.tsx` draws the devices of `tool`
+/// in place of the generic card.
+const CARDS: &str = "ui/blocks/cards";
+
+/// The project's cards of built-in tools in `extensions`, which Bun loads after the generic card.
+pub(crate) fn card_files(extensions: &Path) -> Vec<String> {
+    let entries = std::fs::read_dir(extensions.join(CARDS))
+        .into_iter()
+        .flatten()
+        .flatten();
+    let mut files: Vec<String> = (entries.filter_map(|entry| entry.file_name().into_string().ok()))
+        .filter(|name| name.ends_with(".tsx"))
+        .map(|name| format!("{CARDS}/{name}"))
+        .collect();
+    files.sort();
+    files
+}
+
+/// Whether the file `file` of `extensions/` is a card: the generic one or one of a tool.
+fn is_card(file: &str) -> bool {
+    file == GENERIC_CARD || file.starts_with(&format!("{CARDS}/"))
+}
 
 /// Whether the project in `folder` is one of the new window, see [`THEME`].
 pub fn has_views(folder: &Path) -> bool {
@@ -60,6 +88,23 @@ pub const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
 /// Why an action on a view did nothing while no Bun runs.
 const NOT_RUNNING: &str = "the code of the project does not run now, so this did nothing";
+
+/// What the window shows, see [`Tools::show`].
+#[derive(Default)]
+pub struct Shown {
+    pub instances: BTreeSet<InstanceId>,
+    /// The card of each shown instance whose tool has no view, which the project's card of its
+    /// tool or its generic card draws: its facts.
+    pub cards: BTreeMap<InstanceId, Value>,
+    /// The numbers a lane moves of each shown instance, see `holds`.
+    pub holds: BTreeMap<InstanceId, Vec<String>>,
+    /// What the window knows of each shown instance and of each of its children that no record
+    /// holds: `Facts` in `sdk/view.ts`.
+    pub facts: BTreeMap<InstanceId, Value>,
+    pub catalog: Vec<Offer>,
+    /// The key each action of a tool has now, by `<tool>.<action>`, or none.
+    pub keys: BTreeMap<String, Option<String>>,
+}
 
 /// What [`Tools::run_loops`] did with a step of the control loops.
 #[derive(Debug, PartialEq)]
@@ -83,6 +128,50 @@ pub enum Drawn {
     Failed(String),
     /// The generic card does not draw it: why, in plain words.
     NoCard(String),
+}
+
+/// What code asks of the window that only the window does: the composer's choices that no record
+/// holds, and the questions only the composer answers. [`Tools::take_wants`] gives them; the
+/// answer to a question goes back with [`Tools::answer`].
+#[derive(Debug, PartialEq)]
+pub enum Want {
+    /// What the composer works on: an instance, or nothing, and a stretch of ticks.
+    Select {
+        instance: Option<InstanceId>,
+        span: Option<Range<Ticks>>,
+    },
+    /// Playback repeats over the range, or stops repeating and keeps its range.
+    Repeat(Option<Range<Ticks>>),
+    Click(bool),
+    ComputerKeys(bool),
+    WriteAutomation(bool),
+    /// A yes or no, its yes button `confirm` and the other Cancel: [`Answer::Confirmed`].
+    Confirm {
+        question: u64,
+        message: String,
+        detail: Option<String>,
+        confirm: String,
+    },
+    /// A file the composer chooses, copied into `assets/audio/`: [`Answer::Asset`].
+    OpenFile {
+        question: u64,
+        title: String,
+    },
+    /// Where to write the MIDI file `bytes`, offered as `name`: [`Answer::Confirmed`] once written.
+    ExportNotes {
+        question: u64,
+        name: String,
+        bytes: Vec<u8>,
+    },
+    /// The sound of `instance` alone over `span`, with what still sounds after it when `tail`,
+    /// into a new file of `assets/audio/` named after `name`: [`Answer::Asset`].
+    Render {
+        question: u64,
+        instance: InstanceId,
+        span: Range<Ticks>,
+        tail: bool,
+        name: String,
+    },
 }
 
 pub struct Tools {
@@ -127,6 +216,15 @@ pub struct Tools {
     loads: u64,
     /// How many trees came, for a test that a frame runs no view.
     view_runs: u64,
+    /// What code asked of the window since it last looked.
+    wants: Vec<Want>,
+    /// The tempo map and the sections as Bun was told them.
+    told_song: Option<(TempoMap, Sections)>,
+    /// What `addOffer` puts, as the window last showed it, and as Bun was told it.
+    catalog: Vec<Offer>,
+    told_catalog: Value,
+    facts: BTreeMap<InstanceId, Value>,
+    keys: BTreeMap<String, Option<String>>,
     waker: Waker,
     open_window: Option<WindowOpener>,
 }
@@ -176,6 +274,12 @@ impl Tools {
             performed_on: BTreeSet::new(),
             loads: 0,
             view_runs: 0,
+            wants: Vec::new(),
+            told_song: None,
+            catalog: Vec::new(),
+            told_catalog: Value::Null,
+            facts: BTreeMap::new(),
+            keys: BTreeMap::new(),
             waker,
             open_window: None,
         };
@@ -194,7 +298,20 @@ impl Tools {
     fn listen(&mut self, bun: Arc<Bun>) {
         bun.wake_with(self.waker.clone());
         self.bun = Some(bun);
-        self.told_shown = false;
+        (self.told_shown, self.told_song) = (false, None);
+    }
+
+    /// What code asked of the window since the last call, oldest first.
+    pub fn take_wants(&mut self) -> Vec<Want> {
+        std::mem::take(&mut self.wants)
+    }
+
+    /// The window's answer to the question of a [`Want`]. An answer for a Bun that ended is
+    /// nobody's: the next one numbers its questions anew.
+    pub fn answer(&mut self, question: u64, answer: &Answer) {
+        if let Some(bun) = &self.bun {
+            bun.send(&Request::Answer { question, answer });
+        }
     }
 
     /// What the window shows of `id`, once a Bun said. `None` while one may still say: a Bun
@@ -224,18 +341,29 @@ impl Tools {
             .chain(self.view_problems.values())
     }
 
-    /// The instances whose views the window shows now, and the card of each whose tool may
-    /// have no view, which the project's generic card draws. Whether that is news to Bun.
-    pub fn show(
-        &mut self,
-        instances: BTreeSet<InstanceId>,
-        cards: BTreeMap<InstanceId, Value>,
-        holds: BTreeMap<InstanceId, Vec<String>>,
-    ) -> bool {
-        if instances == self.shown && cards == self.cards && holds == self.holds {
+    /// What the window shows now, with what it knows besides the records. Whether that is news
+    /// to Bun.
+    pub fn show(&mut self, shown: Shown) -> bool {
+        let Shown {
+            instances,
+            cards,
+            holds,
+            facts,
+            catalog,
+            keys,
+        } = shown;
+        let told = serde_json::to_value(&catalog).unwrap_or_default();
+        if instances == self.shown
+            && cards == self.cards
+            && holds == self.holds
+            && facts == self.facts
+            && told == self.told_catalog
+            && keys == self.keys
+        {
             return false;
         }
-        self.holds = holds;
+        (self.holds, self.facts, self.keys) = (holds, facts, keys);
+        (self.catalog, self.told_catalog) = (catalog, told);
         // A built-in device a card shows is told to Bun, as one inside a tool of the project is.
         let new: Vec<InstanceId> = (cards.keys())
             .filter(|id| !self.cards.contains_key(*id))
@@ -323,37 +451,13 @@ impl Tools {
     }
 
     /// One step of the control loop of every instance whose tool has one, `dt` seconds after
-    /// the last, while the project plays at `tick` or stands there, at `time` seconds of engine
-    /// time; also tells Bun the clock when what its code follows of it changed. Not while the
-    /// last step runs.
-    pub fn run_loops(
-        &mut self,
-        project: &Project,
-        playing: bool,
-        tick: Ticks,
-        time: f64,
-        dt: f32,
-    ) -> Looped {
+    /// the last, at `clock`; also tells Bun the clock when what its code follows of it changed.
+    /// Not while the last step runs.
+    pub fn run_loops(&mut self, project: &Project, clock: Clock, dt: f32) -> Looped {
         let Some(bun) = self.bun.clone() else {
             return Looped::Nothing;
         };
-        let tempo_map = &project.project_file().tempo_map;
-        let at = tempo_map.time_signatures().bar_beat_of(tick);
-        let clock = Clock {
-            time,
-            transport: Transport {
-                playing,
-                tick: tick.0,
-                bar: at.bar,
-                beat: at.beat,
-                bpm: tempo_map.change_at(tick).bpm.bpm(),
-                ..Transport::default()
-            },
-        };
-        let told = self.told_transport.map(|told| told.followed());
-        if told != Some(clock.transport.followed()) && bun.send(&Request::Clock { clock }) {
-            self.told_transport = Some(clock.transport);
-        }
+        self.tell_clock(&bun, clock);
         if self.ticking {
             return Looped::Busy;
         }
@@ -375,6 +479,95 @@ impl Tools {
             true => Looped::Sent,
             false => Looped::Nothing,
         }
+    }
+
+    /// Tells Bun `clock` when what its code follows of it changed: never for the playhead alone.
+    fn tell_clock(&mut self, bun: &Bun, clock: Clock) {
+        let told = self.told_transport.map(|told| told.followed());
+        if told != Some(clock.transport.followed()) && bun.send(&Request::Clock { clock }) {
+            self.told_transport = Some(clock.transport);
+        }
+    }
+
+    /// The key of `actions` of the tool of `instance` went down: its code runs them in order
+    /// until one does it, as one step of undo. Whether Bun got them.
+    pub fn action(
+        &mut self,
+        project: &Project,
+        instance: &InstanceId,
+        actions: &[String],
+        clock: Clock,
+    ) -> bool {
+        let Some(bun) = self.bun.clone() else {
+            return false;
+        };
+        self.tell(project);
+        self.tell_clock(&bun, clock);
+        let sent = bun.send(&Request::Action {
+            instance: played(project, instance),
+            actions,
+            clock,
+        });
+        self.acts += usize::from(sent);
+        sent
+    }
+
+    /// A key `onKey` of the tool of `instance` takes went down or up, as `name` without
+    /// shift: `a`, `cmd-c`. Whether Bun got it.
+    pub fn key(
+        &mut self,
+        project: &Project,
+        instance: &InstanceId,
+        (name, down): (&str, bool),
+        held: crate::shortcuts::Held,
+        clock: Clock,
+    ) -> bool {
+        let Some(bun) = self.bun.clone() else {
+            return false;
+        };
+        self.tell(project);
+        self.tell_clock(&bun, clock);
+        bun.send(&Request::Key {
+            instance: played(project, instance),
+            key: name,
+            down,
+            shift: held.shift,
+            alt: held.alt,
+            cmd: held.platform,
+            ctrl: held.control,
+            clock,
+        })
+    }
+
+    /// The actions of every tool of the project that has some, as the keymap lists them.
+    pub fn shortcut_groups(&self) -> Vec<crate::shortcuts::Group> {
+        (self.tools.iter())
+            .filter_map(|info| info.shortcuts())
+            .collect()
+    }
+
+    /// Whether the action `action` of `tool` runs wherever the focus is, while its view is the
+    /// main view.
+    pub fn acts_everywhere(&self, tool: &str, action: &str) -> bool {
+        find(&self.tools, tool).is_some_and(|info| info.acts_everywhere(action))
+    }
+
+    /// Whether `onKey` of `tool` takes the key `name` while its view has the keys: those its
+    /// `keys` name, else every key without cmd, ctrl or alt.
+    pub fn takes_key(&self, tool: &str, name: &str) -> bool {
+        let plain = !["cmd-", "ctrl-", "alt-", "super-"]
+            .iter()
+            .any(|held| name.starts_with(held));
+        find(&self.tools, tool).is_some_and(|info| {
+            info.keys
+                && (info.takes.as_ref()).map_or(plain, |takes| takes.iter().any(|key| key == name))
+        })
+    }
+
+    /// Whether `onKey` of `tool` hears the key `name` wherever the focus is: its `globalKeys`.
+    pub fn takes_global_key(&self, tool: &str, name: &str) -> bool {
+        find(&self.tools, tool)
+            .is_some_and(|info| info.keys && info.global_keys.iter().any(|key| key == name))
     }
 
     /// A change in `extensions/`, as the watcher says it.
@@ -592,7 +785,7 @@ impl Tools {
                 let before = self.drawn.remove(&instance);
                 let problem = (error.as_ref()).and_then(|error| match card {
                     true => Some(Problem {
-                        path: format!("{FOLDER}/{GENERIC_CARD}"),
+                        path: format!("{FOLDER}/{}", self.card_file(project, &instance)),
                         message: format!("it fails to draw the card of {instance}: {error}"),
                     }),
                     false => {
@@ -720,48 +913,127 @@ impl Tools {
                 self.transport(project, op);
                 false
             }
-            Event::OpenMenu { question, .. } => {
-                self.unanswered(project, question, Answer::Item(None), "a menu")
-            }
-            Event::Confirm { question, .. } => {
-                self.unanswered(project, question, Answer::Confirmed(false), "a question")
-            }
-            Event::OpenFile { question, .. } | Event::Render { question, .. } => {
-                self.unanswered(project, question, Answer::Asset(None), "a file")
-            }
-            Event::ExportNotes { question, .. } => {
-                self.unanswered(project, question, Answer::Confirmed(false), "an export")
-            }
-            Event::Offers { question, .. } => {
-                let answer = Answer::Offers {
-                    offers: Vec::new(),
-                    notes: Vec::new(),
-                    here: None,
+            Event::Select {
+                instance,
+                path,
+                span,
+            } => {
+                let selected = match path {
+                    None => Ok(None),
+                    Some(path) => self.child_of(project, &instance, &path).map(Some),
                 };
-                self.unanswered(project, question, answer, "the devices")
-            }
-            Event::Numbers { question, .. } => {
-                self.unanswered(project, question, Answer::Numbers(Vec::new()), "numbers")
-            }
-            Event::OpenWindow { instance, path } => {
-                let child = (path.split('/')).try_fold(instance.clone(), |id, name| id.child(name));
-                let opened = match (child, &self.open_window) {
-                    (Err(error), _) => Err(error.to_string()),
-                    (Ok(child), Some(open)) => open(project, &child),
-                    (Ok(_), None) => Err("this window opens no other".to_string()),
-                };
-                if let Err(why) = opened {
-                    let message = format!("its openWindow({path:?}) was refused: {why}");
-                    if let Some(problem) = self.problem_of(project, &instance, &message)
-                        && !self.problems.contains(&problem)
-                    {
-                        self.problems.push(problem);
-                        self.report(project);
+                match selected {
+                    Ok(instance) => self.wants.push(Want::Select {
+                        instance,
+                        span: span.map(|[from, to]| Ticks(from)..Ticks(to)),
+                    }),
+                    Err(error) => {
+                        self.tool_problem(project, &instance, &format!("it selects {error}"))
                     }
                 }
                 false
             }
-            _ => false,
+            Event::SongEdit {
+                instance,
+                label,
+                tempo_map,
+                sections,
+                gesture,
+            } => {
+                self.edit_song(project, &instance, &label, (tempo_map, sections), gesture);
+                false
+            }
+            Event::Confirm {
+                question,
+                message,
+                detail,
+                confirm,
+            } => {
+                self.wants.push(Want::Confirm {
+                    question,
+                    message,
+                    detail,
+                    confirm,
+                });
+                false
+            }
+            Event::OpenFile { question, title } => {
+                self.wants.push(Want::OpenFile { question, title });
+                false
+            }
+            Event::ExportNotes {
+                question,
+                instance,
+                path,
+                name,
+            } => {
+                match self.notes_of(project, &instance, &path) {
+                    Ok(bytes) => self.wants.push(Want::ExportNotes {
+                        question,
+                        name,
+                        bytes,
+                    }),
+                    Err(error) => {
+                        let message = format!("it exports the notes of {error}");
+                        self.tool_problem(project, &instance, &message);
+                        self.answer(question, &Answer::Confirmed(false));
+                    }
+                }
+                false
+            }
+            Event::Render {
+                question,
+                instance,
+                path,
+                span: [from, to],
+                tail,
+                name,
+            } => {
+                let child =
+                    self.child_of(project, &instance, &path)
+                        .and_then(|child| match from < to {
+                            true => Ok(child),
+                            false => Err(format!("{path:?} from {from} to {to}, which is no span")),
+                        });
+                match child {
+                    Ok(child) => self.wants.push(Want::Render {
+                        question,
+                        instance: child,
+                        span: Ticks(from)..Ticks(to),
+                        tail,
+                        name,
+                    }),
+                    Err(error) => {
+                        self.tool_problem(project, &instance, &format!("it renders {error}"));
+                        self.answer(question, &Answer::Asset(None));
+                    }
+                }
+                false
+            }
+            Event::AddOffer {
+                instance,
+                path,
+                key,
+                label,
+                gesture,
+            } => {
+                self.add_offer(project, &instance, (&path, &key), (&label, gesture));
+                false
+            }
+            Event::OpenWindow { instance, path } => {
+                let opened =
+                    (self.child_of(project, &instance, &path)).and_then(|child| {
+                        match &self.open_window {
+                            Some(open) => open(project, &child),
+                            None => Err("this window opens no other".to_string()),
+                        }
+                    });
+                if let Err(why) = opened {
+                    let message = format!("its openWindow({path:?}) was refused: {why}");
+                    self.tool_problem(project, &instance, &message);
+                }
+                false
+            }
         }
     }
 
@@ -895,7 +1167,7 @@ impl Tools {
         }
     }
 
-    /// Code played, stopped or moved the clock.
+    /// Code played, stopped or moved the clock, or turned one of its switches.
     fn transport(&mut self, project: &mut Project, op: TransportOp) {
         let engine = project.engine();
         match op {
@@ -905,42 +1177,150 @@ impl Tools {
             TransportOp::Jump { to, at: None } => engine.seek(Ticks(to)),
             TransportOp::Jump { to, at: Some(at) } => engine.jump_at(Ticks(at), Ticks(to)),
             TransportOp::Repeat { range } => {
-                engine.set_loop(range.map(|[from, to]| Ticks(from)..Ticks(to)));
+                let range = range.map(|[from, to]| Ticks(from)..Ticks(to));
+                self.wants.push(Want::Repeat(range));
             }
-            TransportOp::Click { .. }
-            | TransportOp::Keys { .. }
-            | TransportOp::Automation { .. } => {
-                let problem = crate::folder_problem(
-                    "code turns the click, the computer keys or the writing of automation, which this window does not have yet".to_string(),
-                );
-                if !self.problems.contains(&problem) {
-                    self.problems.push(problem);
-                    self.report(project);
-                }
-            }
+            TransportOp::Click { on } => self.wants.push(Want::Click(on)),
+            TransportOp::Keys { on } => self.wants.push(Want::ComputerKeys(on)),
+            TransportOp::Automation { on } => self.wants.push(Want::WriteAutomation(on)),
         }
     }
 
-    /// Code asked for `what`, which this window has no way to ask yet: it gets nothing, as when
-    /// the composer says no, so its code does not wait for ever.
-    fn unanswered(
+    /// The instance at the child path `path` of `instance`, or what is wrong with it in words.
+    fn child_of(
+        &self,
+        project: &Project,
+        instance: &InstanceId,
+        path: &str,
+    ) -> Result<InstanceId, String> {
+        (instance.child(path).ok())
+            .filter(|id| project.tool_of(id).is_some())
+            .ok_or_else(|| format!("{path:?}, which {instance} does not own"))
+    }
+
+    /// The notes of the timeline child `path` of `instance` as a MIDI file, with the tempo and
+    /// the time signature where it starts.
+    fn notes_of(
+        &self,
+        project: &Project,
+        instance: &InstanceId,
+        path: &str,
+    ) -> Result<Vec<u8>, String> {
+        let child = self.child_of(project, instance, path)?;
+        let state = (project.tool_of(&child) == Some(crate::timeline::NAME))
+            .then(|| crate::project::state_of(project, &child))
+            .flatten()
+            .ok_or_else(|| format!("{path:?}, which is no timeline of {instance}"))?;
+        let (clip, title) = crate::timeline::timeline_clip(&state)
+            .map_err(|error| format!("{path:?}, which cannot play: {error}"))?;
+        let tempo_map = &project.project_file().tempo_map;
+        let bpm = tempo_map.change_at(clip.start).bpm.bpm();
+        let signature = tempo_map.time_signatures().bar_at(clip.start).signature;
+        let beats = |number: u32| u8::try_from(number).unwrap_or(u8::MAX);
+        let signature = (beats(signature.numerator()), beats(signature.denominator()));
+        sound_notes::midi_file::write(&clip, &title, bpm, signature)
+            .map_err(|error| format!("{path:?}, which does not write: {error}"))
+    }
+
+    /// Code changed the tempo map and the sections, as one edit: with the others of the action
+    /// that runs, or into a run of its label. What the project refuses is a problem of its tool.
+    /// Bun is told the song again either way: its own copy went ahead.
+    fn edit_song(
         &mut self,
         project: &mut Project,
-        question: u64,
-        answer: Answer,
-        what: &str,
-    ) -> bool {
-        if let Some(bun) = &self.bun {
-            bun.send(&Request::Answer { question, answer });
+        instance: &InstanceId,
+        label: &str,
+        (tempo_map, sections): (Value, Value),
+        gesture: bool,
+    ) {
+        self.told_song = None;
+        let read = serde_json::from_value::<TempoMap>(tempo_map)
+            .map_err(|error| format!("tempo_map: {error}"))
+            .and_then(|tempo_map| {
+                let sections = serde_json::from_value::<Sections>(sections)
+                    .map_err(|error| format!("sections: {error}"))?;
+                Ok((tempo_map, sections))
+            });
+        let published = read.and_then(|(tempo_map, sections)| {
+            let mut changes = Changes::new();
+            changes.set_tempo_map(tempo_map);
+            changes.set_sections(sections);
+            let published = match gesture {
+                true => {
+                    let edit = self.acting.get_or_insert_with(|| project.begin(label));
+                    project.publish(edit, changes)
+                }
+                false => project.publish_run(instance, label, changes),
+            };
+            published.map_err(|error| error.to_string())
+        });
+        if let Err(refused) = published {
+            let message = format!("its clock.update {label:?} was refused: {refused}");
+            self.tool_problem(project, instance, &message);
         }
-        let problem = crate::folder_problem(format!(
-            "code asks for {what}, which this window does not have yet, so it got none"
-        ));
+    }
+
+    /// Puts the offer `key` of the catalog at the child `path` of `instance`, as one edit
+    /// `label`: with the others of the action that runs, or into a run of its label.
+    fn add_offer(
+        &mut self,
+        project: &mut Project,
+        instance: &InstanceId,
+        (path, key): (&str, &str),
+        (label, gesture): (&str, bool),
+    ) {
+        let offer = self.catalog.iter().find(|offer| offer.key == key);
+        let refused = match (offer, instance.child(path)) {
+            (None, _) => Some(format!("nothing is offered as {key:?}")),
+            (_, Err(error)) => Some(error.to_string()),
+            (Some(offer), Ok(slot)) => {
+                let mut changes = Changes::new();
+                match offer.write(project, &slot, &mut changes) {
+                    Err(refused) => Some(refused),
+                    Ok(()) => {
+                        self.changed_records.insert(slot);
+                        let published = match gesture {
+                            true => {
+                                let edit = self.acting.get_or_insert_with(|| project.begin(label));
+                                project.publish(edit, changes)
+                            }
+                            false => project.publish_run(instance, label, changes),
+                        };
+                        published.err().map(|error| error.to_string())
+                    }
+                }
+            }
+        };
+        if let Some(refused) = refused {
+            let message = format!("its addOffer {label:?} was refused: {refused}");
+            self.tool_problem(project, instance, &message);
+        }
+    }
+
+    /// What a picker offers of the tools of the project: each at its defaults. Not an owner,
+    /// whose place is the top of the project, nor a tool whose sound is silence.
+    pub fn offers(&self) -> Vec<Offer> {
+        let tools = (self.tools.iter()).filter(|info| !info.behaviour && !info.silent);
+        tools
+            .map(|info| {
+                let takes = match info.tool_kind() {
+                    crate::tools::ToolKind::Effect => Takes::Audio,
+                    crate::tools::ToolKind::Instrument => Takes::Notes,
+                };
+                Offer::of_tool(&info.name, &info.title, Group::Project, takes)
+            })
+            .collect()
+    }
+
+    /// A problem of the code that draws or plays `instance`, once: its tool's, its card's, or
+    /// else the folder's.
+    fn tool_problem(&mut self, project: &mut Project, instance: &InstanceId, message: &str) {
+        let problem = (self.problem_of(project, instance, message))
+            .unwrap_or_else(|| crate::folder_problem(format!("{instance}: {message}")));
         if !self.problems.contains(&problem) {
             self.problems.push(problem);
             self.report(project);
         }
-        false
     }
 
     /// Why a device shows no card though its file is fine to draw it, in plain words.
@@ -957,9 +1337,19 @@ impl Tools {
         }
     }
 
+    /// The key of each action of a tool, as Bun was told last.
+    pub fn keys(&self) -> &BTreeMap<String, Option<String>> {
+        &self.keys
+    }
+
     /// The numbers a lane moves of each shown instance, as Bun was told last.
     pub fn holds(&self) -> &BTreeMap<InstanceId, Vec<String>> {
         &self.holds
+    }
+
+    /// Whether a card draws `id`, as the window last showed it.
+    pub fn draws_card(&self, id: &InstanceId) -> bool {
+        self.cards.contains_key(id)
     }
 
     /// Whether `tool` is a tool of the project that loaded.
@@ -972,13 +1362,31 @@ impl Tools {
         find(&self.tools, tool).is_some_and(|info| info.view)
     }
 
-    /// A problem of the tool of `instance`, if it is one of the project's.
+    /// The file of the card that draws `instance`: the project's card of its tool, else the
+    /// generic card.
+    fn card_file(&self, project: &Project, instance: &InstanceId) -> String {
+        let tool = project.tool_of(instance).unwrap_or_default();
+        let own = format!("{CARDS}/{tool}.tsx");
+        match self.folder.join(&own).is_file() && !self.skipped.contains_key(&own) {
+            true => own,
+            false => GENERIC_CARD.to_string(),
+        }
+    }
+
+    /// A problem of the code of `instance`: its tool's, if it is one of the project's, or the
+    /// card's that draws it.
     fn problem_of(
         &self,
         project: &Project,
         instance: &InstanceId,
         message: &str,
     ) -> Option<Problem> {
+        if self.cards.contains_key(instance) {
+            return Some(Problem {
+                path: format!("{FOLDER}/{}", self.card_file(project, instance)),
+                message: message.to_string(),
+            });
+        }
         let info = project
             .tool_of(instance)
             .and_then(|tool| find(&self.tools, tool))?;
@@ -1044,12 +1452,13 @@ impl Tools {
             .as_ref()
             .and_then(|runs| find(&self.tools, &runs.tool).cloned());
         self.end_actions(project, &format!("the code of the project {why}"));
-        if let Some(runs) = blame.as_ref().filter(|runs| runs.tool == GENERIC_CARD) {
-            let message = format!(
-                "its {} {why}, so devices show no card: fix it and save",
-                runs.what
-            );
-            self.skipped.insert(GENERIC_CARD.to_string(), message);
+        if let Some(runs) = blame.as_ref().filter(|runs| is_card(&runs.tool)) {
+            let shown = match runs.tool == GENERIC_CARD {
+                true => "devices show no card",
+                false => "its devices show the generic card",
+            };
+            let message = format!("its {} {why}, so {shown}: fix it and save", runs.what);
+            self.skipped.insert(runs.tool.clone(), message);
             self.restart(project);
             return;
         }
@@ -1104,13 +1513,27 @@ impl Tools {
             self.changed_records = ids;
             return;
         }
+        let file = project.project_file();
+        let song = (&file.tempo_map, &file.sections);
+        if self
+            .told_song
+            .as_ref()
+            .is_none_or(|(tempo_map, sections)| (tempo_map, sections) != song)
+            && bun.send(&Request::Song {
+                tempo_map: song.0,
+                sections: song.1,
+            })
+        {
+            self.told_song = Some((song.0.clone(), song.1.clone()));
+        }
         if !self.told_shown {
-            let instances = self.shown.iter().collect();
-            let (cards, held) = (&self.cards, &self.holds);
             self.told_shown = bun.send(&Request::Show {
-                instances,
-                cards,
-                held,
+                instances: self.shown.iter().collect(),
+                cards: &self.cards,
+                held: &self.holds,
+                facts: &self.facts,
+                catalog: &self.told_catalog,
+                keys: &self.keys,
             });
         }
     }

@@ -5,7 +5,6 @@ use std::sync::PoisonError;
 use std::time::Duration;
 
 use rune::Tx;
-use serde_json::Value;
 use sound_core::{GROUPING_WINDOW, InstanceId};
 use sound_typescript::next::{FRAME_INTERVAL, Looped, Tools};
 
@@ -35,17 +34,13 @@ impl State {
         let mut changed = false;
         loop {
             let shown = controls::collect(self).shown;
-            let cards = (shown.iter())
-                .filter_map(|id| Some((id.clone(), self.card(id)?)))
-                .collect();
-            self.cards.retain(|id, _| shown.contains(id));
-            let holds = self.holds(&shown);
             let more = shown != self.shown;
             self.shown = shown.clone();
+            let gathered = self.gathered(shown);
             let Some(tools) = &mut self.tools else {
                 return changed;
             };
-            if !tools.show(shown, cards, holds) {
+            if !tools.show(gathered) {
                 return changed;
             }
             if !settle {
@@ -58,26 +53,8 @@ impl State {
         }
     }
 
-    /// The card of `id` for the generic card, unless its tool draws a view of its own. Its
-    /// fields follow its instance's tool and that tool's code: made again only when either
-    /// changed.
-    fn card(&mut self, id: &InstanceId) -> Option<Value> {
-        let tool = self.project.tool_of(id)?.to_string();
-        let tools = self.tools.as_ref();
-        if tools.is_some_and(|tools| tools.has_view(&tool)) {
-            return None;
-        }
-        let loads = tools.map_or(0, Tools::loads);
-        let fresh = !matches!(self.cards.get(id), Some((made_for, made_at, _)) if *made_for == tool && *made_at == loads);
-        if fresh {
-            let card = crate::fields::card_of(self, id)?;
-            self.cards.insert(id.clone(), (tool, loads, card));
-        }
-        self.cards.get(id).map(|(_, _, card)| card.clone())
-    }
-
     /// The numbers a lane moves of each instance of `shown`, for `held` of its view.
-    fn holds(&self, shown: &BTreeSet<InstanceId>) -> BTreeMap<InstanceId, Vec<String>> {
+    pub(super) fn holds(&self, shown: &BTreeSet<InstanceId>) -> BTreeMap<InstanceId, Vec<String>> {
         runtime::session::held(&self.project, shown, false)
     }
 
@@ -86,10 +63,12 @@ impl State {
         let Some(tools) = &mut self.tools else {
             return false;
         };
-        let changed = tools.settle(&mut self.project).unwrap_or_else(|why| {
+        let mut changed = tools.settle(&mut self.project).unwrap_or_else(|why| {
             *FAILED.lock().unwrap_or_else(PoisonError::into_inner) = Some(why);
             true
         });
+        self.imported();
+        changed |= self.serve_wants();
         if changed {
             self.trees_came();
         }
@@ -120,6 +99,7 @@ pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
         }
     }
     let (changed, next) = frame(state, seconds);
+    state.open_file_dialogs(tx);
     if let Some(next) = next {
         tx.wake_after(next);
     }
@@ -167,13 +147,14 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
         }
         changed |= drawn;
     }
+    state.imported();
+    changed |= state.serve_wants();
     // What the views name changes only with what they show, and a lane bound or let go as a
-    // behaviour answers, which says nothing.
+    // behaviour answers, or a key the composer gave an action, which say nothing.
     let holds = state.holds(&state.shown);
-    let moved = state
-        .tools
-        .as_ref()
-        .is_some_and(|tools| *tools.holds() != holds);
+    let keys = state.action_keys();
+    let moved = (state.tools.as_ref())
+        .is_some_and(|tools| *tools.holds() != holds || *tools.keys() != keys);
     if changed || moved {
         changed |= state.discover(headless);
     }
@@ -225,19 +206,14 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
 /// step went to Bun.
 pub(super) fn run_loops(state: &mut State, seconds: f64) -> bool {
     let dt = seconds - state.looped;
+    if state.tools.is_none() || dt < FRAME_INTERVAL.as_secs_f64() {
+        return false;
+    }
+    let clock = state.clock();
     let Some(tools) = &mut state.tools else {
         return false;
     };
-    if dt < FRAME_INTERVAL.as_secs_f64() {
-        return false;
-    }
-    let looped = tools.run_loops(
-        &state.project,
-        state.playing,
-        state.playhead,
-        state.engine_time,
-        dt as f32,
-    );
+    let looped = tools.run_loops(&state.project, clock, dt as f32);
     if looped != Looped::Busy {
         state.looped = seconds;
     }

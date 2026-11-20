@@ -22,8 +22,10 @@ use crate::tree;
 
 mod actions;
 mod chrome;
+mod dialog;
 mod frame;
 mod headless;
+mod host;
 mod keys;
 mod panel;
 mod problems;
@@ -31,8 +33,9 @@ mod problems;
 use headless::copied;
 
 pub(crate) use chrome::{Act, MIN_SIZE, WINDOW_BUTTONS, controls as chrome_controls, view};
+pub(crate) use dialog::controls as dialog_controls;
 pub(crate) use frame::{closing, poll, quitting, setup};
-pub(crate) use keys::on_key;
+pub(crate) use keys::{on_focus, on_key};
 
 /// The template of a new project: the DAW with views of `sdk/view.ts`.
 pub(crate) const TEMPLATE: runtime::Template = runtime::Template {
@@ -94,14 +97,21 @@ pub(crate) struct State {
     pub(crate) gesture: Option<tree::Gesture>,
     /// The element a drag ended on in this frame: the release that ends a drag is no press.
     pub(crate) dragged: Option<String>,
-    /// The cards made for the generic card, by instance, with the tool and the load of Bun they
-    /// were made for.
-    cards: HashMap<InstanceId, (String, u64, Value)>,
+    /// The facts of the instances shown and their children, with the tool and the load of Bun
+    /// they were made for.
+    facts: HashMap<InstanceId, (String, u64, Value)>,
+    /// The offers of the plugins of this computer, and the scan they were made for.
+    plugin_offers: (u64, Vec<sound_typescript::devices::Offer>),
     /// The overlays open now, each inside the one before, by the key of what opened it. How the
     /// composer works, so never saved.
     pub(crate) open: Vec<String>,
     /// What `--main` shows in place of the project's main instance.
     main: Option<InstanceId>,
+    /// The composer's choices no record holds, until the window owns a Session.
+    interface: host::Interface,
+    /// What waits for the composer or a thread: questions of code, file dialogs, imports.
+    waiting: host::Waiting,
+    keys: keys::Keys,
     /// What the text fields say, by key, and the value each was made from.
     pub(crate) fields: RefCell<tree::Fields>,
     waker: Arc<Mutex<Option<rune::Waker>>>,
@@ -195,6 +205,15 @@ impl State {
         let plugin_windows = PluginWindows::new(desktop, events, cfg!(target_os = "windows"));
         let (theme, theme_problem) = Theme::of(&folder);
         let theme_loads = tools.as_ref().map_or(0, Tools::loads);
+        let interface = host::Interface::new(&project);
+        // A run without a window keeps the composer's keys to itself.
+        let keymap_file = match headless {
+            true => None,
+            false => Some(runtime::app::shortcuts_file(
+                &runtime::app::support_folder()?
+            )),
+        };
+        let (keys, unread) = keys::Keys::open(keymap_file);
         let schemas = (runtime::tool_schemas()?.into_iter())
             .map(|schema| (schema.tool, schema.schema))
             .collect();
@@ -213,14 +232,18 @@ impl State {
             engine_time: 0.0,
             looped: 0.0,
             theme_loads,
-            notice: theme_problem,
+            notice: theme_problem.or(unread),
             shown: BTreeSet::new(),
             painting: None,
             gesture: None,
             dragged: None,
             open: Vec::new(),
-            cards: HashMap::new(),
+            facts: HashMap::new(),
+            plugin_offers: (0, Vec::new()),
             main,
+            interface,
+            waiting: host::Waiting::default(),
+            keys,
             fields: RefCell::default(),
             waker,
             first: headless.then(|| (act.unwrap_or_default(), play)),

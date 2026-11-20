@@ -123,9 +123,8 @@ pub(crate) enum Request<'a> {
         #[serde(flatten)]
         clock: Clock,
     },
-    /// The answer to a question of a tool: `openFile`, `render`, `openMenu`, `confirm`, `offers`
-    /// or `numbers`.
-    Answer { question: u64, answer: Answer<'a> },
+    /// The answer to a question of a tool: `openFile`, `render`, `exportNotes` or `confirm`.
+    Answer { question: u64, answer: &'a Answer },
     /// What the behaviour of an owner declares for its record and its children, as Bun was
     /// told them.
     Behaviour {
@@ -142,6 +141,13 @@ pub(crate) enum Request<'a> {
         cards: &'a BTreeMap<InstanceId, Value>,
         /// The numbers a lane moves of each shown instance, as its `held` names them.
         held: &'a BTreeMap<InstanceId, Vec<String>>,
+        /// What the window knows of each shown instance and of each of its children that no
+        /// record holds: `Facts` in `sdk/view.ts`.
+        facts: &'a BTreeMap<InstanceId, Value>,
+        /// What `addOffer` puts: `Offer` in `sdk/view.ts`.
+        catalog: &'a Value,
+        /// The key of each action now, by `<tool>.<action>`, or none.
+        keys: &'a BTreeMap<String, Option<String>>,
     },
     /// An action on the element `key` of the view of `instance`: `press`, `drag` with `{dx, dy}`,
     /// or one the element names, such as `toggle` or `set` with a number.
@@ -153,82 +159,15 @@ pub(crate) enum Request<'a> {
     },
 }
 
-/// A number a lane or a cable moves, as code gets it: its range, and how a knob travels it.
-#[derive(Debug, Serialize)]
-pub(crate) struct Moved {
-    pub name: String,
-    /// What a person reads for it: as its device names it, or its field in plain words.
-    pub label: String,
-    pub min: f32,
-    pub max: f32,
-    /// `"linear"`, `"log"` or `"fader"`, as the knob of the number travels.
-    pub scale: &'static str,
-    /// How a value of it reads, see `unit_of` of the window.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unit: Option<&'static str>,
-    /// What its record holds now.
-    pub value: Option<f32>,
-}
-
-/// What the window answers a tool that asked.
-#[derive(Serialize)]
+/// What the window answers a question of code.
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(untagged)]
-pub(crate) enum Answer<'a> {
-    /// The name under `assets/audio/` of the file the composer chose and the runtime copied
+pub enum Answer {
+    /// The name under `assets/audio/` of the file the composer chose and the window copied
     /// there, or that a render wrote, or none.
-    Asset(Option<&'a str>),
-    /// The place of the item the composer picked in a menu, or none.
-    Item(Option<usize>),
-    /// What the window offers that takes what was asked for, and what its pickers say under
-    /// them.
-    Offers {
-        offers: Vec<Offered>,
-        notes: Vec<String>,
-        /// The key of the offer at the child it was asked about, as a picker ticks it.
-        here: Option<String>,
-    },
-    /// What a lane or a cable can move of the child asked about.
-    Numbers(Vec<Moved>),
+    Asset(Option<String>),
     /// Whether the composer said yes to a question, or a file was written.
     Confirmed(bool),
-}
-
-/// A device the window offers, as code gets it: what `addOffer` names it by.
-#[derive(Debug, Serialize)]
-pub(crate) struct Offered {
-    pub key: String,
-    pub name: String,
-    pub detail: Option<String>,
-    pub group: String,
-    /// The icon a picker shows beside it.
-    pub icon: String,
-    /// Why it cannot be picked here, or `None` when it can.
-    pub unavailable: Option<String>,
-}
-
-/// An item of a menu code opens.
-#[allow(
-    dead_code,
-    reason = "the window uses it once it does all the old app did"
-)]
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct MenuItemSpec {
-    pub label: String,
-    #[serde(default)]
-    pub disabled: bool,
-    #[serde(default)]
-    pub checked: bool,
-    pub icon: Option<String>,
-    /// A quiet second line.
-    pub detail: Option<String>,
-    /// The heading it goes under, with the items before and after it of the same group.
-    pub group: Option<String>,
-    /// A line above it.
-    #[serde(default)]
-    pub separator: bool,
-    /// The keys that do it too, as `cmd-c`.
-    pub shortcut: Option<String>,
 }
 
 /// Where the sound and the piece are, which all code of a tool gets.
@@ -331,12 +270,10 @@ pub(crate) struct Heard {
     pub at: f64,
 }
 
-/// An instance whose code runs, with its watches as they are now. Its record is what Bun was
-/// told.
+/// An instance whose code runs. Its record is what Bun was told.
 #[derive(Serialize)]
 pub(crate) struct Played<'a> {
     pub instance: &'a InstanceId,
-    pub watches: BTreeMap<String, f32>,
 }
 
 /// One record an `update` of a tool changed: its own, or one of a child, by name.
@@ -363,10 +300,6 @@ pub(crate) enum RecordEdit {
 }
 
 /// What the window hears of Bun after its load.
-#[allow(
-    dead_code,
-    reason = "the window uses it once it does all the old app did"
-)]
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Event {
@@ -374,8 +307,6 @@ pub(crate) enum Event {
     Framed,
     /// The tick of a tool, or a click on its card, failed: the first time.
     Failed { tool: String, message: String },
-    /// What the bindings of an instance read now: the window tells Bun at once only of that.
-    Reads { instance: InstanceId, reads: Reads },
     /// The code of an instance changed its record or those of its children, as one edit
     /// called `label`.
     Edit {
@@ -458,43 +389,15 @@ pub(crate) enum Event {
         detail: Option<String>,
         confirm: String,
     },
-    /// Code opens a menu of `items` where the pointer is: the answer goes to its `question`.
-    OpenMenu {
-        question: u64,
-        items: Vec<MenuItemSpec>,
-        /// Quiet lines under the items.
-        #[serde(default)]
-        notes: Vec<String>,
-        /// How wide it is, and how tall its items go before they scroll, in points.
-        #[serde(default)]
-        width: Option<f32>,
-        #[serde(default, rename = "maxHeight")]
-        max_height: Option<f32>,
-        /// A field above the items that keeps those whose label holds what is typed.
-        #[serde(default)]
-        search: bool,
-    },
-    /// Code asks what the window offers that takes `takes`, `"notes"` or `"audio"`.
-    /// With `at`, the answer says which offer is at that child of `instance` now.
-    Offers {
-        question: u64,
-        takes: String,
-        instance: InstanceId,
-        #[serde(default)]
-        at: Option<String>,
-    },
-    /// Code asks what a lane or a cable can move of the child of `instance` at `path`.
-    Numbers {
-        question: u64,
-        instance: InstanceId,
-        path: String,
-    },
-    /// The code of `instance` puts the offer `key` at its child `path`, as one edit `label`.
+    /// The code of `instance` puts the offer `key` at its child `path`, as one edit `label`:
+    /// with `gesture`, one with the others of the action that runs.
     AddOffer {
         instance: InstanceId,
         path: String,
         key: String,
         label: String,
+        #[serde(default)]
+        gesture: bool,
     },
     /// The code of `instance` opens the window of its own of its child at `path`.
     OpenWindow { instance: InstanceId, path: String },
@@ -516,32 +419,14 @@ pub(crate) enum Event {
         label: String,
         tempo_map: Value,
         sections: Value,
+        #[serde(default)]
+        gesture: bool,
     },
     /// Bun hung or stopped, the last thing it says: `why`, and the tool and the code of it that
     /// it ran then, which are to blame. Nothing to blame when it ran no tool's code, such as
     /// code a timer of a tool ran.
     #[serde(skip_deserializing)]
     Ended { blame: Option<Runs>, why: String },
-}
-
-/// What the bindings of the cards of an instance read, so the window tells Bun at once only of a
-/// change of that. `state` and `watches` name what they read, or are `None` for all of it.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub(crate) struct Reads {
-    pub state: Option<Vec<String>>,
-    pub children: bool,
-    pub watches: Option<Vec<String>>,
-}
-
-/// Before Bun says, its cards read everything.
-impl Default for Reads {
-    fn default() -> Self {
-        Self {
-            state: None,
-            children: true,
-            watches: None,
-        }
-    }
 }
 
 /// The code of a tool Bun runs: its tool, and which code, such as `tick`.

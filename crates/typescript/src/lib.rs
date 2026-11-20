@@ -16,6 +16,7 @@
 
 mod behaviours;
 mod bun;
+pub mod devices;
 mod fader;
 mod feeds;
 mod lane;
@@ -498,6 +499,7 @@ fn launch(
     let card = views && extensions.join(next::GENERIC_CARD).is_file();
     if card {
         files.push(next::GENERIC_CARD.to_string());
+        files.extend(next::card_files(extensions));
     }
     let program = bun_program().ok_or_else(|| {
         "Bun is not installed, so the tools of this project do not load: install it from https://bun.sh and open the project again".to_string()

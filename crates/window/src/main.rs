@@ -180,6 +180,7 @@ fn window(arguments: &[String]) -> Result<()> {
         .on_close(app::closing)
         .on_quit(app::quitting)
         .args(rune_arguments)
+        .on_focus(app::on_focus)
         .init(move || state)
         .run();
     if let Some(failed) = app::FAILED
