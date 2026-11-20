@@ -151,8 +151,9 @@ fn window(arguments: &[String], last: bool) -> Result<()> {
         return Ok(());
     }
     // Steps of `--act` land once the window is laid out, as a plane shows a range: a few frames.
-    let at = play.or(act.as_ref().map(|_| 0.05));
-    if let (Some(seconds), false) = (at, rune_arguments.iter().any(|argument| argument == "--at")) {
+    let given = |flag: &str| rune_arguments.iter().any(|argument| argument == flag);
+    let at = play.or(act.as_ref().filter(|_| !given("--script")).map(|_| 0.05));
+    if let (Some(seconds), false) = (at, given("--at")) {
         rune_arguments.extend(["--at".to_string(), seconds.to_string()]);
     }
     let tree = rune_arguments
