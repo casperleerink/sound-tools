@@ -163,3 +163,9 @@ test("an edit of one lane draws only that lane again", () => {
   expect(find("lane-t00-lane-cut")).toBe(other);
   expect(find("point-t00-lane-vol-0")).not.toBe(edited);
 });
+
+test("a point says what it holds under the pointer, before it is chosen", () => {
+  shown();
+  expect(JSON.stringify(find("point-t00-lane-vol-0"))).toContain('"role":"tooltip"');
+  expect(JSON.stringify(find("point-t00-lane-vol-0"))).toContain("−12 dB");
+});

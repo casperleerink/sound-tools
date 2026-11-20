@@ -3,6 +3,7 @@ import { laneValue, roomOf, type AutomationPoint } from "../../../song/lanes";
 import { placeOf } from "../../../song/time";
 import { PLANE, ROW, type Page } from "../../../song/view";
 import { MenuList } from "../../menu";
+import { Tooltip } from "../../tooltip";
 import { liveTravelled, liveValueAt, shown } from "../../value";
 import { dotsOf, downOf, fine, lineOf, MARGIN, middleOf, PIECE, piecesOf, waveOf } from "./lane-shapes";
 import { laneItems, laneOf, type LaneRow } from "./lanes";
@@ -120,17 +121,18 @@ const Points = ({ page, row, points, open, chosen, say }: { page: Page; row: Lan
         const moved = live.drag(together ? `points-${id}` : key);
         const [earliest, latest] = roomOf(points, together ? chosen : [point.tick]);
         const [top, bottom] = together ? [Math.min(...downs), Math.max(...downs)] : [down, down];
-        // Each point is a few hundred bytes of the tree: only a chosen one says what it holds as it drags.
+        // Each point is a few hundred bytes of the tree: only a chosen one says what it holds as it drags; the others in a tip.
+        const value = shown(laneValue(travel, 1 - down), unit);
         return (
-          <box key={key} label={`Point at ${say(point.tick)}, ${shown(laneValue(travel, 1 - down), unit)}`} role="button" checked={isChosen}
+          <box key={key} label={`Point at ${say(point.tick)}, ${value}`} role="button" checked={isChosen}
             place={[moved.dx.plus(point.tick), moved.dy.plus(at.y(down))]} w={MARK} h={MARK} radius="full" fill={isChosen ? "text" : colour} border="background" hover="text/40"
             drag={{ x: [earliest, latest], y: [fine(-top * at.tall), fine((1 - bottom) * at.tall)], ...(snap > 0 ? { snap: [snap, 0] as [number, number] } : {}), ...(together ? { id: `points-${id}` } : {}) }}
             onPress={(p) => lanes.pressPoint(track, name, point.tick, p)} onDragEnd={(p) => lanes.movePoint(track, name, point.tick, at.inLane(p))}>
-            {isChosen && (
+            {isChosen ? (
               <row at={[MARK, -24]} h={22} px={2} align="center" radius="md" fill="raised" border="border-strong" inert>
                 <Readout lane={laneOf(row)} down={moved.dy.over(at.tall).plus(down)} />
               </row>
-            )}
+            ) : <Tooltip text={value} />}
           </box>
         );
       })}
