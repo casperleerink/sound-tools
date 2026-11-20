@@ -105,7 +105,8 @@ pub fn evaluate(live: &Live, leaves: &(impl Leaves + ?Sized)) -> f64 {
         | Live::Drag { .. }
         | Live::Plane { .. }
         | Live::Hover { .. }
-        | Live::Touched { .. } => leaves.leaf(live),
+        | Live::Touched { .. }
+        | Live::Unknown => leaves.leaf(live),
     }
 }
 
@@ -343,6 +344,18 @@ pub enum Live {
         ease: Ease,
         key: String,
     },
+    /// One the window does not know, such as one an older SDK sent: 0, and a problem that names
+    /// it, see [`is_known`], while the rest of the view draws.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Whether `op` is a live value the window knows.
+pub fn is_known(op: &str) -> bool {
+    !matches!(
+        Live::deserialize(serde_json::json!({ "op": op })),
+        Ok(Live::Unknown)
+    )
 }
 
 /// How a live value follows another over time.
@@ -472,6 +485,26 @@ fn pitch_readout(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reads nothing; the leaves of a test are 0.
+    struct Nothing;
+
+    impl Leaves for Nothing {
+        fn leaf(&self, _: &Live) -> f64 {
+            0.0
+        }
+        fn ease(&self, _: &str, _: Ease, value: f64) -> f64 {
+            value
+        }
+    }
+
+    #[test]
+    fn a_live_value_the_window_does_not_know_is_0_and_the_rest_still_reads() {
+        let sent = serde_json::json!({ "op": "plus", "a": { "op": "peak", "name": "t00/mix", "channel": 0 }, "b": 2 });
+        let num: Num = serde_json::from_value(sent).unwrap();
+        assert_eq!(number(&num, &Nothing), 2.0);
+        assert!(!is_known("peak") && is_known("plus") && is_known("tick"));
+    }
 
     #[test]
     fn a_pitch_that_is_not_whole_reads_its_note_and_its_cents() {

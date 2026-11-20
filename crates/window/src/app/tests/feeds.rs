@@ -203,6 +203,40 @@ export const scope = tool({
     );
 }
 
+#[test]
+fn a_feed_or_a_live_value_that_is_not_there_is_a_problem_that_names_it_and_the_rest_draws() {
+    let code = r#"import { h, live, Live, tool } from "./sdk";
+export const scope = tool({
+  name: "scope", title: "Scope", when: "Never", doc: "Reads what is not there.", state: {},
+  behaviour: () => ({ connections: [{ from: { port: "audio" }, to: { child: "comp" } }, { from: { child: "comp" }, to: { port: "audio" } }] }),
+  view: () => (
+    <col>
+      <text key="typo" live={live.feed("peek", "comp")} digits={1} />
+      <box key="old" w={10} h={10} fill="text" opacity={new Live({ op: "peak", name: "comp", channel: 0 } as never)} />
+      <text key="level" live={live.feed("level", "comp")} digits={1} />
+      <text key="rest">Still here</text>
+    </col>
+  ),
+});
+"#;
+    let (_scratch, state) = scoped_as(code, 0);
+    let problems = state.project().problems();
+    let said = (problems.iter())
+        .find(|problem| problem.path.starts_with(crate::feeds::UNREAD))
+        .map(|problem| problem.message.clone());
+    assert_eq!(
+        said.as_deref(),
+        Some(
+            "old reads \"peak\", which is no live value; typo reads the feed \"peek\" of comp, which is not there; each reads 0"
+        ),
+        "{problems:?}"
+    );
+    let window = laid_out(state);
+    for key in ["typo", "old", "level", "rest"] {
+        assert!(window.presented(key).is_some(), "{key} does not draw");
+    }
+}
+
 /// The window's part of a frame of a playing piece with eight spectra 512 points wide: its feeds,
 /// its live values and Rune's frame, not the engine, which a window plays on its own thread.
 #[test]

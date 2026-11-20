@@ -451,6 +451,20 @@ pub fn read(
     (feed.read)(played.as_deref().unwrap_or(state), &context)
 }
 
+/// Whether the instance `instance` gives the feed `name`, or `name.N` of a list feed; `None`
+/// when it is not there.
+pub fn gives(project: &Project, instance: &InstanceId, name: &str) -> Option<bool> {
+    let record = project.instances.get(instance)?;
+    let indexed = (name.rsplit_once('.')).filter(|(_, index)| index.parse::<usize>().is_ok());
+    let wanted = indexed.map_or(name, |(list, _)| list);
+    let registry = &project.registry;
+    let shown = registry.shown(record.tool);
+    let feed = (shown.iter().flat_map(|shown| &shown.feeds))
+        .chain(&registry.every_instance)
+        .find(|feed| feed.name == wanted);
+    Some(feed.is_some_and(|feed| indexed.is_none() || feed.kind == FeedKind::List))
+}
+
 /// A feed as the types of the code of a project name it.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct FeedName {

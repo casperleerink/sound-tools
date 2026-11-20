@@ -9,6 +9,7 @@ use sound_core::{GROUPING_WINDOW, InstanceId};
 use sound_typescript::next::{FRAME_INTERVAL, Looped, Tools};
 
 use crate::controls;
+use crate::feeds::UNREAD;
 use crate::plugin_windows::Spare;
 use crate::theme::Theme;
 use crate::tree;
@@ -34,6 +35,9 @@ impl State {
         self.planes.discover(self);
         if let Some(problems) = self.planes.misplaced(self) {
             (self.session).background(|project| project.set_problems_in(tree::MISPLACED, problems));
+        }
+        if let Some(problems) = self.feeds.unread(self) {
+            (self.session).background(|project| project.set_problems_in(UNREAD, problems));
         }
         changed
     }

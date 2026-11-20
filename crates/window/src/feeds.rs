@@ -2,15 +2,16 @@
 //! from `sound_core::feeds` at most once a frame, and only while a shown element binds it.
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use runtime::files::Files;
 use runtime::input::{Input, TakeNotes};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sound_core::feeds::{self, Feed, FeedRequest, Readings, Sources};
-use sound_core::{AssetName, Assets, InstanceId, Project, Ticks};
+use sound_core::{AssetName, Assets, InstanceId, Problem, Project, Ticks};
 use sound_typescript::RecorderState;
+use sound_typescript::next::Drawn;
 
 use crate::app::State;
 use crate::tree::Listed;
@@ -33,7 +34,14 @@ pub(crate) struct Feeds {
     lists: RefCell<BTreeMap<(InstanceId, String), usize>>,
     /// How many drawings of lists drew anew this frame.
     drew: Cell<usize>,
+    /// Whether each op a view sent is a live value the window knows.
+    known: RefCell<HashMap<String, bool>>,
+    /// What was said of what the views read that is not there, last.
+    unread: RefCell<Vec<Problem>>,
 }
+
+/// Where the problems of what the views read that is not there are, in the project's problems.
+pub(crate) const UNREAD: &str = "live/";
 
 impl Feeds {
     pub(crate) fn new() -> Self {
@@ -44,7 +52,100 @@ impl Feeds {
             last: BTreeMap::new(),
             lists: RefCell::default(),
             drew: Cell::new(0),
+            known: RefCell::default(),
+            unread: RefCell::default(),
         }
+    }
+
+    /// What the views shown read that is not there, as problems of the project, when that
+    /// changed: a feed the device at its path does not give, or a live value the window does
+    /// not know. Each reads 0, and the rest of its view draws.
+    pub(crate) fn unread(&self, state: &State) -> Option<Vec<Problem>> {
+        let mut problems = Vec::new();
+        for id in &state.shown {
+            let Some(Drawn::View { root, memos }) = state.drawn(id) else {
+                continue;
+            };
+            let mut said = Vec::new();
+            let walk = |value: &Value, key: &str, said: &mut Vec<String>| {
+                self.unread_in(state, id, value, key, said);
+            };
+            walk(root, "the view", &mut said);
+            for (key, (_, memo)) in memos {
+                walk(memo, key, &mut said);
+            }
+            if !said.is_empty() {
+                said.sort();
+                said.dedup();
+                problems.push(Problem {
+                    path: format!("{UNREAD}{id}"),
+                    message: format!("{}; each reads 0", said.join("; ")),
+                });
+            }
+        }
+        let mut said = self.unread.borrow_mut();
+        (*said != problems).then(|| {
+            said.clone_from(&problems);
+            problems
+        })
+    }
+
+    /// What `value` of the view of `id`, in the element `key` or its own, reads that is not
+    /// there.
+    fn unread_in(
+        &self,
+        state: &State,
+        id: &InstanceId,
+        value: &Value,
+        key: &str,
+        said: &mut Vec<String>,
+    ) {
+        match value {
+            Value::Object(map) => {
+                // An element's key, not that of a live value, such as a plane's.
+                let element = map.contains_key("t").then(|| map.get("key")).flatten();
+                let key = element.and_then(Value::as_str).unwrap_or(key);
+                match map.get("op").and_then(Value::as_str) {
+                    Some("feed") => {
+                        let name = map.get("name").and_then(Value::as_str).unwrap_or_default();
+                        let path = map.get("path").and_then(Value::as_str);
+                        let there = inside(id, path);
+                        let gives = there.and_then(|at| feeds::gives(state.project(), &at, name));
+                        // Nothing there yet gives nothing, as while a view runs again after a
+                        // device went.
+                        if gives == Some(false) {
+                            let of = path.map_or(String::new(), |path| format!(" of {path}"));
+                            said.push(format!(
+                                "{key} reads the feed \"{name}\"{of}, which is not there"
+                            ));
+                        }
+                    }
+                    Some(op) if !self.knows(op) => {
+                        said.push(format!("{key} reads \"{op}\", which is no live value"));
+                    }
+                    _ => {}
+                }
+                for inside in map.values() {
+                    self.unread_in(state, id, inside, key, said);
+                }
+            }
+            Value::Array(items) => {
+                for inside in items {
+                    self.unread_in(state, id, inside, key, said);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn knows(&self, op: &str) -> bool {
+        let mut known = self.known.borrow_mut();
+        if let Some(known) = known.get(op) {
+            return *known;
+        }
+        let knows = sound_typescript::live::is_known(op);
+        known.insert(op.to_string(), knows);
+        knows
     }
 
     /// Starts a frame `seconds` after the last.
