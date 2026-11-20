@@ -922,7 +922,22 @@ impl Tools {
                     .collect(),
             }
         });
-        self.tools = tools.into_iter().map(Rc::new).collect();
+        // The project keeps playing a tool the code no longer defines, as it was.
+        let gone: Vec<Rc<ToolInfo>> = (self.tools.iter())
+            .filter(|info| !tools.iter().any(|tool| tool.name == info.name))
+            .cloned()
+            .collect();
+        // A file Bun runs without says why already.
+        let unexplained = (gone.iter()).filter(|info| !self.skipped.contains_key(&info.file));
+        problems.extend(unexplained.map(|info| {
+            info.problem(
+                "it is gone from the code; its records play as they did until the project opens again",
+            )
+        }));
+        self.tools = gone
+            .into_iter()
+            .chain(tools.into_iter().map(Rc::new))
+            .collect();
         self.problems = problems;
         self.listen(bun);
         for take in std::mem::take(&mut self.held_takes) {

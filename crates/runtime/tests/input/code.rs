@@ -195,3 +195,30 @@ export const timer = tool({
     }
     assert_eq!(opened.record("heard")["last"], Value::Null);
 }
+
+/// An agent renames a tool in its code: the records of the old name have no code now.
+#[test]
+fn a_tool_gone_from_the_code_is_a_problem_and_its_records_play_on() {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path().to_path_buf();
+    write(&root, "project.json", ONLY_HUM);
+    write(&root, "extensions/theme.json", "{}");
+    write(&root, "extensions/lib/level.ts", &level(0.5));
+    write(&root, "extensions/hum.ts", &hum("lib/level"));
+    write(&root, "state/hum.json", r#"{"tool": "hum", "state": {}}"#);
+    let mut opened = open(folder, Devices::default());
+    assert!((opened.loudest(4_800) - 0.5).abs() < 0.02);
+
+    write(&root, "extensions/hum.ts", &hum("lib/level").replace("\"hum\"", "\"drone\""));
+    opened.tools.code_changed();
+    opened.until("the problem of the gone tool", |opened| {
+        problems(opened).iter().any(|problem| {
+            problem.path == "extensions/hum.ts" && problem.message.contains("gone from the code")
+        })
+    });
+    for _ in 0..10 {
+        opened.settle();
+    }
+    assert_eq!(problems(&opened).len(), 1, "{:?}", problems(&opened));
+    assert!((opened.loudest(4_800) - 0.5).abs() < 0.02);
+}
