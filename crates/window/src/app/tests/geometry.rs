@@ -558,10 +558,18 @@ fn a_plane_that_follows_the_playhead_pages_on_until_a_hand_moves_it() {
     // 400 points at 0.1 a tick show 4000 ticks, 2 seconds at 120 beats a minute.
     until(&mut window, 2.5);
     let (left, right) = shown(&window);
-    assert!(left > 3000.0 && (left..right).contains(&playhead(&window)), "{left} {right}");
+    assert!(
+        left > 3000.0 && (left..right).contains(&playhead(&window)),
+        "{left} {right}"
+    );
     assert_eq!(view_runs(&window), runs);
     let [x, y, w, h] = window.presented(FOLLOWING).unwrap().0;
-    wheel(&mut window, [x + w / 2.0, y + h / 2.0], [-2000.0, 0.0], rune::Mods::default());
+    wheel(
+        &mut window,
+        [x + w / 2.0, y + h / 2.0],
+        [-2000.0, 0.0],
+        rune::Mods::default(),
+    );
     let scrolled = shown(&window).0;
     until(&mut window, 3.5);
     assert_eq!(shown(&window).0, scrolled);
@@ -570,17 +578,27 @@ fn a_plane_that_follows_the_playhead_pages_on_until_a_hand_moves_it() {
     engine(&mut window, true);
     until(&mut window, 4.2);
     let (left, right) = shown(&window);
-    assert!((left..right).contains(&playhead(&window)), "{left} {right} {}", playhead(&window));
+    assert!(
+        (left..right).contains(&playhead(&window)),
+        "{left} {right} {}",
+        playhead(&window)
+    );
 }
 
 #[test]
 fn code_shows_a_range_of_a_plane_zoomed_as_far_as_it_zooms() {
     let (_scratch, mut window) = follows();
-    act(&mut window.state, json!({ "label": "Fit", "action": "press" }));
+    act(
+        &mut window.state,
+        json!({ "label": "Fit", "action": "press" }),
+    );
     redraw(&mut window);
     let view = window.state.planes.view(FOLLOWING).unwrap();
     assert_eq!((view.left, view.right), (9600.0, 11520.0));
-    act(&mut window.state, json!({ "label": "All", "action": "press" }));
+    act(
+        &mut window.state,
+        json!({ "label": "All", "action": "press" }),
+    );
     redraw(&mut window);
     let view = window.state.planes.view(FOLLOWING).unwrap();
     assert_eq!((view.left, view.zoom), (0.0, 0.25));

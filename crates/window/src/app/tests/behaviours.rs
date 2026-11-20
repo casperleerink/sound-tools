@@ -218,14 +218,12 @@ fn a_field_in_a_plane_takes_the_keys_as_it_appears() {
     let mut window = laid_out(opened(&folder));
     click(&mut window, "t00/chain/placed:clip");
     redraw(&mut window);
-    assert_eq!(
-        focused(&window).as_deref(),
-        Some("t00/chain/placed:rename")
-    );
+    assert_eq!(focused(&window).as_deref(), Some("t00/chain/placed:rename"));
     type_in(&mut window, "Kick");
     key(&mut window, rune::Key::Enter);
     let id = InstanceId::new("song/t00/chain/placed").unwrap();
-    let state: Value = serde_json::from_str(&window.state.project().state_json(&id).unwrap()).unwrap();
+    let state: Value =
+        serde_json::from_str(&window.state.project().state_json(&id).unwrap()).unwrap();
     assert_eq!(state["name"], "Kick");
 }
 

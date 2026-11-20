@@ -132,7 +132,12 @@ impl State {
                 Want::Select { instance, span } => {
                     session.select(instance, span.map(|span| (span.start, span.end)));
                 }
-                Want::Show { instance, key, x, y } => {
+                Want::Show {
+                    instance,
+                    key,
+                    x,
+                    y,
+                } => {
                     let key = format!("{}{key}", self.prefix_of(&instance));
                     self.planes.show(&key, x, y);
                     self.lives.move_planes(self, &[key], true);

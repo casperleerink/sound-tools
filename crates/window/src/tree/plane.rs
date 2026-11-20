@@ -375,7 +375,10 @@ impl Planes {
             .cloned()
             .collect();
         for each in along {
-            if let Some(follow) = cameras.get_mut(&each).and_then(|camera| camera.follow.as_mut()) {
+            if let Some(follow) = cameras
+                .get_mut(&each)
+                .and_then(|camera| camera.follow.as_mut())
+            {
                 follow.paused = true;
             }
         }
@@ -398,7 +401,9 @@ impl Planes {
             };
             let page = {
                 let mut cameras = self.cameras.borrow_mut();
-                let Some(follow) = cameras.get_mut(&key).and_then(|camera| camera.follow.as_mut())
+                let Some(follow) = cameras
+                    .get_mut(&key)
+                    .and_then(|camera| camera.follow.as_mut())
                 else {
                     continue;
                 };

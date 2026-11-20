@@ -155,7 +155,8 @@ fn a_track_of_another_instrument_is_added_as_one_undo_step() {
     redraw(&mut window);
     let synth = |state: &State| {
         let file = state.project().root().join("state/song/track/synth.json");
-        file.exists().then(|| record(state, "song/track/synth.json")["tool"].clone())
+        file.exists()
+            .then(|| record(state, "song/track/synth.json")["tool"].clone())
     };
     assert_eq!(synth(&window.state), Some(json!("sampler")));
     act(&mut window.state, json!({ "action": "undo" }));
@@ -200,5 +201,8 @@ fn a_clip_is_named_in_place_from_its_menu() {
         key(&mut window, rune::Key::Text(letter.into()));
     }
     key(&mut window, rune::Key::Enter);
-    assert_eq!(record(&window.state, "song/t00/bass.json")["state"]["title"], "Root");
+    assert_eq!(
+        record(&window.state, "song/t00/bass.json")["state"]["title"],
+        "Root"
+    );
 }

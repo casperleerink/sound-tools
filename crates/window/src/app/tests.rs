@@ -1751,7 +1751,7 @@ fn a_tree_that_comes_during_a_drag_leaves_the_drag_where_it_is() {
 
 /// A lane on the first track of the project in `scratch` that plays `value` into `target`,
 /// such as `synth.cutoff_hz`.
-fn lane(scratch: &tempfile::TempDir, target: &str, value: f64) {
+pub(super) fn lane(scratch: &tempfile::TempDir, target: &str, value: f64) {
     let track = scratch.path().join("song/state/song/t00");
     let automation = json!([{ "lane": "lane-held", "target": target }]);
     let instance = json!({ "tool": "track", "state": { "title": "Track 1", "colour": "blue", "automation": automation } });
