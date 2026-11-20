@@ -452,11 +452,11 @@ fn the_facts_of_an_eq_and_a_wavetable_show_their_nested_fields() {
     assert_eq!(facts["title"], "Eq");
     let bands = field(&facts["fields"], "bands");
     assert_eq!(bands["kind"], "list");
-    assert_eq!(bands["max_items"], 4);
+    assert_eq!(bands["maxItems"], 4);
     let frequency = field(&bands["item"]["fields"], "frequency_hz");
     assert_eq!(
         (&frequency["scale"], &frequency["unit"]),
-        (&"logarithmic".into(), &"hz".into())
+        (&"log".into(), &"hz".into())
     );
     assert_eq!(field(&bands["item"]["fields"], "shape")["kind"], "choice");
 

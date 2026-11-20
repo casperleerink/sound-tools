@@ -252,11 +252,19 @@ export type Node =
   | { t: "memo"; key: string };
 export type Child = Node | string | number | null | undefined | false | Child[];
 
-/** A field of a record as a card shows it: a number with its range, a switch, or a choice of options. */
+/**
+ * A field of a record as a card shows it, by its `name` in the record or the object around it:
+ * a number with its range, a switch, a choice of options, an object of fields (`group`), a list
+ * of `item`s, or an object of `item`s by key (`map`). `scale` spreads a number over a knob's
+ * travel: `log` in octaves, as a frequency; `fader` as a volume.
+ */
 export type FieldInfo = { name: string; label: string } & (
-  | { kind: "number"; min: number; max: number; log: boolean; integer: boolean; unit: Unit | null; default: number }
+  | { kind: "number"; min: number; max: number; scale: "linear" | "log" | "fader"; integer: boolean; unit: Unit | null; default: number }
   | { kind: "switch"; default: boolean }
   | { kind: "choice"; options: { value: string | number; text: string }[]; default: string | number }
+  | { kind: "group"; fields: FieldInfo[] }
+  | { kind: "list"; item: FieldInfo; maxItems: number | null }
+  | { kind: "map"; item: FieldInfo }
 );
 /** What built-in tools tell of an instance besides its title and fields. Rust will write this beside `records.ts`; until then a tool's facts are named here. */
 interface ToolFacts {

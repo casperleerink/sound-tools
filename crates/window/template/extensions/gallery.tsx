@@ -124,7 +124,7 @@ export const gallery = tool({
             <Section title="Values">
               <row gap={4} align="end">
                 <row>
-                  {knob("cutoff", "Cutoff", { min: 20, max: 20000, log: true, unit: "hz", initial: 2000 })}
+                  {knob("cutoff", "Cutoff", { min: 20, max: 20000, scale: "log", unit: "hz", initial: 2000 })}
                   {knob("resonance", "Resonance", { min: 0, max: 1, unit: "percent" })}
                   {knob("pan", "Pan", { min: -1, max: 1, unit: "pan", bipolar: true, initial: 0 })}
                   <Knob {...bound("note", "Note", { min: 36, max: 96, integer: true, unit: "pitch" })} />

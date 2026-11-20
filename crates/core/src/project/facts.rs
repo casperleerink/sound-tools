@@ -60,6 +60,7 @@ pub enum FieldKind {
     /// A list of `item`s, such as the bands of the EQ, at most `max_items`.
     List {
         item: Box<FieldInfo>,
+        #[serde(rename = "maxItems")]
         max_items: Option<u64>,
     },
     /// An object of `item`s by key, such as the pads of the drum pad.
@@ -73,6 +74,7 @@ pub enum FieldKind {
 #[serde(rename_all = "lowercase")]
 pub enum FieldScale {
     Linear,
+    #[serde(rename = "log")]
     Logarithmic,
     Fader,
 }
@@ -292,9 +294,10 @@ fn field(
                 Some("fader") => FieldScale::Fader,
                 _ => FieldScale::Linear,
             };
-            // A tool of the project declares its unit; a built-in one's is read from its name.
-            let unit = match property.get("x-unit").and_then(Value::as_str) {
-                Some(declared) => Some(declared.to_string()),
+            // A tool of the project declares its unit, `null` for a plain number; a built-in
+            // one's is read from its name.
+            let unit = match property.get("x-unit") {
+                Some(declared) => declared.as_str().map(str::to_string),
                 None => unit_of_name(name, min, max).map(str::to_string),
             };
             FieldKind::Number {

@@ -3,7 +3,7 @@
 //! offline, a step per frame, and Bun answers before each frame, so a run is always the same.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -108,9 +108,10 @@ pub(crate) struct State {
     pub(crate) gesture: Option<tree::Gesture>,
     /// The element a drag ended on in this frame: the release that ends a drag is no press.
     pub(crate) dragged: Option<String>,
-    /// The facts of the instances shown and their children, with the tool and the load of Bun
-    /// they were made for.
-    facts: HashMap<InstanceId, (String, u64, Value)>,
+    /// The facts Bun was last told, see `State::facts_now`.
+    facts: BTreeMap<InstanceId, sound_core::facts::Facts>,
+    /// When facts were last read, in seconds of the window's clock.
+    facts_read: f64,
     /// The offers of the plugins of this computer, and the scan they were made for.
     plugin_offers: (u64, Vec<sound_typescript::devices::Offer>),
     /// The overlays open now, each inside the one before, by the key of what opened it. How the
@@ -259,7 +260,8 @@ impl State {
             gesture: None,
             dragged: None,
             open: Vec::new(),
-            facts: HashMap::new(),
+            facts: BTreeMap::new(),
+            facts_read: 0.0,
             plugin_offers: (0, Vec::new()),
             main,
             waiting: host::Waiting::default(),
@@ -321,13 +323,6 @@ impl State {
 
     fn headless(&self) -> bool {
         matches!(self.sound, Sound::Offline { .. })
-    }
-
-    /// The JSON Schema of the records of `tool`: a tool of the project's, else a built-in one's.
-    pub(crate) fn schema(&self, tool: &str) -> Option<Value> {
-        (self.tools.as_ref())
-            .and_then(|tools| tools.schema(tool))
-            .or_else(|| self.schemas.get(tool).cloned())
     }
 
     /// What the keys of the elements of `id` start with: nothing for the main view, its path

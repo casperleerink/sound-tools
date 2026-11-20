@@ -7,7 +7,7 @@ use std::sync::{PoisonError, mpsc};
 use plugin_host::{PluginRecord, Plugins};
 use rune::{FileDialogOptions, FileDialogResult, Tx};
 use runtime::session::Loop;
-use serde_json::Value;
+use sound_core::facts::{self, Facts};
 use sound_core::{InstanceId, ProjectError};
 use sound_typescript::devices::{self, Offer, Takes};
 use sound_typescript::next::{Answer, Shown, Tools, Want};
@@ -38,18 +38,9 @@ impl State {
     /// What the window shows of `shown`, with what it knows besides the records: the one place
     /// facts, the catalog and the keys of actions are gathered.
     pub(super) fn gathered(&mut self, instances: BTreeSet<InstanceId>) -> Shown {
-        let children: Vec<InstanceId> = (self.project().instances())
-            .map(|(id, _)| id)
-            .filter(|id| {
-                id.parent()
-                    .is_some_and(|parent| instances.contains(&parent))
-            })
-            .cloned()
-            .collect();
-        let known: BTreeSet<InstanceId> = instances.iter().chain(&children).cloned().collect();
-        self.facts.retain(|id, _| known.contains(id));
-        let facts: BTreeMap<InstanceId, Value> = (known.iter())
-            .filter_map(|id| Some((id.clone(), self.facts_of(id)?)))
+        self.facts = self.facts_now(&instances);
+        let facts = (self.facts.iter())
+            .map(|(id, facts)| (id.clone(), facts.to_value()))
             .collect();
         let tools = self.tools.as_ref();
         let cards = (instances.iter())
@@ -57,7 +48,7 @@ impl State {
                 let tool = self.project().tool_of(id);
                 tool.is_some_and(|tool| !tools.is_some_and(|tools| tools.has_view(tool)))
             })
-            .filter_map(|id| Some((id.clone(), facts.get(id)?.clone())))
+            .cloned()
             .collect();
         if let Some(tools) = tools {
             self.keys.keymap.set_tool_groups(tools.shortcut_groups());
@@ -72,18 +63,28 @@ impl State {
         }
     }
 
-    /// What the window knows of `id` that no record holds, as `Facts` of `sdk/view.ts`: its
-    /// title and fields, from the schema of its tool. Made again only when its tool or that
-    /// tool's code changed.
-    fn facts_of(&mut self, id: &InstanceId) -> Option<Value> {
-        let tool = self.project().tool_of(id)?.to_string();
-        let loads = self.tools.as_ref().map_or(0, Tools::loads);
-        let fresh = !matches!(self.facts.get(id), Some((made_for, made_at, _)) if *made_for == tool && *made_at == loads);
-        if fresh {
-            let facts = crate::fields::card_of(self, id)?;
-            self.facts.insert(id.clone(), (tool, loads, facts));
-        }
-        self.facts.get(id).map(|(_, _, facts)| facts.clone())
+    /// The facts of `shown` and of their children and grandchildren, which views and actions
+    /// read: what no record holds, such as the fields of a record or the length of a file.
+    pub(super) fn facts_now(&self, shown: &BTreeSet<InstanceId>) -> BTreeMap<InstanceId, Facts> {
+        let project = self.project();
+        let reached = |id: &InstanceId| {
+            let parent = id.parent();
+            let grandparent = parent.as_ref().and_then(InstanceId::parent);
+            [Some(id.clone()), parent, grandparent]
+                .iter()
+                .flatten()
+                .any(|above| shown.contains(above))
+        };
+        (project.instances().map(|(id, _)| id))
+            .filter(|id| reached(id))
+            .filter_map(|id| {
+                // A tool of the project gives its schema; a built-in one registered it.
+                let schema =
+                    (project.tool_of(id)).and_then(|tool| self.tools.as_ref()?.schema(tool));
+                let facts = facts::of(project, self.feeds.sources(), id, schema.as_ref())?;
+                Some((id.clone(), facts))
+            })
+            .collect()
     }
 
     /// What `addOffer` puts: the built-in devices, the tools of the project and the plugins of

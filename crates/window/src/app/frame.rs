@@ -19,6 +19,9 @@ use super::{DID_NOTHING, FAILED, REPORT, State};
 const FRAME: Duration = Duration::from_millis(16);
 /// How often an idle window looks at what has no way to wake it: plugins, and sounds that load.
 const IDLE: Duration = Duration::from_millis(250);
+/// How often facts are read for a change no edit brings, such as a file that arrived: reading
+/// those of 900 instances took 1.5 ms.
+const FACTS: f64 = 0.25;
 
 impl State {
     /// Shows what the views name, and waits for their trees in a run without a window. Only
@@ -151,11 +154,16 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
     state.imported();
     changed |= state.serve_wants();
     // What the views name changes only with what they show, and a lane bound or let go as a
-    // behaviour answers, or a key the composer gave an action, which say nothing.
+    // behaviour answers, a key the composer gave an action, or facts, which say nothing.
     let holds = state.holds(&state.shown);
     let keys = state.action_keys();
+    let facts_due = seconds - state.facts_read >= FACTS;
+    if facts_due {
+        state.facts_read = seconds;
+    }
     let moved = (state.tools.as_ref())
-        .is_some_and(|tools| *tools.holds() != holds || *tools.keys() != keys);
+        .is_some_and(|tools| *tools.holds() != holds || *tools.keys() != keys)
+        || (facts_due && state.facts_now(&state.shown) != state.facts);
     if changed || moved {
         changed |= state.discover(headless);
     }

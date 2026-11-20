@@ -44,6 +44,11 @@ impl Feeds {
         }
     }
 
+    /// What feeds and facts read that the project does not hold.
+    pub(crate) fn sources(&self) -> &dyn Sources {
+        &*self.sources
+    }
+
     /// Starts a frame `seconds` after the last.
     pub(crate) fn next_frame(&mut self, seconds: f64) {
         self.readings.next_frame(seconds as f32);

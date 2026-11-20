@@ -6,6 +6,7 @@ import { envelope, lfo } from "../lfo";
 import { freeName, splitTarget, type Mover } from "../track";
 import { isRow, nameFrom, type Child, type Draft, type Song } from "./model";
 import { nearestOf } from "./time";
+import { FADER } from "../ui/value";
 
 export type AutomationPoint = FilledStateOfTool<"lane">["points"][number];
 type Scale = FilledStateOfTool<"lane">["scale"];
@@ -13,8 +14,6 @@ type Scale = FilledStateOfTool<"lane">["scale"];
 /** How a number spreads over the height of its lane, as its knob or fader travels it. */
 export type Travel = { min: number; max: number; scale: Scale };
 
-/** The fader's scale: 0 dB at 0.8 of the travel and +6 dB at the top, a power law on the amplitude. */
-const FADER = { unity: 0.8, decade: 61.94, top: 6 } as const;
 
 /** Where `value` sits along `travel`: 0 at `min` and 1 at `max`. A fader's is a volume in dB whatever its ends. */
 export function positionOf({ min, max, scale }: Travel, value: number): number {

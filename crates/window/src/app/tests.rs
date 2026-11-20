@@ -1696,9 +1696,10 @@ fn a_card_keeps_the_unit_a_tool_declares() {
     let (_scratch, folder) = with_tools(&[("rate", RATE)]);
     let state = opened(&folder);
     let id = InstanceId::new("song/t00/chain/rate").unwrap();
-    let card = crate::fields::card_of(&state, &id).unwrap();
+    let facts = state.facts_now(&std::collections::BTreeSet::from([id.clone()]));
+    let card = facts[&id].to_value();
     assert_eq!(card["fields"][0]["unit"], "hz");
-    assert_eq!(card["fields"][0]["log"], true);
+    assert_eq!(card["fields"][0]["scale"], "log");
     assert_eq!(card["fields"][1]["unit"], Value::Null);
 }
 
@@ -2111,6 +2112,7 @@ fn code_that_opens_the_window_of_a_child_with_none_has_a_problem() {
 }
 
 mod behaviours;
+mod facts;
 mod feeds;
 mod frame;
 mod projects;

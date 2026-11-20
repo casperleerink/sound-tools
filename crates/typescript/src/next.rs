@@ -94,9 +94,9 @@ const NOT_RUNNING: &str = "the code of the project does not run now, so this did
 #[derive(Default)]
 pub struct Shown {
     pub instances: BTreeSet<InstanceId>,
-    /// The card of each shown instance whose tool has no view, which the project's card of its
-    /// tool or its generic card draws: its facts.
-    pub cards: BTreeMap<InstanceId, Value>,
+    /// The shown instances whose tools have no view, which the project's card of their tool or
+    /// its generic card draws.
+    pub cards: BTreeSet<InstanceId>,
     /// The numbers a lane moves of each shown instance, see `holds`.
     pub holds: BTreeMap<InstanceId, Vec<String>>,
     /// What the window knows of each shown instance and of each of its children that no record
@@ -202,7 +202,7 @@ pub struct Tools {
     changed_at: Option<Instant>,
     changed_records: BTreeSet<InstanceId>,
     shown: BTreeSet<InstanceId>,
-    cards: BTreeMap<InstanceId, Value>,
+    cards: BTreeSet<InstanceId>,
     /// The numbers a lane moves of each shown instance.
     holds: BTreeMap<InstanceId, Vec<String>>,
     told_shown: bool,
@@ -279,7 +279,7 @@ impl Tools {
             changed_at: None,
             changed_records: every_instance(project),
             shown: BTreeSet::new(),
-            cards: BTreeMap::new(),
+            cards: BTreeSet::new(),
             holds: BTreeMap::new(),
             told_shown: true,
             drawn: HashMap::new(),
@@ -387,8 +387,8 @@ impl Tools {
         (self.holds, self.facts, self.keys) = (holds, facts, keys);
         (self.catalog, self.told_catalog) = (catalog, told);
         // A built-in device a card shows is told to Bun, as one inside a tool of the project is.
-        let new: Vec<InstanceId> = (cards.keys())
-            .filter(|id| !self.cards.contains_key(*id))
+        let new: Vec<InstanceId> = (cards.iter())
+            .filter(|id| !self.cards.contains(*id))
             .cloned()
             .collect();
         self.changed_records.extend(new);
@@ -913,7 +913,7 @@ impl Tools {
                     return false;
                 }
                 // Bun draws a card for an instance it got one for, with the generic card.
-                let card = self.cards.contains_key(&instance);
+                let card = self.cards.contains(&instance);
                 let before = self.drawn.remove(&instance);
                 let problem = (error.as_ref()).and_then(|error| match card {
                     true => Some(Problem {
@@ -1488,7 +1488,7 @@ impl Tools {
 
     /// Whether a card draws `id`, as the window last showed it.
     pub fn draws_card(&self, id: &InstanceId) -> bool {
-        self.cards.contains_key(id)
+        self.cards.contains(id)
     }
 
     /// Whether `tool` is a tool of the project that loaded.
@@ -1520,7 +1520,7 @@ impl Tools {
         instance: &InstanceId,
         message: &str,
     ) -> Option<Problem> {
-        if self.cards.contains_key(instance) {
+        if self.cards.contains(instance) {
             return Some(Problem {
                 path: format!("{FOLDER}/{}", self.card_file(project, instance)),
                 message: message.to_string(),
@@ -1631,9 +1631,9 @@ impl Tools {
         let ids = std::mem::take(&mut self.changed_records);
         let records: Vec<(&InstanceId, Option<(&str, String)>)> = (ids.iter())
             .map(|id| {
-                let tool = project.tool_of(id).filter(|_| {
-                    told_to_bun(project, &self.tools, id) || self.cards.contains_key(id)
-                });
+                let tool = project
+                    .tool_of(id)
+                    .filter(|_| told_to_bun(project, &self.tools, id) || self.cards.contains(id));
                 (
                     id,
                     tool.and_then(|tool| Some((tool, project.state_json(id)?))),

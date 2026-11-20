@@ -14,7 +14,6 @@
 mod app;
 mod controls;
 mod feeds;
-mod fields;
 mod lives;
 mod plugin_windows;
 mod shell;
