@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use super::{frame, laid_out, redraw, with_tools};
+use super::{frame, laid_out, new_project, opened, redraw, with_tools};
 use crate::app::State;
 
 /// 64 tracks with 500 clips, each a box with its name, a drag and a place that follows it, a
@@ -119,7 +119,12 @@ fn view_runs(window: &rune::Runtime<State>) -> u64 {
 
 /// Scrolls, plays, zooms and drags the plane `plane` of `tool`; what each frame took.
 fn budgets(tool: &str, code: &str, plane: &str, dragged: &str) -> [Duration; 3] {
-    let (_scratch, mut window) = shown(tool, code);
+    let (_scratch, window) = shown(tool, code);
+    budgets_of(window, tool, plane, dragged)
+}
+
+/// Scrolls, plays, zooms and drags the plane `plane` of the view `window` shows; what each frame took.
+fn budgets_of(mut window: rune::Runtime<State>, tool: &str, plane: &str, dragged: &str) -> [Duration; 3] {
     let runs = view_runs(&window);
     let [x, y, w, h] = window.presented(plane).unwrap().0;
     let at = [x + w / 2.0, y + h / 2.0];
@@ -193,6 +198,53 @@ fn five_hundred_clips_scroll_play_zoom_and_drag_within_their_budgets_and_run_no_
 #[test]
 fn two_thousand_notes_scroll_play_zoom_and_drag_within_their_budgets_and_run_no_view() {
     let [scroll, play, zoom] = budgets("notes", NOTES, "roll", "n5");
+    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame took {scroll:?}");
+    assert!(play < SCROLL_AND_PLAY, "a play frame took {play:?}");
+    assert!(zoom < ZOOM, "a zoom frame took {zoom:?}");
+}
+
+/// The song of the template with 64 tracks of 500 clips: its records, as the window keeps them.
+fn big_song() -> tempfile::TempDir {
+    let scratch = new_project();
+    let song = scratch.path().join("song/state/song");
+    let copy = |from: &std::path::Path, to: &std::path::Path| {
+        for entry in walk(from) {
+            let into = to.join(entry.strip_prefix(from).unwrap());
+            std::fs::create_dir_all(into.parent().unwrap()).unwrap();
+            std::fs::copy(&entry, into).unwrap();
+        }
+    };
+    for track in 2..64 {
+        copy(&song.join("t00"), &song.join(format!("t{track:02}")));
+    }
+    let notes: Vec<_> = (0..8).map(|n| serde_json::json!({ "start": n * 480, "length": 480, "pitch": 48 + n * 2, "velocity": 100 })).collect();
+    for clip in 0..500 {
+        let (track, at) = (clip % 64, clip / 64);
+        let record = serde_json::json!({ "tool": "timeline", "state": { "start": at * 2 * 3840, "length": 3840, "notes": notes } });
+        let file = song.join(format!("t{track:02}/c{at}.json"));
+        std::fs::write(file, record.to_string()).unwrap();
+    }
+    scratch
+}
+
+fn walk(folder: &std::path::Path) -> Vec<std::path::PathBuf> {
+    (std::fs::read_dir(folder).unwrap().flatten())
+        .flat_map(|entry| match entry.path().is_dir() {
+            true => walk(&entry.path()),
+            false => vec![entry.path()],
+        })
+        .collect()
+}
+
+#[test]
+fn the_song_of_the_template_with_64_tracks_and_500_clips_runs_no_view_as_it_scrolls_plays_and_zooms() {
+    let scratch = big_song();
+    let mut window = laid_out(opened(&scratch.path().join("song")));
+    for _ in 0..3 {
+        redraw(&mut window);
+    }
+    assert!(window.presented("clip-t05/c1").is_some());
+    let [scroll, play, zoom] = budgets_of(window, "song", "song", "clip-t05/c1");
     assert!(scroll < SCROLL_AND_PLAY, "a scroll frame took {scroll:?}");
     assert!(play < SCROLL_AND_PLAY, "a play frame took {play:?}");
     assert!(zoom < ZOOM, "a zoom frame took {zoom:?}");
