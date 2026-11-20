@@ -30,7 +30,7 @@ export type PadProps = {
 export const Pad = ({ id, label, text, detail, pitch, path, level, sample = false, missing = false, chosen = false, w = theme.size.cell, h: tall = theme.size.cell, onPress, onDrop }: PadProps) => (
   <box key={id} label={label} role="button" w={w} h={tall} radius="md" fill={chosen ? "selected" : "fill"} border={chosen ? "text-secondary" : undefined} hover="fill" clip onPress={onPress} {...(onDrop ? { onDrop } : {})}>
     <box at={[0, 0]} w={w} h={tall} fill="sound/24" opacity={level ?? live.feed(`sounding.${pitch}`, path)} inert />
-    <text at={[8, detail === undefined ? (tall - 16) / 2 : 6]} w={w - (missing || sample ? 28 : 16)} style="label" color={chosen ? "text" : "text-secondary"} truncate>{text ?? label}</text>
+    <text at={[8, detail === undefined ? (tall - 16) / 2 : 6]} w={w - (missing || sample ? 28 : 16)} style="label" color="text" truncate>{text ?? label}</text>
     {detail !== undefined && <text at={[8, tall - 22]} w={w - (missing || sample ? 28 : 16)} style="label" color="text-muted" truncate>{detail}</text>}
     {(missing || sample) && <box at={[w - 20, detail === undefined ? (tall - 12) / 2 : tall - 20]}>{missing ? <icon name="triangle-alert" size={12} color="warning" /> : <icon name="audio-lines" size={12} color="text-secondary" />}</box>}
   </box>
