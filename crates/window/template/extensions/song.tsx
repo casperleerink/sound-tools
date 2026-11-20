@@ -9,7 +9,7 @@ import { lengthAt, lengthOf } from "./song/clips";
 import { editsOf } from "./song/edits";
 import { actions } from "./song/keys";
 import { colourOf, fields, isStrip, memory, mixOf, muted, ordered, parts, titleOf } from "./song/model";
-import { notesTrackOf } from "./song/tracks";
+import { notesTrackOf, trackEdits } from "./song/tracks";
 import type { bus } from "./bus";
 import type { tape } from "./tape";
 import type { track } from "./track";
@@ -68,8 +68,10 @@ export const song = tool({
   },
   memory,
   actions,
+  tick: (song) => trackEdits(song).stopped(),
   view: (self, ctx) => {
-    const { memory } = ctx;
+    // `update` stays named here: the window's tests put a button into this view that calls it.
+    const { memory, update } = ctx;
     const edits = editsOf(ctx);
     const strips = ordered(self.children.filter(isStrip), self.state.order);
     const rows = strips.filter((each) => each.tool !== "bus");

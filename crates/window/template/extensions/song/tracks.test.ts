@@ -95,7 +95,8 @@ test("arm opens the recorder's input, and R records every armed track and the ke
     [{ child: "t00/rec", number: "record" }, 1],
   ]);
   expect(f.clock.playing).toBe(true);
-  tracks.record();
+  f.clock.playing = false;
+  tracks.stopped();
   expect(f.memory.recording).toBe(null);
   expect(f.sent.slice(3)).toEqual([[{ child: "t00/rec", number: "record" }, 0], [{ child: "audio-1/rec", number: "record" }, 0]]);
 });

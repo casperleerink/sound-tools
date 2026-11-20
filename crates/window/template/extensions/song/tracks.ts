@@ -262,6 +262,10 @@ export const trackEdits = (song: Song) => {
       for (const name of new Set([...memory.armed, ...(notes ? [notes] : [])])) if (all.includes(name)) record(name, true);
       song.clock.play();
     },
+    /** A pause or a stop ends the recording: what the song's control loop checks. */
+    stopped() {
+      if (!song.clock.playing && memory.recording !== null) edits.record();
+    },
     /**
      * Renders the clips and regions `keys` of the track `name`, from the first to the last, after
      * its effects and before its fader, with the tail or without, onto a new audio track under it
