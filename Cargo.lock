@@ -4633,7 +4633,6 @@ dependencies = [
  "sound-agent",
  "sound-core",
  "sound-export",
- "sound-media",
  "sound-typescript",
  "tempfile",
  "windows-sys 0.61.2",
