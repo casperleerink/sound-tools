@@ -120,7 +120,8 @@ fn first_of_wave(state: &State) -> f32 {
         "wave",
         request,
     ) {
-        Some(Feed::List(list)) => list[0],
+        // Rects, x y w h each: the height of the first.
+        Some(Feed::List(list)) => list[3],
         other => panic!("{other:?}"),
     }
 }

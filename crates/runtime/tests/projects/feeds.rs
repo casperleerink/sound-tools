@@ -312,8 +312,17 @@ fn a_drum_pad_shows_the_level_of_the_pad_that_plays_and_names_its_pads() {
     assert_eq!(field(&facts["fields"], "pads")["kind"], "map");
 }
 
-/// The wave of a file comes from a thread of its own: read again until it is there.
+/// The wave of a file comes from a thread of its own: read again until it is there. Its
+/// heights, each rect of it centred, so it draws mirrored about its middle.
 fn wave_when_read(harness: &Harness, path: &str, at: FeedRequest) -> Vec<f32> {
+    let rects = rects_when_read(harness, path, at);
+    for rect in rects.chunks_exact(4) {
+        assert!((rect[1] + rect[3] / 2.0 - 0.5).abs() < 1e-6, "{rects:?}");
+    }
+    rects.chunks_exact(4).map(|rect| rect[3]).collect()
+}
+
+fn rects_when_read(harness: &Harness, path: &str, at: FeedRequest) -> Vec<f32> {
     let (files, readings, id) = (
         Files::new(),
         Readings::new(),

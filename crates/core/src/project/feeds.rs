@@ -428,6 +428,22 @@ impl<S: State> Shows<'_, S> {
     }
 }
 
+/// Heights, 0 to 1, of the stretches between `edges` as rects, x y w h each, centred on 0.5 of
+/// 0 to 1 down: a `rects` drawing with `units` [across, 1] shows a wave mirrored about its middle.
+pub fn band(edges: &[f64], tall: impl IntoIterator<Item = f32>) -> Vec<f32> {
+    (edges.windows(2).zip(tall))
+        .flat_map(|(edge, tall)| {
+            let tall = tall.clamp(0.0, 1.0);
+            [
+                edge[0] as f32,
+                (1.0 - tall) / 2.0,
+                (edge[1] - edge[0]) as f32,
+                tall,
+            ]
+        })
+        .collect()
+}
+
 /// What `name` of the instance `instance` gives this frame, from its record as it plays at the
 /// request's tick. `name.N` is the number at N of a list feed, as `sounding.60`. `None` for a
 /// feed its tool does not have.

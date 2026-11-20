@@ -88,7 +88,7 @@ pub(crate) fn register_feeds(registry: &mut Registry) {
         .shows::<Record>()
         .feed(
             "wave",
-            "The loudest sample, 0 to 1, of each of `points` equal stretches (96 unless the binding says) of the region as it plays, with its gain and fades, across the ticks after its start the binding shows (all of it unless it says); empty while its file is missing or read.",
+            "The loudest sample, 0 to 1, of each of `points` equal stretches (96 unless the binding says) of the region as it plays, with its gain and fades, across the ticks after its start the binding shows (all of it unless it says): as `rects` that draw it mirrored about its middle with `units` [across, 1]; empty while its file is missing or read.",
             wave,
         )
         .facts(|record, context| Facts {
@@ -126,13 +126,12 @@ fn wave(record: &Record, context: &FeedContext<'_>) -> Vec<f32> {
     let frame = |tick: Ticks| clock.frame_of(tick).0;
     let frames = frame(end).saturating_sub(frame(start));
     let (fade_in, fade_out) = region.fade_frames(clock.sample_rate());
-    (peaks.into_iter().zip(edges.windows(2)))
-        .map(|(peak, edge)| {
-            let middle = frame(at((edge[0] + edge[1]) / 2.0)).saturating_sub(frame(start));
-            let level = faded(middle, frames, fade_in, fade_out) * f64::from(region.gain);
-            peak * level as f32
-        })
-        .collect()
+    let heights = (peaks.into_iter().zip(edges.windows(2))).map(|(peak, edge)| {
+        let middle = frame(at((edge[0] + edge[1]) / 2.0)).saturating_sub(frame(start));
+        let level = faded(middle, frames, fade_in, fade_out) * f64::from(region.gain);
+        peak * level as f32
+    });
+    sound_core::feeds::band(&edges, heights)
 }
 
 /// The record of the region, for the SDK.
