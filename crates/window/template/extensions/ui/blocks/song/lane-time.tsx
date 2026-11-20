@@ -138,11 +138,10 @@ const Points = ({ page, row, points, open, chosen, say }: { page: Page; row: Lan
   );
 };
 
-/** What a chosen point holds `down` its lane as it drags, in its unit: a lane holds no silence, its volume's bottom is -100 dB. */
+/** What a chosen point holds `down` its lane as it drags, in its unit: what a release there sets. */
 const Readout = ({ lane: { travel, unit }, down }: { lane: ReturnType<typeof laneOf>; down: LiveValue }) => {
-  const played = liveValueAt(down.clamp(0, 1).negate().plus(1), travel);
   // To a hundredth: a live value's numbers are 32-bit, and 0 dB would read -0.0000005 dB.
-  const value = (travel.scale === "fader" ? played.max(-100) : played).times(100).round().over(100);
+  const value = liveValueAt(down.clamp(0, 1).negate().plus(1), travel).times(100).round().over(100);
   return unit === undefined ? <text style="number" color="text" w={72} live={value} digits={2} /> : <text style="number" color="text" w={72} live={value} unit={unit} />;
 };
 

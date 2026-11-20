@@ -5,7 +5,7 @@ import { builtInNumbers, type FilledStateOfTool, type Pointer, type Unit } from 
 import { ENVELOPE, envelope, lfo } from "../lfo";
 import { freeName, splitTarget, type Mover } from "../track";
 import { isRow, mixOf, nameFrom, words, type Child, type Draft, type Song } from "./model";
-import { positionOf, valueOf } from "../ui/value";
+import { positionOf, SILENT_DB, valueAt, valueOf, VOLUME } from "../ui/value";
 import { nearestOf } from "./time";
 
 export type AutomationPoint = FilledStateOfTool<"lane">["points"][number];
@@ -15,11 +15,8 @@ type Scale = FilledStateOfTool<"lane">["scale"];
 export type Travel = { min: number; max: number; scale: Scale };
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
-/** The value a lane holds `up` its travel, 0 to 1: a lane holds no -inf, so a volume's bottom is -100 dB. */
-export const laneValue = (travel: Travel, up: number) => {
-  const value = valueOf(clamp(up, 0, 1), travel);
-  return travel.scale === "fader" ? Math.max(value, -100) : value;
-};
+/** The value a lane holds `up` its travel, 0 to 1, as its fader or knob sets it there. */
+export const laneValue = (travel: Travel, up: number) => valueAt(up, travel);
 
 /** How far along a line bent by `curve` the place `done` of the way is, as the lane plays it. */
 export const bent = (done: number, curve: number) => (curve === 0 ? done : done ** (4 ** curve));
@@ -71,7 +68,7 @@ export function laid(points: readonly AutomationPoint[], scale: Scale, line: rea
 /** The travel of the number `target` a lane of `row` moves: a fader's volume, a pan, or a built-in device's number; else what its points span. */
 export function travelOf(row: Child, target: string): Travel {
   const [path, number] = splitTarget(target);
-  if (path === "mix" || path.startsWith("send-")) return number === "gain_db" ? { min: -100, max: 6, scale: "fader" } : { min: -1, max: 1, scale: "linear" };
+  if (path === "mix" || path.startsWith("send-")) return number === "gain_db" ? { min: SILENT_DB, max: VOLUME.max, scale: "fader" } : { min: -1, max: 1, scale: "linear" };
   let device: { tool: unknown; children: readonly unknown[] } | undefined = isRow(row) ? row : undefined;
   for (const step of path.split("/")) device = (device?.children as { name: string; tool: unknown; children: readonly unknown[] }[] | undefined)?.find((child) => child.name === step);
   const numbers = builtInNumbers[String(device?.tool)] ?? {};
@@ -115,7 +112,7 @@ export function movablesOf(row: Child): Movable[] {
   if (!isRow(row)) return [];
   const gain = mixOf(row)?.state.gain_db;
   const own: Movable[] = [
-    { target: "mix.gain_db", text: "Volume", group: "Track", value: gain === "-inf" ? -100 : (gain ?? 0) },
+    { target: "mix.gain_db", text: "Volume", group: "Track", value: gain === "-inf" ? SILENT_DB : (gain ?? 0) },
     { target: "mix.pan", text: "Pan", group: "Track", value: mixOf(row)?.state.pan ?? 0 },
   ];
   const chain = row.children.find((child) => child.name === "chain");
@@ -234,7 +231,7 @@ export const laneEdits = (song: Song) => {
         const row = rowIn(draft, track);
         if (!row) return;
         const lane = freeName(row.children.map((child) => child.name), `lane-${nameFrom(target)}`) as `lane-${string}`;
-        row.children.push({ name: lane, tool: "lane", state: { points: [{ tick: 0, value: Math.max(value, -100) }], scale } });
+        row.children.push({ name: lane, tool: "lane", state: { points: [{ tick: 0, value: Math.max(value, SILENT_DB) }], scale } });
         row.state.automation = [...row.state.automation, { lane, target }];
       });
       this.show(track, true);

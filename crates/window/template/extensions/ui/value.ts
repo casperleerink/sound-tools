@@ -14,6 +14,8 @@ export type Range = { min: number; max: number; scale?: Scale; step?: number };
 const FADER = { unity: 0.8, decade: 61.94, top: 6 } as const;
 /** What a volume fader takes: silence to +6 dB, in tenths of a dB. */
 export const VOLUME: Range = { min: -Infinity, max: FADER.top, scale: "fader" };
+/** Silence where a number cannot hold -inf: a lane's bottom, and what a fader plays while it drags there. */
+export const SILENT_DB = -100;
 
 const clamp = (at: number) => Math.min(Math.max(at, 0), 1);
 /** What an arrow key moves of the travel when there is no `step`. */
@@ -62,8 +64,6 @@ export const liveTravelled = (value: Live, { min, max, scale }: Range): Live => 
 /** Where an amplitude, such as a meter's peak, is on a fader: a level beside it reads on its scale. */
 export const liveLevel = (amplitude: Live): Live => amplitude.pow(20 / FADER.decade).times(FADER.unity).min(1);
 
-/** The quietest a fader plays while it drags, as a lane writes silence: a live value holds no -inf. */
-const SILENT_DB = -100;
 
 /** {@link valueAt} as a live value, for the sound while a drag goes on: what a release there sets, a fader's -inf as -100 dB. */
 export const liveValueAt = (at: Live, range: Range): Live => {

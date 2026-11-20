@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import { editsOf } from "./edits";
 import { fakeSong, laneOf, tapeOf, trackOf } from "./fake";
-import { laneAt, movablesOf } from "./lanes";
+import { downOf } from "../ui/blocks/song/lane-shapes";
+import { SILENT_DB, travelled, valueAt, VOLUME } from "../ui/value";
+import { laneAt, laneValue, movablesOf, travelOf } from "./lanes";
 import { BAR, BEAT } from "./time";
 
 const child = (f: ReturnType<typeof fakeSong>, track: string, name: string) => (f.self.children as any[]).find((each) => each.name === track).children.find((each: { name: string }) => each.name === name);
@@ -123,4 +125,10 @@ test("a new lane offers the track's volume and pan, then each device's numbers i
   expect(offered.find((each) => each.target === "synth.cutoff_hz")).toMatchObject({ text: "Cutoff", value: 2000 });
   expect(offered.find((each) => each.target === "chain/eq.bands.0.gain_db")).toMatchObject({ text: "Bands 1 gain", value: 3 });
   expect(offered.find((each) => each.target === "chain/filter.cutoff_hz")).toMatchObject({ value: 500 });
+});
+
+test("a volume's lane and its fader agree: the same height for a value, and the same value at a height, but silence, which a lane holds as -100 dB", () => {
+  const lane = travelOf(trackOf("t00") as never, "mix.gain_db");
+  for (let tenths = SILENT_DB * 10; tenths <= 60; tenths++) expect(Math.abs(1 - downOf(tenths / 10, lane) - travelled(tenths / 10, VOLUME))).toBeLessThan(1e-4);
+  for (let at = 0; at <= 1000; at++) expect(laneValue(lane, at / 1000)).toBe(Math.max(valueAt(at / 1000, VOLUME), SILENT_DB));
 });

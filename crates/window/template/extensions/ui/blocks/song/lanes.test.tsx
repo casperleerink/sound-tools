@@ -126,8 +126,8 @@ test("a point drags on the snap and in its unit, between its neighbours; alt-cli
   // A tenth of the travel down from 0 dB, on the fader's scale.
   act("point-t00-lane-vol-3840", "drag", { dx: 500, dy: 0.076 });
   expect(pointsOf("t00", "lane-vol")[1]).toMatchObject({ tick: 4320, curve: 0.5 });
-  expect(Math.round(pointsOf("t00", "lane-vol")[1]!.value * 10) / 10).toBe(-3.6);
-  expect(find("point-t00-lane-vol-4320")).toMatchObject({ label: "Point at 2.1.3, −3.59 dB", checked: true });
+  expect(pointsOf("t00", "lane-vol")[1]!.value).toBe(-3.6);
+  expect(find("point-t00-lane-vol-4320")).toMatchObject({ label: "Point at 2.1.3, −3.6 dB", checked: true });
   act("point-t00-lane-vol-4320", "drag", { dx: 10 * BAR });
   expect(pointsOf("t00", "lane-vol")[1]?.tick).toBe(2 * BAR - 1);
   press("point-t00-lane-vol-0", { alt: true });
