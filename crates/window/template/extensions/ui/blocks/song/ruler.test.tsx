@@ -17,8 +17,10 @@ test("a right press on the ruler offers what it can add there, and a pick adds i
   const f = fakeSong({ children: [] }, { piece: { sections: [{ bar: 1, name: "Intro" }] } });
   ruler(f, { delete_mark: "backspace" });
   press("ruler", { x: 100, right: true });
-  // At bar 1 a section and the first tempo are there already, and no time signature change can be.
-  expect([find("Add a time signature change"), find("Add a section"), find("Add a tempo change")]).toEqual([undefined, undefined, undefined]);
+  // At bar 1 a section and the first tempo are there already, and no time signature change can be: shown, but no press.
+  const offered = ["Add a time signature change", "Add a section", "Add a tempo change"].map((text) => find(text));
+  expect(offered.map((item) => item !== undefined && "onPress" in item && item.onPress !== undefined)).toEqual([false, false, false]);
+  expect(offered.every((item) => item !== undefined)).toBe(true);
   expect(JSON.stringify(find("Remove the section"))).toContain("⌫");
   press("ruler", { x: 2 * BAR + 100, right: true });
   act("Add a time signature change", "press");
