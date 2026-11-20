@@ -1,7 +1,11 @@
 import { expect, test } from "bun:test";
 import { act, apply, find, press, render, type Node, type Op, type Self } from "../../../sdk";
+import { host } from "../../../sdk/view";
+import { editsOf } from "../../../song/edits";
+import { fakeSong, trackOf } from "../../../song/fake";
 import { song } from "../../../song";
-import { MIXER } from "../../../song/view";
+import { MIXER, pageOf } from "../../../song/view";
+import { Mixer } from "./mixer";
 import { SHORTEST_FADER, VALUE_LINE } from "../../strip";
 import { travelled, VOLUME } from "../../value";
 
@@ -145,4 +149,16 @@ test("a fader a lane plays shows what plays and takes no change", () => {
 test("a strip is one stop of Tab, whose controls the arrows walk", () => {
   mixer(songOf([track("t00", "Drums")]));
   expect(find("strip-t00")).toMatchObject({ group: true, role: "group" });
+});
+
+test("a fader moved builds that strip again and no other: the window keeps the rest", () => {
+  const f = fakeSong({ children: [trackOf("t00"), trackOf("t01"), trackOf("t02"), master] });
+  const held = (_: string) => false;
+  const ctx = Object.assign(f.song, { held, shortcut: () => null });
+  const draw = (self: unknown) => Mixer({ page: pageOf(self as never, ctx) });
+  const run = () => host.run("mixer-test", draw as never, { name: "song", state: f.self.state, children: f.self.children.map((each) => ({ ...(each as object), facts: { title: "", fields: [] } })), facts: { title: "", fields: [] } } as never, ctx as never);
+  expect(Object.keys(run().memos)).toEqual(["mixer-t00", "mixer-t01", "mixer-t02", "mixer-master"]);
+  expect(Object.keys(run().memos)).toEqual([]);
+  editsOf(f.song).tracks.volume("t01", -6);
+  expect(Object.keys(run().memos)).toEqual(["mixer-t01"]);
 });
