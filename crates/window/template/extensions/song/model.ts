@@ -60,6 +60,8 @@ export type Memory = {
   editorLarge: boolean;
   /** Whether the page showed the panel of its first track, as it does once, when it opens. */
   opened: boolean;
+  /** Whether the card of a region shows where in its file it starts and ends. */
+  regionMore: boolean;
   /** The chosen notes of the open clip, by `noteKey`: by what they are, so an undo keeps them right. */
   notes: string[];
   /** Where the editor of each clip opened, `row/clip`: the row of the roll at its top and its points per tick, which its view keeps. */
@@ -78,7 +80,7 @@ export const EDITOR = 352;
 
 export const memory = (): Memory => ({
   selected: [], below: null, track: null, armed: [], recording: null, clipboard: null, renaming: null, renamingClip: null, renamingSection: null, menu: null,
-  mark: null, point: null, effect: null, lanes: [], tempoLane: false, returnsOpen: false, rulerMenu: { x: 0, mark: null }, repeatRange: null, repeating: false, snap: SNAP, editor: EDITOR, editorLarge: false, opened: false,
+  mark: null, point: null, effect: null, lanes: [], tempoLane: false, returnsOpen: false, rulerMenu: { x: 0, mark: null }, repeatRange: null, repeating: false, snap: SNAP, editor: EDITOR, editorLarge: false, opened: false, regionMore: false,
   notes: [], rolls: {}, lane: "velocity", length: BEAT / 2, copied: null, strength: 1, swing: 0, humanized: 0,
 });
 
