@@ -112,7 +112,7 @@ export type FrameProps = {
 
 /**
  * The frame of a card in a rack: its surface, and a header with the title (a menu of other
- * devices), then power and remove, which show while the pointer or the keys are on it. A card's
+ * devices, which a right press or the menu key on the header opens too), then power and remove, which show while the pointer or the keys are on it. A card's
  * own code draws none of this, so every device looks alike in a rack.
  */
 export const Frame = ({ id, title, menu, on = true, onPower, onRemove, end, chosen = false, onChoose, drag, onDragEnd, children }: FrameProps) => (
@@ -134,6 +134,7 @@ export const Frame = ({ id, title, menu, on = true, onPower, onRemove, end, chos
         {onPower && <Quiet shown={!on}><HeaderIcon id={`${id}-power`} label={on ? `Turn ${title} off` : `Turn ${title} on`} icon="power" color={on ? "text-secondary" : "text-muted"} checked={on} tip={on ? "Turn off" : "Turn on"} onPress={onPower} /></Quiet>}
         {onRemove && <Quiet shown={false}><HeaderIcon id={`${id}-remove`} label={`Remove ${title}`} icon="x" color="text-secondary" tip="Remove" onPress={onRemove} /></Quiet>}
       </row>
+      {menu && <MenuList id={`${id}-menu`} label={menu.label} items={menu.items} notes={menu.notes} w={280} open="menu" />}
     </row>
     {/* A card taller than the rest, such as a project's own view, scrolls inside its frame. */}
     <box h={BODY} scroll="y" opacity={on ? 1 : 0.4}>{children}</box>

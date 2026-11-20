@@ -117,11 +117,6 @@ export const actions: Record<string, Action<Song>> = {
   show_song: on(["z", "shift-z"], "Show the whole song", (song) => song.show(PLANE, { x: [0, spanOf(song, itemsIn(song))?.to ?? 4 * BAR] })),
   next_clip: on(["alt-right"], "Choose the next clip", (song) => editsOf(song).clips.step(1)),
   previous_clip: on(["alt-left"], "Choose the clip before", (song) => editsOf(song).clips.step(-1)),
-  clip_menu: on(["alt-enter"], "Open the menu of the chosen clip", ({ memory }) => {
-    const [chosen] = memory.selected;
-    if (chosen === undefined) return false;
-    memory.menu = chosen;
-  }),
   add_clip: on(["shift-c"], "Add a clip at the playhead", (song) => editsOf(song).clips.addAtPlayhead()),
   delete_clips: on(["backspace", "delete"], "Delete the chosen clips", (song) => editsOf(song).clips.command("delete")),
   cut_clips: on(["cmd-x"], "Cut the chosen clips", (song) => editsOf(song).clips.command("cut")),

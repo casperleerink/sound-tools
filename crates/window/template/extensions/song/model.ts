@@ -39,8 +39,6 @@ export type Memory = {
   renaming: string | null;
   renamingClip: string | null;
   renamingSection: { bar: number; tick: number } | null;
-  /** The clip whose menu a key asked for, which the timeline opens. */
-  menu: string | null;
   /** The chosen mark of the ruler, points of a lane and effect of a panel: delete and the keys act on it. */
   mark: Mark | null;
   /** The lane open for editing, whose points take the pointer, and its chosen points. */
@@ -81,7 +79,7 @@ export type Memory = {
 export const EDITOR = 352;
 
 export const memory = (): Memory => ({
-  selected: [], below: null, track: null, published: null, armed: [], recording: null, clipboard: null, renaming: null, renamingClip: null, renamingSection: null, menu: null,
+  selected: [], below: null, track: null, published: null, armed: [], recording: null, clipboard: null, renaming: null, renamingClip: null, renamingSection: null,
   mark: null, point: null, effect: null, lanes: [], tempoLane: false, returnsOpen: false, rulerMenu: { x: 0, mark: null }, repeatRange: null, repeating: false, snap: SNAP, editor: EDITOR, editorLarge: false, opened: false, regionMore: false,
   notes: [], rolls: {}, lane: "velocity", length: BEAT / 2, copied: null, strength: 1, swing: 0, humanized: 0,
 });

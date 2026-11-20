@@ -59,14 +59,11 @@ test("cmd-a chooses all notes while the editor is open, else all clips; enter op
   expect(f.memory.notes.length).toBe(2);
 });
 
-test("enter names the chosen section, and alt-enter asks for the menu of the chosen clip", () => {
+test("enter names the chosen section", () => {
   const f = song();
   press(f.song, "alt-shift-right");
   expect(press(f.song, "enter")).toBe("name_section");
   expect(f.memory.renamingSection).toEqual({ bar: 2, tick: BAR });
-  f.memory.selected = ["t00/c00"];
-  press(f.song, "alt-enter");
-  expect(f.memory.menu).toBe("t00/c00");
 });
 
 test("the keys add a clip at the playhead and notes in a row in it", () => {

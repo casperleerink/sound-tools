@@ -2166,4 +2166,5 @@ mod rack;
 mod ruler;
 mod sidebar;
 mod song;
+mod song_page;
 mod transport;
