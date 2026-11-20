@@ -26,6 +26,9 @@ pub(crate) struct Planes {
     focused: RefCell<Option<String>>,
     /// What was said of places outside a plane, last.
     misplaced: RefCell<Vec<Problem>>,
+    /// How many times the content of a plane was built, for a test that a scroll builds none.
+    #[cfg(test)]
+    pub(crate) builds: Cell<u64>,
 }
 
 /// Where an element built in a plane is.
@@ -466,46 +469,51 @@ impl Scope<'_> {
         let Some(plane) = &self.plane else {
             return e;
         };
+        if let Some(shows) = self.placed_shows(place, size) {
+            // Sized as it is now as well: Rune lays out and focuses only what has a size.
+            let [.., w, h] = self.rect(place, size);
+            let per = self.state.planes.per(plane);
+            return self.bind(e.w(w * per[0]).h(h * per[1]), shows);
+        }
+        let fixed = |num: Option<&Num>| num.and_then(Num::fixed);
+        let numbers: Vec<f32> = place.numbers().iter().filter_map(Num::fixed).collect();
+        let from =
+            (self.parent.as_ref()).map(|at| at.each_ref().map(|at| at.fixed().unwrap_or(0.0)));
+        let size = [fixed(size.0), fixed(size.1)];
+        let [x, y, w, h] = self.state.planes.points(plane, &numbers, size, from);
+        let e = e.absolute(x, y);
+        match place {
+            Place::Box(_) => e.w(w).h(h),
+            Place::Mark(_) => {
+                let e = if size[0].is_some() { e.w(w) } else { e };
+                if size[1].is_some() { e.h(h) } else { e }
+            }
+        }
+    }
+
+    /// What a place in the plane around it binds, when anything of it is live.
+    pub(super) fn placed_shows(
+        &self,
+        place: &Place,
+        size: (Option<&Num>, Option<&Num>),
+    ) -> Option<Shows> {
+        let plane = self.plane.as_ref()?;
         let size = match place {
             Place::Mark(_) => [size.0.cloned(), size.1.cloned()],
             Place::Box(_) => [None, None],
         };
         let parent = self.parent.clone();
-        let fixed = |num: &Num| num.fixed();
-        let numbers: Option<Vec<f32>> = place.numbers().iter().map(fixed).collect();
-        let sized: Option<Vec<f32>> = size.iter().flatten().map(fixed).collect();
-        let from = match &parent {
-            Some(at) => at.iter().map(fixed).collect::<Option<Vec<f32>>>(),
-            None => Some(vec![0.0; 2]),
-        };
-        match (numbers, sized, from) {
-            (Some(numbers), Some(_), Some(from)) => {
-                let size = size.map(|size| size.and_then(|size| size.fixed()));
-                let [x, y, w, h] =
-                    (self.state.planes).points(plane, &numbers, size, Some([from[0], from[1]]));
-                let e = e.absolute(x, y);
-                match place {
-                    Place::Box(_) => e.w(w).h(h),
-                    Place::Mark(_) => [(size[0], w), (size[1], h)].into_iter().zip([0, 1]).fold(
-                        e,
-                        |e, ((given, points), i)| match (given, i) {
-                            (None, _) => e,
-                            (Some(_), 0) => e.w(points),
-                            (Some(_), _) => e.h(points),
-                        },
-                    ),
-                }
-            }
-            _ => self.bind(
-                e,
-                Shows::Placed {
-                    plane: plane.clone(),
-                    place: place.clone(),
-                    size,
-                    parent,
-                },
-            ),
-        }
+        let live = |num: &Num| num.fixed().is_none();
+        let any = (place.numbers().iter())
+            .chain(size.iter().flatten())
+            .chain(parent.iter().flatten())
+            .any(live);
+        any.then(|| Shows::Placed {
+            plane: plane.clone(),
+            place: place.clone(),
+            size,
+            parent,
+        })
     }
 
     /// Where `place` is in the plane's units now: [x, y, w, h], a mark `size` points.
@@ -539,6 +547,8 @@ impl Scope<'_> {
 /// camera, and only what shows, and a stretch about it, is built.
 pub(super) fn plane(scope: &Scope, e: El, b: &BoxNode, key: &str, spec: &PlaneSpec) -> El {
     let planes = &scope.state.planes;
+    #[cfg(test)]
+    planes.builds.set(planes.builds.get() + 1);
     planes.ensure(key, spec, scope.prefix);
     planes
         .found
@@ -924,8 +934,10 @@ impl State {
             return false;
         }
         self.lives.move_planes(self, &self.planes.keys(), scaled);
-        if !self.planes.stale() {
-            tx.live_only();
+        match self.planes.stale() {
+            // What is placed lands where the camera says, not by a glide.
+            true => tx.instant(),
+            false => tx.live_only(),
         }
         true
     }

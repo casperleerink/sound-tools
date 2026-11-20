@@ -167,10 +167,12 @@ impl State {
         let prefix = self.prefix_of(&press.instance);
         let dragged = format!("{prefix}{}", press.element);
         if let Some(plane) = plane {
-            let over = self
-                .planes
-                .over(plane, self.planes.units(plane, window), &dragged)?;
-            return over.strip_prefix(&prefix).map(str::to_string);
+            let point = self.planes.units(plane, window);
+            // Over nothing placed: over the plane.
+            let over = (self.planes.over(plane, point, &dragged)).unwrap_or(plane.to_string());
+            return (over != dragged)
+                .then(|| over.strip_prefix(&prefix).map(str::to_string))
+                .flatten();
         }
         let path = format!("/{}/", picked?.path());
         let root = self.root(&press.instance)?;

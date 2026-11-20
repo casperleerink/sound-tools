@@ -235,6 +235,7 @@ impl Step {
     pub(crate) fn run(&self, state: &mut State) -> Result<()> {
         let done = self.act(state);
         state.settle();
+        state.open_menu();
         done?;
         match state.take_failed_action() {
             Some(why) => bail!("{} did not {}: {why}", self.named(), self.action),

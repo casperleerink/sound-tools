@@ -533,6 +533,8 @@ fn every_node_the_template_draws_is_one_the_window_reads() {
 
 /// What the test helpers of `sdk/view.ts` do, as the window does it, and what its types refuse.
 const VIEW_CHECKS: &str = include_str!("checks.test.tsx");
+/// A clip on a plane that `checks.test.tsx` and the window's tests both drag.
+const BOARD: &str = include_str!("board.tsx");
 
 #[test]
 fn the_test_helpers_change_and_draw_as_the_window_does() {
@@ -540,6 +542,7 @@ fn the_test_helpers_change_and_draw_as_the_window_does() {
     let state = opened(&scratch.path().join("song"));
     let extensions = state.project.root().join("extensions");
     std::fs::write(extensions.join("checks.test.tsx"), VIEW_CHECKS).unwrap();
+    std::fs::write(extensions.join("board.tsx"), BOARD).unwrap();
     run_bun(&state, &["check", "-p", "."]);
     run_bun(&state, &["test", "checks.test.tsx"]);
 }
@@ -2084,3 +2087,5 @@ fn a_held_control_s_accessibility_value_follows_its_lane() {
     assert!(spoken > 8100.0, "{spoken}");
     assert!((spoken - value).abs() < value * 0.01, "{spoken} {value}");
 }
+
+mod geometry;

@@ -90,6 +90,9 @@ pub(crate) struct BoxNode {
     /// The names of its `actions`.
     #[serde(default)]
     pub(crate) actions: Vec<String>,
+    /// It has `onDrop`: not honoured yet.
+    #[serde(default)]
+    drop: bool,
     pub(crate) drag: Option<DragSpec>,
     pub(crate) plane: Option<PlaneSpec>,
     pub(crate) place: Option<Place>,

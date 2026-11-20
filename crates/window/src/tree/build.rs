@@ -21,7 +21,8 @@ pub(crate) fn bound(state: &State) -> HashSet<String> {
     let mut named = HashSet::new();
     for id in &state.shown {
         if let Some(node) = state.root(id) {
-            walk(state, id, &node, &mut |shows| {
+            let prefix = state.prefix_of(id);
+            walk(&Scope::new(state, id, &prefix), &node, &mut |shows| {
                 named.insert(Lives::name(id, &shows));
             });
         }
@@ -66,13 +67,28 @@ pub(crate) fn keyed(state: &State, id: &InstanceId, node: &Node, keys: &mut Vec<
 }
 
 /// Gives `bind` everything `node` binds, and its memos.
-fn walk(state: &State, id: &InstanceId, node: &Node, bind: &mut impl FnMut(Shows)) {
-    let live = match node {
+fn walk(scope: &Scope, node: &Node, bind: &mut impl FnMut(Shows)) {
+    let live: Vec<Shows> = match node {
         Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
+            let plane = b.plane.as_ref().zip(b.key.as_deref());
+            let inside = Scope {
+                plane: plane.map(|(_, key)| scope.key(key)).or(scope.plane.clone()),
+                parent: match plane {
+                    Some(_) => None,
+                    None => b.place.as_ref().map(Place::origin).or(scope.parent.clone()),
+                },
+                ..scope.clone()
+            };
             for child in &b.children {
-                walk(state, id, child, bind);
+                walk(&inside, child, bind);
             }
-            live_place(b.at.as_ref(), b.size(), b.opacity.as_ref())
+            let placed = b
+                .place
+                .as_ref()
+                .and_then(|place| scope.placed_shows(place, b.size()));
+            (placed.into_iter())
+                .chain(live_place(b.at.as_ref(), b.size(), b.opacity.as_ref()))
+                .collect()
         }
         Node::Text(t) => {
             if let Some(value) = &t.live {
@@ -88,11 +104,16 @@ fn walk(state: &State, id: &InstanceId, node: &Node, bind: &mut impl FnMut(Shows
             {
                 bind(Shows::Trim(trim.clone()));
             }
-            live_place(d.at.as_ref(), (None, None), d.opacity.as_ref())
+            let size = [d.w, d.h].map(Num::Fixed);
+            let placed = (d.place.as_ref())
+                .and_then(|place| scope.placed_shows(place, (Some(&size[0]), Some(&size[1]))));
+            (placed.into_iter())
+                .chain(live_place(d.at.as_ref(), (None, None), d.opacity.as_ref()))
+                .collect()
         }
         Node::Memo { key } => {
-            if let Some((_, inner)) = state.memo_of(id, key) {
-                walk(state, id, &inner, bind);
+            if let Some(inner) = scope.memo(key) {
+                walk(scope, &inner, bind);
             }
             return;
         }
