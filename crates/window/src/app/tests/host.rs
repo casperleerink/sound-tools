@@ -214,6 +214,22 @@ fn the_composers_key_moves_an_action_and_its_shortcut_says_the_key_it_has() {
     assert_eq!(did(&window.state, "probe"), "go");
 }
 
+/// The composer may give a tool's action a key of the app: the tool's comes first, but undo
+/// stays undo.
+#[test]
+fn a_tool_s_key_comes_before_the_app_s_but_never_before_undo() {
+    let (_scratch, mut window) = probe();
+    let keymap = &mut window.state.keys.keymap;
+    keymap.set_keys("probe.go", vec!["cmd-k".into()]).unwrap();
+    keys(&mut window, "cmd-k cmd-k");
+    assert_eq!(did(&window.state, "probe"), "go go");
+    assert!(!window.state.session.transport().keys);
+    let keymap = &mut window.state.keys.keymap;
+    keymap.set_keys("probe.go", vec!["cmd-z".into()]).unwrap();
+    keys(&mut window, "cmd-z");
+    assert_eq!(did(&window.state, "probe"), "go");
+}
+
 #[test]
 fn an_action_that_runs_everywhere_runs_outside_its_page_but_not_in_a_text_field() {
     let (_scratch, mut window) = probe();
