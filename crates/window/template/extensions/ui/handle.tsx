@@ -1,11 +1,11 @@
-import { h, live, Live, type Drag, type Num, type Pointer } from "../sdk";
+import { h, live, Live, type Child, type Drag, type Num, type Pointer } from "../sdk";
 import { played, type Bound } from "./field";
-import { fitted, liveTravelled, liveValueAt, shown, stepped, travelled, valueAt, type Range } from "./value";
+import { fitted, liveTravelled, liveValueAt, shown, stepped, travelled, valueOf, type Range } from "./value";
 
 /** What a pointer takes: more than the dot, for a trackpad. The dot, and the dot with a number in it. */
 const [TARGET, DOT, NUMBERED] = [20, 10, 16];
 
-/** A number a handle moves, bound as a knob is (`field.number(...)`), spread over the drawing by `travel`: its own range when left out. */
+/** A number a handle moves, bound as a knob is (`field.number(...)`), spread over the drawing by `travel`: its own range when left out. A travel from a higher `min` to a lower `max` runs the other way. */
 export type HandleAxis = Bound & { travel?: Range };
 
 export type HandleProps = {
@@ -25,7 +25,7 @@ export type HandleProps = {
   /** At 40 %, for what does nothing now, such as a band that is off. It still drags. */
   dimmed?: boolean;
   /** What the foot of the display says while it is pointed at or dragged: only what no knob in view says. */
-  caption?: string;
+  caption?: Child;
   onPress?: () => void;
   /** Both numbers at the end of a drag, as one step; left out, each axis changes its own. */
   onChange?: (x: number | undefined, y: number | undefined) => void;
@@ -73,7 +73,7 @@ export const Handle = ({ id, label, w, h: tall, x, y, number, chosen = true, dim
       </row>
       {caption !== undefined && (
         <row reveal at={[Live.of(6).minus(left), Live.of(tall - 22).minus(top)]} h={18} px={1} align="center" radius="sm" fill="well">
-          <text style="number" color="text-secondary">{caption}</text>
+          {typeof caption === "string" ? <text style="number" color="text-secondary">{caption}</text> : caption}
         </row>
       )}
     </box>
@@ -97,6 +97,6 @@ const along = (axis: HandleAxis | Num, size: number, moved: Live) => {
     place,
     along: [-at * size, (1 - at) * size] as [number, number],
     plays: axis.path === undefined ? undefined : ([axis.path, liveValueAt(now.clamp(0, 1), travel).clamp(axis.min, axis.max)] as const),
-    end: (d: number) => (d === 0 ? axis.value : fitted(valueAt(at + d / size, travel), axis)),
+    end: (d: number) => (d === 0 ? axis.value : fitted(valueOf(Math.min(Math.max(at + d / size, 0), 1), travel), axis)),
   };
 };
