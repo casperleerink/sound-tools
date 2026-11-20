@@ -12,7 +12,7 @@ fn open_files(heard: &str, files: &[(&str, &str)]) -> Opened {
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     let project = format!(
-        r#"{{"format": 1, "extensions": ["instrument"],
+        r#"{{"format": 1, "extensions": ["instrument", "utility"],
   "tempo_map": {{"time_signature": "4/4", "tempo_changes": [{{"tick": 0, "bpm": 120.0}}]}},
   "connections": [{{"from": {{"instance": "{heard}", "port": "audio"}}, "to": {{"device_output": 0}}}}]}}"#
     );
@@ -286,4 +286,47 @@ impl Opened {
             )
         });
     }
+}
+
+/// A number that swings from -0.8 to 0.8 four times a second, for a parent to cable into the
+/// pan of a utility.
+const SWAY: &str = include_str!("../../../../tooling/agent-eval/examples/sway.ts");
+
+const SWAYER: &str = r#"import { tool } from "./sdk";
+export const swayer = tool({
+  name: "swayer", title: "Swayer", when: "Never", doc: "Its sway moves the pan of its strip.", state: {},
+  behaviour: () => ({
+    connections: [
+      { from: { child: "sway", number: "pan" }, to: { child: "strip", number: "pan" } },
+      { from: { child: "strip" }, to: { port: "audio" } },
+    ],
+  }),
+});
+"#;
+
+/// A knob shows the pan a cable plays into it, not the record's, which stays.
+#[test]
+fn a_number_shows_what_a_cable_plays_into_it_and_not_its_record() {
+    let mut opened = open_files(
+        "swayer",
+        &[
+            ("extensions/swayer.ts", SWAYER),
+            ("extensions/sway.ts", SWAY),
+            ("state/swayer/instance.json", r#"{"tool": "swayer", "state": {}}"#),
+            ("state/swayer/sway.json", r#"{"tool": "sway", "state": {"rate": 4}}"#),
+            ("state/swayer/strip.json", r#"{"tool": "utility", "state": {}}"#),
+        ],
+    );
+    assert_eq!(problems(&opened), []);
+    opened.project.engine().play();
+    let swayer = crate::support::id("swayer");
+    let pan = |opened: &mut Opened| {
+        let tick = opened.project.engine().poll().unwrap().playhead_tick;
+        (opened.tools).field_now(&opened.project, &swayer, Some("strip"), "pan", tick)
+    };
+    opened.until("the pan to swing", |opened| {
+        opened.render(1_200);
+        pan(opened).abs() > 0.3
+    });
+    assert_eq!(opened.record("swayer/strip")["pan"], 0.0);
 }
