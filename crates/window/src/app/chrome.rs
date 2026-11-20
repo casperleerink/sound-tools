@@ -52,7 +52,14 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
         .min_h(0.0)
         .w_full()
         .children(panel::view(state))
-        .child(el().grow(1.0).h_full().clip_soft(0.0).child(body));
+        // Keyed, so what has the keys in it keeps them as the panel comes and goes.
+        .child(
+            el().key("main")
+                .grow(1.0)
+                .h_full()
+                .clip_soft(0.0)
+                .child(body),
+        );
     let base = col()
         .w_full()
         .h_full()
