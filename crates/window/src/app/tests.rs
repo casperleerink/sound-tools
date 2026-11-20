@@ -69,6 +69,15 @@ fn control<'a>(controls: &'a [controls::Control], label: &str) -> &'a controls::
     })
 }
 
+/// The loudest the `peak` feed of `id` read in the last frame, in dB.
+fn peak_db(state: &State, id: &str) -> f32 {
+    let numbers = state.feeds.numbers();
+    let peak = numbers
+        .iter()
+        .find(|(name, _)| *name == format!("{id} peak"));
+    sound_core::feeds::db(peak.map_or(0.0, |(_, number)| *number))
+}
+
 fn act(state: &mut State, step: Value) {
     try_act(state, step).unwrap();
 }
@@ -85,12 +94,10 @@ fn playing_moves_the_playhead_and_the_meters_and_runs_no_view() {
         frame(&mut state, f64::from(step) / 60.0);
     }
     assert!(state.playhead.0 > 0);
-    let levels = state.lives.levels();
     assert!(
-        levels
-            .iter()
-            .any(|(name, db)| name == "song/t01/mix" && *db > -60.0),
-        "{levels:?}"
+        peak_db(&state, "song/t01/mix") > -60.0,
+        "{:?}",
+        state.feeds.numbers()
     );
     assert_eq!(state.tools.as_ref().unwrap().view_runs(), runs);
 }
@@ -511,15 +518,11 @@ fn the_meter_of_a_track_taken_away_and_brought_back_moves() {
     // Rune builds the view again once the tree that has the track comes.
     state.settle();
     play(&mut state, 1.0, 1.0);
-    let levels = state.lives.levels();
     assert!(
-        levels
-            .iter()
-            .any(|(name, db)| name == "song/t01/mix" && *db > -60.0),
-        "{levels:?}"
+        peak_db(&state, "song/t01/mix") > -60.0,
+        "{:?}",
+        state.feeds.numbers()
     );
-    let names: Vec<&String> = levels.iter().map(|(name, _)| name).collect();
-    assert!(names.is_sorted(), "{names:?}");
 }
 
 /// What `sdk/view.ts` sends, read by the window with no field left over.
@@ -608,12 +611,10 @@ fn a_control_loop_plays_its_input_and_stops_the_piece() {
     let mut state = opened(&folder);
     play(&mut state, 0.0, 1.0);
     assert!(!state.playing);
-    let levels = state.lives.levels();
     assert!(
-        levels
-            .iter()
-            .any(|(name, db)| name == "song/t00/mix" && *db > -60.0),
-        "{levels:?}"
+        peak_db(&state, "song/t00/mix") > -60.0,
+        "{:?}",
+        state.feeds.numbers()
     );
 }
 
@@ -777,11 +778,7 @@ fn a_note_a_control_loop_held_on_a_child_or_its_own_voices_ends_with_its_bun() {
         }
         let mut state = opened(&folder);
         build(&state);
-        let level = |state: &State| {
-            let levels = state.lives.levels();
-            let mix = levels.iter().find(|(name, _)| name == "song/t00/mix");
-            mix.map_or(-120.0, |(_, db)| *db)
-        };
+        let level = |state: &State| peak_db(state, "song/t00/mix");
         for step in 1..=30 {
             frame(&mut state, f64::from(step) / 60.0);
         }
@@ -935,12 +932,10 @@ fn a_press_plays_an_input_and_the_piece_as_a_control_loop_does() {
         frame(&mut state, f64::from(step) / 60.0);
     }
     assert!(state.playing);
-    let levels = state.lives.levels();
     assert!(
-        levels
-            .iter()
-            .any(|(name, db)| name == "song/t00/mix" && *db > -60.0),
-        "{levels:?}"
+        peak_db(&state, "song/t00/mix") > -60.0,
+        "{:?}",
+        state.feeds.numbers()
     );
     act(
         &mut state,

@@ -10,7 +10,6 @@ export type LiveNode =
   | { op: "drag"; id: string; part: "startX" | "startY" | "dx" | "dy" | "x" | "y" | "active" | "alt" }
   | { op: "space"; key: string; part: "left" | "top" | "right" | "bottom" | "pointX" | "pointY" }
   | { op: "hover"; key: string }
-  | { op: "sounding"; pitch: number; child?: string }
   | { op: "feed"; name: string; path?: string }
   | { op: "plane"; key: string; part: "left" | "right" | "top" | "bottom" | "zoom" }
   | { op: "touched"; name: string }

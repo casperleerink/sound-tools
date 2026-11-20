@@ -13,6 +13,7 @@
 
 mod app;
 mod controls;
+mod feeds;
 mod fields;
 mod lives;
 mod plugin_windows;
@@ -224,7 +225,7 @@ fn window(arguments: &[String], last: bool) -> Result<()> {
 }
 
 /// Adds what the window knows to the tree Rune wrote: every control with its label, role,
-/// value or state and actions, where the piece plays, and the meters.
+/// value or state and actions, where the piece plays, and the feeds the views read.
 fn add_report(path: &std::path::Path) -> Result<()> {
     let report = app::REPORT
         .lock()

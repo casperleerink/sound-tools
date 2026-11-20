@@ -9,7 +9,7 @@ Run 1 and 2 in `extensions/`, the rest with `sound-tools` on the project folder.
 1. `bun check -p .`: types, token names and props.
 2. `bun test`: one test for each thing the tool must do, as `song.test.tsx` does: `render(tool, self, { held, facts, answers })`, then `find`, `press(key, { x, right })`, `act(keyOrLabel, "drag", { dx, alt, over })`, `act(k, "drop", { audio })`, `act(k, "set", 6)`, `act("song.record")` (an action of the tool), and `apply`. `act` drags within the drag's bounds and on its grid, as the window does.
 3. `sound-tools . --snap out.png --play 2`: a picture after two seconds of playing.
-4. `--tree out.json`: every element, and `controls` (key, label, role, value or `checked`, actions), `meters` and `problems`.
+4. `--tree out.json`: every element, and `controls` (key, label, role, value or `checked`, actions), `feeds` (each number a view reads) and `problems`.
 5. `--act steps.json` runs actions first, on the project itself: `[{ "label": "Mute Track 2", "action": "toggle" }, { "key": "fader-t00", "action": "set", "value": -6 }, { "action": "undo" }]`. `--script steps.json` points by key: `{"events": [{ "t": 2, "type": "drag", "key": "fader-t00", "dy": 40 }]}`.
 
 `problems.txt` says why what does not load. `--inspect` prints the records; `--analyze` and `--render` play the sound.

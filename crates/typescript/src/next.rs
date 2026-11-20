@@ -1680,18 +1680,13 @@ impl Tools {
 
 /// The keys down on the sound of a tool of the project, followed from what its keys did.
 #[derive(Default)]
-pub struct Keys {
+struct Keys {
     tap: Option<EventTap<NoteEvent>>,
     next: u64,
     down: u128,
 }
 
 impl Keys {
-    /// The keys down now on the sound of `id`, a bit for each pitch.
-    pub fn follow(&mut self, project: &Project, id: &InstanceId) -> u128 {
-        self.follow_tap(project.tap::<NoteEvent>(id, SOUNDING_TAP))
-    }
-
     /// The keys down now on the sound whose keys `tap` hears.
     fn follow_tap(&mut self, tap: Option<EventTap<NoteEvent>>) -> u128 {
         let Some(tap) = tap else {

@@ -184,6 +184,7 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
     changed |= tree::follow_fields(state);
     let dt = (seconds - state.last).max(0.0);
     state.last = seconds;
+    state.feeds.next_frame(dt);
     let mut moving = state.lives.update(state, dt);
     let (falling, light) = (state.transport).update(state.session.project(), state.playhead, dt);
     (moving, changed) = (moving || falling, changed || light);

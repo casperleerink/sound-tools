@@ -16,6 +16,7 @@ use sound_core::{Engine, InstanceId, OutputDevice, OutputStream, Project, Ticks}
 use sound_typescript::next::{Drawn, Tools};
 
 use crate::controls::Step;
+use crate::feeds::Feeds;
 use crate::lives::Lives;
 use crate::plugin_windows::{self, Events, PluginWindows, RuneDesktop};
 use crate::theme::Theme;
@@ -91,6 +92,7 @@ pub(crate) struct State {
     /// The JSON Schema of each built-in tool's record, by tool name.
     schemas: HashMap<&'static str, Value>,
     pub(crate) lives: Lives,
+    pub(crate) feeds: Feeds,
     pub(crate) playing: bool,
     pub(crate) playhead: Ticks,
     /// Engine time in seconds, which a control loop's clock counts on.
@@ -246,6 +248,7 @@ impl State {
             theme,
             schemas,
             lives: Lives::new(),
+            feeds: Feeds::new(Box::new(runtime::files::Files::new())),
             playing: false,
             playhead: Ticks(0),
             engine_time: 0.0,
