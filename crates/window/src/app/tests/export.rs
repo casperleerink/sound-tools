@@ -41,7 +41,8 @@ fn chosen(state: &State) -> Vec<String> {
         .collect()
 }
 
-/// Opens the dialog and exports with the choice it shows into `file`.
+/// Opens the dialog and exports with the choice it shows into `file`, with a [`stand_in`].
+#[cfg(unix)]
 fn export_to(window: &mut rune::Runtime<State>, file: PathBuf) {
     act(&mut window.state, json!({ "action": "app.export" }));
     press(window, "Export…");
@@ -125,7 +126,8 @@ fn a_project_where_nothing_plays_to_an_end_has_nothing_to_export() {
     assert!(chosen(&state).is_empty());
 }
 
-/// A program in place of this one's `--render`, which says `body` and does nothing else.
+/// A program in place of this one's `--render`, which says `body` and does nothing else. A shell
+/// script, so Unix only.
 #[cfg(unix)]
 pub(super) fn stand_in(folder: &std::path::Path, body: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;

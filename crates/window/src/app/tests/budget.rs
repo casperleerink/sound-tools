@@ -131,6 +131,7 @@ fn spent() -> Duration {
     Duration::new(now.tv_sec as u64, now.tv_nsec as u32)
 }
 
+// Wall time: Windows counts a thread's time in steps of 15 ms, too coarse for a frame.
 #[cfg(not(unix))]
 fn spent() -> Duration {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
