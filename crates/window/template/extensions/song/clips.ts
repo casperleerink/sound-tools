@@ -25,8 +25,7 @@ export function lengthAt(song: { children: readonly Child[]; clock: { tempo_map:
   if (item?.tool === "timeline") return lengthOf(item.state);
   if (item?.tool !== "region") return 0;
   const { warp, start, file_start_seconds, file_end_seconds } = item.state;
-  const told = (item as { facts?: { seconds?: number } }).facts?.seconds;
-  const seconds = told ?? (file_end_seconds === null ? 0 : file_end_seconds - file_start_seconds);
+  const seconds = item.facts.seconds ?? (file_end_seconds === null ? 0 : file_end_seconds - file_start_seconds);
   return warp?.at(-1)?.ticks ?? ticksAcross(song.clock.tempo_map.tempo_changes, start, seconds);
 }
 

@@ -3,7 +3,7 @@
 import { ActionKey, AppKey, Clock, KeyName, Modifiers, PLAIN_KEYS, PlainKey, SHIFTED_KEYS, SYMBOL_KEYS } from "./clock";
 import { BangInput, Fields, InputNames, Inputs, NumberField, Outputs, SoundOf, StateOf, ValuesOf } from "./fields";
 // The runtime writes the old window's `host.ts` or the new one's, so these change with the window.
-import type { ToolView, ViewContext } from "./host";
+import type { Seen, ToolView, ViewContext } from "./host";
 import { Tools } from "./records";
 import { Operand, Stereo } from "./sound";
 
@@ -478,8 +478,8 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
   extends Performer<I, K>, ViewContext<State, I, M> {
   /** The record as it is now, every field at its default where the record leaves it out. */
   state: Frozen<State>;
-  /** The records of its children, as its behaviour gets them. */
-  children: Frozen<OwnedChild<K>[]>;
+  /** The records of its children, as its behaviour gets them, with their facts and those of their children. */
+  children: Frozen<Seen<OwnedChild<K>>[]>;
   /**
    * Changes the record and those of its children: `change` gets a copy of the latest to edit,
    * also after an `await`, and may change a child's `state`, push a new child or leave one

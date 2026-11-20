@@ -276,8 +276,9 @@ export type FieldInfo = { name: string; label: string } & (
 );
 /** What the window knows of an instance of the tool `T` that no record holds and that rarely changes: its title, the fields of its record, and more of some tools. A change runs the view. */
 export type Facts<T = unknown> = { title: string; fields: FieldInfo[] } & (T extends keyof ToolFacts ? ToolFacts[T] : {});
-/** A child as a view gets it: with its facts. */
-type Seen<C> = C extends { tool: infer T } ? C & { facts: Facts<T> } : never;
+type WithFacts<C> = C extends { tool: infer T } ? C & { facts: Facts<T> } : never;
+/** A child as code gets it: with its facts, and its own children with theirs. */
+export type Seen<C> = C extends { tool: infer T; children: readonly (infer G)[] } ? Omit<C, "children"> & { children: WithFacts<G>[]; facts: Facts<T> } : never;
 
 /** The tools of the children of `T`, as its `children` names them. */
 type KidsOf<T> = T extends ProjectTool<string, infer Entry> ? (Entry extends { children: infer K extends ChildTools } ? K : {}) : ChildTools;
@@ -491,10 +492,10 @@ const TESTED = "test";
 /** What a test answers when a handler asks: `confirm`, and the file `openFile` chose. */
 type Answers = { confirm?: boolean; openFile?: string | null };
 type Options<F> = { held?: string[]; facts?: Partial<F>; answers?: Answers };
-/** `self` as a test gives it: its facts come from `render`, and a child's are its own to give. */
-type Given<S> = S extends { children: readonly (infer C)[] }
-  ? Omit<S, "facts" | "children"> & { children: readonly (C extends { facts: infer F } ? Omit<C, "facts"> & { facts?: Partial<F> } : never)[] }
-  : S;
+/** `self` as a test gives it: its facts come from `render`, and those of a child and a grandchild are its own to give. */
+type Given<S> = S extends { children: readonly (infer C)[] } ? Omit<S, "facts" | "children"> & { children: readonly GivenChild<C>[] } : S;
+type GivenChild<C> = C extends { facts: infer F; children: readonly (infer G)[] } ? Omit<C, "facts" | "children"> & { facts?: Partial<F>; children: readonly Told<G>[] } : never;
+type Told<C> = C extends { facts: infer F } ? Omit<C, "facts"> & { facts?: Partial<F> } : never;
 type Tested = {
   draw: Draw;
   spec?: ToolSpec<Fields, Inputs, unknown>;
@@ -524,11 +525,27 @@ export function render(drawn: ProjectTool | Draw, given: unknown, { held = [], f
   const same = tested?.draw === draw;
   if (!same) instances.delete(TESTED);
   const memory = same ? tested!.memory : (spec?.memory?.() ?? {});
-  const { name, children } = given as { name: string; children: readonly { name: string; facts?: object }[] };
-  const seen = children.map((child) => ({ ...child, facts: { title: child.name, fields: [], ...child.facts } }));
-  const self = { ...(given as object), children: seen, facts: { title: spec?.title ?? name, fields: [], ...facts } } as unknown as Drawn<unknown>;
+  const { name, children } = given as { name: string; children: readonly Kid[] };
+  const self = { ...(given as object), children: told(children), facts: { title: spec?.title ?? name, fields: [], ...facts } } as unknown as Drawn<unknown>;
   tested = { draw, spec, self, memory, held, answers, ops: [], acting: false };
   return redraw(tested);
+}
+
+type Kid = { name: string; facts?: object; children?: readonly Kid[] };
+/** What `told` made of each list and child a test gave, by depth: the same while it is the same, as in the window. */
+const toldAt = [new WeakMap<object, unknown>(), new WeakMap<object, unknown>()];
+/** Children as a test gives them, with the facts the window gives where the test leaves them out: of children and grandchildren. */
+function told(children: readonly Kid[], depth = 2): Kid[] {
+  const known = toldAt[depth - 1]!;
+  const kept = <T extends object>(given: object, make: () => T): T => {
+    if (!known.has(given)) known.set(given, make());
+    return known.get(given) as T;
+  };
+  return kept(children, () =>
+    children.map((child) =>
+      kept(child, () => ({ ...child, facts: { title: child.name, fields: [], ...child.facts }, ...(depth > 1 && child.children ? { children: told(child.children, depth - 1) } : {}) })),
+    ),
+  );
 }
 
 function redraw(at: Tested): Node {

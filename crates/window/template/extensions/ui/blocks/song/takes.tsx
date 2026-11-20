@@ -3,7 +3,7 @@
 import { h, live } from "../../../sdk";
 import { colourOf, titleOf } from "../../../song/model";
 import { BAR } from "../../../song/time";
-import { partsOf, ROW, type Page, type Track } from "../../../song/view";
+import { ROW, type Page, type Track } from "../../../song/view";
 import { liveLevel } from "../../value";
 import { tint } from "./regions";
 
@@ -13,7 +13,7 @@ import { tint } from "./regions";
  * the pitches of the track's clips.
  */
 export const Take = ({ page, track, y, tall }: { page: Page; track: Track; y: number; tall: number }) => {
-  const recorder = partsOf(track).find((child) => child.tool === "recorder");
+  const recorder = track.children.find((child) => child.tool === "recorder");
   const from = recorder?.tool === "recorder" ? recorder.facts.taking?.from : null;
   if (from === null || from === undefined) return null;
   const path = `${track.name}/rec`;

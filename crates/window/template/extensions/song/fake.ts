@@ -28,10 +28,11 @@ export function fakeSong(records: Records, { tick = 0, piece, answers = {} }: { 
     },
   };
   const memory: Memory = fresh();
+  let seen: [typeof self, unknown[]] | undefined;
   const fake = {
     memory, clock,
     get state() { return self.state; },
-    get children() { return self.children; },
+    get children() { return (seen?.[0] === self ? seen : (seen = [self, withFacts(self.children)]))[1]; },
     update(label: string, change: (draft: unknown) => void) {
       const draft = structuredClone(self);
       change(draft);
@@ -48,6 +49,11 @@ export function fakeSong(records: Records, { tick = 0, piece, answers = {} }: { 
   };
   return { song: fake as unknown as Song, memory, clock, steps, sent, selected, offers, shown, get piece() { return song; }, get self() { return self; } };
 }
+
+type Kid = { name: string; facts?: object; children?: Kid[] };
+/** Children and grandchildren with facts, as the window gives them: one it was not told of has its title alone. */
+const withFacts = (children: unknown[], depth = 2): unknown[] =>
+  (children as Kid[]).map((child) => ({ ...child, facts: { title: child.name, fields: [], ...child.facts }, ...(depth > 1 ? { children: withFacts(child.children ?? [], depth - 1) } : {}) }));
 
 /** A track `name` with a fader and the given children. */
 export const trackOf = (name: string, children: unknown[] = [], automation: { lane: string; target: string }[] = []) => ({

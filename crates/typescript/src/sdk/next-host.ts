@@ -1,7 +1,7 @@
 // What the runtime runs a project's tools with. Not for tools: they import `./sdk`.
 
 import { registry } from "./tools";
-export type { ToolView, ViewContext } from "./view";
+export type { Seen, ToolView, ViewContext } from "./view";
 
 /** Makes `target` hold what `value` holds, so code that kept `target` reads the new values. */
 function reconcile(target: Record<PropertyKey, unknown>, value: Record<PropertyKey, unknown>) {

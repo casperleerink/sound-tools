@@ -3,7 +3,7 @@ import { lengthAt, lengthOf } from "../../../song/clips";
 import { colourOf, itemAt, muted, rowOfKey, titleOf, words } from "../../../song/model";
 import { cannotRender } from "../../../song/tracks";
 import { BAR, barStarts, beatRuns, type Runs } from "../../../song/time";
-import { ACROSS, GUTTER, laneGroups, partsOf, PLANE, ROW, trackAt, trackY, ZOOM, type Page, type Row, type Track } from "../../../song/view";
+import { ACROSS, GUTTER, laneGroups, PLANE, ROW, trackAt, trackY, ZOOM, type Page, type Row, type Track } from "../../../song/view";
 import { Button } from "../../button";
 import { keysOf } from "../../kbd";
 import { MenuList, type Item } from "../../menu";
@@ -182,7 +182,7 @@ const TrackTime = ({ page, row, tempo: tempoKey, chosen, bounds, hint }: { page:
           <text at={[12, ROW / 2 - 8]} style="label" color="text-muted">{hint}</text>
         </box>
       )}
-      {partsOf(track).flatMap((item) => {
+      {track.children.flatMap((item) => {
         if (item.tool !== "timeline" && item.tool !== "region") return [];
         const key = `${track.name}/${item.name}`;
         // An audio clip whose file is not there is two bars long, to say why it is silent.

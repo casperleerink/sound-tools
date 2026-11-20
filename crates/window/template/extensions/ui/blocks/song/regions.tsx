@@ -4,10 +4,10 @@
 import { h, live, type Color, type Live, type Pointer } from "../../../sdk";
 import { GAIN } from "../../../song/regions";
 import { BEAT, secondsBetween, ticksAcross } from "../../../song/time";
-import { ROW, type Page, type Part } from "../../../song/view";
+import { ROW, type Page, type Track } from "../../../song/view";
 
 /** An audio clip of a track, with its facts. */
-export type Region = Extract<Part, { tool: "region" }>;
+export type Region = Extract<Track["children"][number], { tool: "region" }>;
 
 /** Where its sound starts under its name, in points. */
 const WAVE = 22;

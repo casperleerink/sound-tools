@@ -7,6 +7,9 @@ import { CardRoot, Child, forget, homeInControls, insert, Made, makeNode, materi
 import { adopted, batch, isRead, listener, Memory, Owner, readFields, reconcile, root, runIn, settingUp, setup, store } from "./reactivity";
 import { ChildTools, Context, Key, registry } from "./tools";
 
+/** A child as code gets it: this window tells no facts. */
+export type Seen<C> = C;
+
 /** A tool's `view`: drawn in the room the window gives it, a card in a rack or the whole window for an instance at the top of a project. Without one it gets `defaultView`. */
 export type ToolView<S extends Fields, I extends Inputs, M, K extends ChildTools> = (view: View<ValuesOf<S>, I, M, K>) => Child;
 
