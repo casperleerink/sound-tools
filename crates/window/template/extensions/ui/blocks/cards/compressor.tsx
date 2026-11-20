@@ -32,8 +32,8 @@ export const card: Card<"compressor"> = (self, ctx) => {
     onChange: (slope) => ratio.onChange(Math.round(100 / slope) / 100),
   };
   const handles = [
-    <Handle id="threshold" label={`${field.title} threshold point`} w={w} h={tall} x={threshold} y={partOf(live.feed("threshold_level"), LEVELS)} />,
-    <Handle id="ratio" label={`${field.title} ratio point`} w={w} h={tall} chosen={false} x={1} y={curved ? slope : partOf(live.feed("transfer.60"), LEVELS)} />,
+    <Handle id="threshold-point" label={`${field.title} threshold point`} w={w} h={tall} x={threshold} y={partOf(live.feed("threshold_level"), LEVELS)} />,
+    <Handle id="ratio-point" label={`${field.title} ratio point`} w={w} h={tall} chosen={false} x={1} y={curved ? slope : partOf(live.feed("transfer.60"), LEVELS)} />,
   ];
   const lookahead = field.choice("lookahead_ms", "Lookahead");
   return (

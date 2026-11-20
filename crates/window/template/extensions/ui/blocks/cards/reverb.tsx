@@ -49,11 +49,11 @@ export const card: Card<"reverb"> = (self, ctx) => {
       {marks}
       {line(length.times(highs), dashed(FLOOR / TOP), false)}
       {line(length, [0, 1, 1, FLOOR / TOP], true)}
-      <Handle id="pre-delay" label={`${field.title} pre-delay point`} w={w} h={tall} chosen={false} x={{ ...preDelay, travel: stretched(preDelay, LEFT, PRE) }} y={TOP}
+      <Handle id="pre-delay-point" label={`${field.title} pre-delay point`} w={w} h={tall} chosen={false} x={{ ...preDelay, travel: stretched(preDelay, LEFT, PRE) }} y={TOP}
         caption={expanded ? undefined : `Pre-delay ${shown(preDelay.value, "ms")}`} />
       {/* Laid from the start in the record, moved along while the pre-delay plays another. */}
       <box at={[start.minus(started).times(w), 0]} w={w} h={tall}>
-        <Handle id="decay" label={`${field.title} decay point`} w={w} h={tall} x={{ ...decay, travel: stretched(decay, started + SHORTEST, DECAY) }} y={FLOOR}
+        <Handle id="decay-point" label={`${field.title} decay point`} w={w} h={tall} x={{ ...decay, travel: stretched(decay, started + SHORTEST, DECAY) }} y={FLOOR}
           caption={expanded ? undefined : `Decay ${shown(decay.value, "seconds")}`} />
       </box>
     </Display>

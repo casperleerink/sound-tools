@@ -20,7 +20,7 @@ export const card: Card<"gate"> = (self, ctx) => {
   const threshold = field.number("threshold_db", "Threshold");
   // Under the threshold it turns down by its range: what comes out is under the drawing up to the bottom plus the range.
   const floor = live.field("range_db").plus(LEVELS[0]).min(live.field("threshold_db"));
-  const handle = <Handle id="threshold" label={`${field.title} threshold point`} w={w} h={tall} x={threshold} y={partOf(live.field("threshold_db"), LEVELS)} />;
+  const handle = <Handle id="threshold-point" label={`${field.title} threshold point`} w={w} h={tall} x={threshold} y={partOf(live.field("threshold_db"), LEVELS)} />;
   return (
     <DeviceCard id="card" title={field.title} display={<Display><DynamicsCurve levels={LEVELS} floor={floor} handles={handle} /></Display>}
       cells={[

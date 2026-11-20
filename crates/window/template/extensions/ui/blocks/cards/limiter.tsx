@@ -28,7 +28,7 @@ export const card: Card<"limiter"> = (self, ctx) => {
       <box at={[0, INSET]} w={w} h={tall}>
         <shapes at={[INSET, 0]} w={w - INSET} h={tall} units={[[0, 1], [LEVELS[1], LEVELS[0]]]} lines={[{ color: "green", width: 1.5, points: live.feed("history"), fill: "green/16" }]} />
         <box at={[0, partOf(live.field("ceiling_db"), LEVELS).negate().plus(1).times(tall)]} w={w} h={1} fill="text" />
-        <Handle id="ceiling" label={`${field.title} ceiling point`} w={w} h={tall} x={1} y={ceiling} />
+        <Handle id="ceiling-point" label={`${field.title} ceiling point`} w={w} h={tall} x={1} y={ceiling} />
       </box>
       <TurnedDown />
     </Display>

@@ -38,9 +38,9 @@ export const card: Card<"modulation"> = (self, ctx) => {
     <Display strip={<Choice {...field.choice("mode", "Mode")} />} zero={MIDDLE}>
       <shapes at={[lag.minus(0.5).times(w), swing.negate().plus(1 - MIDDLE).times(tall)]} w={1.5 * w} h={swing.times(2 * tall)} units={[[0, 1.5], [1, -1]]} lines={[{ color: "text-secondary", width: 1, points: LAGGED }]} />
       <shapes at={[0, swing.negate().plus(1 - MIDDLE).times(tall)]} w={w} h={swing.times(2 * tall)} units={[[0, 1], [1, -1]]} lines={[{ color: "text", width: 1.5, points: LINE }]} />
-      <Handle id="spread" label={`${field.title} spread point`} w={w} h={tall} chosen={false} x={{ ...spread, travel: SPREAD_TRAVEL }} y={swing.plus(MIDDLE)}
+      <Handle id="spread-point" label={`${field.title} spread point`} w={w} h={tall} chosen={false} x={{ ...spread, travel: SPREAD_TRAVEL }} y={swing.plus(MIDDLE)}
         caption={expanded ? undefined : `Spread ${Math.round(spread.value * 180)}°`} />
-      <Handle id="depth" label={`${field.title} depth point`} w={w} h={tall} x={DEPTH_AT} y={{ ...depth, travel: DEPTH_TRAVEL }} />
+      <Handle id="depth-point" label={`${field.title} depth point`} w={w} h={tall} x={DEPTH_AT} y={{ ...depth, travel: DEPTH_TRAVEL }} />
     </Display>
   );
   return (
