@@ -1111,3 +1111,22 @@ fn the_other_buttons_neither_click_nor_end_a_press_the_left_holds() {
         (json!(1), json!(1))
     );
 }
+
+/// A key a tool took comes up to it after the focus left its view: the release follows the
+/// key, so none stays held. One the system never sends is let go with the window's focus.
+#[test]
+fn a_key_a_tool_took_comes_up_to_it_after_the_focus_left_its_view() {
+    let files = [
+        ("extensions/holder.tsx", HOLDER),
+        ("state/holder.json", r#"{"tool": "holder", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "holder");
+    focus(&mut window, "here");
+    window.key(event("b"));
+    redraw(&mut window);
+    assert_eq!(did(&window.state, "holder"), "b↓");
+    focus(&mut window, "play");
+    window.key_up(event("b"));
+    redraw(&mut window);
+    assert_eq!(did(&window.state, "holder"), "b↓ b↑");
+}
