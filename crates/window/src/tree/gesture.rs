@@ -10,7 +10,7 @@ use serde_json::json;
 use sound_core::InstanceId;
 use sound_typescript::live::Num;
 
-use crate::app::State;
+use crate::app::{State, plays};
 use crate::lives::Hand;
 
 use super::semantics::Press;
@@ -183,8 +183,10 @@ pub(super) fn pointer(scope: &Scope, mut e: El, b: &BoxNode, key: &str, press: &
                     if let (true, Some(drag)) = (gesture.far, &gesture.drag) {
                         let hand = gesture.hand(drag, mods, true);
                         let (id, spec) = (drag.id.clone(), drag.spec.clone());
-                        plays_moved(s, &press.instance, spec.plays.as_ref());
                         s.lives.move_hand(s, &id, hand);
+                        if !plays_moved(s, &press.instance, spec.plays.as_ref()) {
+                            s.lives.move_hand(s, &id, Hand::default());
+                        }
                         tx.live_only();
                     }
                 }
@@ -216,15 +218,17 @@ pub(super) fn pointer(scope: &Scope, mut e: El, b: &BoxNode, key: &str, press: &
                         return;
                     };
                     let id = drag.id.clone();
-                    let plays = drag.spec.plays.as_ref();
                     if d.cancelled() {
-                        plays_ended(s, &press.instance, plays, false);
+                        plays::cancelled(s);
+                        s.lives.move_hand(s, &id, Hand::default());
+                        return;
+                    }
+                    if !plays::let_go(s) {
                         s.lives.move_hand(s, &id, Hand::default());
                         return;
                     }
                     let hand = gesture.hand(drag, mods, false);
                     s.lives.move_hand(s, &id, hand);
-                    plays_ended(s, &press.instance, plays, true);
                     let pointer = Pointer {
                         x: drag.start[0],
                         y: drag.start[1],
@@ -292,12 +296,20 @@ fn units(state: &State, plane: Option<&str>, window: [f32; 2], local: [f32; 2]) 
     plane.map_or(local, |plane| state.planes.units(plane, window))
 }
 
-/// What a drag `plays` sounds as it moves: not yet, as the session that plays it comes first.
-fn plays_moved(_state: &mut State, _instance: &InstanceId, _plays: Option<&Plays>) {}
-
-/// A drag that `plays` ended, `kept` or cancelled: what it played goes back. Not yet, see
-/// [`plays_moved`].
-fn plays_ended(_state: &mut State, _instance: &InstanceId, _plays: Option<&Plays>, _kept: bool) {}
+/// A move of a drag that `plays`: its values as they are now, after the hand moved. Whether
+/// the drag goes on.
+fn plays_moved(state: &mut State, instance: &InstanceId, plays: Option<&Plays>) -> bool {
+    let Some(plays) = plays else {
+        return true;
+    };
+    let values: Vec<(&str, f64)> = (plays.iter())
+        .map(|(path, value)| {
+            let value = state.lives.value(state, instance, value);
+            (path.as_str(), f64::from(value))
+        })
+        .collect();
+    plays::moved(state, instance, &values)
+}
 
 /// The numbers of a record a drag plays, by path, and what they play.
 type Plays = std::collections::HashMap<String, Num>;

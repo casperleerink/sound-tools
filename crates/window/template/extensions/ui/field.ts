@@ -1,5 +1,5 @@
 // A number of a record wired to a control: its range, unit and default from its field, what a
-// lane plays while one holds it, and its change as one step of undo. `<Knob {...field("depth")} />`.
+// lane plays while one holds it, the sound following a drag, and its change as one step of undo. `<Knob {...field("depth")} />`.
 import { live, type Fields, type Live, type Unit } from "../sdk";
 import type { Range } from "./value";
 
@@ -7,7 +7,7 @@ import type { Range } from "./value";
 export type NumberLike = { min: number; max: number; default?: number; integer?: boolean; unit?: Unit | null; label?: string; log?: boolean };
 
 /** What a Knob, Fader or Slider of one number takes. */
-export type Bound = Range & { id: string; label: string; value: number; unit?: Unit; initial?: number; held?: Live; onChange: (value: number) => void };
+export type Bound = Range & { id: string; path?: string; label: string; value: number; unit?: Unit; initial?: number; held?: Live; onChange: (value: number) => void };
 
 /** `cutoff_hz` as `Cutoff`: a field's name in words, without its unit. */
 const words = (name: string) => {
@@ -25,6 +25,7 @@ export const control = (held: (name: string) => boolean, path: string, field: Nu
   const name = path.slice(path.lastIndexOf(".") + 1);
   return {
     id: path,
+    path,
     label: field.label ?? words(name),
     value,
     min: field.min,

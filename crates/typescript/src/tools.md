@@ -74,11 +74,11 @@ A live value is an expression the window works out every frame, without the view
 - `<text live={live.feed("peak", "t01/mix").hold(3).decibels()} unit="db" />`; `opacity={live.feed("sounding.60")}`.
 - A feed that is a list draws as `points` or `rects` of a `shapes`.
 - `at`, `place`, `w`, `h`, `opacity` and `trim` take one, as `ui/meter.tsx` does. Code cannot read one.
-- `binder(self, ctx, fields)` of `ui/field.ts` wires a number's control, also what a lane plays.
+- `binder(self, ctx, fields)` of `ui/field.ts` wires a number's control: what a lane plays, and the sound following its drag.
 
 ## Changes and actions
 
-- `update(label, (draft) => …)` changes records. All the changes of one press, drag or paint are one step of undo. An update of a number a lane plays (`held`) is refused.
+- `update(label, (draft) => …)` changes records. All the changes of one press, drag or paint are one step of undo. An update of a number a lane plays (`held`) is refused; with Write automation on while the piece plays it writes the lane.
 - An element a pointer or an agent uses has a unique `key`, a `label` ("Mute Track 2") and its state (`checked`, `value`). Handlers: `onPress(p)` and `onDragEnd(p)` hear a `Pointer` (`x`, `y`, `dx`, `dy`, `clicks`, `right`, `shift`, `alt`, `cmd`, `over`: the key under it at the end), `onDrop(d)` hears files (`d.audio`, `d.parts`), `onEnter` paints, a `field`'s `onCommit(text)` (`null` on Escape; `focus`: rename in place), `actions`.
-- `drag={{ x: [-start, 9999], snap: [240, 1] }}` moves a clip along time on sixteenths; `live.drag(key)` follows it and `onDragEnd` keeps it with `update`. `plays: { gain_db: live.drag("gain").dy.negate().plus(gain) }` sounds a value while the drag is held.
+- `drag={{ x: [-start, 9999], snap: [240, 1] }}` moves a clip along time on sixteenths; `live.drag(key)` follows it and `onDragEnd` keeps it with `update`. `plays: { gain_db: live.drag("gain").dy.negate().plus(gain) }` sounds a value while the drag is held; the `update` of `onDragEnd` keeps it as one step, none puts it back.
 - `<col overlay={{ open: "menu" }} role="menu">` in a box opens at a right press on it: its items are boxes with `onPress`.

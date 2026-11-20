@@ -62,8 +62,16 @@ impl State {
         if let Some(tools) = tools {
             self.keys.keymap.set_tool_groups(tools.shortcut_groups());
         }
+        let holds = self.holds(&instances);
+        // A hand on a lane's number lets the lane go, which then names none: what was written
+        // into as the drag began still is.
+        let writes = match (self.plays.idle(), &self.tools) {
+            (false, Some(tools)) => tools.writes().clone(),
+            _ => written(self.project(), &instances, &holds),
+        };
         Shown {
-            holds: self.holds(&instances),
+            holds,
+            writes,
             instances,
             cards,
             facts,
@@ -128,6 +136,11 @@ impl State {
                 Want::Click(on) => session.set_click(on),
                 Want::ComputerKeys(on) => session.set_computer_keys(on),
                 Want::WriteAutomation(on) => session.set_writes_automation(on),
+                Want::Write {
+                    instance,
+                    label,
+                    values,
+                } => super::plays::write(self, &instance, &label, &values),
                 Want::Confirm {
                     question,
                     message,
@@ -358,4 +371,20 @@ fn plugin_offers(plugins: &Plugins) -> Vec<Offer> {
         )
     });
     found.chain(failed).chain(still).collect()
+}
+
+/// The numbers a lane moves of each instance of `shown` that `holds` leaves free: a hand writes
+/// into their lanes now.
+fn written(
+    project: &sound_core::Project,
+    shown: &BTreeSet<InstanceId>,
+    holds: &BTreeMap<InstanceId, Vec<String>>,
+) -> BTreeMap<InstanceId, Vec<String>> {
+    let mut writes = runtime::session::held(project, shown, false);
+    for (id, numbers) in &mut writes {
+        let held = holds.get(id);
+        numbers.retain(|number| !held.is_some_and(|held| held.contains(number)));
+    }
+    writes.retain(|_, numbers| !numbers.is_empty());
+    writes
 }

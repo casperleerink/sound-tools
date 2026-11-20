@@ -5,43 +5,83 @@
 use runtime::session::Drag;
 use sound_core::InstanceId;
 
+use sound_typescript::next::Tools;
+
 use super::State;
 
 /// The step of a drag that writes into a lane without an update of code.
 const STEP: &str = "Move a control";
 
-/// The drag that plays now.
-pub(crate) enum Playing {
-    Open(Drag),
-    /// A lane holds what it plays: the gesture ended and the rest of the drag does nothing.
-    Refused,
+/// The drag that plays now, if one does.
+#[derive(Default)]
+pub(crate) struct Playing {
+    drag: Option<Drag>,
+    /// A lane refused what it plays: the rest of the drag does nothing.
+    refused: bool,
+    /// It was let go: it ends once the code answered its release.
+    let_go: bool,
+}
+
+impl Playing {
+    /// No drag plays, nor waits for the code to answer its release.
+    pub(crate) fn idle(&self) -> bool {
+        self.drag.is_none()
+    }
 }
 
 /// One move of the drag: `values` by their paths in `instance`, as `drag.plays` names them.
-pub(crate) fn moved(state: &mut State, instance: &InstanceId, values: &[(&str, f64)]) {
-    let mut drag = match state.plays.take() {
-        Some(Playing::Open(drag)) => drag,
-        Some(Playing::Refused) => {
-            state.plays = Some(Playing::Refused);
-            return;
-        }
-        None => Drag::new(STEP),
-    };
+/// Whether the drag goes on: a number a lane holds refuses it, in the session's words.
+pub(crate) fn moved(state: &mut State, instance: &InstanceId, values: &[(&str, f64)]) -> bool {
+    let playing = &mut state.plays;
+    if playing.refused {
+        return false;
+    }
+    let mut drag = (playing.drag.take()).unwrap_or_else(|| Drag::new(STEP));
     match state.session.play(&mut drag, instance, values) {
-        Ok(()) => state.plays = Some(Playing::Open(drag)),
+        Ok(()) => {
+            playing.drag = Some(drag);
+            defer(state, true);
+            true
+        }
         Err(held) => {
             // The session ended the gesture as the step it was so far.
             state.session.finish(drag);
             state.session.report(held);
-            state.plays = Some(Playing::Refused);
+            playing.refused = true;
+            defer(state, false);
+            false
         }
+    }
+}
+
+/// The drag was let go: whether its release goes to the code. A refused one ends here.
+pub(crate) fn let_go(state: &mut State) -> bool {
+    let playing = &mut state.plays;
+    if std::mem::take(&mut playing.refused) {
+        return false;
+    }
+    if playing.drag.is_some() {
+        playing.let_go = true;
+        defer(state, false);
+        // What an earlier action updated is not this release's.
+        state.tools.as_mut().map(Tools::take_update);
+    }
+    true
+}
+
+/// Each frame: a drag let go ends once the code answered its release.
+pub(crate) fn settle(state: &mut State) {
+    if state.plays.let_go && state.tools.as_ref().is_none_or(Tools::answered) {
+        let update = state.tools.as_mut().and_then(Tools::take_update);
+        ended(state, update.as_deref());
     }
 }
 
 /// The drag let go, and the code answered: `update` names the update it sent for the end,
 /// which landed, and the drag's one step; none puts back the sound from before the drag.
 pub(crate) fn ended(state: &mut State, update: Option<&str>) {
-    let Some(Playing::Open(drag)) = state.plays.take() else {
+    state.plays.let_go = false;
+    let Some(drag) = state.plays.drag.take() else {
         return;
     };
     match update {
@@ -52,8 +92,38 @@ pub(crate) fn ended(state: &mut State, update: Option<&str>) {
 
 /// Escape: the sound from before the drag.
 pub(crate) fn cancelled(state: &mut State) {
-    if let Some(Playing::Open(drag)) = state.plays.take() {
+    (state.plays.refused, state.plays.let_go) = (false, false);
+    defer(state, false);
+    if let Some(drag) = state.plays.drag.take() {
         state.session.cancel(drag);
+    }
+}
+
+/// An update of code that set numbers a hand writes into a lane now: into the drag that ends,
+/// so it is one step with it, else as a value typed.
+pub(crate) fn write(
+    state: &mut State,
+    instance: &InstanceId,
+    label: &str,
+    values: &[(String, f64)],
+) {
+    let values: Vec<(&str, f64)> = (values.iter())
+        .map(|(path, value)| (path.as_str(), *value))
+        .collect();
+    let playing = &mut state.plays;
+    let played = match playing.drag.as_mut().filter(|_| playing.let_go) {
+        Some(drag) => state.session.play(drag, instance, &values),
+        None => state.session.set(label, instance, &values),
+    };
+    if let Err(held) = played {
+        state.session.report(held);
+    }
+}
+
+/// While a drag plays, the code hears none of the records it changes, so no view runs.
+fn defer(state: &mut State, deferred: bool) {
+    if let Some(tools) = &mut state.tools {
+        tools.defer_records(deferred);
     }
 }
 
@@ -136,6 +206,6 @@ mod tests {
         moved(&mut state, &track(), &[("synth.cutoff_hz", 1000.0)]);
         ended(&mut state, None);
         assert_eq!(cutoff(&state), Some(500.0));
-        assert!(state.plays.is_none());
+        assert!(state.plays.drag.is_none());
     }
 }

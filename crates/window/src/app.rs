@@ -30,11 +30,7 @@ mod host;
 mod keys;
 mod notices;
 mod panel;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the drag calls it once it plays numbers")
-)]
-mod plays;
+pub(crate) mod plays;
 mod problems;
 mod projects;
 mod transport;
@@ -143,11 +139,7 @@ pub(crate) struct State {
     pub(crate) plugin_windows: PluginWindows<RuneDesktop>,
     pub(crate) transport: transport::Transport,
     /// The drag that plays numbers into the session's gesture now.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the drag calls it once it plays numbers")
-    )]
-    pub(crate) plays: Option<plays::Playing>,
+    pub(crate) plays: plays::Playing,
     pub(crate) shell: crate::shell::Projects,
 }
 
@@ -280,7 +272,7 @@ impl State {
             ),
             problems_open: false,
             transport: transport::Transport::new(output),
-            plays: None,
+            plays: plays::Playing::default(),
             shell: crate::shell::Projects::new(
                 crate::shell::Projects::machine(),
                 headless,

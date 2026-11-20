@@ -74,8 +74,11 @@ export const gallery = tool({
   view: (_, { memory, play }) => {
     const flip = (name: string) => () => (memory.toggles[name] = !memory.toggles[name]);
     const value = (name: string) => ({ value: memory.values[name] ?? 0, onChange: (to: number) => (memory.values[name] = to) });
-    // Memory, not a record: the controls are wired by hand to it, as `control` takes.
-    const bound = (id: string, label: string, field: NumberLike) => ({ ...control(() => false, id, field, memory.values[id] ?? field.default ?? field.min, (to) => (memory.values[id] = to)), label });
+    // Memory, not a record: the controls are wired by hand to it, as `control` takes, and play no number.
+    const bound = (id: string, label: string, field: NumberLike) => {
+      const { path: _, ...wired } = control(() => false, id, field, memory.values[id] ?? field.default ?? field.min, (to) => (memory.values[id] = to));
+      return { ...wired, label };
+    };
     const knob = (id: string, label: string, props: NumberLike & { bipolar?: boolean; initial?: number }) => <Knob {...bound(id, label, { ...props, default: props.initial })} bipolar={props.bipolar} />;
     const gain = (id: string, label: string) => bound(id, label, { min: -60, max: 6, unit: "db" });
     const toggle = (id: string, label: string, color?: "warning" | "hot" | "danger", dot?: boolean, text?: string) => <Toggle id={id} label={label} text={text} on={memory.toggles[id] ?? false} color={color} dot={dot} onToggle={flip(id)} />;

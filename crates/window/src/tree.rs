@@ -220,7 +220,7 @@ pub(crate) struct DragSpec {
     pub(crate) from: Option<[f32; 2]>,
     /// What `live.drag` follows: its key when left out.
     pub(crate) id: Option<String>,
-    /// What plays while it is held: read, not acted on yet.
+    /// The numbers of the record it plays while it is held, by path.
     pub(crate) plays: Option<HashMap<String, Num>>,
 }
 

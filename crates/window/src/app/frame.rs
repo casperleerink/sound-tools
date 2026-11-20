@@ -157,6 +157,7 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
     }
     state.imported();
     changed |= state.serve_wants();
+    super::plays::settle(state);
     // What the views name changes only with what they show, and a lane bound or let go as a
     // behaviour answers, or a key the composer gave an action, which say nothing.
     let holds = state.holds(&state.shown);

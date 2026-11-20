@@ -20,6 +20,8 @@ for (let i = 0; i < 48; i++) {
 
 export type KnobProps = Range & {
   id: string;
+  /** The number of the record it turns (`cutoff_hz`, `t01/mix.gain_db`): the sound follows a drag. */
+  path?: string;
   /** What it is called, for an agent; also shown under the dial unless `text` says it shorter. */
   label: string;
   text?: string;
@@ -39,12 +41,13 @@ export type KnobProps = Range & {
  * ten times finer), arrows step it, a double click or Backspace sets `initial`, and a click on
  * the value or Enter types one. The arc is the one bright line and follows the drag.
  */
-export const Knob = ({ id, label, text, value, initial, unit, bipolar = false, held, onChange, ...range }: KnobProps) => {
+export const Knob = ({ id, path, label, text, value, initial, unit, bipolar = false, held, onChange, ...range }: KnobProps) => {
   const at = travelled(value, range);
   const set = (next: number) => onChange(fitted(next, range));
   // A drag from the value line turns the knob too.
-  const dragged = held ? liveTravelled(held, range) : live.drag(id).dy.plus(live.drag(`${id}-value`).dy).over(-TRAVEL).plus(at);
-  const drag: Drag = { y: [-(1 - at) * TRAVEL, at * TRAVEL] };
+  const turned = live.drag(id).dy.plus(live.drag(`${id}-value`).dy).over(-TRAVEL).plus(at);
+  const dragged = held ? liveTravelled(held, range) : turned;
+  const drag: Drag = { y: [-(1 - at) * TRAVEL, at * TRAVEL], ...(path === undefined ? {} : { plays: { [path]: liveValueAt(turned, range) } }) };
   const dragEnd = ({ dy }: Pointer) => onChange(valueAt(at - dy / TRAVEL, range));
   const actions = { set, increment: (by: number) => onChange(stepped(value, by, range)), decrement: (by: number) => onChange(stepped(value, -by, range)), ...(initial === undefined ? {} : { reset: () => set(initial) }) };
   const readout = held ?? liveValueAt(dragged, range);
