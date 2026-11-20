@@ -4,6 +4,7 @@ import { colourOf, muted, sendsOf, titleOf } from "../../../song/model";
 import { MIXER, sendOf, type Page, type Strip as Each } from "../../../song/view";
 import { Button } from "../../button";
 import { Dot } from "../../dot";
+import { keysOf } from "../../kbd";
 import { Knob } from "../../knob";
 import { clearsOf } from "../../meter";
 import { SHORTEST_FADER, STRIP, Strip, VALUE_LINE } from "../../strip";
@@ -36,7 +37,7 @@ export const Mixer = ({ page }: MixerProps) => {
       page.song.state.solo.includes(name), page.song.memory.armed.includes(name), page.song.held(`${name}/mix.gain_db`), page.song.held(`${name}/mix.pan`), sent.map((back) => page.song.held(`${name}/send-${back.name}.gain_db`)).join(), clearsOf(`meter-${name}`), sent.length];
     return memo(`mixer-${name}`, deps, () => <Column page={page} each={each} sent={sent} fader={fader} />);
   };
-  const key = page.song.shortcut("mixer");
+  const key = keysOf(page.song.shortcut("mixer"));
   const tall = 2 * PAD + OVER + fader + UNDER + sent.length * (GAP + SEND);
   return (
     <col key="mixer" label="Mixer" w="full" h="full" fill="surface" scroll="y">
@@ -60,7 +61,7 @@ export const Mixer = ({ page }: MixerProps) => {
           {column(undefined)}
         </row>
         <row pad={2}>
-          <Button id="close-mixer" label="Hide the mixer" icon="x" variant="ghost" size="sm" tip={key ? `Hide the mixer (${key.toUpperCase()})` : "Hide the mixer"} onPress={() => page.edits.tracks.toggleMixer()} />
+          <Button id="close-mixer" label="Hide the mixer" icon="x" variant="ghost" size="sm" tip={key ? `Hide the mixer (${key})` : "Hide the mixer"} onPress={() => page.edits.tracks.toggleMixer()} />
         </row>
       </row>
     </col>

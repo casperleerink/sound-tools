@@ -1,7 +1,7 @@
 import { h, live, type Num } from "../../../sdk";
 import type { Mark } from "../../../song/model";
 import { ACROSS, PLANE, type Page } from "../../../song/view";
-import { keyText } from "../../kbd";
+import { keysOf } from "../../kbd";
 import { ContextMenu, type Item } from "../../menu";
 
 // What the ruler and the tempo lane share: their menu, and where a thing of a set width in
@@ -23,13 +23,12 @@ export const TimeMenu = ({ page, id, label }: { page: Page; id: string; label: s
   const { song, edits } = page;
   const { x, mark } = song.memory.rulerMenu;
   const at = edits.marks.menuAt(x, mark ?? undefined);
-  const keys = song.shortcut("delete_mark");
   const items: Item[] = [
     { text: "Add a tempo change", icon: "tempo-change", disabled: at.tempo === null, onPress: () => at.tempo !== null && edits.marks.addTempo(at.tempo) },
     { text: "Add a time signature change", icon: "time-signature", disabled: at.signature === null, onPress: () => at.signature !== null && edits.marks.addSignature(at.signature) },
     { text: "Add a section", icon: "section", disabled: at.section === null, onPress: () => at.section !== null && edits.marks.addSection(at.section) },
   ];
   const removed = at.removed;
-  if (removed) items.push({ text: `Remove the ${NAMES[removed.kind]}`, icon: "trash-2", danger: true, line: true, keys: keys === null ? undefined : keyText(keys), onPress: () => edits.marks.remove(removed) });
+  if (removed) items.push({ text: `Remove the ${NAMES[removed.kind]}`, icon: "trash-2", danger: true, line: true, keys: keysOf(song.shortcut("delete_mark")), onPress: () => edits.marks.remove(removed) });
   return <ContextMenu id={id} label={label} w={240} items={items} />;
 };
