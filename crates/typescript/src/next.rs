@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use notify::RecommendedWatcher;
 use serde_json::{Map, Value, json};
 use sound_core::EventTap;
+use sound_core::feeds::FeedContext;
 use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEdit, ProjectEvent, Ticks};
 use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
@@ -1129,7 +1130,12 @@ pub struct Keys {
 impl Keys {
     /// The keys down now on the sound of `id`, a bit for each pitch.
     pub fn follow(&mut self, project: &Project, id: &InstanceId) -> u128 {
-        let Some(tap) = project.tap::<NoteEvent>(id, SOUNDING_TAP) else {
+        self.follow_tap(project.tap::<NoteEvent>(id, SOUNDING_TAP))
+    }
+
+    /// The keys down now on the sound whose keys `tap` hears.
+    fn follow_tap(&mut self, tap: Option<EventTap<NoteEvent>>) -> u128 {
+        let Some(tap) = tap else {
             *self = Self::default();
             return 0;
         };
@@ -1151,6 +1157,15 @@ impl Keys {
         }
         self.down
     }
+}
+
+/// The feed `sounding` of every instance, see [`crate::register_feeds`].
+pub(crate) fn sounding(context: &FeedContext<'_>) -> Vec<f32> {
+    let tap = context.tap::<NoteEvent>(SOUNDING_TAP);
+    let down = context.kept("sounding", |keys: &mut Keys| keys.follow_tap(tap));
+    (0..128)
+        .map(|pitch| f32::from(u8::from(down & (1 << pitch) != 0)))
+        .collect()
 }
 
 /// A tree as Bun `bun` sends it, with the memos the window kept from `before` that it still

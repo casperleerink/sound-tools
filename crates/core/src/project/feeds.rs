@@ -85,9 +85,9 @@ pub struct FeedRequest {
 /// What feeds and facts read that the engine does not hold: files and takes. The window gives
 /// one; every method reads nothing by default.
 pub trait Sources {
-    /// The loudest sample, 0 to 1, of each of `points` equal stretches of the audio file `asset`
-    /// from `from` to `to` seconds into it. `None` while it is read, or when it does not play.
-    fn wave(&self, _asset: &AssetName, _from: f64, _to: f64, _points: usize) -> Option<Vec<f32>> {
+    /// The loudest sample, 0 to 1, between each two of `edges`, seconds into the audio file
+    /// `asset` from left to right. `None` while it is read, or when it does not play.
+    fn wave(&self, _assets: &Assets, _asset: &AssetName, _edges: &[f64]) -> Option<Vec<f32>> {
         None
     }
 
@@ -253,6 +253,11 @@ impl<'a> FeedContext<'a> {
         self.sources
     }
 
+    /// See [`Sources::wave`].
+    pub fn wave(&self, asset: &AssetName, edges: &[f64]) -> Option<Vec<f32>> {
+        self.sources.wave(self.project.assets(), asset, edges)
+    }
+
     /// [`Self::points`], or `default` where the binding left it to the feed.
     pub fn points_or(&self, default: usize) -> usize {
         match self.points {
@@ -266,18 +271,19 @@ impl<'a> FeedContext<'a> {
         self.range.unwrap_or(default)
     }
 
-    /// `points` values evenly from one end of the range, `default` where the binding shows all
-    /// of it, to the other, both ends included: the places of the points of a curve.
-    pub fn across(&self, default: [f64; 2], points: usize) -> impl Iterator<Item = f64> + use<> {
+    /// `count` values evenly from one end of the range, `default` where the binding shows all
+    /// of it, to the other, both ends included: the edges of `count - 1` columns.
+    pub fn across(&self, default: [f64; 2], count: usize) -> impl Iterator<Item = f64> + use<> {
         let [from, to] = self.range_or(default);
-        let points = self.points_or(points).max(2);
+        let points = count.max(2);
         let step = (to - from) / (points - 1) as f64;
         (0..points).map(move |point| from + step * point as f64)
     }
 
-    /// A curve as pairs of `x, y`: `y` of each place of [`Self::across`].
+    /// A curve of [`Self::points`] points, `points` where the binding leaves it, as pairs of
+    /// `x, y`: `y` of each place of [`Self::across`].
     pub fn curve(&self, default: [f64; 2], points: usize, y: impl Fn(f32) -> f32) -> Vec<f32> {
-        (self.across(default, points))
+        (self.across(default, self.points_or(points)))
             .flat_map(|x| [x as f32, y(x as f32)])
             .collect()
     }

@@ -269,7 +269,7 @@ fn field(
     };
     let default = property.get("default").cloned();
     let kind = match (
-        property.get("type").and_then(Value::as_str),
+        property.get("type").and_then(kind_of),
         number("minimum"),
         number("maximum"),
     ) {
@@ -334,6 +334,16 @@ fn field(
         label,
         kind,
     })
+}
+
+/// The type of a field: a number a record may leave out is `["number", "null"]`.
+fn kind_of(kind: &Value) -> Option<&str> {
+    match kind {
+        Value::Array(kinds) => {
+            (kinds.iter().filter_map(Value::as_str)).find(|kind| *kind != "null")
+        }
+        kind => kind.as_str(),
+    }
 }
 
 /// The schema behind a `$ref`, and behind an `Option` of it: a card shows a field that may be

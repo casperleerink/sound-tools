@@ -107,6 +107,12 @@ impl Region {
         }
     }
 
+    /// Its fade in and its fade out, in frames at `engine_rate`.
+    pub fn fade_frames(&self, engine_rate: u32) -> (u64, u64) {
+        let frames = |ms: f32| (f64::from(ms) / 1000.0 * f64::from(engine_rate)).round() as u64;
+        (frames(self.fade_in_ms), frames(self.fade_out_ms))
+    }
+
     /// The second of its file that plays at `tick`, at or after its start.
     pub fn file_seconds_at(&self, tick: Ticks, clock: &Clock) -> f64 {
         let after = tick.0.saturating_sub(self.start.0);
@@ -127,6 +133,19 @@ impl Region {
         let along = (after as f64 - from.ticks.0 as f64) / (to.ticks.0 - from.ticks.0) as f64;
         from.seconds + along * (to.seconds - from.seconds)
     }
+}
+
+/// The level of frame `frame` of a clip `length` frames long by its fades of `fade_in` and
+/// `fade_out` frames alone: 1 between them.
+pub fn faded(frame: u64, length: u64, fade_in: u64, fade_out: u64) -> f64 {
+    let mut level: f64 = 1.0;
+    if fade_in > 0 {
+        level = level.min(frame as f64 / fade_in as f64);
+    }
+    if fade_out > 0 {
+        level = level.min(length.saturating_sub(frame) as f64 / fade_out as f64);
+    }
+    level
 }
 
 /// The part of `file` from `start_seconds` to `end_seconds`, the end of the file with `None`, in
@@ -208,8 +227,7 @@ pub fn snapshot(
         // What the file holds from where it starts, which a join may play past its end.
         let rate = file.sample_rate;
         let available = crate::engine_frames(file.frames - origin, rate, engine_rate);
-        let milliseconds =
-            |ms: f32| (f64::from(ms) / 1000.0 * f64::from(engine_rate)).round() as u64;
+        let (fade_in, fade_out) = region.fade_frames(engine_rate);
         clips.push(PlacedAudio {
             start: region.start,
             resampler: crate::resampler(audio.sample_rate(), engine_rate),
@@ -218,8 +236,8 @@ pub fn snapshot(
             length,
             available,
             gain: region.gain,
-            fade_in: milliseconds(region.fade_in_ms),
-            fade_out: milliseconds(region.fade_out_ms),
+            fade_in,
+            fade_out,
             warp,
         });
     }
@@ -268,14 +286,9 @@ impl PlacedAudio {
         let rising = (frame - part.from + 1) as f64 / steps;
         let falling = (end - frame) as f64 / steps;
         let entering = entered.saturating_add(1) as f64 / steps;
-        let mut level = rising.min(falling).min(entering).min(1.0);
-        if self.fade_in > 0 {
-            level = level.min(frame as f64 / self.fade_in as f64);
-        }
-        if self.fade_out > 0 {
-            level = level.min(length.saturating_sub(frame) as f64 / self.fade_out as f64);
-        }
-        (level * f64::from(self.gain)) as f32
+        let level = rising.min(falling).min(entering).min(1.0);
+        let faded = level.min(faded(frame, length, self.fade_in, self.fade_out));
+        (faded * f64::from(self.gain)) as f32
     }
 
     /// Frames `first..` of the clip, `length` frames long, as heard in `part`, into `out`.

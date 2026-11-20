@@ -4,6 +4,7 @@
 
 pub mod app;
 pub mod cli;
+pub mod files;
 pub mod log_file;
 pub mod recorder;
 pub mod report;
@@ -175,6 +176,7 @@ pub fn registry(folder: &Path, plugins: Plugins) -> Result<Registry> {
         registry.runtime_agent_doc(*doc)?;
     }
     register_extensions(&mut registry, Some(plugins))?;
+    sound_typescript::register_feeds(&mut registry);
     Ok(registry)
 }
 

@@ -555,13 +555,73 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         .tool::<DrumPadState>(EXTENSION)?
         .behaviour(apply)
         .rebinds_on_assets(sound_media::AUDIO_FOLDER)
-        .schema(DrumPad::AUTOMATION.parameters());
+        .schema(DrumPad::AUTOMATION.parameters())
+        .feed(
+            "levels",
+            "How loud each pad sounded since the last frame, 0 to 1: 16 numbers, pad 0 (note 36, bottom left) first.",
+            |_, context| {
+                (0..PADS)
+                    .map(|pad| {
+                        let [left, right] = context.peaks(&peaks_name(pad));
+                        left.max(right)
+                    })
+                    .collect::<Vec<f32>>()
+            },
+        )
+        .facts(|state, context| Facts::of(state, context.assets()));
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
 
+/// What its card knows that is no record.
+#[derive(Serialize, JsonSchema)]
+struct Facts {
+    /// Pad 0 (note 36, bottom left) first.
+    pads: Vec<PadFacts>,
+    /// The sounds of the kit, in the order a list shows them.
+    sounds: Vec<SoundFacts>,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct PadFacts {
+    note: u8,
+    /// What the card writes on it, see [`Pad::name`].
+    name: String,
+    /// The file it plays; null for a sound of the kit.
+    file: Option<sound_media::FileFacts>,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct SoundFacts {
+    /// As a record writes it.
+    value: &'static str,
+    name: &'static str,
+}
+
+impl Facts {
+    fn of(state: &DrumPadState, assets: &sound_core::Assets) -> Self {
+        let pads = (state.pads.iter().enumerate())
+            .map(|(pad, settings)| PadFacts {
+                note: note_of(pad),
+                name: settings.name(pad),
+                file: match &settings.source {
+                    Source::Sample(asset) => Some(sound_media::FileFacts::of(assets, asset)),
+                    Source::Sound(_) => None,
+                },
+            })
+            .collect();
+        let sounds = (Sound::ALL.into_iter())
+            .map(|sound| SoundFacts {
+                value: sound.key(),
+                name: sound.name(),
+            })
+            .collect();
+        Self { pads, sounds }
+    }
+}
+
 /// The name of the peaks of pad `pad`, which say how loud it sounds for the card.
-pub fn peaks_name(pad: usize) -> String {
+fn peaks_name(pad: usize) -> String {
     format!("pad-{}", note_of(pad))
 }
 
