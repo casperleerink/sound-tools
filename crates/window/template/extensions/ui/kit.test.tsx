@@ -117,6 +117,8 @@ test("a knob says words for its value at rest; a disabled one takes no change", 
   render(knob(true), { name: "k", state: {}, children: [] });
   expect(find("Ratio")).toMatchObject({ role: "slider", value: "4:1" });
   expect(() => act("Ratio", "set", 8)).toThrow("has no set");
+  render((() => <Knob id="ratio" label="Ratio" value={4} min={1} max={100} said="4:1" held={live.field("ratio")} onChange={() => {}} />) as Card, { name: "k", state: {}, children: [] });
+  expect(JSON.stringify(find("Ratio"))).not.toContain('"text":"4:1"');
 });
 
 test("a clip lands on its snap when dragged, and the arrows move it a step within its bounds", () => {

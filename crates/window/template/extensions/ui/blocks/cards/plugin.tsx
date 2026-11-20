@@ -128,7 +128,7 @@ export const card: Card<"plugin"> = (self, ctx) => {
     const held = laned(id) ? live.field(path) : undefined;
     const knob = steps > 2
       ? <Knob id={`pin-${id}`} label={label} text={parameter.name} value={stepOf(parameter, steps, pin.value)} min={0} max={steps - 1} step={1} initial={stepOf(parameter, steps, parameter.default)} onChange={(index) => set(id, change, stepValue(parameter, steps, index))} />
-      : <Knob id={`pin-${id}`} path={path} label={label} text={parameter.name} value={pin.value} min={parameter.min} max={parameter.max} initial={parameter.default} {...(held ? { held } : {})} {...(facts.texts[id] === undefined ? {} : { words: facts.texts[id] })} onChange={(value) => set(id, change, Math.min(Math.max(value, parameter.min), parameter.max))} />;
+      : <Knob id={`pin-${id}`} path={path} label={label} text={parameter.name} value={pin.value} min={parameter.min} max={parameter.max} initial={parameter.default} {...(held ? { held } : {})} said={facts.texts[id]} onChange={(value) => set(id, change, Math.min(Math.max(value, parameter.min), parameter.max))} />;
     return [outside ? <Cell text={parameter.name} value="Out of range"><box opacity={0.4}>{knob}</box></Cell> : knob, 1];
   };
   // In the order of their ids, each in the row with the most room.

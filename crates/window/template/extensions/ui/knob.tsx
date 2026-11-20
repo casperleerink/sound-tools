@@ -40,11 +40,9 @@ export type KnobProps = Range & {
   bipolar?: boolean;
   /** What a lane plays into it, when one does: it shows that, with a dot and a tip that say why. */
   held?: Live;
-  /** The value in the device's own words, such as a plugin's `3.2 kHz`: shown for the number while no lane holds it. */
-  words?: string;
   /** A small dial without its name, as in a mixer's strip: its value under it, or `beside` it, `w` wide. */
   small?: { beside?: boolean; w: number; quiet?: boolean };
-  /** Words for its value at rest, such as `"Off"`, `"4:1"` or `"90°"`: a drag shows the number. */
+  /** Words for its value at rest, such as `"Off"`, `"4:1"` or a plugin's `"3.2 kHz"`: a drag or a lane shows the number. */
   said?: string;
   /** Shown dimmed, and it takes no change: what it sets is off. */
   disabled?: boolean;
@@ -56,7 +54,7 @@ export type KnobProps = Range & {
  * ten times finer), arrows step it, a double click or Backspace sets `initial`, and a click on
  * the value or Enter types one. The arc is the one bright line and follows the drag.
  */
-export const Knob = ({ id, path, label, text, value, initial, unit, bipolar = false, held, words, small, said, disabled = false, onChange, ...range }: KnobProps) => {
+export const Knob = ({ id, path, label, text, value, initial, unit, bipolar = false, held, small, said, disabled = false, onChange, ...range }: KnobProps) => {
   const at = travelled(value, range);
   const set = (next: number) => onChange(fitted(next, range));
   // A drag from the value line turns the knob too.
@@ -70,9 +68,9 @@ export const Knob = ({ id, path, label, text, value, initial, unit, bipolar = fa
   const readout = held ?? playing ?? liveShownAt(dragged, range);
   const shown = unit === undefined ? <text style="number" color="text" live={readout} /> : <text style="number" color="text" live={readout} unit={unit} />;
   const moving = live.drag(id).active.max(live.drag(`${id}-value`).active);
-  const number = words !== undefined && !held ? <text style="number" color="text" truncate>{words}</text> : said === undefined ? shown : (
+  const number = said === undefined || held ? shown : (
     <box>
-      <text style="number" color="text" opacity={moving.negate().plus(1)}>{said}</text>
+      <text style="number" color="text" opacity={moving.negate().plus(1)} truncate>{said}</text>
       <box at={[0, 0]} opacity={moving}>{shown}</box>
     </box>
   );
