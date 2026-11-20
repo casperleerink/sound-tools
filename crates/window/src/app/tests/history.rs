@@ -142,6 +142,19 @@ fn a_press_on_a_row_writes_its_files_back_and_makes_no_point() {
     assert_eq!(points(&window), made);
 }
 
+/// As the song's page would: the history keeps no key it has no use for from the transport.
+#[test]
+fn r_records_while_the_history_has_the_keys() {
+    let scratch = new_project();
+    let mut window = history(&scratch);
+    let changed = edit(&mut window, "Change the cutoff", 600.0);
+    tab_to(&mut window, &row(changed));
+    key(&mut window, Key::Text("r".into()));
+    redraw(&mut window);
+    assert_eq!(focused(&window), Some(row(changed)));
+    assert!(window.state.playing);
+}
+
 #[test]
 fn tab_reaches_the_point_you_are_at_the_arrows_move_and_enter_goes() {
     let scratch = new_project();

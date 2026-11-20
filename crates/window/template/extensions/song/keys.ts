@@ -9,6 +9,8 @@ import { noteCommand, openClip, type NoteCommand } from "./notes";
 
 /** An action of the song. `run` says `false` when there was nothing for it to do. */
 const on = (keys: readonly ActionKey[], title: string, run: (song: Song) => boolean | void): Action<Song> => ({ title, keys, run });
+/** As the transport's keys: also while the keys are outside the page, such as in the history. */
+const everywhere = (action: Action<Song>): Action<Song> => ({ ...action, everywhere: true });
 const notes = (keys: readonly ActionKey[], title: string, command: NoteCommand) => on(keys, title, (song) => noteCommand(song, command));
 
 /** Escape: closes the editor with no note chosen, else lets go of the chosen notes, effect, mark, point or clips, else closes what shows below. */
@@ -25,12 +27,12 @@ function back(song: Song) {
 }
 
 export const actions: Record<string, Action<Song>> = {
-  record: on(["r"], "Record", (song) => editsOf(song).tracks.record()),
+  record: everywhere(on(["r"], "Record", (song) => editsOf(song).tracks.record())),
   add_tempo: on(["t"], "Add a tempo change at the playhead", (song) => editsOf(song).marks.addTempoAtPlayhead()),
   add_signature: on(["shift-t"], "Add a time signature change at the playhead", (song) => editsOf(song).marks.addSignature(song.clock.tick)),
   add_section: on(["shift-s"], "Add a section at the playhead", (song) => editsOf(song).marks.addSection(song.clock.tick)),
-  next_mark: on(["alt-shift-right"], "Go to the next section, tempo or time signature change", (song) => editsOf(song).marks.step(1)),
-  previous_mark: on(["alt-shift-left"], "Go to the section, tempo or time signature change before", (song) => editsOf(song).marks.step(-1)),
+  next_mark: everywhere(on(["alt-shift-right"], "Go to the next section, tempo or time signature change", (song) => editsOf(song).marks.step(1))),
+  previous_mark: everywhere(on(["alt-shift-left"], "Go to the section, tempo or time signature change before", (song) => editsOf(song).marks.step(-1))),
   back: on(["escape"], "Let go of what is chosen, or close what is open", back),
 
   select_all_notes: notes(["cmd-a"], "Choose all notes", "all"),
