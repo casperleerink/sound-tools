@@ -12,6 +12,19 @@ python3 tooling/perf/bench.py render main HEAD --projects builtins --runs 5   # 
 python3 tooling/perf/reverb.py main HEAD                  # the reverb of B against A
 ```
 
+The window, headless, on a release build of this checkout:
+
+```sh
+python3 tooling/perf/window.py            # compares with window.json, the last saved run
+python3 tooling/perf/window.py --save     # and keeps this run as window.json
+```
+
+Each scenario (idle, play, scroll, zoom, drag a clip, open the note editor) is a Rune `--script`
+of 3 s on the DAW template and on a song of 64 tracks and 500 clips; the table has Rune's frame
+times and the process's CPU and memory, and `--play 10` the app's own playback. Frame times are wall
+time: on a busy machine they double, so compare runs of a similar load average. Rejected:
+`--native --trace`, which opens a window.
+
 `--projects a,b` picks projects (`projects.names()`); `--runs` and `--seconds` change the
 counts. Builds, projects and logs go to `/tmp/st-perf` (`PERF_DIR` moves it). Remove it and run
 `git worktree prune` to clean up.
