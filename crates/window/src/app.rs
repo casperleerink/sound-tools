@@ -27,6 +27,7 @@ mod dialog;
 mod frame;
 mod headless;
 mod host;
+mod input;
 mod keys;
 mod notices;
 mod panel;
@@ -44,7 +45,7 @@ use headless::copied;
 pub(crate) use chrome::{Act, MIN_SIZE, WINDOW_BUTTONS, controls as chrome_controls, view};
 pub(crate) use dialog::controls as dialog_controls;
 pub(crate) use frame::{closing, poll, quitting, setup};
-pub(crate) use keys::{on_focus, on_key};
+pub(crate) use keys::{on_focus, on_key, on_modifiers};
 
 /// The template of a new project: the DAW with views of `sdk/view.ts`.
 pub(crate) const TEMPLATE: runtime::Template = runtime::Template {
@@ -75,8 +76,21 @@ pub(crate) static FAILED: Mutex<Option<String>> = Mutex::new(None);
 
 /// The engine: a device's, or offline, stepped by the frames of a run without a window.
 enum Sound {
-    Device(#[allow(dead_code)] OutputStream),
+    Device(OutputStream),
     Offline { engine: Box<Engine>, played: f64 },
+}
+
+/// What the output device went through, for the log, as the app ends.
+impl Drop for Sound {
+    fn drop(&mut self) {
+        if let Sound::Device(output) = self {
+            let status = output.status();
+            println!("xruns: {}", status.xruns);
+            println!("late callbacks: {}", status.late_callbacks);
+            println!("slowest callback: {:?}", status.slowest_callback);
+            println!("device output latency: {:?}", status.output_latency);
+        }
+    }
 }
 
 pub(crate) struct State {
@@ -145,6 +159,7 @@ pub(crate) struct State {
     )]
     pub(crate) plays: Option<plays::Playing>,
     pub(crate) shell: crate::shell::Projects,
+    pub(crate) incoming: input::Incoming,
 }
 
 impl State {
@@ -219,6 +234,11 @@ impl State {
         let desktop = RuneDesktop::new(plugins.clone(), events.clone());
         let plugin_windows = PluginWindows::new(desktop, events, cfg!(target_os = "windows"));
         let output = project.engine().output_peaks().clone();
+        let output_stream = match &sound {
+            Sound::Device(stream) => Some(stream),
+            Sound::Offline { .. } => None,
+        };
+        let incoming = input::Incoming::open(&mut project, output_stream, wake.clone());
         let mut session = Session::new(project, plugins.clone(), wake);
         let (theme, theme_problem) = Theme::of(&folder);
         let theme_loads = tools.as_ref().map_or(0, Tools::loads);
@@ -279,6 +299,7 @@ impl State {
                 headless,
                 Some(folder),
             ),
+            incoming,
             last: 0.0,
             _copy: copy,
             icons: tree::Icons::default(),

@@ -99,6 +99,8 @@ fn title_row(state: &State) -> El {
 pub(crate) enum Act {
     Transport(transport::Act),
     Dismiss,
+    /// The button of the update's notice.
+    Update,
     Panel,
     Tab(Tab),
     Problems,
@@ -113,6 +115,7 @@ impl Act {
         match self {
             Act::Transport(act) => act.run(state, value)?,
             Act::Dismiss => state.session.dismiss_notice(),
+            Act::Update => state.take_update(&mut Tx::default()),
             Act::Panel => state.set_panel_open(!state.panel.open),
             Act::Tab(tab) => state.show_tab(tab),
             Act::Problems => state.toggle_problems(),

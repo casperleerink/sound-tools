@@ -1,7 +1,10 @@
-//! The notices in the bottom right: a render while it runs, with how far it is, and what went
-//! wrong last, which a dismiss takes away. Nothing blocks.
+//! The notices in the bottom right: a render while it runs, with how far it is, a newer
+//! release with Restart or Download, and what went wrong last, which a dismiss takes away.
+//! Nothing blocks.
 
 use rune::{El, Icon, col, el, icon, row, text};
+use rune_kit::{Button, ButtonVariant};
+use runtime::update::Action;
 
 use super::State;
 use crate::controls::{Control, Target};
@@ -11,6 +14,7 @@ const INSET: f32 = 24.0;
 /// A notice is as wide as its words up to this; longer words wrap to three lines at most.
 const WIDTH: f32 = 400.0;
 const DISMISS: &str = "Dismiss";
+const UPDATE_BUTTON: &str = "notice-update-button";
 const DOT: f32 = 6.0;
 const GAP: f32 = 8.0;
 
@@ -24,8 +28,9 @@ enum Tone {
 /// The column of notices, if there is one.
 pub(super) fn view(state: &State) -> Option<El> {
     let rendering = state.session.rendering();
+    let update = state.incoming.ready.as_ref();
     let error = state.session.notice();
-    if rendering.is_none() && error.is_none() {
+    if rendering.is_none() && update.is_none() && error.is_none() {
         return None;
     }
     let notices = col()
@@ -40,23 +45,37 @@ pub(super) fn view(state: &State) -> Option<El> {
             .progress(done)
             .build()
     });
+    let message = update.map(runtime::update::Ready::message);
+    let update = update.zip(message.as_deref()).map(|(ready, words)| {
+        let tone = match ready.action {
+            Action::Failed { .. } => Tone::Error,
+            Action::Restart | Action::Download { .. } => Tone::Info,
+        };
+        let mut update = notice(state, "update", words, tone);
+        update.button = Some(ready.button());
+        update.build()
+    });
     let error = error.map(|words| notice(state, "error", words, Tone::Error).dismiss().build());
-    Some(notices.children(rendering).children(error))
+    Some(notices.children(rendering).children(update).children(error))
 }
 
-/// The dismiss of the notice, for `--tree` and `--act`.
-pub(super) fn controls(state: &State) -> Option<Control> {
-    state.session.notice()?;
-    Some(Control {
-        key: "notice-dismiss".into(),
-        label: DISMISS.into(),
+/// The buttons of the notices, for `--tree` and `--act`.
+pub(super) fn controls(state: &State) -> Vec<Control> {
+    let button = |key: &str, label: &str, act| Control {
+        key: key.into(),
+        label: label.into(),
         role: Some("button".into()),
         value: None,
         checked: None,
         expanded: None,
         actions: vec!["press".into()],
-        target: Target::Chrome(super::Act::Dismiss),
-    })
+        target: Target::Chrome(act),
+    };
+    let update = (state.incoming.ready.as_ref())
+        .map(|ready| button(UPDATE_BUTTON, ready.button(), super::Act::Update));
+    let dismiss =
+        (state.session.notice()).map(|_| button("notice-dismiss", DISMISS, super::Act::Dismiss));
+    update.into_iter().chain(dismiss).collect()
 }
 
 struct Notice<'a> {
@@ -66,6 +85,7 @@ struct Notice<'a> {
     tone: Tone,
     progress: Option<f32>,
     dismiss: bool,
+    button: Option<&'static str>,
 }
 
 fn notice<'a>(state: &'a State, key: &'static str, words: &'a str, tone: Tone) -> Notice<'a> {
@@ -76,6 +96,7 @@ fn notice<'a>(state: &'a State, key: &'static str, words: &'a str, tone: Tone) -
         tone,
         progress: None,
         dismiss: false,
+        button: None,
     }
 }
 
@@ -151,6 +172,13 @@ impl Notice<'_> {
                         .a11y_hidden(),
                 )
         });
+        let button = self.button.map(|label| {
+            Button::new(label)
+                .variant(ButtonVariant::Neutral)
+                .on_press_tx(|s: &mut State, tx| s.take_update(tx))
+                .build(&theme.kit)
+                .key(UPDATE_BUTTON)
+        });
         row()
             .key(format!("notice-{}", self.key))
             .role(match self.tone {
@@ -169,6 +197,7 @@ impl Notice<'_> {
             .border(1.0, theme.color("border-strong"))
             .child(dot)
             .child(col().shrink().min_w(0.0).child(words).children(bar))
+            .children(button)
             .children(dismiss)
     }
 }

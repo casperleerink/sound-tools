@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow};
 use rune::{Cursor, El, Icon, Key, KeyEvent, LiveText, TextEdit, Tx, el, icon, row, text};
 use runtime::session::Drag;
 use serde_json::{Value, json};
@@ -19,6 +19,8 @@ use crate::controls::{Control, Target};
 
 const TEMPO_STEP: &str = "Change the tempo";
 const SIGNATURE_STEP: &str = "Change the time signature";
+/// The action of the main tool that the Record button runs.
+const RECORD_ACTION: &str = "record";
 /// Points of a drag up per beat a minute faster; Shift is ten times finer.
 const POINTS_PER_BPM: f64 = 2.0;
 const SLOWEST: f64 = 10.0;
@@ -41,9 +43,6 @@ pub(crate) struct Transport {
     typing: Option<Typed>,
     /// What its field says, by key, and the value it was made from.
     edits: RefCell<HashMap<&'static str, (TextEdit, String)>>,
-    /// Whether the main tool has an action named `record`, which the Record button runs. The
-    /// host says so once it knows the tools' actions.
-    pub(crate) records: bool,
 }
 
 struct TempoDrag {
@@ -90,7 +89,6 @@ impl Transport {
             dragging: None,
             typing: None,
             edits: RefCell::default(),
-            records: false,
         }
     }
 
@@ -163,10 +161,27 @@ impl State {
         self.session.background(|project| project.engine().stop());
     }
 
-    /// Runs the main tool's action `record`. HOST: the host runs a tool's action by name once
-    /// it has them; until then there is none to run.
+    /// Whether the main tool has the action the Record button runs.
+    pub(crate) fn records(&self) -> bool {
+        let tool = self.main().and_then(|main| self.project().tool_of(main));
+        tool.is_some_and(|tool| {
+            (self.keys.keymap.groups()).any(|group| {
+                group.name == tool
+                    && group
+                        .actions
+                        .iter()
+                        .any(|action| action.name == RECORD_ACTION)
+            })
+        })
+    }
+
+    /// Runs the main tool's action `record`, as its key does.
     fn record(&mut self) -> Result<()> {
-        bail!("this tool has no action to record yet")
+        let main = (self.main().cloned())
+            .filter(|_| self.records())
+            .context("this tool has nothing to record")?;
+        self.run_actions(&main, &[RECORD_ACTION.to_string()]);
+        Ok(())
     }
 
     fn tempo_now(&self) -> (Ticks, f64) {
@@ -378,7 +393,7 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
         ),
         control("stop", "Stop", "button", Act::Stop, &["press"]),
     ];
-    if state.transport.records {
+    if state.records() {
         controls.push(Control {
             checked: Some(state.records_now()),
             ..control("record", "Record", "button", Act::Record, &["press"])
@@ -470,7 +485,7 @@ pub(super) fn view(state: &State) -> El {
             .build(|s: &mut State| s.play_or_pause()),
         )
         .child(round(state, "stop", "Stop", &STOP).build(|s: &mut State| s.stop()))
-        .children(transport.records.then(|| {
+        .children(state.records().then(|| {
             let on = state.records_now();
             round(state, "record", "Record", &RECORD)
                 .ink(if on { "text-inverse" } else { "red" })

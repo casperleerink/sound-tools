@@ -51,7 +51,7 @@ fn problems(state: &State) -> Vec<String> {
 }
 
 /// A key as the keymap names it, `shift-up` or `cmd-c`, as the system sends it.
-fn event(chord: &str) -> KeyEvent {
+pub(super) fn event(chord: &str) -> KeyEvent {
     let mut mods = Mods::default();
     let mut name = chord;
     loop {

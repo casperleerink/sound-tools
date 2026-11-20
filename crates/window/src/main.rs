@@ -205,6 +205,7 @@ fn window(arguments: &[String], last: bool) -> Result<()> {
         .on_quit(app::quitting)
         .args(rune_arguments)
         .on_focus(app::on_focus)
+        .on_modifiers(app::on_modifiers)
         .init(move || state)
         .run();
     if shell::starts_again() {

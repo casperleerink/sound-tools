@@ -1,7 +1,9 @@
 //! The keys of the window, matched in one place: a focused text field first, which no action
 //! hears; then the left panel's; then undo and redo; then the tool of the focused card, the
-//! pages around it up to the main view, and the app. Outside the views the main view's tool hears only its actions that run `everywhere` and
-//! its `globalKeys`. A key does an action, or a tool's `onKey` holds it until it comes up there.
+//! pages around it up to the main view, the app, and last the computer keys, which play the
+//! plain keys no one else took. Outside the views the main view's tool hears only its actions
+//! that run `everywhere` and its `globalKeys`. A key does an action, or a tool's `onKey` or the
+//! computer keys hold it until it comes up.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -69,6 +71,7 @@ fn app_group() -> Group {
             ),
             action("new-project", "New project", "cmd-n"),
             action("open-project", "Open project", "cmd-o"),
+            action("quit", "Quit", "cmd-q"),
         ],
     }
 }
@@ -199,9 +202,10 @@ impl State {
         self.handled();
     }
 
-    /// Every key an `onKey` holds comes up: cmd went down, under which macOS sends no key up, or
-    /// the window lost the keys.
+    /// Every key an `onKey` or the computer keys hold comes up: cmd went down, under which macOS
+    /// sends no key up, or the window lost the keys.
     pub(crate) fn let_go_of_keys(&mut self) {
+        self.incoming.live.let_go_of_computer_keys();
         for (name, instance) in std::mem::take(&mut self.keys.held) {
             self.key_to(&instance, (&name, false), Held::default());
         }
@@ -224,6 +228,10 @@ impl State {
             }
             "open-project" => {
                 self.app_action(AppAction::OpenProject, tx);
+                Ok(())
+            }
+            "quit" => {
+                tx.quit();
                 Ok(())
             }
             _ => Ok(()),
@@ -281,6 +289,12 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
     if held.platform {
         state.let_go_of_keys();
     }
+    let modified = held.platform || held.control || held.alt;
+    let repeat = tx.key_repeat();
+    // A key the computer keys hold stays theirs: its repeats reach no one else.
+    if state.computer_key(&name, modified, repeat, false) {
+        return true;
+    }
     if panel_key(state, key, false, tx) {
         state.handled();
         return true;
@@ -301,7 +315,6 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
         state.app_key(action, tx);
         return true;
     }
-    let repeat = tx.key_repeat();
     let main = state.main().cloned();
     for (instance, everywhere) in state.chain(tx.focused()) {
         if state.act_on_key(&instance, &chord, everywhere, repeat) {
@@ -329,7 +342,7 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     let Some(action) = app else {
-        return false;
+        return state.computer_key(&name, modified, repeat, true);
     };
     state.app_key(&action, tx);
     true
@@ -351,11 +364,14 @@ pub(super) fn panel_key(state: &mut State, key: &KeyEvent, inside: bool, tx: &mu
     true
 }
 
-/// A key came up: to the `onKey` that took it going down, if one did.
+/// A key came up: to the computer keys or the `onKey` that took it going down, if one did.
 pub(crate) fn on_key_up(state: &mut State, key: &KeyEvent, _: &mut Tx) -> bool {
     let Some(name) = name_of(&key.key) else {
         return false;
     };
+    if state.incoming.live.computer_key_up(&name) {
+        return true;
+    }
     let Some(instance) = state.keys.held.remove(&name) else {
         return false;
     };
@@ -364,9 +380,16 @@ pub(crate) fn on_key_up(state: &mut State, key: &KeyEvent, _: &mut Tx) -> bool {
     true
 }
 
-/// The window lost the keys: whatever an `onKey` holds comes up.
+/// The window lost the keys: whatever is held comes up.
 pub(crate) fn on_focus(state: &mut State, focused: bool, _: &mut Tx) {
     if !focused {
+        state.let_go_of_keys();
+    }
+}
+
+/// Cmd went down, under which macOS sends no key up: whatever is held comes up.
+pub(crate) fn on_modifiers(state: &mut State, mods: Mods, _: &mut Tx) {
+    if mods.logo || (cfg!(target_os = "macos") && mods.cmd) {
         state.let_go_of_keys();
     }
 }

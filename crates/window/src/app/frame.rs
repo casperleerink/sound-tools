@@ -73,7 +73,7 @@ impl State {
             }
             changed |= drawn;
         }
-        changed
+        changed | self.take_in(&polled.events)
     }
 
     /// Waits for Bun; a run without a window fails when it does not finish.
@@ -111,11 +111,16 @@ pub(crate) fn setup(state: &mut State, waker: rune::Waker) {
 
 /// The start of every frame: Bun, the project, the engine and what moves.
 pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
+    // What a plugin's window does not use: the shortcuts, then the computer keys.
     for spare in state.plugin_windows.take_spare_keys() {
-        // The computer keys are not in this window yet: they play `spare` here, the shortcuts first.
-        if let Spare::Down(key) = &spare {
-            super::keys::on_key(state, key, tx);
-        }
+        match &spare {
+            Spare::Down(key) => super::keys::on_key(state, key, tx),
+            Spare::Up(key) => super::keys::on_key_up(state, key, tx),
+            Spare::LetGo => {
+                state.let_go_of_keys();
+                false
+            }
+        };
     }
     let (changed, next) = frame(state, seconds);
     state.open_file_dialogs(tx);
