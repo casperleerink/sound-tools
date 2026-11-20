@@ -205,6 +205,17 @@ impl State {
         chain
     }
 
+    /// The press of the focused element of a view, when it has `onPress`.
+    fn focused_press(&self, focused: Option<&str>) -> Option<crate::tree::Press> {
+        let focused = focused?;
+        (controls::collect(self).controls.into_iter()).find_map(|control| {
+            match (control.key == focused, control.target) {
+                (true, Target::View(press)) if press.pressed => Some(press),
+                _ => None,
+            }
+        })
+    }
+
     /// Runs the actions of the tool of `instance` that `chord` does, if any: as one step of
     /// undo, in their order until one does it. Whether it had any.
     fn act_on_key(
@@ -378,6 +389,17 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
     {
         state.app_key(action, tx);
         return true;
+    }
+    // Enter presses an element the keys focused that has a press, as Space does, before the
+    // actions of a tool: else it would be an action of the page, such as renaming the chosen
+    // track. Focused by a click, Enter stays the page's: a clip clicked opens on Enter.
+    if !page && chord == "enter" && tx.focus_visible() {
+        if let Some(press) = state.focused_press(tx.focused()) {
+            if !repeat {
+                state.press(&press, "press", None);
+            }
+            return true;
+        }
     }
     let main = state.main().cloned();
     let chain = match page {

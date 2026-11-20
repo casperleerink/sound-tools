@@ -206,3 +206,35 @@ fn a_clip_is_named_in_place_from_its_menu() {
         "Root"
     );
 }
+
+/// Enter and Space on an element the keys focused that has a press but no role press it,
+/// before the song's own Enter, which would rename the chosen track. A clip focused by a click
+/// still opens on Enter.
+#[test]
+fn enter_and_space_press_a_focused_element_before_the_actions_of_the_song() {
+    let (_scratch, mut window) = song();
+    let chosen =
+        |window: &rune::Runtime<State>| window.state.report()["selected"]["instance"].clone();
+    for pressed in [rune::Key::Enter, rune::Key::Text(" ".into())] {
+        act(
+            &mut window.state,
+            json!({ "key": "clip-t00/bass", "action": "press" }),
+        );
+        redraw(&mut window);
+        assert_eq!(chosen(&window), "song/t00/bass");
+        window.update(|_, tx| tx.focus("timeline-foot", true));
+        redraw(&mut window);
+        assert_eq!(super::focused(&window).as_deref(), Some("timeline-foot"));
+        key(&mut window, pressed);
+        redraw(&mut window);
+        // Its press let go of the clip; no name field opened.
+        assert_eq!(chosen(&window), "song/t00");
+        assert!(window.find("rename-t00").is_none());
+    }
+    let [x, y, w, h] = rect(&window, "clip-t00/bass");
+    press_at(&mut window, (x + w / 2.0, y + h / 2.0));
+    assert_eq!(super::focused(&window).as_deref(), Some("clip-t00/bass"));
+    key(&mut window, rune::Key::Enter);
+    redraw(&mut window);
+    assert!(window.find("roll-t00-bass").is_some());
+}
