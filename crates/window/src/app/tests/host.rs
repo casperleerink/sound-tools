@@ -937,3 +937,36 @@ fn a_page_that_opens_leaves_the_focus_where_it_is() {
     assert!(window.find("keep").is_some(), "the page did not open");
     assert_eq!(focused(&window).as_deref(), Some("play"));
 }
+
+/// A page that fills the room it gets.
+const ROOM: &str = r#"import { h, tool } from "./sdk";
+export const room = tool({
+  name: "room", title: "Room", when: "Never", doc: "Fills its room.", state: {},
+  view: () => <box key="room" label="Room" w="full" h={40} />,
+});
+"#;
+
+/// A resize of the window reaches the page, with no view run.
+#[test]
+fn a_page_follows_its_room_when_the_window_resizes() {
+    let files = [
+        ("extensions/room.tsx", ROOM),
+        ("state/room.json", r#"{"tool": "room", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "room");
+    let width = |window: &rune::Runtime<State>| window.presented("room").unwrap().0[2];
+    let (before, runs) = (
+        width(&window),
+        window.state.tools.as_ref().unwrap().view_runs(),
+    );
+    window.set_viewport((900.0, 700.0), 1.0);
+    for _ in 0..60 {
+        redraw(&mut window);
+    }
+    assert!(
+        width(&window) < before - 400.0,
+        "{before} {}",
+        width(&window)
+    );
+    assert_eq!(window.state.tools.as_ref().unwrap().view_runs(), runs);
+}

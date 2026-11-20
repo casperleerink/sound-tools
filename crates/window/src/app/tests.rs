@@ -882,7 +882,10 @@ fn a_live_field_the_record_leaves_out_shows_its_default() {
 #[test]
 fn a_live_field_follows_its_record_when_it_changes() {
     let (_scratch, mut state) = gauge();
-    let record = state.project().root().join("state/song/t00/chain/gauge.json");
+    let record = state
+        .project()
+        .root()
+        .join("state/song/t00/chain/gauge.json");
     let changed = json!({ "tool": "gauge", "state": { "level": 0.5 } });
     std::fs::write(&record, changed.to_string()).unwrap();
     (state.session).background(|project| project.apply_outside_changes(&[record]).unwrap());
