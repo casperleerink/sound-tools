@@ -51,8 +51,11 @@ export type Memory = {
   repeatRange: { from: number; to: number } | null;
   /** The grid of drags, nudges and new clips in ticks: 0 is off. */
   snap: number;
-  /** Whether the note editor takes all the window but one track. */
+  /** How tall the note editor is, in points, and whether it takes all the window but one track. */
+  editor: number;
   editorLarge: boolean;
+  /** Whether the page showed the panel of its first track, as it does once, when it opens. */
+  opened: boolean;
   /** The chosen notes of the open clip, by `noteKey`: by what they are, so an undo keeps them right. */
   notes: string[];
   /** The lane under the notes, how long a new note is, the copied notes from 0, and what Quantize and Humanize use. */
@@ -64,9 +67,12 @@ export type Memory = {
   humanized: number;
 };
 
+/** How tall the note editor opens, in points. */
+export const EDITOR = 352;
+
 export const memory = (): Memory => ({
   selected: [], below: null, track: null, armed: [], recording: null, clipboard: null, renaming: null, renamingClip: null, renamingSection: null, menu: null,
-  mark: null, point: null, effect: null, lanes: [], tempoLane: false, returnsOpen: false, repeatRange: null, snap: SNAP, editorLarge: false,
+  mark: null, point: null, effect: null, lanes: [], tempoLane: false, returnsOpen: false, repeatRange: null, snap: SNAP, editor: EDITOR, editorLarge: false, opened: false,
   notes: [], lane: "velocity", length: BEAT / 2, copied: null, strength: 1, swing: 0, humanized: 0,
 });
 

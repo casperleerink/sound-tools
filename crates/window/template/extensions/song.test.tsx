@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { act, apply, find, press, render, type Self } from "./sdk";
+import { act, apply, find, h, press, render, type Self } from "./sdk";
 import { song } from "./song";
 
 type Song = Self<typeof song>;
@@ -58,4 +58,18 @@ test("audio tracks and returns are rows: a return has no solo, and only an audio
   render(song, { ...self(false), children: [...self(false).children, audio, back] } as unknown as Song);
   expect([find("Choose Audio 1"), find("Choose Return A"), find("Arm Audio 1")]).toMatchObject([{ role: "tab" }, { role: "tab" }, { role: "switch" }]);
   expect([find("Solo Return A"), find("Arm Track 1")]).toEqual([undefined, undefined]);
+});
+
+test("the song opens on its first track's panel; escape closes it and the master shows its own", () => {
+  // Another view first: the song's memory starts as it does when the song opens.
+  const other = (_self: { name: string; children: never[] }) => <box />;
+  render(other, { name: "other", children: [] });
+  render(song, self(false));
+  expect(find("strip-t00")).toBeDefined();
+  act("song.back");
+  expect(find("strip-t00")).toBeUndefined();
+  press("master");
+  expect(find("strip-master")).toBeDefined();
+  act("Close the panel", "press");
+  expect(find("strip-master")).toBeUndefined();
 });

@@ -123,10 +123,10 @@ fn an_action_on_mute_writes_the_record_and_undo_takes_it_back() {
 fn a_changed_tool_file_starts_a_new_bun_and_the_view_follows() {
     let scratch = new_project();
     let mut state = opened(&scratch.path().join("song"));
-    let song = state.project().root().join("extensions/song.tsx");
-    let code = std::fs::read_to_string(&song).unwrap();
+    let heads = (state.project().root()).join("extensions/ui/blocks/song/heads.tsx");
+    let code = std::fs::read_to_string(&heads).unwrap();
     std::fs::write(
-        &song,
+        &heads,
         code.replace("label={`Mute ${title}`}", "label={`Silence ${title}`}"),
     )
     .unwrap();
@@ -704,9 +704,9 @@ fn a_peak_held_three_seconds_shows_in_decibels_then_drops() {
     let scratch = new_project();
     let folder = scratch.path().join("song");
     let song = folder.join("extensions/song.tsx");
-    let loudest = r#"<Ruler /><text key="loudest" live={live.feed("peak", "t00/mix").hold(3).decibels()} digits={1} />"#;
+    let loudest = r#"<Ruler page={page} /><text key="loudest" live={live.feed("peak", "t00/mix").hold(3).decibels()} digits={1} />"#;
     let code = std::fs::read_to_string(&song).unwrap();
-    std::fs::write(&song, code.replace("<Ruler />", loudest)).unwrap();
+    std::fs::write(&song, code.replace("<Ruler page={page} />", loudest)).unwrap();
     let mut state = opened(&folder);
     play(&mut state, 0.0, 1.0);
     state.session.background(|project| project.engine().stop());
@@ -984,9 +984,9 @@ fn a_live_text_with_no_width_is_as_wide_as_the_widest_it_showed() {
     let scratch = new_project();
     let folder = scratch.path().join("song");
     let song = folder.join("extensions/song.tsx");
-    let loudest = r#"<Ruler /><row><text key="loudest" live={live.feed("peak", "t00/mix").decibels()} unit="db" /></row>"#;
+    let loudest = r#"<Ruler page={page} /><row><text key="loudest" live={live.feed("peak", "t00/mix").decibels()} unit="db" /></row>"#;
     let code = std::fs::read_to_string(&song).unwrap();
-    std::fs::write(&song, code.replace("<Ruler />", loudest)).unwrap();
+    std::fs::write(&song, code.replace("<Ruler page={page} />", loudest)).unwrap();
     let mut window = laid_out(opened(&folder));
     window
         .state
@@ -1017,20 +1017,13 @@ export const tall = tool({{ name: "tall", title: "Tall", when: "Never", doc: "Ta
 }
 
 #[test]
-fn the_devices_take_the_height_they_need_and_scroll_past_the_most() {
+fn a_device_taller_than_the_panel_scrolls() {
     let rect = |window: &rune::Runtime<State>, key: &str| {
         window
             .presented(key)
             .unwrap_or_else(|| panic!("no {key}"))
             .0
     };
-    let (_scratch, folder) = with_tools(&[("tall", &tall(230))]);
-    let window = laid_out(opened(&folder));
-    let [_, top, _, height] = rect(&window, "t00/chain/tall:tall");
-    assert!(
-        top + height <= rect(&window, "strip-t00")[1],
-        "under the mixer"
-    );
     let (_scratch, folder) = with_tools(&[("tall", &tall(900))]);
     let mut window = laid_out(opened(&folder));
     let [x, top, ..] = rect(&window, "t00/chain/tall:tall");
@@ -1979,12 +1972,12 @@ fn a_device_whose_code_does_not_load_says_so_where_it_sits_and_as_the_main_view(
 fn with_lane_button(scratch: &tempfile::TempDir) {
     let song = scratch.path().join("song/extensions/song.tsx");
     let code = std::fs::read_to_string(&song).unwrap();
-    let button = r#"<Ruler /><box key="add-lane" label="Add lane" w={20} h={20} onPress={() => update("Lane", (draft) => {
+    let button = r#"<Ruler page={page} /><box key="add-lane" label="Add lane" w={20} h={20} onPress={() => ctx.update("Lane", (draft) => {
       const first = draft.children.find((child) => child.name === "t00");
       first.state.automation = [{ lane: "lane-held", target: "mix.gain_db" }];
       first.children.push({ name: "lane-held", tool: "lane", state: { points: [{ tick: 0, value: -24 }] }, children: [] });
     })} />"#;
-    std::fs::write(&song, code.replacen("<Ruler />", button, 1)).unwrap();
+    std::fs::write(&song, code.replacen("<Ruler page={page} />", button, 1)).unwrap();
 }
 
 fn acted(scratch: &tempfile::TempDir, steps: Value) -> State {
