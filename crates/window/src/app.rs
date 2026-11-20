@@ -5,6 +5,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::{Context as _, Result};
@@ -15,6 +16,7 @@ use sound_typescript::next::{Drawn, Tools};
 
 use crate::controls::Step;
 use crate::lives::Lives;
+use crate::plugin_windows::{self, Events, PluginWindows, RuneDesktop};
 use crate::theme::Theme;
 use crate::tree;
 
@@ -29,7 +31,7 @@ mod problems;
 use headless::copied;
 
 pub(crate) use chrome::{Act, MIN_SIZE, WINDOW_BUTTONS, controls as chrome_controls, view};
-pub(crate) use frame::{poll, setup};
+pub(crate) use frame::{closing, poll, quitting, setup};
 pub(crate) use keys::on_key;
 
 /// The template of a new project: the DAW with views of `sdk/view.ts`.
@@ -113,6 +115,7 @@ pub(crate) struct State {
     pub(crate) panel: panel::LeftPanel,
     /// The list of the files that are not live is open.
     problems_open: bool,
+    pub(crate) plugin_windows: PluginWindows<RuneDesktop>,
 }
 
 impl State {
@@ -178,8 +181,14 @@ impl State {
         if !headless {
             project.watch()?;
         }
-        let tools =
-            extensions.map(|extensions| Tools::start(extensions, &project, !headless, wake));
+        let tools = extensions.map(|extensions| {
+            let mut tools = Tools::start(extensions, &project, !headless, wake);
+            tools.open_windows_with(plugin_windows::opener(plugins.clone()));
+            tools
+        });
+        let events = Rc::new(Events::waking(waker.clone()));
+        let desktop = RuneDesktop::new(plugins.clone(), events.clone());
+        let plugin_windows = PluginWindows::new(desktop, events, cfg!(target_os = "windows"));
         let (theme, theme_problem) = Theme::of(&folder);
         let theme_loads = tools.as_ref().map_or(0, Tools::loads);
         let schemas = (runtime::tool_schemas()?.into_iter())
@@ -190,6 +199,7 @@ impl State {
             project,
             sound,
             plugins,
+            plugin_windows,
             tools,
             theme,
             schemas,

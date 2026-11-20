@@ -20,6 +20,9 @@ use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEdit, Pro
 use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
 
+/// Opens the own window of an instance, or brings it forward: the app's, for `openWindow` of
+/// code. `Err` says why there is none.
+pub type WindowOpener = Box<dyn Fn(&Project, &InstanceId) -> Result<(), String>>;
 use crate::bun::{
     Answer, Bun, Event, Played, RecordEdit, Request, Runs, Skipped, Telling, TransportOp,
     record_key,
@@ -124,6 +127,7 @@ pub struct Tools {
     /// How many trees came, for a test that a frame runs no view.
     view_runs: u64,
     waker: Waker,
+    open_window: Option<WindowOpener>,
 }
 
 impl Tools {
@@ -172,11 +176,17 @@ impl Tools {
             loads: 0,
             view_runs: 0,
             waker,
+            open_window: None,
         };
         if let Some(bun) = bun {
             this.listen(bun);
         }
         this
+    }
+
+    /// Where `openWindow` of code goes. Without one it is refused.
+    pub fn open_windows_with(&mut self, opener: WindowOpener) {
+        self.open_window = Some(opener);
     }
 
     /// Hears `bun` from now on: what it says wakes the window.
@@ -731,6 +741,24 @@ impl Tools {
             }
             Event::Numbers { question, .. } => {
                 self.unanswered(project, question, Answer::Numbers(Vec::new()), "numbers")
+            }
+            Event::OpenWindow { instance, path } => {
+                let child = (path.split('/')).try_fold(instance.clone(), |id, name| id.child(name));
+                let opened = match (child, &self.open_window) {
+                    (Err(error), _) => Err(error.to_string()),
+                    (Ok(child), Some(open)) => open(project, &child),
+                    (Ok(_), None) => Err("this window opens no other".to_string()),
+                };
+                if let Err(why) = opened {
+                    let message = format!("its openWindow({path:?}) was refused: {why}");
+                    if let Some(problem) = self.problem_of(project, &instance, &message)
+                        && !self.problems.contains(&problem)
+                    {
+                        self.problems.push(problem);
+                        self.report(project);
+                    }
+                }
+                false
             }
             _ => false,
         }

@@ -49,6 +49,12 @@ impl WindowId {
     pub fn number(self) -> u64 {
         self.0
     }
+
+    /// For the app's tests of its side of the windows, which give it commands of their own.
+    /// The host hears no event of a window it did not make.
+    pub const fn numbered(number: u64) -> Self {
+        Self(number)
+    }
 }
 
 /// What the host wants of the app's windows, from `Plugins::settle_windows`.

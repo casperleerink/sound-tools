@@ -107,6 +107,7 @@ impl State {
             "view_runs": self.tools.as_ref().map_or(0, Tools::view_runs),
             "problems": problems,
             "notice": self.notice,
+            "plugin_windows": self.plugin_windows.titles(),
         })
     }
 

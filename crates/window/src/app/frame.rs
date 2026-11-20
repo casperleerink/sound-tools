@@ -10,6 +10,7 @@ use sound_core::{GROUPING_WINDOW, InstanceId};
 use sound_typescript::next::{FRAME_INTERVAL, Looped, Tools};
 
 use crate::controls;
+use crate::plugin_windows::Spare;
 use crate::theme::Theme;
 use crate::tree;
 
@@ -111,6 +112,12 @@ pub(crate) fn setup(state: &mut State, waker: rune::Waker) {
 
 /// The start of every frame: Bun, the project, the engine and what moves.
 pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
+    for spare in state.plugin_windows.take_spare_keys() {
+        // The computer keys are not in this window yet: they play `spare` here, the shortcuts first.
+        if let Spare::Down(key) = &spare {
+            super::keys::on_key(state, key, tx);
+        }
+    }
     let (changed, next) = frame(state, seconds);
     if let Some(next) = next {
         tx.wake_after(next);
@@ -145,6 +152,7 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
     if let Some(error) = errors.first() {
         state.notice = Some(error.to_string());
     }
+    state.plugin_windows.settle(&state.plugins, seconds);
     let events = state.project.drain_events();
     // The list of the files that are not live goes with the last of them.
     if state.problems_open && state.files_not_live() == 0 {
@@ -232,4 +240,15 @@ pub(super) fn run_loops(state: &mut State, seconds: f64) -> bool {
         state.looped = seconds;
     }
     looped == Looped::Sent
+}
+
+/// The main window closes: the app ends with it, not with the last plugin window open.
+pub(crate) fn closing(state: &mut State, tx: &mut Tx) {
+    state.plugin_windows.close_all(&state.plugins);
+    tx.quit();
+}
+
+/// Before any window goes, so every plugin lets go of its view and saves its state.
+pub(crate) fn quitting(state: &mut State, _: &mut Tx) {
+    state.plugin_windows.close_all(&state.plugins);
 }

@@ -15,6 +15,7 @@ mod app;
 mod controls;
 mod fields;
 mod lives;
+mod plugin_windows;
 mod theme;
 mod tree;
 
@@ -176,6 +177,8 @@ fn window(arguments: &[String]) -> Result<()> {
         })
         // Every control is a stop of Tab, whatever the system's keyboard setting.
         .tab_visits_controls(true)
+        .on_close(app::closing)
+        .on_quit(app::quitting)
         .args(rune_arguments)
         .init(move || state)
         .run();

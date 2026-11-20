@@ -4619,6 +4619,7 @@ dependencies = [
  "anyhow",
  "dunce",
  "embed-resource",
+ "objc2 0.6.5",
  "plugin-host",
  "rune",
  "rune-kit",
