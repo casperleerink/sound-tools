@@ -2119,4 +2119,5 @@ mod frame;
 mod geometry;
 mod plays;
 mod projects;
+mod song;
 mod transport;

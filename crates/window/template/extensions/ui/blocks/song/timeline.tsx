@@ -72,6 +72,7 @@ export const Timeline = ({ page }: TimelineProps) => {
           <MenuList id="timeline-menu" label="Menu of the timeline" items={emptyMenu(page)} open="menu" />
         </box>
       </row>
+      <ClipName page={page} />
       <box key="timeline-foot" label="Under the tracks" w="full" h={low} border="border" borderSides={[1, 0, 0, 0]} onPress={() => now().edits.clips.clear()} />
       {tracks.length === 0 && <EmptySong page={page} />}
       <box inset={[GUTTER, 0, 0, 0]} clip inert>
@@ -169,13 +170,12 @@ const TrackTime = ({ page, row, tempo: tempoKey, chosen, bounds, hint }: { page:
   const colour = colourOf(track);
   const tempo = song.clock.tempo_map;
   const here = [...chosen].filter((key) => rowOfKey(key) === track.name);
-  const renaming = memory.renamingClip !== null && rowOfKey(memory.renamingClip) === track.name ? memory.renamingClip : null;
   const dim = muted(track) || !plays(track) ? DIM : 1;
   // How tall its lanes are under it, while they show: the chosen shade them too.
   const under = page.rows.filter((each) => each.kind !== "track" && each.track === track).reduce((sum, each) => sum + each.height, 0);
   const keys = ["cut_clips", "copy_clips", "duplicate_clips", "delete_clips"].map((action) => song.shortcut(action)).join(" ");
   const quiet = memory.recording !== null || track.children.some((child) => child.tool === "timeline" || child.tool === "region");
-  return memo(`time-${track.name}`, [track.children, colour, tempoKey, row.top, here.join(" "), here.length > 0 ? JSON.stringify(bounds) : null, renaming, memory.snap, dim, under, keys, quiet ? "" : hint], () => (
+  return memo(`time-${track.name}`, [track.children, colour, tempoKey, row.top, here.join(" "), here.length > 0 ? JSON.stringify(bounds) : null, memory.snap, dim, under, keys, quiet ? "" : hint], () => (
     <box>
       <box place={[0, row.top, page.end, 1]} border="border" borderSides={[0, 0, 1, 0]} />
       {!quiet && hint !== "" && (
@@ -188,7 +188,7 @@ const TrackTime = ({ page, row, tempo: tempoKey, chosen, bounds, hint }: { page:
         const key = `${track.name}/${item.name}`;
         const length = item.tool === "timeline" ? lengthOf(item.state) : Math.max(lengthAt({ children: [track], clock: { tempo_map: tempo } }, key), 1);
         return [<Item page={page} track={track} itemKey={key} name={item.tool === "timeline" ? item.state.title || "" : ""} region={item.tool === "region"} start={item.state.start} length={length}
-          notes={item.tool === "timeline" ? item.state.notes : []} top={row.top} under={under} chosen={chosen.has(key)} bounds={bounds} colour={colour} dim={dim} renaming={renaming === key} />];
+          notes={item.tool === "timeline" ? item.state.notes : []} top={row.top} under={under} chosen={chosen.has(key)} bounds={bounds} colour={colour} dim={dim} />];
       })}
     </box>
   ));
@@ -215,7 +215,6 @@ type ItemProps = {
   bounds: Bounds;
   colour: Color;
   dim: number;
-  renaming: boolean;
 };
 
 /**
@@ -223,7 +222,7 @@ type ItemProps = {
  * opens a clip's notes, a drag moves the chosen on the snap (Cmd: free, Alt: a copy, the original
  * staying), its edges resize the chosen clips, a right press opens its menu.
  */
-const Item = ({ page, track, itemKey: key, name, region, start, length, notes, top, under, chosen, bounds, colour, dim, renaming }: ItemProps) => {
+const Item = ({ page, track, itemKey: key, name, region, start, length, notes, top, under, chosen, bounds, colour, dim }: ItemProps) => {
   const { memory } = page.song;
   const now = () => latest(page);
   const moved = live.drag(chosen ? MOVE : `clip-${key}`);
@@ -257,11 +256,7 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
           edits.clips.move({ dx: p.dx, dy: trackAt(rows, tracks, top + p.dy + 0.5) - row, alt: p.alt });
         }}>
         {notes.length > 0 && <Miniature itemKey={key} chosen={chosen} notes={notes} x={moved.dx.plus(start)} y={y} length={length} titled={name !== ""} colour={colour} />}
-        {renaming ? (
-          <row at={[4, 4]}><TextField id={`clip-name-${key}`} label={`Name of ${words}`} value={name} focus size="sm" w={140} onCommit={(text) => (text === null ? (memory.renamingClip = null) : now().edits.clips.rename(key, text))} /></row>
-        ) : (
-          name !== "" && <text at={[8, 6]} style="label" color="text-secondary" truncate>{name}</text>
-        )}
+        {name !== "" && <text at={[8, 6]} style="label" color="text-secondary" truncate>{name}</text>}
         {/* Where a region's waveform draws, from the `wave` feed. */}
         {region && <RegionWave />}
         {dim < 1 && !muted(track) && <Tooltip text={UNPLAYED} />}
@@ -275,6 +270,26 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
         )}
         <MenuList id={`menu-${key}`} label={`Menu of ${words}`} items={itemMenu(page, key, region)} open="menu" w={260} />
       </box>
+    </box>
+  );
+};
+
+/**
+ * The field that names the clip being named, over it: out of the plane, where a field takes the
+ * keys, following the plane's scroll and zoom.
+ */
+const ClipName = ({ page }: { page: Page }) => {
+  const key = page.song.memory.renamingClip;
+  const clip = key === null ? undefined : itemAt(page.song.children, key);
+  const row = key === null ? undefined : page.rows.find((each) => each.kind === "track" && each.track.name === rowOfKey(key));
+  if (key === null || clip?.tool !== "timeline" || !row) return null;
+  const view = live.plane(PLANE);
+  const x = view.left.negate().plus(clip.state.start).times(view.zoom.times(ACROSS)).max(0).plus(GUTTER + 4);
+  const title = clip.state.title || "";
+  return (
+    <box at={[x, view.top.negate().plus(row.top).times(ROW).plus(INSET + 4)]}>
+      <TextField id={`clip-name-${key}`} label={`Name of Clip ${title || wordsOf(key)}`} value={title} focus size="sm" w={140}
+        onCommit={(text) => (text === null ? (latest(page).song.memory.renamingClip = null) : latest(page).edits.clips.rename(key, text))} />
     </box>
   );
 };

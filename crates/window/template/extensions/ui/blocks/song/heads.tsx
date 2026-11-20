@@ -26,6 +26,7 @@ const RETURNS = 4.5;
 export const Heads = ({ page }: HeadsProps) => {
   const { song, rows, returns, tracks, height } = page;
   const { memory } = song;
+  const renamed = rows.find((row) => row.kind === "track" && row.track.name === memory.renaming);
   return (
     <col w={HEAD} h="full" border="border" borderSides={[0, 1, 0, 0]}>
       <box key="heads" label="Tracks" grow={1} w="full" plane={{ y: PLANE }}>
@@ -40,6 +41,7 @@ export const Heads = ({ page }: HeadsProps) => {
           </row>
         )}
       </box>
+      {renamed && <box at={[32, live.plane(PLANE).top.negate().plus(renamed.top).times(ROW).plus(8)]}><Rename page={page} each={renamed.track} /></box>}
       {returns.length > 0 && (
         <col w="full" border="border" borderSides={[1, 0, 0, 0]}>
           <row w="full" h={LOW_ROW} pad={2} gap={1} align="center">
@@ -115,13 +117,15 @@ function trackMenu(page: Page, each: Strip): Item[] {
 const colours = (page: Page, each: Strip): Item[] =>
   PALETTE.map(({ name, colour }) => ({ text: name, checked: colourOf(each) === colour, onPress: () => latest(page).edits.tracks.colour(each.name, colour) }));
 
-/** A track's name, or the field that renames it in place. */
-const Name = ({ page, each, title, style }: { page: Page; each: Strip; title: string; style: "heading" | "label" }) =>
-  page.song.memory.renaming === each.name ? (
-    <TextField id={`rename-${each.name}`} label={`Name of ${title}`} value={title} focus size="sm" w={120} onCommit={(text) => latest(page).edits.tracks.rename(each.name, text)} />
-  ) : (
-    <text style={style} color="text" opacity={muted(each) ? DIM : 1} truncate>{title}</text>
-  );
+/** The field that renames `each` in place of its name. */
+const Rename = ({ page, each }: { page: Page; each: Strip }) => {
+  const title = titleOf(each);
+  return <TextField id={`rename-${each.name}`} label={`Name of ${title}`} value={title} focus size="sm" w={120} onCommit={(text) => latest(page).edits.tracks.rename(each.name, text)} />;
+};
+
+/** A track's name, or the field that renames it in place: a return's; a track's lies over its head, out of the plane, where a field takes the keys. */
+const Name = ({ page, each, title }: { page: Page; each: Strip; title: string }) =>
+  page.song.memory.renaming === each.name && each.tool === "bus" ? <Rename page={page} each={each} /> : <text style="heading" color="text" opacity={muted(each) ? DIM : 1} truncate>{title}</text>;
 
 /**
  * A track's head: its colour, which picks another, its name, what plays it, and of its toggles
@@ -151,7 +155,7 @@ const Head = ({ page, row }: { page: Page; row: Row }) => {
         <MenuList id={`colour-${each.name}`} label={`Colour of ${title}`} items={colours(page, each)} w={180} />
       </row>
       <col grow={1} gap={1}>
-        <Name page={page} each={each} title={title} style="heading" />
+        <Name page={page} each={each} title={title} />
         <row h={24} gap={1} align="center">
           <row grow={1}><text style="label" color="text-muted" opacity={isMuted ? DIM : 1} truncate>{kind}</text></row>
           <Quiet shown={shown || chosen}><Toggle id={`lanes-${each.name}`} label={`Automation of ${title}`} icon="automation" on={shown} tip={lanes > 0 ? `Automation: ${lanes}` : "Automation"} onToggle={() => now().edits.lanes.show(each.name, !shown)} /></Quiet>
@@ -175,7 +179,7 @@ const Low = ({ page, each }: { page: Page; each: Strip }) => {
     <row key={`track-${each.name}`} label={`Choose ${title}`} role="tab" checked={chosen} w="full" h={LOW_ROW} px={3} gap={2} align="center" fill={chosen ? "selected" : undefined} hover={chosen ? undefined : "fill"}
       onPress={(p) => { if (p.right) return; if (p.clicks === 2) page.song.memory.renaming = each.name; else latest(page).edits.tracks.openPanel(each.name); }}>
       <box opacity={isMuted ? DIM : 1}><Dot color={colourOf(each)} /></box>
-      <row grow={1}><Name page={page} each={each} title={title} style="heading" /></row>
+      <row grow={1}><Name page={page} each={each} title={title} /></row>
       <Toggle id={`mute-${each.name}`} label={`Mute ${title}`} text="M" on={isMuted} color="warning" tip="Mute" onToggle={() => latest(page).edits.tracks.mute(each.name)} />
       <MenuList id={`menu-${each.name}`} label={`Menu of ${title}`} items={trackMenu(page, each)} open="menu" />
     </row>
