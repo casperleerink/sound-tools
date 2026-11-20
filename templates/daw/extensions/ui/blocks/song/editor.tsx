@@ -1,7 +1,7 @@
 import { h, live, memo } from "../../../sdk";
 import { titleOf } from "../../../song/model";
 import { controllerName, CONTROLLERS, LANE_NAMES, LANES, type NoteLane } from "../../../song/notes";
-import { BEAT, nearestOf } from "../../../song/time";
+import { BEAT, linesIn, nearestOf, stepAt } from "../../../song/time";
 import type { Page } from "../../../song/view";
 import { GUTTER, HEAD } from "../../../song/view";
 import { Button } from "../../button";
@@ -76,15 +76,15 @@ const Ruler = ({ roll }: { roll: Roll }) => {
     <box key={`${key}-ruler`} label="Bars of the clip" grow={1} h={HEADER} clip plane={{ x: key }} onPress={(p) => page.song.clock.jump(nearestOf(roll.runs, state.start + p.x, snap))}>
       {memo(`ruler-${key}`, [roll.runs, state.start, roll.end], () => {
         // A beat says its number once the zoom leaves it room for one.
-        const beats = live.plane(key).zoom.ge(BEAT_ROOM / BEAT);
+        const shown = (tick: number) => live.plane(key).zoom.ge(BEAT_ROOM / stepAt(roll.runs, state.start + tick, BEAT));
         return (
-          <box>
+          <box key={`${key}-numbers`}>
             {bars.map(({ tick, bar }, index) => [
               <box place={[tick, HEADER - 10, 1, 10]} fill="border-strong">
                 <text at={[5, -14]} style="label" color="text-muted">{bar}</text>
               </box>,
-              ...Array.from({ length: Math.max(Math.round(((bars[index + 1]?.tick ?? tick) - tick) / BEAT) - 1, 0) }, (_, beat) => (
-                <box place={[tick + (beat + 1) * BEAT, HEADER - 5, 1, 5]} fill="border" opacity={beats}>
+              ...linesIn(roll.runs, state.start + tick, state.start + (bars[index + 1]?.tick ?? tick), BEAT).map((at, beat) => (
+                <box place={[at - state.start, HEADER - 5, 1, 5]} fill="border" opacity={shown(tick)}>
                   <text at={[4, -19]} style="label" color="text-muted">{`${bar}.${beat + 2}`}</text>
                 </box>
               )),

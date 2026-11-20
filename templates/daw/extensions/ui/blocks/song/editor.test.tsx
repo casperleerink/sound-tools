@@ -13,12 +13,13 @@ const note = (start: number, pitch = 60, velocity = 100, length = BEAT): Shown =
 const ROLL = "roll-t00-c00";
 
 /** The editor of the clip `t00/c00` alone, as the song draws it, with the song's memory. */
-function shown(notes: Shown[], { length = BAR as number | null, track = trackOf("t00", [clipOf("c00", BAR, length, notes)]) } = {}) {
+function shown(notes: Shown[], { length = BAR as number | null, track = trackOf("t00", [clipOf("c00", BAR, length, notes)]), signatures = [{ signature: "4/4", bars: 1 }] } = {}) {
   let memory = undefined as unknown as Memory;
   const draw = (self: Drawn, ctx: Song) => {
     if (!("rolls" in ctx.memory)) Object.assign(ctx.memory, fresh(), { below: { kind: "editor", clip: "t00/c00" } });
     memory = ctx.memory;
-    return <Editor page={pageOf(self, ctx)} clip="t00/c00" />;
+    const clock = { ...ctx.clock, tempo_map: { ...ctx.clock.tempo_map, time_signatures: signatures } };
+    return <Editor page={pageOf(self, Object.assign(Object.create(ctx), { clock }))} clip="t00/c00" />;
   };
   let self = { name: "song", state: { order: [], solo: [], sidechains: [], limit_off: false }, children: [track] } as unknown as Drawn;
   render(draw, self);
@@ -195,4 +196,19 @@ test("an edit of one note draws only its bar again: of 2,000 notes, the other ba
   editor.apply(act("note-5", "drag", { dx: 0, dy: -1 }));
   expect(find("note-1500")).toBe(far);
   expect(find("note-5")).not.toBe(near);
+});
+
+/** The ticks of the clip where the roll draws a thin line: its beats and the snap's lines. */
+function thinLines(node: Node | undefined): number[] {
+  if (!node || typeof node !== "object") return [];
+  const own = "lines" in node && Array.isArray(node.lines) ? node.lines.flatMap((line: { color: string; points: unknown }) => (line.color === "border" && Array.isArray(line.points) ? line.points.filter((_: number, at: number) => at % 4 === 0) : [])) : [];
+  return [...own, ...("children" in node && Array.isArray(node.children) ? node.children.flatMap((child) => thinLines(child as Node)) : [])];
+}
+
+test("in 6/8 the ruler numbers the eighths, as the head counts them, and in 3/4 the roll draws every beat", () => {
+  shown([], { length: 2880, track: trackOf("t00", [clipOf("c00", 2880, 2880, [])]), signatures: [{ signature: "6/8", bars: 1 }] });
+  expect(words(find(`${ROLL}-numbers`)).filter((word) => word.startsWith("2."))).toEqual(["2.2", "2.3", "2.4", "2.5", "2.6"]);
+  shown([], { length: 2 * 2880, track: trackOf("t00", [clipOf("c00", 0, 2 * 2880, [])]), signatures: [{ signature: "3/4", bars: 1 }] });
+  // The beats of bar 2 of 3/4, in the clip's ticks drawn after the room before it.
+  expect([3840, 4800].map((tick) => thinLines(find(`${ROLL}-grid`)).includes(tick + BEAT))).toEqual([true, true]);
 });

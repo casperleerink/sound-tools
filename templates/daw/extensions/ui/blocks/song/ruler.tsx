@@ -1,7 +1,7 @@
 import { h, live, memo, type Color, type Drag, type Num } from "../../../sdk";
 import { changeBars } from "../../../song/marks";
 import { repeatOf, type Mark } from "../../../song/model";
-import { barAt, barNear, barStarts, BAR, BEAT, beatRuns, dragGrid, linesAround, SNAPS, stepped, type Runs } from "../../../song/time";
+import { barAt, barNear, barStarts, BAR, BEAT, dragGrid, linesAround, linesIn, SNAPS, stepped, type Runs } from "../../../song/time";
 import { GUTTER, HEAD, PLANE, RULER, TIME, type Page } from "../../../song/view";
 import { Select } from "../../select";
 import { Toggle } from "../../toggle";
@@ -78,13 +78,8 @@ const widthOf = (text: string) => text.length * 6.5 + 10;
 const Grid = ({ runs, end }: { runs: Runs; end: number }) => {
   const starts = barStarts(runs, end);
   const changes = runs.length > 1 ? changeBars(runs) : [];
-  const beatsOf = beatRuns(runs);
-  const [bars, beats]: [number[], number[]] = [[], []];
-  starts.forEach((tick, index) => {
-    bars.push(tick, 0, tick, 8);
-    const beat = beatsOf.findLast((run) => run.from <= tick)?.ticks ?? BEAT;
-    for (let at = tick + beat; at < (starts[index + 1] ?? end); at += beat) beats.push(at, 4, at, 8);
-  });
+  const bars = starts.flatMap((tick) => [tick, 0, tick, 8]);
+  const beats = linesIn(runs, 0, end, BEAT).flatMap((at) => [at, 4, at, 8]);
   return (
     <box key="ruler-numbers">
       <shapes place={[0, FOOT, end, 8]} lines={[{ color: "border-strong", width: 1, points: bars }]} />

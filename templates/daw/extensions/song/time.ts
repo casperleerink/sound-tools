@@ -136,6 +136,15 @@ export function nearestOf(runs: Runs, tick: number, snap: number): number {
   const [before, after] = linesAround(runs, tick, snap);
   return after - tick <= tick - before ? after : before;
 }
+/** The lines of the grid `snap` from `from` to before `to`, but the bar lines, each bar's from its own line. */
+export function linesIn(runs: Runs, from: number, to: number, snap: number): number[] {
+  const starts = barStarts(runs, to);
+  return starts.slice(0, -1).flatMap((start, index) => {
+    const [end, step] = [starts[index + 1]!, stepAt(runs, start, snap)];
+    if (end <= from || start >= to) return [];
+    return Array.from({ length: Math.ceil((end - start) / step) - 1 }, (_, at) => start + (at + 1) * step).filter((tick) => tick >= from && tick < to);
+  });
+}
 /** `tick` moved `by` lines of the grid `snap`, as far off the grid as it was; a sixteenth a step while it is off: what a nudge does. */
 export function stepped(runs: Runs, tick: number, snap: number, by: number): number {
   if (!(snap > 0)) return tick + by * stepAt(runs, tick, snap);

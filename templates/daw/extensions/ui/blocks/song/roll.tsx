@@ -1,6 +1,6 @@
 import { h, live, memo, type Color, type Frozen, type Note, type Pointer } from "../../../sdk";
 import { noteCommand, noteKey, pitchName, STRENGTHS, SWINGS, type NoteCommand } from "../../../song/notes";
-import { BEAT, dragGrid, placeOf } from "../../../song/time";
+import { BAR, BEAT, dragGrid, linesIn, placeOf } from "../../../song/time";
 import { MenuList, type Item } from "../../menu";
 import { EmptyState } from "../empty-state";
 import { barsOf, BEFORE, END, MOVE, PITCH, playing, SHORTEST, signatureOf, START, ZOOM, type Roll } from "./roll-view";
@@ -50,17 +50,19 @@ const Grid = ({ roll }: { roll: Roll }) => {
   const { key, top, end, length, state, bars, colour } = roll;
   const snap = roll.page.song.memory.snap;
   const loop = state.loop ? state.notes.map(noteKey).join(",") : "";
-  return memo(`grid-${key}`, [top, end, length, snap, roll.runs, loop, colour], () => {
+  return memo(`grid-${key}`, [top, end, length, snap, roll.runs, state.start, loop, colour], () => {
     const width = end + BEFORE;
     const shown = (step: number) => live.plane(key).zoom.ge(ROOM / step);
     const lines = (ticks: number[]) => ticks.flatMap((tick) => [tick + BEFORE, 0, tick + BEFORE, 128]);
-    const every = (step: number, over: number) => Array.from({ length: Math.ceil(end / step) }, (_, at) => at * step).filter((tick) => tick % over !== 0);
+    /** The lines of the song's grid `step` over the roll, in the clip's ticks. */
+    const every = (step: number) => linesIn(roll.runs, state.start - BEFORE, state.start + end, step).map((tick) => tick - state.start);
+    const beats = every(BEAT);
     const area = [-BEFORE, -top, width, 128] as const;
     return (
-      <box>
+      <box key={`${key}-grid`}>
         <shapes place={[...area]} rects={[{ color: "fill/40", rects: Array.from({ length: 128 }, (_, row) => row).filter((row) => BLACK.includes((127 - row) % 12)).flatMap((row) => [0, row, width, 1]) }]} />
-        {snap > 0 && snap < BEAT && <shapes place={[...area]} opacity={shown(snap).times(0.5)} lines={[{ color: "border", width: 1, points: lines(every(snap, BEAT)) }]} />}
-        <shapes place={[...area]} opacity={shown(BEAT)} lines={[{ color: "border", width: 1, points: lines(every(BEAT, 4 * BEAT).filter((tick) => !bars.some((bar) => bar.tick === tick))) }]} />
+        {snap > 0 && snap !== BAR && snap !== BEAT && <shapes place={[...area]} opacity={shown(snap).times(0.5)} lines={[{ color: "border", width: 1, points: lines(every(snap).filter((tick) => !beats.includes(tick))) }]} />}
+        <shapes place={[...area]} opacity={shown(BEAT)} lines={[{ color: "border", width: 1, points: lines(beats) }]} />
         <shapes place={[...area]} lines={[{ color: "border-strong", width: 1, points: lines(bars.map((bar) => bar.tick)) }]} />
         {state.loop && <shapes place={[...area]} rects={[{ color: `${colour}/25` as Color, rects: state.notes.flatMap((note) => [note.start + length + BEFORE, 127 - note.pitch, note.length, 1]) }]} />}
         <box place={[-BEFORE, -top, BEFORE, 128]} fill="background/70" inert />

@@ -2,7 +2,7 @@ import { h, hearsNotes, live, Live, memo, type Color } from "../../../sdk";
 import { lengthAt, lengthOf } from "../../../song/clips";
 import { colourOf, itemAt, muted, rowOfKey, titleOf, words } from "../../../song/model";
 import { cannotRender } from "../../../song/tracks";
-import { BAR, barStarts, beatRuns, dragGrid, placeOf, stepAt, type Runs } from "../../../song/time";
+import { BAR, barStarts, BEAT, dragGrid, linesIn, placeOf, stepAt, type Runs } from "../../../song/time";
 import { GUTTER, laneGroups, PLANE, ROW, TIME, trackAt, trackY, type Page, type Row, type Track } from "../../../song/view";
 import { Button } from "../../button";
 import { MenuList, type Item } from "../../menu";
@@ -122,18 +122,8 @@ function itemMenu(page: Page, key: string, region: boolean): Item[] {
 /** The grid of the song's bars, which its time signatures place. */
 const SongGrid = ({ runs, end, height }: { runs: Runs; end: number; height: number }) => {
   const bars = barStarts(runs, end);
-  return <Grid plane={PLANE} end={end} tall={height} bar={BAR} bars={bars} beats={beatTicks(runs, bars)} />;
+  return <Grid plane={PLANE} end={end} tall={height} bar={BAR} bars={bars} beats={linesIn(runs, 0, bars.at(-1)!, BEAT)} />;
 };
-/** The ticks of the beats that are not bars. */
-function beatTicks(runs: Runs, bars: readonly number[]) {
-  const steps = beatRuns(runs);
-  const ticks: number[] = [];
-  for (let bar = 0; bar < bars.length - 1; bar++) {
-    const step = steps.findLast((run) => run.from <= bars[bar]!)?.ticks ?? 960;
-    for (let tick = bars[bar]! + step; tick < bars[bar + 1]!; tick += step) ticks.push(tick);
-  }
-  return ticks;
-}
 
 /**
  * The clips or the regions of one track on its row: one memo, so an edit of a clip draws its row
