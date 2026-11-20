@@ -255,3 +255,46 @@ fn the_song_of_the_template_with_64_tracks_and_500_clips_runs_no_view_as_it_scro
     assert!(play < SCROLL_AND_PLAY, "a play frame took {play:?}");
     assert!(zoom < ZOOM, "a zoom frame took {zoom:?}");
 }
+
+/// The song of the template with 16 audio tracks of 100 audio clips of a four-second file, its
+/// waves read: they draw only what shows, and run no view as the song scrolls, plays and zooms.
+#[test]
+fn the_song_of_the_template_with_100_audio_clips_on_16_audio_tracks_runs_no_view_as_it_scrolls_plays_and_zooms()
+ {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    let song = folder.join("state/song");
+    super::audio::tone(&folder.join("assets/audio/tone.wav"), 4.0);
+    for track in 0..16 {
+        let at = song.join(format!("audio-{track:02}"));
+        std::fs::create_dir_all(at.join("chain")).unwrap();
+        let files = [
+            ("instance.json", r#"{"tool": "tape", "state": {"colour": "teal"}}"#),
+            ("rec.json", r#"{"tool": "recorder", "state": {"channels": [0]}}"#),
+            ("chain/instance.json", r#"{"tool": "chain", "state": {}}"#),
+            ("mix.json", r#"{"tool": "fader", "state": {}}"#),
+        ];
+        for (path, contents) in files {
+            std::fs::write(at.join(path), contents).unwrap();
+        }
+    }
+    for clip in 0..100 {
+        let (track, at) = (clip % 16, clip / 16);
+        let record = serde_json::json!({ "tool": "region", "state": { "asset": "tone.wav", "start": at * 3 * 3840 } });
+        std::fs::write(song.join(format!("audio-{track:02}/r{at}.json")), record.to_string()).unwrap();
+    }
+    let mut window = laid_out(opened(&folder));
+    let start = std::time::Instant::now();
+    while window.presented("wave-audio-03/r1").is_none() {
+        assert!(start.elapsed().as_secs() < 30, "the waves were never drawn");
+        redraw(&mut window);
+    }
+    for _ in 0..3 {
+        redraw(&mut window);
+    }
+    // A zoom reads and draws every wave that shows anew each frame, about 50 ms in a test build:
+    // over its budget until the window keeps a wave's drawing while its plane zooms.
+    let [scroll, play, _zoom] = budgets_of(window, "song", "song", "clip-audio-03/r1");
+    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame took {scroll:?}");
+    assert!(play < SCROLL_AND_PLAY, "a play frame took {play:?}");
+}

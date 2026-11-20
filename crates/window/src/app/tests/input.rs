@@ -17,7 +17,7 @@ use super::*;
 /// How long a test waits for Bun and the threads of the input, at most.
 const PATIENCE: Duration = Duration::from_secs(30);
 
-fn window_of(folder: &Path) -> rune::Runtime<State> {
+pub(super) fn window_of(folder: &Path) -> rune::Runtime<State> {
     let mut window = laid_out(opened(folder));
     window.on_key = Some(on_key);
     redraw(&mut window);
@@ -25,7 +25,7 @@ fn window_of(folder: &Path) -> rune::Runtime<State> {
 }
 
 /// A key goes down, and the frame after the one that hears it, which polls what it did.
-fn press(window: &mut rune::Runtime<State>, chord: &str) {
+pub(super) fn press(window: &mut rune::Runtime<State>, chord: &str) {
     window.key(event(chord));
     redraw(window);
     redraw(window);
@@ -38,7 +38,7 @@ fn release(window: &mut rune::Runtime<State>, chord: &str) {
 }
 
 /// Frames until `done` holds. Bun and the threads of the input answer in real time.
-fn until(window: &mut rune::Runtime<State>, what: &str, done: impl Fn(&State) -> bool) {
+pub(super) fn until(window: &mut rune::Runtime<State>, what: &str, done: impl Fn(&State) -> bool) {
     let start = Instant::now();
     while !done(&window.state) {
         assert!(
@@ -53,7 +53,7 @@ fn until(window: &mut rune::Runtime<State>, what: &str, done: impl Fn(&State) ->
 }
 
 /// The children of `track` of `tool`, by name.
-fn children_of(state: &State, track: &str, tool: &str) -> Vec<String> {
+pub(super) fn children_of(state: &State, track: &str, tool: &str) -> Vec<String> {
     let track = InstanceId::new(track).unwrap();
     (state.project().instances())
         .filter(|(id, each)| id.parent().as_ref() == Some(&track) && *each == tool)
@@ -63,7 +63,7 @@ fn children_of(state: &State, track: &str, tool: &str) -> Vec<String> {
 
 /// What the recorder `recorder` shows of the take that runs, read as the views read it: the
 /// level of its input, the numbers of its `take` and `notes` feeds, and where it began.
-fn shown_of_take(state: &State, recorder: &str) -> (f32, usize, usize, Value) {
+pub(super) fn shown_of_take(state: &State, recorder: &str) -> (f32, usize, usize, Value) {
     use sound_core::feeds::{Feed, FeedRequest, Readings, read};
     let (id, sources) = (InstanceId::new(recorder).unwrap(), state.sources());
     let feed = |name: &str| {
@@ -158,14 +158,14 @@ fn r_records_the_computer_keys_on_the_first_track_as_one_step_and_undo_waits_for
 
 /// An audio input with no device, into which the test writes a steady tone.
 #[derive(Clone, Default)]
-struct Microphone {
+pub(super) struct Microphone {
     writers: Arc<Mutex<Option<(CaptureWriter, LiveWriter)>>>,
     written: Arc<AtomicU64>,
     openings: Arc<AtomicU64>,
 }
 
 impl Microphone {
-    fn devices(&self) -> Devices {
+    pub(super) fn devices(&self) -> Devices {
         let microphone = self.clone();
         Devices {
             open_input: Some(Arc::new(move || {
@@ -186,7 +186,7 @@ impl Microphone {
     }
 
     /// Writes the input up to engine frame `until`, captured as that frame sounds.
-    fn write_until(&self, until: u64) {
+    pub(super) fn write_until(&self, until: u64) {
         let mut writers = self.writers.lock().unwrap();
         let Some((capture, live)) = writers.as_mut() else {
             return;
@@ -202,7 +202,7 @@ impl Microphone {
     }
 }
 
-const AUDIO_TRACK: [(&str, &str); 4] = [
+pub(super) const AUDIO_TRACK: [(&str, &str); 4] = [
     (
         "audio-1/instance.json",
         r#"{"tool": "tape", "state": {"colour": "green", "title": "Audio 1"}}"#,

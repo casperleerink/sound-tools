@@ -62,7 +62,7 @@ type HandlesProps = { page: Page; itemKey: string; region: Region; words: string
 /**
  * The handles of `region` chosen alone, on its top edge: a fade at each end with its line down to the
  * corner and a shade over what it turns down, the gain in the middle. Each plays what it makes
- * while it drags, so the sound and the wave follow the hand, shows it in a pill, and is one undo
+ * while it drags, so the sound and the wave follow the hand, shows it in a pill above, and is one undo
  * step when let go.
  */
 export const RegionHandles = ({ page, itemKey: key, region, words, x, y, width, tall }: HandlesProps) => {
@@ -85,9 +85,9 @@ export const RegionHandles = ({ page, itemKey: key, region, words, x, y, width, 
       lines={[{ color: "well/60", width: 0.5, points: shade, fill: "well/60" }, { color: "text", width: 1.5, points: line }]} />
   );
   const pill = (title: string, value: Live, unit: "ms" | "db", held: Live) => (
-    <row at={[14, -6]} h={22} px={2} gap={2} align="center" radius="sm" fill="background" border="border-strong" opacity={held}>
+    <row at={[8, -30]} h={22} px={2} gap={2} align="center" radius="sm" fill="background" border="border-strong" opacity={held}>
       <text style="label" color="text-secondary">{title}</text>
-      <text style="number" color="text" live={value} unit={unit} />
+      <text style="number" color="text" w={56} align="end" live={value} unit={unit} />
     </row>
   );
   return (
