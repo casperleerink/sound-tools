@@ -79,6 +79,9 @@ fn main() -> Result<()> {
     if let Some(served) = cli::plugin_process() {
         return served;
     }
+    // Rune ends the process inside `run` unless told otherwise, so starting again after it and
+    // the project's last writes as it is dropped would never happen.
+    rune::orderly_exit();
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let words: Vec<&str> = arguments.iter().map(String::as_str).collect();
     match words.as_slice() {

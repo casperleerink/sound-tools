@@ -268,6 +268,15 @@ impl Session {
 
     /// Shows what went wrong outside an edit: the engine, the watcher, the system. It stays
     /// until dismissed or replaced.
+    /// For the project closing: an open drag and an open turn of a plugin's knob are written as
+    /// one point each, and every plugin saves its state, whether it said it changed or not.
+    pub fn close(&mut self) {
+        self.finish_open();
+        for problem in self.plugins.close(&mut self.project) {
+            eprintln!("error: {problem}");
+        }
+    }
+
     pub fn report(&mut self, error: impl Display) {
         self.set_notice(Source::System, error.to_string());
     }
@@ -379,13 +388,9 @@ impl Session {
     }
 }
 
-/// A turn of a plugin's knob that is still open is written as one point, and so is an open drag.
 impl Drop for Session {
     fn drop(&mut self) {
-        self.finish_open();
-        for error in self.plugins.end_turns(&mut self.project) {
-            eprintln!("error: {error}");
-        }
+        self.close();
     }
 }
 

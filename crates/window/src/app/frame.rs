@@ -285,15 +285,18 @@ pub(super) fn run_loops(state: &mut State, seconds: f64) -> bool {
 
 /// The main window closes: the app ends with it, not with the last plugin window open.
 pub(crate) fn closing(state: &mut State, tx: &mut Tx) {
-    finish_takes(state);
-    state.plugin_windows.close_all(&state.plugins);
+    // A quit ran `quitting` already, before its windows close.
+    if !rune::quitting() {
+        quitting(state, tx);
+    }
     tx.quit();
 }
 
-/// Before any window goes, so what was recorded is in the song, every plugin lets go of its
-/// view and saves its state, and the agent's writes end.
+/// Before any window goes, so what was recorded is in the song, every plugin saves its state
+/// and lets go of its view, and the agent's writes end.
 pub(crate) fn quitting(state: &mut State, tx: &mut Tx) {
     finish_takes(state);
+    state.session.close();
     state.plugin_windows.close_all(&state.plugins);
     crate::sidebar::before_quit(state, tx);
 }

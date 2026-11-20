@@ -263,3 +263,26 @@ fn the_parameters_of_a_plugin_this_machine_does_not_have_are_an_error() {
     assert!(error.contains("no CLAP plugin"), "{error}");
     assert!(error.contains("--plugins"), "{error}");
 }
+
+/// The window closes its session as the app quits or opens another project, before any
+/// destructor runs: every plugin saves then, also one that never said its state changed.
+#[test]
+fn a_session_that_closes_saves_every_plugin_while_it_is_still_open() {
+    let (mut harness, _plugins) = plugin_rack(PluginFormat::Clap, "piano", &clip_with_pedal(None));
+    harness.play(4_096);
+    let asset = harness.path("assets/plugin-state/piano.bin");
+    assert!(
+        !asset.exists(),
+        "the plugin said nothing, so nothing was written yet"
+    );
+    let Harness {
+        project,
+        plugins,
+        engine: _engine,
+        folder: _folder,
+        ..
+    } = harness;
+    let mut session = runtime::session::Session::new(project, plugins, std::sync::Arc::new(|| {}));
+    session.close();
+    assert!(asset.exists());
+}
