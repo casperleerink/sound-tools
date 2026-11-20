@@ -1519,7 +1519,10 @@ fn a_page_of_an_older_sound_tools_plays_and_says_its_view_is_gone() {
     let state = opened(&folder);
     let old = InstanceId::new("old").unwrap();
     assert_eq!(state.project().tool_of(&old), Some("old"));
-    assert!(state.tools.as_ref().unwrap().knows("old"), "its sound loads");
+    assert!(
+        state.tools.as_ref().unwrap().knows("old"),
+        "its sound loads"
+    );
     let problems = state.project().problems();
     assert!(
         problems.iter().any(|problem| problem

@@ -142,11 +142,13 @@ pub(crate) fn code_failed(state: &State, id: &InstanceId) -> El {
         true => "page",
         false => "device",
     };
-    text(format!("This {what}'s code has a mistake, so it shows nothing until it is mended."))
-        .key(format!("{}code-failed", state.prefix_of(id)))
-        .font(state.theme.text("label"))
-        .color(state.theme.color("text-secondary"))
-        .wrap()
+    text(format!(
+        "This {what}'s code has a mistake, so it shows nothing until it is mended."
+    ))
+    .key(format!("{}code-failed", state.prefix_of(id)))
+    .font(state.theme.text("label"))
+    .color(state.theme.color("text-secondary"))
+    .wrap()
 }
 
 /// The view `drawn` of `instance`, with its keys after `prefix`.
