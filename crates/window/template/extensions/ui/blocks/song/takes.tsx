@@ -25,7 +25,7 @@ export const Take = ({ page, track, y, tall }: { page: Page; track: Track; y: nu
     <box key={`take-${track.name}`} label={`Recording on ${titleOf(track)}`} place={[from, y, live.playhead.minus(from).max(1), tall]} radius="md" fill="surface" border="danger" clip inert>
       <text at={[8, 4]} style="label" color="danger">Recording</text>
       {track.tool === "tape" ? (
-        <shapes place={[from, inner[0], span, inner[1]]} units={[span, [1, 0]]} lines={[{ color: colour, width: 1, points: live.feed("take", path), fill: tint(colour, 45) }]} />
+        <shapes place={[from, inner[0], span, inner[1]]} units={[span, 1]} rects={[{ color: tint(colour, 60), rects: live.feed("take", path) }]} />
       ) : (
         <shapes place={[from, inner[0], span, inner[1]]} units={[span, pitchesOf(track)]} rects={[{ color: colour, rects: live.feed("notes", path) }]} />
       )}

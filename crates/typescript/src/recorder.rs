@@ -108,15 +108,18 @@ pub(crate) fn register_feeds(registry: &mut Registry) {
         )
         .feed(
             "take",
-            "The sound of the take that runs: the loudest sample, 0 to 1, of each of `points` equal stretches (96 unless the binding says) across the ticks after it began the binding shows (up to now unless it says); empty while none runs.",
+            "The sound of the take that runs: the loudest sample, 0 to 1, of each of `points` equal stretches (96 unless the binding says) across the ticks after it began the binding shows (up to now unless it says), as `rects` that draw it mirrored about its middle with `units` [ticks, 1]; empty while none runs.",
             |_, context| {
                 let (sources, id) = (context.sources(), context.instance());
                 let Some(from) = sources.taking(id) else {
                     return Vec::new();
                 };
                 let now = context.tick.0.saturating_sub(from.0) as f64;
+                let points = context.points_or(96);
                 let [from, to] = context.range_or([0.0, now]);
-                (sources.take_wave(id, from, to, context.points_or(96))).unwrap_or_default()
+                let peaks = (sources.take_wave(id, from, to, points)).unwrap_or_default();
+                let edges: Vec<f64> = context.across([0.0, now], points + 1).collect();
+                sound_core::feeds::band(&edges, peaks)
             },
         )
         .feed(

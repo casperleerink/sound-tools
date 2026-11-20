@@ -66,7 +66,7 @@ test("a take that runs draws from where it began to the playhead, its sound on a
   opened(songOf([tapeOf("audio-1", [recorder(BAR)]), trackOf("t00", [recorder(2 * BAR)]), tapeOf("audio-2", [recorder(null)])]));
   const take = (track: string) => find(`take-${track}`) as unknown as { place: unknown[]; children: Placed[] };
   expect(take("audio-1").place[0]).toBe(BAR);
-  expect(take("audio-1").children.find((kid) => kid.lines)?.lines?.[0]?.points.node).toEqual({ op: "feed", name: "take", path: "audio-1/rec" });
+  expect(take("audio-1").children.find((kid) => kid.rects)?.rects?.[0]?.rects.node).toEqual({ op: "feed", name: "take", path: "audio-1/rec" });
   expect(take("t00").children.find((kid) => kid.rects)?.rects?.[0]?.rects.node).toEqual({ op: "feed", name: "notes", path: "t00/rec" });
   expect(find("take-audio-2")).toBeUndefined();
 });

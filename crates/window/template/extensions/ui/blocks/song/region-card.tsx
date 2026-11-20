@@ -1,4 +1,5 @@
 import { h, live, type Color } from "../../../sdk";
+import { lengthAt } from "../../../song/clips";
 import { colourOf, itemAt, rowOfKey } from "../../../song/model";
 import { GAIN } from "../../../song/regions";
 import type { Page } from "../../../song/view";
@@ -36,7 +37,7 @@ export const RegionCard = ({ page, region }: RegionCardProps) => {
   return (
     <Frame id="slot-region" title={file}>
       <DeviceCard id="region" title={file}
-        display={<Wave path={region} colour={track ? colourOf(track) : "text"} caption={`${shown(from, "seconds")} to ${to === null ? "the end" : shown(to, "seconds")}`} />}
+        display={<Wave path={region} length={lengthAt({ children: page.self.children, clock: song.clock }, region)} colour={track ? colourOf(track) : "text"} caption={`${shown(from, "seconds")} to ${to === null ? "the end" : shown(to, "seconds")}`} />}
         cells={[
           knob("gain_db", "Gain", { min: GAIN[0], max: GAIN[1], unit: "db", default: 0 }, gain_db, (db) => edits.regions.setGain(region, db)),
           knob("fade_in_ms", "Fade in", { min: 0, max: Math.max(fade - fade_out_ms, 1), unit: "ms", default: 0 }, fade_in_ms, (ms) => edits.regions.setFade(region, "in", ms, seconds)),
@@ -51,21 +52,12 @@ export const RegionCard = ({ page, region }: RegionCardProps) => {
   );
 };
 
-/**
- * The sound of the clip as it plays, with its gain and fades, as a band around the middle in its
- * track's colour. A line fills only below it, so the lower half fills its whole and the well
- * fills back from its line down.
- */
-const Wave = ({ path, colour, caption }: { path: string; colour: Color; caption: string }) => {
+/** The sound of the clip as it plays, `length` ticks, with its gain and fades, as a band around the middle in its track's colour. */
+const Wave = ({ path, length, colour, caption }: { path: string; length: number; colour: Color; caption: string }) => {
   const { w, h: tall } = drawingOf(6);
-  const half = (units: [number, number], y: number, fill: Color) => (
-    <shapes at={[0, y]} w={w} h={tall / 2} units={[1, units]} lines={[{ color: colour, width: 1, points: live.feed("wave", path), fill }]} />
-  );
   return (
     <Display columns={6} caption={caption}>
-      {half([1, 0], 0, tint(colour, 45))}
-      <box at={[0, tall / 2]} w={w} h={tall / 2} fill={tint(colour, 45)} />
-      {half([0, 1], tall / 2, "well")}
+      <shapes at={[0, 0]} w={w} h={tall} units={[Math.max(length, 1), 1]} rects={[{ color: tint(colour, 60), rects: live.feed("wave", path) }]} />
     </Display>
   );
 };
