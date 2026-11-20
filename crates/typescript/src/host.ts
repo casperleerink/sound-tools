@@ -637,6 +637,9 @@ function forget(id: string) {
   for (const key of memories.keys()) {
     if (key.startsWith(`${id} `)) memories.delete(key);
   }
+  for (const key of lastMade.keys()) {
+    if (key.startsWith(`${id} `)) lastMade.delete(key);
+  }
 }
 
 function hear({ records, gone, edits: heard }: Extract<Request, { type: "records" }>) {
@@ -721,15 +724,32 @@ const nameOf = (instance: string) => instance.slice(instance.lastIndexOf("/") + 
 /** What the window told of the shown instances besides their records. */
 let known: { facts: Record<string, Facts>; catalog: unknown[]; keys: Record<string, string | null> } = { facts: {}, catalog: [], keys: {} };
 /** The facts of `id` as the window told them, or its title alone. */
-const factsOf = (id: string, tool: string): Facts => known.facts[id] ?? { title: sdk.host.tools.get(tool)?.title ?? nameOf(id), fields: [] };
+const factsOf = (id: string, tool: string): Facts => known.facts[id] ?? kept(`${id} facts`, [tool], () => ({ title: sdk.host.tools.get(tool)?.title ?? nameOf(id), fields: [] }));
 /** `children` of `parent` with their facts, and their children's, as views and actions get them. */
-const seen = (parent: string, children: readonly OwnedChild[], depth = 2): OwnedChild[] =>
-  depth === 0
-    ? [...children]
-    : children.map((child) => {
-        const id = `${parent}/${child.name}`;
-        return { ...child, facts: factsOf(id, child.tool), children: seen(id, child.children, depth - 1) } as OwnedChild;
-      });
+function seen(parent: string, children: readonly OwnedChild[], depth = 2): OwnedChild[] {
+  const list =
+    depth === 0
+      ? [...children]
+      : children.map((child) => {
+          const id = `${parent}/${child.name}`;
+          const [facts, below] = [factsOf(id, child.tool), seen(id, child.children, depth - 1)];
+          return kept(`${id} seen ${depth}`, [child, facts, below], () => ({ ...child, facts, children: below }) as OwnedChild);
+        });
+  return kept(`${parent} seen list ${depth}`, list, () => list);
+}
+
+/**
+ * What was made last under `key`, while it is made of the same `parts`, else what `make` makes:
+ * a child that did not change is the same object in every run, so a `memo` on it holds.
+ */
+const lastMade = new Map<string, { parts: readonly unknown[]; value: unknown }>();
+function kept<T>(key: string, parts: readonly unknown[], make: () => T): T {
+  const last = lastMade.get(key);
+  if (last && last.parts.length === parts.length && last.parts.every((part, at) => part === parts[at])) return last.value as T;
+  const value = make();
+  lastMade.set(key, { parts, value });
+  return value;
+}
 const seenChildren = (instance: string) => seen(instance, childrenOf(instance));
 /** The key the action `name` of `tool` has now: as the window told, none included, else its first own key. */
 const shortcutOf = (tool: string) => (name: string) => {
@@ -856,11 +876,14 @@ function listed(id: string, told: Set<string>, latest: boolean): OwnedChild[] {
       }
     }
   }
-  return frozen([...names].sort().flatMap((name) => {
+  const list = [...names].sort().flatMap((name) => {
     const child = `${id}/${name}`;
     const entry = recordOf(child, latest);
-    return entry ? [{ name, tool: entry.tool, state: filledOf(entry), children: childrenOf(child, latest) } as OwnedChild] : [];
-  }));
+    if (!entry) return [];
+    const children = childrenOf(child, latest);
+    return [kept(`${child} record`, [entry, children], () => frozen({ name, tool: entry.tool, state: filledOf(entry), children } as OwnedChild))];
+  });
+  return kept(`${id} records`, list, () => frozen(list));
 }
 
 /** The `state` of a record as the code of its tool gets it: every field, at its default where left out. */
@@ -1486,6 +1509,8 @@ function handle(request: Request): string | undefined {
       carded = new Set(request.cards);
       heldFields = request.held;
       if (factsMoved.length > 0) recordsChanged += 1;
+      // Facts that did not move stay the objects they were, so the children made of them do.
+      for (const id of Object.keys(sent.facts)) if (!factsMoved.includes(id)) sent.facts[id] = known.facts[id]!;
       known = sent;
       show(request.instances);
       changed.forEach(drawNext);

@@ -3,7 +3,7 @@
 use serde_json::{Value, json};
 
 use super::{act, key, laid_out, new_project, opened, record, redraw, travel};
-use crate::app::State;
+use crate::app::{Drawn, InstanceId, State};
 
 fn song() -> (tempfile::TempDir, rune::Runtime<State>) {
     let scratch = new_project();
@@ -55,6 +55,28 @@ fn a_clip_dragged_lands_on_the_snap_as_one_undo_step() {
     assert_eq!(start(&window.state, "t00/bass"), 2400);
     act(&mut window.state, json!({ "action": "undo" }));
     assert_eq!(start(&window.state, "t00/bass"), before);
+}
+
+/// A child that did not change is the same in every run of the view, so a move of a clip builds
+/// its track's row again and keeps the row of every other track.
+#[test]
+fn a_clip_moved_builds_only_its_row_again() {
+    let (_scratch, mut window) = song();
+    let builds = |window: &rune::Runtime<State>| {
+        let song = InstanceId::new("song").unwrap();
+        let Some(Drawn::View { memos, .. }) = window.state.drawn(&song) else {
+            panic!("the song has no view");
+        };
+        ["time-t00", "time-t01"].map(|row| memos[row].0)
+    };
+    let [x, y, ..] = rect(&window, "clip-t00/bass");
+    press_at(&mut window, (x + 20.0, y + 20.0));
+    let before = builds(&window);
+    drag(&mut window, (x + 20.0, y + 20.0), (61.0, 0.0));
+    assert_eq!(start(&window.state, "t00/bass"), 2400);
+    let after = builds(&window);
+    assert_ne!(after[0], before[0]);
+    assert_eq!(after[1], before[1]);
 }
 
 /// What Export selection exports follows every edit of the chosen: a move, and its undo.
