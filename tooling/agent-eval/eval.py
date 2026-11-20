@@ -13,9 +13,8 @@ work, and the council's verdicts. `report.py` puts runs side by side by `--label
 ~/.cache/sound-tools-eval/, which a restart keeps. `$SOUND_TOOLS_PROGRAM` picks another program
 to compare.
 
-`examples/` holds tools agents built in these runs, from one prompt each: a gravity harp view,
-a storm drone played from its display, a generative part in D dorian, and a grain cloud of a sample. Copy one into the
-`extensions/` folder of a project to try it.
+`examples/` holds tools agents built in these runs, from one prompt each: a grain cloud of a
+sample and a swaying tone. Copy one into the `extensions/` folder of a project to try it.
 """
 
 import argparse
