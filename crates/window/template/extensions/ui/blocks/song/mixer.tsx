@@ -14,7 +14,7 @@ export type MixerProps = { page: Page };
 const [PAD, GAP, NAME, SEND, NAMES] = [8, 4, 28, 28, 64];
 /** What a column holds over its fader: its name; and under it, its value line. */
 const OVER = NAME + GAP;
-const UNDER = GAP + VALUE_LINE;
+const UNDER = VALUE_LINE;
 
 /**
  * A strip per track, then behind a line the returns' and the master's, which stay in view while

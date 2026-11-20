@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { act, apply, find, press, render, type Node, type Op, type Self } from "../../../sdk";
 import { song } from "../../../song";
 import { MIXER } from "../../../song/view";
-import { SHORTEST_FADER } from "../../strip";
+import { SHORTEST_FADER, VALUE_LINE } from "../../strip";
 import { travelled, VOLUME } from "../../value";
 
 type Song = Self<typeof song>;
@@ -128,9 +128,9 @@ test("the faders take the height the sends leave, never shorter than the column 
   const sends = (count: number) => Object.fromEntries([..."abcdefgh"].slice(0, count).map((letter) => [`ret-${letter}`, -6]));
   const height = (count: number) => {
     mixer(songOf([track("t00", "Drums", fader(), sends(count)), ...[..."abcdefgh"].slice(0, count).map((letter) => back(`ret-${letter}`, letter))]));
-    return find("fader-t00") as { h: number };
+    return (find("fader-t00") as { h: number }).h - VALUE_LINE;
   };
-  const [none, two, eight] = [height(0).h, height(2).h, height(8).h];
+  const [none, two, eight] = [height(0), height(2), height(8)];
   expect(none).toBeLessThan(MIXER);
   expect(two).toBeLessThan(none);
   expect(eight).toBe(SHORTEST_FADER);

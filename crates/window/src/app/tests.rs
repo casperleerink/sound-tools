@@ -2117,6 +2117,7 @@ mod behaviours;
 mod budget;
 mod frame;
 mod geometry;
+mod mixer;
 mod plays;
 mod projects;
 mod sidebar;
