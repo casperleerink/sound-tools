@@ -25,6 +25,9 @@ sound-core.workspace = true
 sound-typescript.workspace = true
 tempfile.workspace = true
 
+[dev-dependencies]
+smol.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Console"] }
 

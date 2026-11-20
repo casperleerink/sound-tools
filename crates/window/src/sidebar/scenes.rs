@@ -62,13 +62,38 @@ fn both() -> Vec<(Provider, Installed)> {
 
 /// The window with the sidebar open on a chat on `agents`, its project's own.
 fn open(state: &mut State, agents: impl FnOnce(AgentSettings, sound_agent::Waker) -> Agents) {
+    open_saving(state, None, agents);
+}
+
+/// [`open`], keeping the threads in `threads`.
+fn open_saving(
+    state: &mut State,
+    threads: Option<PathBuf>,
+    agents: impl FnOnce(AgentSettings, sound_agent::Waker) -> Agents,
+) {
     let waker = sound_agent::Waker::new(|| {});
     let settings = AgentSettings::new(None, waker.clone());
-    let chat = Chat::new(agents(settings, waker.clone()), &state.project, None, waker);
+    let chat = Chat::new(agents(settings, waker.clone()), &state.project, threads, waker);
     let woken = Arc::default();
     state.panel.agent = Some(Box::new(Sidebar::new(chat, woken, Arc::new(|| {}))));
     state.show_tab(Tab::Agent);
     state.set_panel_open(true);
+}
+
+/// For a test: signed in to both, the threads kept in `threads`.
+#[cfg(test)]
+pub(crate) fn signed_in_saving(state: &mut State, threads: Option<PathBuf>) {
+    open_saving(state, threads, |settings, waker| {
+        Agents::with_programs(both(), settings, waker).with_services(services())
+    });
+}
+
+/// For a test: the scene called `name`.
+#[cfg(test)]
+pub(crate) fn scene(state: &mut State, name: &str) {
+    if let Some((_, scene)) = SCENES.iter().find(|(scene, _)| *scene == name) {
+        scene(state);
+    }
 }
 
 fn signed_in(state: &mut State) {
@@ -105,7 +130,7 @@ fn model(id: &str, name: &str, description: &str, short_name: &str) -> Model {
     }
 }
 
-fn started() -> AgentEvent {
+pub(crate) fn started() -> AgentEvent {
     AgentEvent::Started {
         account: Some(Account {
             email: Some("composer@example.com".into()),

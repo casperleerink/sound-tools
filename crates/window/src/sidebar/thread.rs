@@ -189,9 +189,18 @@ fn turn(state: &State, index: usize, shown: TurnShown<'_>) -> El {
         .children(below)
 }
 
-/// A quiet line that does something: muted, brighter under the pointer, a tab stop.
-fn quiet(theme: &Theme, key: String, label: String, ink: Color, body: El) -> El {
+/// A quiet line that does `act`: muted, brighter under the pointer, a tab stop that Return and
+/// Space press.
+fn quiet(theme: &Theme, key: String, label: String, ink: Color, body: El, act: Act) -> El {
     row()
+        .on_press_tx(move |s: &mut State, tx: &mut Tx| press(s, act, tx))
+        .on_key(move |s: &mut State, key: &KeyEvent, tx: &mut Tx| {
+            let enter = key.key == Key::Enter;
+            if enter {
+                press(s, act, tx);
+            }
+            enter
+        })
         .key(key)
         .role("button")
         .label(label)
@@ -238,9 +247,7 @@ fn meta_line(theme: &Theme, index: usize, meta: Meta, open: bool) -> El {
     let act = Act::Steps(index);
     let label = line;
     row().child(
-        quiet(theme, format!("agent-worked-for-{index}"), label, ink, body)
-            .expanded(open)
-            .on_press_tx(move |s: &mut State, tx: &mut Tx| press(s, act, tx)),
+        quiet(theme, format!("agent-worked-for-{index}"), label, ink, body, act).expanded(open),
     )
 }
 
@@ -369,9 +376,8 @@ fn below_line(theme: &Theme, index: usize, below: Below<'_>) -> El {
                 .child(icon(chevron, 12.0).color(peach).mt(2.0).group_color(theme.color("text")))
                 .child(text(line.clone()).font(font).color(peach).group_color(theme.color("text")));
             let act = Act::Problems(index);
-            let toggle = quiet(theme, format!("agent-problems-{index}"), line, peach, body)
-                .expanded(open)
-                .on_press_tx(move |s: &mut State, tx: &mut Tx| press(s, act, tx));
+            let toggle =
+                quiet(theme, format!("agent-problems-{index}"), line, peach, body, act).expanded(open);
             let lines = lines.into_iter().flatten().map(|line| {
                 text(line)
                     .font(font)
@@ -404,9 +410,7 @@ fn action(theme: &Theme, key: &str, (name, label): (&str, &str), act: Act) -> El
                 .group_color(theme.color("text")),
         );
     row().child(
-        quiet(theme, key.into(), label.into(), muted, body)
-            .items_center()
-            .on_press_tx(move |s: &mut State, tx: &mut Tx| press(s, act, tx)),
+        quiet(theme, key.into(), label.into(), muted, body, act).items_center(),
     )
 }
 

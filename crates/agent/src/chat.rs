@@ -332,6 +332,12 @@ impl Chat {
         self.saving > 0
     }
 
+    /// Whether a thread is still read: the project's last one, or a recent one opened. No
+    /// message goes until it is in.
+    pub fn is_loading(&self) -> bool {
+        self.loading.is_some() || self.opening.is_some()
+    }
+
     /// Whether the agent works or waits on the composer, so a closed panel can say so.
     pub fn is_working(&self) -> bool {
         self.conversation.is_working()

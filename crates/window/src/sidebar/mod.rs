@@ -231,6 +231,16 @@ impl PanelTab for Sidebar {
     }
 }
 
+/// For a test: `f` on the chat of the sidebar of `state` and its project.
+#[cfg(test)]
+pub(crate) fn chat<R>(state: &mut State, f: impl FnOnce(&mut Chat, &mut Project) -> R) -> R {
+    #[allow(clippy::unwrap_used)]
+    with_chat(state, |sidebar, project| f(&mut sidebar.chat, project)).unwrap()
+}
+
+#[cfg(test)]
+pub(crate) use scenes::{scene, signed_in_saving, started};
+
 /// The sidebar of `state`, when its panel has one.
 fn sidebar(state: &State) -> Option<&Sidebar> {
     let agent: &dyn std::any::Any = state.panel.agent.as_deref()?;
@@ -456,11 +466,10 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
     if !state.panel.open || state.panel.tab != crate::app::Tab::Agent {
         return Vec::new();
     }
-    let mut controls = menus::controls(sidebar);
     if sidebar.shows_settings {
-        controls.extend(settings::controls(sidebar.chat.agents(), &sidebar.settings));
-        return controls;
+        return settings::controls(sidebar.chat.agents(), &sidebar.settings);
     }
+    let mut controls = menus::controls(sidebar);
     controls.extend(thread::controls(state, sidebar));
     controls.extend(composer::controls(sidebar));
     controls

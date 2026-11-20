@@ -2086,3 +2086,4 @@ fn a_held_control_s_accessibility_value_follows_its_lane() {
 }
 
 mod frame;
+mod sidebar;
