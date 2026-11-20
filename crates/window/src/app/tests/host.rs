@@ -1158,3 +1158,70 @@ fn a_key_used_twice_in_a_view_is_a_problem_that_says_the_fix() {
         "{problems:?}"
     );
 }
+
+/// Lists that scroll, one a name of its record, each of rows of its name, with a title the code
+/// may change.
+fn lists(title: &str) -> String {
+    format!(
+        r#"import {{ h, list, text, tool }} from "./sdk";
+export const lists = tool({{
+  name: "lists", title: "Lists", when: "Never", doc: "Lists that scroll.", state: {{ names: list(text(), {{ max: 4 }}) }},
+  view: (self) => <row>{{self.state.names.map((name) => (
+    <col key={{name}} label="{title} {{name}}" w={{100}} h={{100}} scroll="y">{{Array.from({{ length: 30 }}, (_, i) => <box key={{`${{name}}-${{i}}`}} label={{`${{name}} ${{i}}`}} w={{100}} h={{20}} />)}}</col>
+  ))}}</row>,
+}});
+"#
+    )
+}
+
+/// A list keeps its scroll by its key: when the code is saved again, and when a list is put in
+/// before it.
+#[test]
+fn a_list_keeps_its_scroll_by_its_key_over_a_save_and_a_list_put_in_first() {
+    let code = lists("List");
+    let files = [
+        ("extensions/lists.tsx", code.as_str()),
+        (
+            "state/lists.json",
+            r#"{"tool": "lists", "state": {"names": ["a", "b"]}}"#,
+        ),
+    ];
+    let (_scratch, mut window) = page(&files, "lists");
+    let top = |window: &rune::Runtime<State>, key: &str| window.presented(key).unwrap().0[1];
+    let (x, y) = window.find("b").unwrap();
+    let (a, b) = (top(&window, "a-0"), top(&window, "b-0"));
+    window.wheel(x, y, -200.0);
+    for _ in 0..60 {
+        window.frame(1.0 / 60.0);
+    }
+    let scrolled = top(&window, "b-0");
+    assert!(scrolled < b - 100.0, "{b} {scrolled}");
+    assert_eq!(top(&window, "a-0"), a);
+
+    let root = window.state.project().root().to_path_buf();
+    let loads = window.state.tools.as_ref().unwrap().loads();
+    std::fs::write(root.join("extensions/lists.tsx"), lists("Scrolled")).unwrap();
+    window.state.tools.as_mut().unwrap().code_changed();
+    for _ in 0..10 {
+        polled(&mut window);
+        redraw(&mut window);
+    }
+    assert!(
+        window.state.tools.as_ref().unwrap().loads() > loads,
+        "the new code"
+    );
+    assert_eq!((top(&window, "a-0"), top(&window, "b-0")), (a, scrolled));
+
+    let record = root.join("state/lists.json");
+    std::fs::write(
+        &record,
+        r#"{"tool": "lists", "state": {"names": ["c", "a", "b"]}}"#,
+    )
+    .unwrap();
+    (window.state.session).background(|project| project.apply_outside_changes(&[record]).unwrap());
+    for _ in 0..10 {
+        polled(&mut window);
+        redraw(&mut window);
+    }
+    assert_eq!((top(&window, "a-0"), top(&window, "b-0")), (a, scrolled));
+}
