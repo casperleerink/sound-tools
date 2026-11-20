@@ -1,7 +1,7 @@
 // What every block of the song's page lays out by: its sizes, and the rows of the plane "song",
 // in order. Across, the plane is in ticks of the song; down, in rows of a track: a track and
 // each of its lanes are one, the row that adds a lane is less.
-import type { Drawn, ValuesOf } from "../sdk";
+import type { Drawn, Facts, ValuesOf } from "../sdk";
 import { editsOf } from "./edits";
 import type { bus } from "../bus";
 import type { tape } from "../tape";
@@ -32,6 +32,9 @@ const [SHOWN, AFTER] = [64 * BAR, 32 * BAR];
 export type Seen = Drawn<ValuesOf<typeof fields>, typeof parts>["children"][number];
 /** A track or an audio track: a row of the timeline. */
 export type Track = Extract<Seen, { tool: typeof track | typeof tape }>;
+/** A child of a track as a view gets it: with its facts, which the window gives and the SDK's types of a grandchild leave out. */
+export type Part = Track["children"][number] extends infer C ? (C extends { tool: infer T } ? C & { facts: Facts<T> } : never) : never;
+export const partsOf = (track: Track) => track.children as Part[];
 /** A track, an audio track or a return: what has a panel and a strip. */
 export type Strip = Extract<Seen, { tool: typeof track | typeof tape | typeof bus }>;
 

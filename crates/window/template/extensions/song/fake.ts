@@ -62,10 +62,11 @@ export const clipOf = (name: string, start: number, length: number | null, notes
   name, tool: "timeline", children: [],
   state: { start, length, notes, loop: false, plays: true, quantize: "bar", pedal: [], bend: [], mod_wheel: [], pressure: [], controllers: {}, title: "" },
 });
-/** A region `name` from `start` of a file it plays `seconds` of. */
+/** A region `name` from `start` of a file it plays `seconds` of, with the facts the window gives a view: its file plays, `seconds` long. */
 export const regionOf = (name: string, start: number, seconds: number | null = null) => ({
   name, tool: "region", children: [],
   state: { asset: `${name}.wav`, start, file_start_seconds: 0, file_end_seconds: seconds, gain_db: 0, fade_in_ms: 0, fade_out_ms: 0 },
+  facts: { title: "Region", fields: [], seconds, file: { name: `${name}.wav`, state: "plays", seconds } },
 });
 /** A lane `name` with `points`. */
 export const laneOf = (name: string, points: { tick: number; value: number; curve?: number }[], scale = "linear") => ({ name, tool: "lane", children: [], state: { points, scale } });

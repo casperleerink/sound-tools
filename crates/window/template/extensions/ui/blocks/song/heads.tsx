@@ -11,6 +11,7 @@ import { Meter } from "../../meter";
 import { TextField } from "../../text-field";
 import { Toggle } from "../../toggle";
 import { LaneHeads } from "./lanes";
+import { InputLevel } from "./takes";
 
 export type HeadsProps = { page: Page };
 
@@ -155,7 +156,7 @@ const Head = ({ page, row }: { page: Page; row: Row }) => {
         <MenuList id={`colour-${each.name}`} label={`Colour of ${title}`} items={colours(page, each)} w={180} />
       </row>
       <col grow={1} gap={1}>
-        <Name page={page} each={each} title={title} />
+        <row gap={2} align="center"><Name page={page} each={each} title={title} />{armed && <InputLevel path={`${each.name}/rec`} title={title} />}</row>
         <row h={24} gap={1} align="center">
           <row grow={1}><text style="label" color="text-muted" opacity={isMuted ? DIM : 1} truncate>{kind}</text></row>
           <Quiet shown={shown || chosen}><Toggle id={`lanes-${each.name}`} label={`Automation of ${title}`} icon="automation" on={shown} tip={lanes > 0 ? `Automation: ${lanes}` : "Automation"} onToggle={() => now().edits.lanes.show(each.name, !shown)} /></Quiet>
