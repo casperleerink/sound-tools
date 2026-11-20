@@ -5,6 +5,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -18,6 +19,7 @@ use sound_typescript::next::{Drawn, FRAME_INTERVAL, Looped, Tools};
 
 use crate::controls::{self, Step, Target};
 use crate::lives::Lives;
+use crate::plugin_windows::{self, Events, PluginWindows, RuneDesktop, Spare};
 use crate::theme::Theme;
 use crate::tree;
 
@@ -72,6 +74,7 @@ pub(crate) struct State {
     pub(crate) project: Project,
     sound: Sound,
     plugins: Plugins,
+    plugin_windows: PluginWindows<RuneDesktop>,
     pub(crate) tools: Option<Tools>,
     pub(crate) theme: Theme,
     /// The JSON Schema of each built-in tool's record, by tool name.
@@ -175,8 +178,14 @@ impl State {
         if !headless {
             project.watch()?;
         }
-        let tools =
-            extensions.map(|extensions| Tools::start(extensions, &project, !headless, wake));
+        let tools = extensions.map(|extensions| {
+            let mut tools = Tools::start(extensions, &project, !headless, wake);
+            tools.open_windows_with(plugin_windows::opener(plugins.clone()));
+            tools
+        });
+        let events = Rc::new(Events::waking(waker.clone()));
+        let desktop = RuneDesktop::new(plugins.clone(), events.clone());
+        let plugin_windows = PluginWindows::new(desktop, events, cfg!(target_os = "windows"));
         let (theme, theme_problem) = Theme::of(&folder);
         let theme_loads = tools.as_ref().map_or(0, Tools::loads);
         let schemas = (runtime::tool_schemas()?.into_iter())
@@ -187,6 +196,7 @@ impl State {
             project,
             sound,
             plugins,
+            plugin_windows,
             tools,
             theme,
             schemas,
@@ -633,6 +643,7 @@ impl State {
             "view_runs": self.tools.as_ref().map_or(0, Tools::view_runs),
             "problems": problems,
             "notice": self.notice,
+            "plugin_windows": self.plugin_windows.titles(),
         })
     }
 
@@ -688,6 +699,12 @@ pub(crate) fn setup(state: &mut State, waker: rune::Waker) {
 
 /// The start of every frame: Bun, the project, the engine and what moves.
 pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
+    for spare in state.plugin_windows.take_spare_keys() {
+        // The computer keys are not in this window yet: they play `spare` here, the shortcuts first.
+        if let Spare::Down(key) = &spare {
+            on_key(state, key, tx);
+        }
+    }
     let (changed, next) = frame(state, seconds);
     if let Some(next) = next {
         tx.wake_after(next);
@@ -722,6 +739,7 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
     if let Some(error) = errors.first() {
         state.notice = Some(error.to_string());
     }
+    state.plugin_windows.settle(&state.plugins, seconds);
     let events = state.project.drain_events();
     changed |= !events.is_empty();
     if let Some(tools) = &mut state.tools {
@@ -805,6 +823,17 @@ fn run_loops(state: &mut State, seconds: f64) -> bool {
         state.looped = seconds;
     }
     looped == Looped::Sent
+}
+
+/// The main window closes: the app ends with it, not with the last plugin window open.
+pub(crate) fn closing(state: &mut State, tx: &mut Tx) {
+    state.plugin_windows.close_all(&state.plugins);
+    tx.quit();
+}
+
+/// Before any window goes, so every plugin lets go of its view and saves its state.
+pub(crate) fn quitting(state: &mut State, _: &mut Tx) {
+    state.plugin_windows.close_all(&state.plugins);
 }
 
 pub(crate) fn on_key(state: &mut State, key: &KeyEvent, _: &mut Tx) -> bool {

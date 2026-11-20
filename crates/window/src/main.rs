@@ -15,6 +15,7 @@ mod app;
 mod controls;
 mod fields;
 mod lives;
+mod plugin_windows;
 mod theme;
 mod tree;
 
@@ -169,6 +170,8 @@ fn window(arguments: &[String]) -> Result<()> {
             traffic_lights: Some(app::WINDOW_BUTTONS),
             ..rune::Chrome::DEFAULT
         })
+        .on_close(app::closing)
+        .on_quit(app::quitting)
         .args(rune_arguments)
         .init(move || state)
         .run();

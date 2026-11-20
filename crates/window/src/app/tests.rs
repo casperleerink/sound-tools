@@ -2112,3 +2112,42 @@ fn a_held_control_s_accessibility_value_follows_its_lane() {
     assert!(spoken > 8100.0, "{spoken}");
     assert!((spoken - value).abs() < value * 0.01, "{spoken} {value}");
 }
+
+/// A parent whose button opens the window of its child: an amp, which has none.
+const OPENER: &str = r#"import { h, tool } from "./sdk";
+
+export const opener = tool({
+  name: "opener", title: "Opener", when: "Never", doc: "Opens the window of its amp.", state: {}, children: { amp: "amp" },
+  behaviour: () => ({ connections: [{ from: { child: "amp" }, to: { port: "audio" } }] }),
+  view: (_, { openWindow }) => <box key="open" label="Open amp window" onPress={() => openWindow("amp")} />,
+});
+"#;
+
+/// The window of a child comes from code, as a plugin card's button opens it; one with none is
+/// a problem of that code. Headless, no plugin loads, so `--tree` lists no plugin window.
+#[test]
+fn code_that_opens_the_window_of_a_child_with_none_has_a_problem() {
+    let (_scratch, folder) = with_tools(&[("opener", OPENER)]);
+    std::fs::write(folder.join("extensions/amp.ts"), AMP).unwrap();
+    let chain = folder.join("state/song/t00/chain");
+    std::fs::create_dir(chain.join("opener")).unwrap();
+    std::fs::rename(
+        chain.join("opener.json"),
+        chain.join("opener/instance.json"),
+    )
+    .unwrap();
+    let amp = r#"{"tool": "amp", "state": {}}"#;
+    std::fs::write(chain.join("opener/amp.json"), amp).unwrap();
+    let mut state = opened(&folder);
+    act(
+        &mut state,
+        json!({ "label": "Open amp window", "action": "press" }),
+    );
+    frame(&mut state, 0.1);
+    let problems = state.report()["problems"].to_string();
+    assert!(
+        problems.contains(r#"its openWindow(\"amp\") was refused: it has no window of its own"#),
+        "{problems}"
+    );
+    assert_eq!(state.report()["plugin_windows"], json!([]));
+}
