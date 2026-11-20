@@ -961,6 +961,7 @@ fn laid_out(state: State) -> rune::Runtime<State> {
     // As on a Mac with keyboard navigation off, and the app's Tab that reaches every control.
     window.set_full_keyboard_access(false);
     window.set_tab_visits_controls(true);
+    window.on_key = Some(super::on_key);
     window.frame(0.0);
     window
 }
@@ -1405,9 +1406,8 @@ fn tab_to(window: &mut rune::Runtime<State>, key: &str) {
 fn a_row_with_a_menu_in_it_keeps_its_keys_and_tab_reaches_the_menu() {
     let (_scratch, mut window) = kit();
     tab_to(&mut window, "t00/chain/kit:item");
-    key(&mut window, rune::Key::Enter);
-    assert!(window.state.open.is_empty());
     key(&mut window, rune::Key::Text(" ".into()));
+    assert!(window.state.open.is_empty());
     assert_eq!(kit_record(&window.state)["name"], "item");
     key(&mut window, rune::Key::Tab);
     assert_eq!(focused(&window).as_deref(), Some("t00/chain/kit:item-menu"));

@@ -17,7 +17,6 @@ fn history(scratch: &tempfile::TempDir) -> rune::Runtime<State> {
     state.panel = LeftPanel::new(None, None);
     state.set_panel_open(true);
     let mut window = laid_out(state);
-    window.on_key = Some(on_key);
     redraw(&mut window);
     window
 }

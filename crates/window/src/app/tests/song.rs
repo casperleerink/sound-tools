@@ -7,8 +7,7 @@ use crate::app::State;
 
 fn song() -> (tempfile::TempDir, rune::Runtime<State>) {
     let scratch = new_project();
-    let mut window = laid_out(opened(&scratch.path().join("song")));
-    window.on_key = Some(crate::app::on_key);
+    let window = laid_out(opened(&scratch.path().join("song")));
     (scratch, window)
 }
 

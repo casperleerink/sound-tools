@@ -19,7 +19,6 @@ const PATIENCE: Duration = Duration::from_secs(30);
 
 fn window_of(folder: &Path) -> rune::Runtime<State> {
     let mut window = laid_out(opened(folder));
-    window.on_key = Some(on_key);
     redraw(&mut window);
     window
 }
