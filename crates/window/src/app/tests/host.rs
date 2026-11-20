@@ -1009,3 +1009,42 @@ fn two_devices_with_the_same_inner_keys_keep_a_focus_and_a_press_each() {
         (Value::Null, json!(false))
     );
 }
+
+/// A kit of two rows of steps, whose presses turn them in its record.
+const KIT: &str = r#"import { boolean, h, list, tool } from "./sdk";
+import { StepGrid } from "./ui/blocks/steps";
+export const kit = tool({
+  name: "kit", title: "Kit", when: "Never", doc: "Rows of steps.", state: { on: list(boolean({ default: false }), { max: 8 }) },
+  view: (self, { update }) => {
+    const on = (r: number, i: number) => self.state.on[r * 4 + i] ?? false;
+    const rows = ["Kick", "Snare"].map((name, r) => ({ name, steps: [0, 1, 2, 3].map((i) => ({ on: on(r, i), velocity: 0.5 })) }));
+    return <StepGrid id="grid" label="Steps" rows={rows} onToggle={(r, i) => update("Turn a step", (part) => void (part.state.on = Array.from({ length: 8 }, (_, j) => (j === r * 4 + i ? !on(r, i) : (self.state.on[j] ?? false)))))} onVelocity={() => {}} />;
+  },
+});
+"#;
+
+/// The arrows move along the steps of a grid, and space or enter turns the one they are on.
+#[test]
+fn the_arrows_move_along_steps_and_space_or_enter_turns_the_one_they_are_on() {
+    let files = [
+        ("extensions/kit.tsx", KIT),
+        ("state/kit.json", r#"{"tool": "kit", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "kit");
+    focus(&mut window, "grid-0-0");
+    window.key(KeyEvent {
+        key: Key::Right,
+        mods: Mods::default(),
+    });
+    redraw(&mut window);
+    window.key(KeyEvent {
+        key: Key::Down,
+        mods: Mods::default(),
+    });
+    redraw(&mut window);
+    assert_eq!(focused(&window).as_deref(), Some("grid-1-1"));
+    keys(&mut window, "space");
+    assert_eq!(record_of(&window.state, "kit")["on"][5], true);
+    keys(&mut window, "enter");
+    assert_eq!(record_of(&window.state, "kit")["on"][5], false);
+}
