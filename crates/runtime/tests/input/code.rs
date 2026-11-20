@@ -362,3 +362,61 @@ fn a_child_made_again_keeps_its_note_when_the_code_that_held_one_on_the_old_chil
     opened.render(4_800);
     assert!(opened.loudest(4_800) > 0.05);
 }
+
+/// A player of `sine.wav` at `level`, over and over.
+fn player(level: f32) -> String {
+    format!(
+        r#"import {{ file, phasor, tool }} from "./sdk";
+export const player = tool({{
+  name: "player", title: "Player", when: "Never", doc: "Plays a sound file over and over.",
+  state: {{ sound: file() }},
+  sound: ({{ sound }}) => sound.at(phasor(1).times(sound.length)).times({level}),
+}});
+"#
+    )
+}
+
+/// Writes a second of a 441 Hz sine at `level` to `assets/audio/sine.wav`.
+fn write_sine(folder: &std::path::Path, level: f32) {
+    let path = folder.join("assets/audio/sine.wav");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 44_100,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+    for frame in 0..44_100 {
+        let sample = (frame as f32 * 441.0 / 44_100.0 * std::f32::consts::TAU).sin() * level;
+        writer.write_sample((sample * f32::from(i16::MAX)) as i16).unwrap();
+    }
+    writer.finalize().unwrap();
+}
+
+/// A save of the code keeps the sample a tool plays and does not read its file again.
+#[test]
+fn a_save_of_a_tool_keeps_its_sample_playing_and_does_not_read_it_again() {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path().to_path_buf();
+    write(&root, "project.json", &project(Some("player"), false));
+    write(&root, "extensions/theme.json", "{}");
+    write(&root, "state/player.json", r#"{"tool": "player", "state": {"sound": "sine.wav"}}"#);
+    write(&root, "extensions/player.ts", &player(1.0));
+    write_sine(&root, 0.5);
+    let mut opened = open(folder, Devices::default());
+    let at = |level: f32| move |opened: &mut Opened| (opened.loudest(4_800) - level).abs() < 0.02;
+    opened.until("the sine", at(0.5));
+
+    // The file turns silent with the same size and time: only a new read would hear that.
+    let sine = root.join("assets/audio/sine.wav");
+    let modified = std::fs::metadata(&sine).unwrap().modified().unwrap();
+    write_sine(&root, 0.0);
+    let file = std::fs::File::options().write(true).open(&sine).unwrap();
+    file.set_modified(modified).unwrap();
+
+    // The save plays the new sound, still with the sine it read at the start.
+    write(&root, "extensions/player.ts", &player(0.5));
+    opened.tools.code_changed();
+    opened.until("the saved tool at half the level", at(0.25));
+}
