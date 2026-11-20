@@ -8,7 +8,8 @@ import type { tape } from "../tape";
 import type { track } from "../track";
 import { control, type Bound } from "../ui/field";
 import { MAX_DB, MIN_DB } from "../ui/fader";
-import { isRow, isStrip, lanesOf, mixOf, ordered, type fields, type Memory, type parts, type Song } from "./model";
+import { trackBelow } from "./clips";
+import { isRow, isStrip, lanesOf, mixOf, ordered, rowOfKey, type fields, type Memory, type parts, type Song } from "./model";
 import { BAR } from "./time";
 
 /** The plane the ruler, the timeline and the lanes share across, and the heads down. */
@@ -84,13 +85,29 @@ export function trackAt(rows: readonly Row[], tracks: readonly Track[], y: numbe
   return row ? tracks.indexOf(row.track) : y < 0 ? 0 : -1;
 }
 
+/** `y` of the plane where the edits take rows: a track's row is its index on, and its lanes are the edge under it. */
+export function trackY(rows: readonly Row[], tracks: readonly Track[], y: number): number {
+  const row = rows.find((each) => y < each.top + each.height) ?? rows.at(-1);
+  if (!row) return 0;
+  const index = tracks.indexOf(row.track);
+  return row.kind === "track" ? index + Math.min(Math.max(y - row.top, 0), 1) : index + 1;
+}
+
+/** The one chosen track or return, which its head shows: of what shows below, else of the chosen clips, else beside the mixer the one the keyboard plays. */
+export const chosenTrack = (memory: Memory) =>
+  trackBelow(memory) ?? (memory.selected[0] === undefined ? null : rowOfKey(memory.selected[0])) ?? (memory.below?.kind === "mixer" ? memory.track : null);
+
+const pages = new WeakMap<object, Page>();
+/** The page of the view's last run: a handler a memo kept from an earlier run reads the song as it is now through it. */
+export const latest = (page: Page): Page => pages.get(page.song.memory) ?? page;
+
 /** What every block of the page gets: the song, its edits, and its rows worked out once a run. */
 export function pageOf(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song: Song) {
   const strips = ordered(self.children.filter(isStrip), self.state.order);
   const tracks = strips.filter(isRow);
   const returns = strips.filter((each) => each.tool === "bus");
   const rows = rowsOf(tracks, song.memory);
-  return {
+  const page = {
     self,
     song,
     edits: editsOf(song),
@@ -105,6 +122,8 @@ export function pageOf(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song:
     // The range the ruler shows, not the clock's: a view that reads the clock runs again as it plays.
     end: endOf(tracks, song.memory.repeatRange),
   };
+  pages.set(song.memory, page);
+  return page;
 }
 /** What every block of the song's page gets. */
 export type Page = ReturnType<typeof pageOf>;

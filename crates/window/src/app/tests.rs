@@ -2125,4 +2125,5 @@ mod menu_settings;
 mod plays;
 mod projects;
 mod sidebar;
+mod song;
 mod transport;
