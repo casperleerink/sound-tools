@@ -1,8 +1,8 @@
 //! A view's tree as `sdk/view.ts` sends it, drawn with Rune. What moves every frame is bound
 //! here to a live value of [`crate::lives`]; a press or the end of a drag goes to the tool's code.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 use rune::El;
@@ -452,7 +452,13 @@ pub(crate) struct Within {
 /// The trees of the views as nodes, each read once from the JSON Bun sent: a build, the
 /// controls and the overlays read them many times.
 #[derive(Default)]
-pub(crate) struct Trees(RefCell<HashMap<(InstanceId, Option<String>), Read>>);
+pub(crate) struct Trees {
+    read: RefCell<HashMap<(InstanceId, Option<String>), Read>>,
+    /// Counts the trees read and forgotten.
+    changes: Cell<u64>,
+    /// The count and the instances shown when the trees were last walked whole.
+    walked: RefCell<Option<(u64, BTreeSet<InstanceId>)>>,
+}
 
 /// A tree as Bun sent it, kept so its address is not another's, and what it reads as.
 type Read = (Rc<Value>, Result<Rc<Node>, String>);
@@ -465,11 +471,12 @@ impl Trees {
         memo: Option<&str>,
         value: &Rc<Value>,
     ) -> Result<Rc<Node>, String> {
-        let mut trees = self.0.borrow_mut();
+        let mut trees = self.read.borrow_mut();
         let entry = trees.entry((id.clone(), memo.map(str::to_string)));
         let (sent, node) = entry.or_insert_with(|| (value.clone(), Err(String::new())));
         if !Rc::ptr_eq(sent, value) || node.as_ref().is_err_and(String::is_empty) {
             *sent = value.clone();
+            self.changes.set(self.changes.get() + 1);
             *node = Node::deserialize(&**value)
                 .map(Rc::new)
                 .map_err(|error| error.to_string());
@@ -479,7 +486,9 @@ impl Trees {
 
     /// Forgets the trees the views do not show any more.
     pub(crate) fn keep(&self, state: &State) {
-        self.0.borrow_mut().retain(|(id, memo), (sent, _)| {
+        let mut trees = self.read.borrow_mut();
+        let before = trees.len();
+        trees.retain(|(id, memo), (sent, _)| {
             let Some(Drawn::View { root, memos }) = state.drawn(id) else {
                 return false;
             };
@@ -490,6 +499,21 @@ impl Trees {
                     .is_some_and(|(_, inner)| Rc::ptr_eq(inner, sent)),
             }
         });
+        if trees.len() != before {
+            self.changes.set(self.changes.get() + 1);
+        }
+    }
+
+    /// Whether a tree was read or forgotten, or `shown` changed, since the last time this said
+    /// so: what is worked out of all the trees is out of date.
+    pub(crate) fn unwalked(&self, shown: &BTreeSet<InstanceId>) -> bool {
+        let mut walked = self.walked.borrow_mut();
+        let now = self.changes.get();
+        if walked.as_ref().is_some_and(|(at, then)| *at == now && then == shown) {
+            return false;
+        }
+        *walked = Some((now, shown.clone()));
+        true
     }
 }
 
