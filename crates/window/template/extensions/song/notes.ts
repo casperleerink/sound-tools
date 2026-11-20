@@ -28,6 +28,8 @@ export const controllerName = (number: number) => {
 
 /** How far alt-up and alt-down move the chosen velocities, and Humanize a start and a velocity, either way. */
 const VELOCITY_STEP = 10;
+/** The shortest a note gets: 1/64. */
+const SHORTEST = BEAT / 16;
 const HUMANIZE = { timing: 20, velocity: 10 };
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
@@ -94,7 +96,7 @@ function spanOf(notes: readonly Note[]) {
 }
 
 /** What a key does to the notes of the open clip. */
-export type NoteCommand = "all" | "add" | "paste" | "quantize" | "delete" | "copy" | "cut" | "duplicate" | "louder" | "softer" | "none" | keyof typeof NOTE_MOVES;
+export type NoteCommand = "all" | "add" | "paste" | "quantize" | "delete" | "copy" | "cut" | "duplicate" | "louder" | "softer" | "shorter" | "longer" | "none" | keyof typeof NOTE_MOVES;
 /** How far each move takes the chosen notes: in steps of the grid, and in pitches. */
 const NOTE_MOVES = { left: [-1, 0], right: [1, 0], up: [0, 1], down: [0, -1], "octave-up": [0, 12], "octave-down": [0, -12] } as const;
 
@@ -155,6 +157,9 @@ export function noteCommand(song: Song, command: NoteCommand): boolean {
   } else if (command === "duplicate") {
     const { span } = spanOf(picked());
     change(song, key, "Duplicate notes", (notes, all) => moved(notes, all, span, 0, true));
+  } else if (command === "shorter" || command === "longer") {
+    const by = (command === "longer" ? 1 : -1) * stepOf(memory.snap);
+    change(song, key, "Resize notes", (notes, all) => ({ notes: notes.map((note, index) => (all.has(index) ? { ...note, length: Math.max(note.length + by, SHORTEST) } : note)), chosen: all }));
   } else if (command === "louder" || command === "softer") {
     const by = command === "louder" ? VELOCITY_STEP : -VELOCITY_STEP;
     change(song, key, "Change velocity", (notes, all) => ({ notes: notes.map((note, index) => (all.has(index) ? { ...note, velocity: clamp(note.velocity + by, 1, 127) } : note)), chosen: all }));
@@ -192,7 +197,7 @@ export const lengthText = (length: number, snap: number) => {
 export function lengthOfText(text: string, value: number): number | null {
   const [, count, under] = /^(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+))?$/.exec(text.trim()) ?? [];
   const ticks = Math.round((Number(count) * WHOLE) / (under ? Number(under) : value));
-  return Number.isFinite(ticks) && ticks >= BEAT / 16 ? ticks : null;
+  return Number.isFinite(ticks) && ticks >= SHORTEST ? ticks : null;
 }
 
 /** A point of an expression lane as the record holds it: the pedal counts from `start`, the others from `tick`. */
@@ -240,6 +245,10 @@ export const noteEdits = (song: Song, key: string) => {
       if (p.shift || p.cmd) memory.notes = memory.notes.includes(chosen) ? memory.notes.filter((each) => each !== chosen) : [...memory.notes, chosen];
       else memory.notes = [chosen];
     },
+    /** A drag that began on a note not chosen: it alone is chosen, and the drag moves it. */
+    choose(note: Frozen<Note>) {
+      memory.notes = [noteKey(note)];
+    },
     /** A press where no note is: a double click adds one on the snap, as long as the last, and sounds it; a plain press lets go of the chosen. */
     pressEmpty(p: Pick<Pointer, "x" | "y" | "clicks" | "shift" | "cmd">) {
       if (p.clicks === 2) {
@@ -252,14 +261,24 @@ export const noteEdits = (song: Song, key: string) => {
     remove(note: Frozen<Note>) {
       edit("Delete notes", (list) => ({ notes: list.filter((each) => noteKey(each) !== noteKey(note)), chosen: new Set() }));
     },
-    /** A drag of the chosen notes by `dx` ticks and `dy` rows: alt copies them. */
+    /** A drag of the chosen notes by `dx` ticks and `dy` rows: alt copies them. One moved to another pitch sounds there. */
     move(p: Pick<Pointer, "dx" | "dy" | "alt">) {
-      edit(p.alt ? "Copy notes" : "Move notes", (list, chosen) => moved(list, chosen, Math.round(p.dx), -Math.round(p.dy), p.alt));
+      const pitches = -Math.round(p.dy);
+      const first = said();
+      if (first && pitches !== 0) hear(clamp(first.pitch + pitches, 0, 127));
+      edit(p.alt ? "Copy notes" : "Move notes", (list, chosen) => moved(list, chosen, Math.round(p.dx), pitches, p.alt));
+    },
+    /** A drag of the start of the chosen notes: their ends stay, and each keeps at least 1/64. */
+    resizeStart(p: Pick<Pointer, "dx">) {
+      edit("Resize notes", all((note) => {
+        const start = clamp(note.start + Math.round(p.dx), 0, note.start + note.length - SHORTEST);
+        return { ...note, start, length: note.start + note.length - start };
+      }));
     },
     /** A drag of the end of the chosen notes: at least 1/64; a new note is as long as the last one resized. */
     resize(p: Pick<Pointer, "dx">) {
       edit("Resize notes", (list, chosen) => {
-        const changed = list.map((note, index) => (chosen.has(index) ? { ...note, length: Math.max(note.length + Math.round(p.dx), BEAT / 16) } : note));
+        const changed = list.map((note, index) => (chosen.has(index) ? { ...note, length: Math.max(note.length + Math.round(p.dx), SHORTEST) } : note));
         const last = [...chosen].at(-1);
         if (last !== undefined && changed[last]) memory.length = changed[last].length;
         return { notes: changed, chosen };

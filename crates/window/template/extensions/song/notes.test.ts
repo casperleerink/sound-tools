@@ -150,3 +150,17 @@ test("a point added in the bend lane lands on the grid at its height, and the la
   f.edits.removePoint(7, 0);
   expect(clip().controllers).toEqual({});
 });
+
+test("a drag of the start keeps the end, down to 1/64, and shift-left and shift-right resize by the snap", () => {
+  const f = open([note(BEAT)]);
+  noteCommand(f.song, "all");
+  f.edits.resizeStart({ dx: -BEAT / 2 });
+  expect(f.notes()[0]).toEqual(note(BEAT / 2, 60, 100, 1.5 * BEAT));
+  f.edits.resizeStart({ dx: 5 * BEAT });
+  expect(f.notes()[0]).toEqual(note(2 * BEAT - BEAT / 16, 60, 100, BEAT / 16));
+  noteCommand(f.song, "longer");
+  noteCommand(f.song, "shorter");
+  noteCommand(f.song, "shorter");
+  expect(f.notes()[0]!.length).toBe(BEAT / 16);
+  expect(f.steps).toEqual(["Resize notes", "Resize notes", "Resize notes", "Resize notes", "Resize notes"]);
+});
