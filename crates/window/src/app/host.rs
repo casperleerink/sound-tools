@@ -2,10 +2,12 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::{PoisonError, mpsc};
+use std::sync::{Arc, PoisonError};
+use std::time::Duration;
 
 use plugin_host::{PluginRecord, Plugins};
-use rune::{FileDialogOptions, FileDialogResult, Tx};
+use rune::{FileDialogOptions, Tx};
+use runtime::input::{Brought, Importing};
 use runtime::session::Loop;
 use serde_json::Value;
 use sound_core::{InstanceId, ProjectError};
@@ -30,8 +32,15 @@ pub(crate) struct Waiting {
     pub(crate) asked: VecDeque<Asked>,
     /// File dialogs to open, which need the frame's `Tx`.
     files: Vec<Want>,
-    /// Files chosen that a thread copies into `assets/audio/`, by question.
-    imports: Vec<(u64, mpsc::Receiver<Result<String, String>>)>,
+    /// Files on their way into `assets/audio/`, by question.
+    imports: Vec<Import>,
+}
+
+struct Import {
+    question: u64,
+    importing: Importing,
+    /// The folder of a render, which goes once its file is in.
+    _scratch: Option<tempfile::TempDir>,
 }
 
 impl State {
@@ -153,12 +162,13 @@ impl State {
                     confirm,
                 }),
                 Want::OpenFile { .. } | Want::ExportNotes { .. } => self.waiting.files.push(want),
-                Want::Render { question, name, .. } => {
-                    self.session.report(format!(
-                        "{name} was not rendered: this window does not render parts of the song yet."
-                    ));
-                    self.answer(question, &Answer::Asset(None));
-                }
+                Want::Render {
+                    question,
+                    instance,
+                    span,
+                    tail,
+                    name,
+                } => self.render_part(question, &instance, span, tail, name),
             }
         }
         changed
@@ -178,8 +188,9 @@ impl State {
         self.handled();
     }
 
-    /// Opens the file dialogs code asked for: the system's, one at a time.
+    /// Opens the file dialogs code and the export asked for: the system's, one at a time.
     pub(crate) fn open_file_dialogs(&mut self, tx: &mut Tx) {
+        self.ask_where_to_export(tx);
         for want in std::mem::take(&mut self.waiting.files) {
             match want {
                 Want::OpenFile { question, title } => {
@@ -187,8 +198,14 @@ impl State {
                         title,
                         ..FileDialogOptions::default()
                     };
-                    tx.open_file(options, move |state: &mut State, chosen, _| {
-                        state.import(question, chosen);
+                    tx.open_file(options, move |state: &mut State, chosen, _| match chosen {
+                        Ok(Some(file)) => state.import(question, file, None),
+                        Ok(None) => state.answer(question, &Answer::Asset(None)),
+                        Err(error) => {
+                            (state.session)
+                                .report(format!("The file picker did not open: {error}"));
+                            state.answer(question, &Answer::Asset(None));
+                        }
                     });
                 }
                 Want::ExportNotes {
@@ -225,46 +242,29 @@ impl State {
         }
     }
 
-    /// Copies the file the composer chose into `assets/audio/` on a thread; the answer goes once
-    /// it is there.
-    fn import(&mut self, question: u64, chosen: FileDialogResult) {
-        let path = match chosen {
-            Ok(Some(path)) => path,
-            Ok(None) => return self.answer(question, &Answer::Asset(None)),
-            Err(error) => {
-                self.session
-                    .report(format!("The file picker did not open: {error}"));
-                return self.answer(question, &Answer::Asset(None));
-            }
-        };
-        let (send, imported) = mpsc::channel();
-        let assets = self.project().assets().clone();
+    /// Brings `file` into `assets/audio/` on a thread; the answer goes once it is there.
+    pub(super) fn import(
+        &mut self,
+        question: u64,
+        file: PathBuf,
+        scratch: Option<tempfile::TempDir>,
+    ) {
         let waker = self.waker.clone();
-        let started = std::thread::Builder::new()
-            .name("import".into())
-            .spawn(move || {
-                let imported = sound_media::import(&assets, &path);
-                send.send(
-                    imported
-                        .map(|file| file.asset.to_string())
-                        .map_err(|error| error.to_string()),
-                )
-                .ok();
-                if let Some(wake) = waker
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .as_ref()
-                {
-                    wake();
-                }
-            });
-        match started {
-            Ok(_) => self.waiting.imports.push((question, imported)),
-            Err(error) => {
-                self.session.report(error);
-                self.answer(question, &Answer::Asset(None));
+        let wake = Arc::new(move || {
+            if let Some(wake) = waker
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_ref()
+            {
+                wake();
             }
-        }
+        });
+        let importing = runtime::input::import(self.project().assets(), file, wake);
+        self.waiting.imports.push(Import {
+            question,
+            importing,
+            _scratch: scratch,
+        });
         self.handled();
     }
 
@@ -272,25 +272,25 @@ impl State {
     pub(super) fn imported(&mut self) {
         let headless = self.headless();
         let mut ended = Vec::new();
-        self.waiting.imports.retain(|(question, imported)| {
-            let result = match headless {
-                true => imported
-                    .recv()
-                    .map_err(|_| mpsc::TryRecvError::Disconnected),
-                false => imported.try_recv(),
-            };
-            match result {
-                Ok(result) => ended.push((*question, result)),
-                Err(mpsc::TryRecvError::Empty) => return true,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    ended.push((*question, Err("the copy stopped".to_string())));
-                }
+        self.waiting.imports.retain(|import| {
+            let mut brought = import.importing.poll();
+            while headless && brought.is_none() {
+                std::thread::sleep(Duration::from_millis(2));
+                brought = import.importing.poll();
             }
+            let Some(brought) = brought else {
+                return true;
+            };
+            ended.push((import.question, brought));
             false
         });
-        for (question, result) in ended {
-            let asset = match result {
-                Ok(asset) => Some(asset),
+        for (question, brought) in ended {
+            let asset = match brought {
+                Ok(Brought::Sound(asset)) => Some(asset),
+                Ok(Brought::Parts(_)) => {
+                    (self.session).report("That file holds notes: choose a sound file.");
+                    None
+                }
                 Err(error) => {
                     self.session.report(error);
                     None

@@ -24,6 +24,7 @@ use crate::tree;
 mod actions;
 mod chrome;
 mod dialog;
+mod export;
 mod frame;
 mod headless;
 mod host;
@@ -34,6 +35,7 @@ mod panel;
 pub(crate) mod plays;
 mod problems;
 mod projects;
+mod render;
 mod transport;
 
 use headless::copied;
@@ -157,6 +159,8 @@ pub(crate) struct State {
     pub(crate) plays: plays::Playing,
     pub(crate) shell: crate::shell::Projects,
     pub(crate) incoming: input::Incoming,
+    pub(crate) export: export::Export,
+    renders: render::Renders,
 }
 
 impl State {
@@ -301,6 +305,13 @@ impl State {
                 Some(folder),
             ),
             incoming,
+            export: export::Export::new(
+                (!headless)
+                    .then(runtime::app::support_folder)
+                    .and_then(Result::ok)
+                    .map(|support| runtime::app::export_settings_file(&support)),
+            ),
+            renders: render::Renders::new()?,
             last: 0.0,
             _copy: copy,
             icons: tree::Icons::default(),

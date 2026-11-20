@@ -22,6 +22,7 @@ serde.workspace = true
 serde_json.workspace = true
 sound-agent.workspace = true
 sound-core.workspace = true
+sound-export.workspace = true
 sound-media.workspace = true
 sound-typescript.workspace = true
 tempfile.workspace = true
@@ -30,6 +31,7 @@ tempfile.workspace = true
 objc2.workspace = true
 
 [dev-dependencies]
+hound.workspace = true
 smol.workspace = true
 
 [target.'cfg(windows)'.dependencies]

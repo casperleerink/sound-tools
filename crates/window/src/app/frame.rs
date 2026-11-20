@@ -66,10 +66,7 @@ impl State {
     /// Polls the session and gives the code and the agent what changed in the project. Whether
     /// what the window shows changed.
     pub(super) fn poll_session(&mut self) -> bool {
-        let polled = self.session.poll();
-        if let Some(Err(error)) = polled.rendered {
-            self.session.report(format!("{error:#}"));
-        }
+        let polled = self.poll_renders();
         let mut changed = polled.redraw || !polled.events.is_empty();
         if let Some(tools) = &mut self.tools {
             let drawn = (self.session).background(|project| tools.poll(project, &polled.events));

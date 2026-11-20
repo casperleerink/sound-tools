@@ -37,6 +37,7 @@ pub(crate) enum AppAction {
     NewProject,
     SaveAsTemplate,
     OpenProject,
+    Export,
 }
 
 impl AppAction {
@@ -45,6 +46,7 @@ impl AppAction {
             "app.new-project" => Some(Self::NewProject),
             "app.save-as-template" => Some(Self::SaveAsTemplate),
             "app.open-project" => Some(Self::OpenProject),
+            "app.export" => Some(Self::Export),
             _ => None,
         }
     }
@@ -57,6 +59,7 @@ impl State {
             AppAction::NewProject => self.shell.new_project(),
             AppAction::SaveAsTemplate => self.shell.save_as_template(),
             AppAction::OpenProject => Projects::choose_project::<State>(tx),
+            AppAction::Export => self.export(),
         }
     }
 
