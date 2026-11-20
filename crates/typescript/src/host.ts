@@ -3,7 +3,7 @@
 // message per line: the runtime tells on stdin, this says on stdout. What a tool logs goes to
 // stderr, so it cannot break a message.
 
-import { existsSync, readdirSync, realpathSync, writeSync } from "node:fs";
+import { existsSync, realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { Child, Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, NoteEvent, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
@@ -219,15 +219,14 @@ async function load() {
     const before = new Set(sdk.host.tools.keys());
     try {
       const module = await import(join(folder, file));
-      if (file === GENERIC_CARD) {
-        if (typeof module.card !== "function") throw new Error("it exports no `card`, a `Card`");
-        genericCard = module.card;
-      }
+      const card = file === GENERIC_CARD || file.startsWith(`${CARDS}/`);
+      if (card && typeof module.card !== "function") throw new Error("it exports no `card`, a `Card`");
+      if (file === GENERIC_CARD) genericCard = module.card;
+      else if (card) toolCards.set(file.slice(CARDS.length + 1, -".tsx".length), module.card);
     } catch (error) {
       // The tools it defined before it failed are its tools too.
       errors.push({ file, message: String(error) });
     }
-    if (file === GENERIC_CARD) await loadCards(errors);
     for (const [name, spec] of sdk.host.tools) {
       if (before.has(name)) {
         continue;
@@ -241,22 +240,6 @@ async function load() {
     }
   }
   say({ type: "loaded", tools, errors });
-}
-
-/** Loads the project's cards of built-in tools, `ui/blocks/cards/<tool>.tsx`, beside the generic card. */
-async function loadCards(errors: Array<{ file: string; message: string }>) {
-  const names = existsSync(join(folder, CARDS)) ? readdirSync(join(folder, CARDS)).filter((name) => name.endsWith(".tsx")) : [];
-  for (const name of names) {
-    const file = `${CARDS}/${name}`;
-    say({ type: "loading", file });
-    try {
-      const module = await import(join(folder, file));
-      if (typeof module.card !== "function") throw new Error("it exports no `card`, a `Card`");
-      toolCards.set(name.slice(0, -".tsx".length), module.card);
-    } catch (error) {
-      errors.push({ file, message: String(error) });
-    }
-  }
 }
 
 /**

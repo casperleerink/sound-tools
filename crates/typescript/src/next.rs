@@ -43,6 +43,29 @@ pub const THEME: &str = "theme.json";
 /// view, from the fields of its record. Bun loads it with the tools.
 pub const GENERIC_CARD: &str = "ui/blocks/generic-card.tsx";
 
+/// The folder of a project's cards of built-in tools: `<tool>.tsx` draws the devices of `tool`
+/// in place of the generic card.
+const CARDS: &str = "ui/blocks/cards";
+
+/// The project's cards of built-in tools in `extensions`, which Bun loads after the generic card.
+pub(crate) fn card_files(extensions: &Path) -> Vec<String> {
+    let entries = std::fs::read_dir(extensions.join(CARDS))
+        .into_iter()
+        .flatten()
+        .flatten();
+    let mut files: Vec<String> = (entries.filter_map(|entry| entry.file_name().into_string().ok()))
+        .filter(|name| name.ends_with(".tsx"))
+        .map(|name| format!("{CARDS}/{name}"))
+        .collect();
+    files.sort();
+    files
+}
+
+/// Whether the file `file` of `extensions/` is a card: the generic one or one of a tool.
+fn is_card(file: &str) -> bool {
+    file == GENERIC_CARD || file.starts_with(&format!("{CARDS}/"))
+}
+
 /// Whether the project in `folder` is one of the new window, see [`THEME`].
 pub fn has_views(folder: &Path) -> bool {
     folder.join(FOLDER).join(THEME).is_file()
@@ -754,7 +777,7 @@ impl Tools {
                 let before = self.drawn.remove(&instance);
                 let problem = (error.as_ref()).and_then(|error| match card {
                     true => Some(Problem {
-                        path: format!("{FOLDER}/{GENERIC_CARD}"),
+                        path: format!("{FOLDER}/{}", self.card_file(project, &instance)),
                         message: format!("it fails to draw the card of {instance}: {error}"),
                     }),
                     false => {
@@ -1327,13 +1350,31 @@ impl Tools {
         find(&self.tools, tool).is_some_and(|info| info.view)
     }
 
-    /// A problem of the tool of `instance`, if it is one of the project's.
+    /// The file of the card that draws `instance`: the project's card of its tool, else the
+    /// generic card.
+    fn card_file(&self, project: &Project, instance: &InstanceId) -> String {
+        let tool = project.tool_of(instance).unwrap_or_default();
+        let own = format!("{CARDS}/{tool}.tsx");
+        match self.folder.join(&own).is_file() && !self.skipped.contains_key(&own) {
+            true => own,
+            false => GENERIC_CARD.to_string(),
+        }
+    }
+
+    /// A problem of the code of `instance`: its tool's, if it is one of the project's, or the
+    /// card's that draws it.
     fn problem_of(
         &self,
         project: &Project,
         instance: &InstanceId,
         message: &str,
     ) -> Option<Problem> {
+        if self.cards.contains_key(instance) {
+            return Some(Problem {
+                path: format!("{FOLDER}/{}", self.card_file(project, instance)),
+                message: message.to_string(),
+            });
+        }
         let info = project
             .tool_of(instance)
             .and_then(|tool| find(&self.tools, tool))?;
@@ -1399,12 +1440,13 @@ impl Tools {
             .as_ref()
             .and_then(|runs| find(&self.tools, &runs.tool).cloned());
         self.end_actions(project, &format!("the code of the project {why}"));
-        if let Some(runs) = blame.as_ref().filter(|runs| runs.tool == GENERIC_CARD) {
-            let message = format!(
-                "its {} {why}, so devices show no card: fix it and save",
-                runs.what
-            );
-            self.skipped.insert(GENERIC_CARD.to_string(), message);
+        if let Some(runs) = blame.as_ref().filter(|runs| is_card(&runs.tool)) {
+            let shown = match runs.tool == GENERIC_CARD {
+                true => "devices show no card",
+                false => "its devices show the generic card",
+            };
+            let message = format!("its {} {why}, so {shown}: fix it and save", runs.what);
+            self.skipped.insert(runs.tool.clone(), message);
             self.restart(project);
             return;
         }

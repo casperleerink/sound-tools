@@ -666,3 +666,59 @@ fn a_key_a_tool_took_comes_up_to_it_and_cmd_or_losing_the_window_lets_go_of_it()
         assert!(!on_key_up(state, &event("b"), tx));
     });
 }
+
+/// The template's synth with a card of its own, of `body`.
+fn with_synth_card(body: &str) -> (tempfile::TempDir, State) {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    let cards = folder.join("extensions/ui/blocks/cards");
+    std::fs::create_dir_all(&cards).unwrap();
+    let card = format!(
+        "import {{ h, type Card }} from \"../../../sdk\";\nexport const card: Card = () => {body};\n"
+    );
+    std::fs::write(cards.join("instrument.synth.tsx"), card).unwrap();
+    let state = opened(&folder);
+    (scratch, state)
+}
+
+#[test]
+fn a_problem_of_a_card_of_a_tool_names_its_file() {
+    let (_scratch, mut state) = with_synth_card(r#"{ throw new Error("no room") }"#);
+    frame(&mut state, 0.1);
+    state.settle();
+    let problems = problems(&state);
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.contains("cards/instrument.synth.tsx")
+                && problem.contains("no room")),
+        "{problems:?}"
+    );
+    assert!(
+        !problems
+            .iter()
+            .any(|problem| problem.contains("generic-card.tsx")),
+        "{problems:?}"
+    );
+}
+
+#[test]
+fn a_card_of_a_tool_that_hangs_is_left_out_next_start_and_the_generic_card_draws() {
+    let (_scratch, mut state) = with_synth_card(r#"{ while (true) {} }"#);
+    for step in 1..=8 {
+        frame(&mut state, f64::from(step) * 0.5);
+        state.settle();
+    }
+    let problems = problems(&state);
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.contains("cards/instrument.synth.tsx")
+                && problem.contains("show the generic card")),
+        "{problems:?}"
+    );
+    // The generic card draws the synth now, and the page goes on.
+    let synth = InstanceId::new("song/t00/synth").unwrap();
+    assert!(matches!(state.drawn(&synth), Some(Drawn::View { .. })));
+    control(&controls::collect(&state).controls, "Mute Track 2");
+}
