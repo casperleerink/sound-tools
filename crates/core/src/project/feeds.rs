@@ -280,11 +280,11 @@ impl<'a> FeedContext<'a> {
         (0..points).map(move |point| from + step * point as f64)
     }
 
-    /// A curve of [`Self::points`] points, `points` where the binding leaves it, as pairs of
-    /// `x, y`: `y` of each place of [`Self::across`].
+    /// A curve as a line of `shapes` draws a list: `y` of each of [`Self::points`] places of
+    /// [`Self::across`], `points` where the binding leaves it.
     pub fn curve(&self, default: [f64; 2], points: usize, y: impl Fn(f32) -> f32) -> Vec<f32> {
         (self.across(default, self.points_or(points)))
-            .flat_map(|x| [x as f32, y(x as f32)])
+            .map(|x| y(x as f32))
             .collect()
     }
 }

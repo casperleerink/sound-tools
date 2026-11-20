@@ -157,7 +157,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         .schema(Saturator::AUTOMATION.parameters())
         .feed(
             "transfer",
-            "Its curve: pairs of x, the level of a steady sound in, and y, its level out, both dBFS; x from -48 to 6 unless the binding shows another range.",
+            "Its curve: the level out, in dBFS, of a steady sound at each of `points` levels in (61 unless the binding says), evenly from -48 to 6 dBFS unless the binding shows another range.",
             |state, context| {
                 context.curve([-48.0, 6.0], 61, |input| {
                     db(transfer(state, amplitude(input)).abs())

@@ -259,7 +259,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         )
         .feed(
             "transfer",
-            "Its curve: pairs of x, the level in, and y, the level out before makeup and mix, both dBFS; x from -60 to 0 unless the binding shows another range.",
+            "Its curve: the level out before makeup and mix, in dBFS, of a steady sound at each of `points` levels in (61 unless the binding says), evenly from -60 to 0 dBFS unless the binding shows another range.",
             |state, context| {
                 context.curve(LEVELS, 61, |input| input - reduction_db(state, input))
             },
