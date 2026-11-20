@@ -261,3 +261,21 @@ test("a region's start trims what it plays of its file; its fades and gain are o
   expect(named(f, "audio-1").children[1].state.gain_db).toBe(-47);
   expect(f.steps).toEqual(["Trim a region", "Change fade in", "Change fade out", "Change gain", "Change gain"]);
 });
+
+test("R, then Stop before the engine plays, or an engine that never plays, puts Record back off, and the next Play records nothing", () => {
+  const rec = { name: "rec", tool: "recorder", state: { channels: [] } };
+  const stop = fakeSong({ state: { order: ["t00"] }, children: [trackOf("t00", [rec])] }, { tick: BAR });
+  editsOf(stop.song).tracks.record(0);
+  stop.clock.jump(0);
+  editsOf(stop.song).tracks.stopped(100);
+  stop.clock.playing = true;
+  editsOf(stop.song).tracks.stopped(200);
+  expect(stop.memory.recording).toBe(null);
+  expect(stop.sent).toEqual([[{ child: "t00/rec", number: "record" }, 1], [{ child: "t00/rec", number: "record" }, 0]]);
+  const silent = fakeSong({ state: { order: ["t00"] }, children: [trackOf("t00", [rec])] });
+  editsOf(silent.song).tracks.record(0);
+  editsOf(silent.song).tracks.stopped(1000);
+  expect(silent.memory.recording).not.toBe(null);
+  editsOf(silent.song).tracks.stopped(3000);
+  expect(silent.memory.recording).toBe(null);
+});

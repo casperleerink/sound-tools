@@ -10,6 +10,9 @@ import { choose, copyOf, lengthAt } from "./clips";
 import { dropLanesOf } from "./lanes";
 import { isRow, isStrip, itemAt, PALETTE, rowOfKey, rowsOf, titleOf, type Child, type Draft, type Song } from "./model";
 
+/** How long the engine may take to play after R, in ms: past it, no output device plays it, and the recording ends. */
+const STARTS_WITHIN_MS = 2000;
+
 /** A fader for each return of the song, silent, as a new track sends into them. */
 const sendsInto = (draft: Draft) =>
   draft.children.filter((child) => child.tool === "bus").map((back) => ({ name: `send-${back.name}` as const, tool: "fader" as const, state: { gain_db: "-inf" as const } }));
@@ -267,7 +270,7 @@ export const trackEdits = (song: Song) => {
      * Records from the playhead, or ends the recording: every armed track, and the keyboard's
      * notes on its track. With nothing armed and an audio track chosen, it arms that one first.
      */
-    record() {
+    record(now = Date.now()) {
       const all = recordable();
       if (memory.recording !== null) {
         for (const name of all) record(name, false);
@@ -277,14 +280,21 @@ export const trackEdits = (song: Song) => {
       const chosen = strip(memory.track ?? "");
       if (memory.armed.length === 0 && chosen?.tool === "tape" && all.includes(chosen.name)) edits.arm(chosen.name);
       const notes = notesTrackOf(song.children, song.state.order, memory.track);
-      memory.recording = song.clock.playing ? "rolling" : "starting";
+      memory.recording = song.clock.playing ? "rolling" : { from: song.clock.tick, asked: now };
       for (const name of new Set([...memory.armed, ...(notes ? [notes] : [])])) if (all.includes(name)) record(name, true);
       song.clock.play();
     },
-    /** A pause or a stop ends the recording, once the song played: what the song's control loop checks. */
-    stopped() {
-      if (memory.recording === "starting" && song.clock.playing) memory.recording = "rolling";
-      else if (memory.recording === "rolling" && !song.clock.playing) edits.record();
+    /**
+     * A pause or a stop ends the recording, once the song played: what the song's control loop
+     * checks. Before it plays, a playhead that moved (a stop) or an engine that does not start
+     * ends it too, so the next Play records nothing the composer did not ask for.
+     */
+    stopped(now = Date.now()) {
+      const { recording } = memory;
+      if (recording === null) return;
+      if (song.clock.playing) {
+        if (recording !== "rolling") memory.recording = "rolling";
+      } else if (recording === "rolling" || song.clock.tick !== recording.from || now - recording.asked > STARTS_WITHIN_MS) edits.record();
     },
     /**
      * Renders the clips and regions `keys` of the track `name`, from the first to the last, after

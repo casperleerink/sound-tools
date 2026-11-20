@@ -32,8 +32,8 @@ export type Memory = {
   published: string | null;
   /** The tracks whose recorder has its input open. */
   armed: string[];
-  /** While it records: from R until the clock says the song plays, then until it stops. */
-  recording: "starting" | "rolling" | null;
+  /** While it records: from R at tick `from`, asked at `asked` (ms), until the clock says the song plays; then rolling until it stops. */
+  recording: { from: number; asked: number } | "rolling" | null;
   clipboard: Clipboard | null;
   /** The track or return whose name is typed, the clip whose name is typed, and the section. */
   renaming: string | null;
