@@ -6,7 +6,7 @@
 import { humanize, legato, quantize, type FilledStateOfTool, type Frozen, type Note, type Pointer } from "../sdk";
 import { editClips, lengthOf } from "./clips";
 import { itemAt, rowOfKey, type Song } from "./model";
-import { barAt, BEAT, cellOf, stepAt, stepped } from "./time";
+import { BAR, barAt, BEAT, cellOf, lineFrom, stepAt, stepped } from "./time";
 
 type Clip = FilledStateOfTool<"timeline">;
 /** A lane under the notes: the velocities, the pedal, an expression lane, or a MIDI controller by number. */
@@ -56,18 +56,22 @@ export function moved(notes: readonly Note[], chosen: ReadonlySet<number>, ticks
 type Next = (notes: Note[], chosen: ReadonlySet<number>, end: number) => { notes: Note[]; chosen: ReadonlySet<number> };
 /**
  * Changes the notes of the clip `key` as `next` says, given the places of the chosen ones and the
- * end of the clip, as one undo step, and chooses what it chose. A note added at or past the end is
- * left out: the timeline plays none there. A clip with no `length` plays to its last note.
+ * end of the clip, as one undo step, and chooses what it chose; none when nothing changed. A note
+ * added at or past the end grows the clip to the bar line after the notes, in that step: the
+ * timeline plays none past it. A clip with no `length` plays to its last note.
  */
 function change(song: Song, key: string, label: string, next: Next) {
+  const clip = clipAt(song, key);
+  if (!clip) return;
+  const end = clip.length ?? Infinity;
+  const result = next([...clip.notes], indexesOf(clip.notes, song.memory.notes), end);
+  song.memory.notes = [...result.chosen].flatMap((index) => (result.notes[index] ? [noteKey(result.notes[index])] : []));
+  const past = result.notes.filter((note) => note.start >= end);
+  const length = past.length === 0 ? clip.length : lineFrom(song.clock.tempo_map.time_signatures, clip.start + Math.max(...past.map((note) => note.start + note.length)), BAR) - clip.start;
+  if (length === clip.length && JSON.stringify(result.notes) === JSON.stringify(clip.notes)) return;
   editClips(song, label, [key], (draft) => {
-    const end = draft.length ?? Infinity;
-    const result = next(draft.notes, indexesOf(draft.notes, song.memory.notes), end);
-    draft.notes = result.notes.filter((note) => note.start < end);
-    song.memory.notes = [...result.chosen].flatMap((index) => {
-      const note = result.notes[index];
-      return note && note.start < end ? [noteKey(note)] : [];
-    });
+    draft.notes = result.notes;
+    draft.length = length;
   });
 }
 

@@ -139,6 +139,11 @@ export function linesAround(runs: Runs, tick: number, snap: number): [number, nu
   const before = start + Math.floor((Math.max(tick, 0) - start) / step) * step;
   return [before, Math.min(before + step, end)];
 }
+/** The line of the grid `snap` at or after `tick`. */
+export function lineFrom(runs: Runs, tick: number, snap: number): number {
+  const [before, after] = linesAround(runs, tick, snap);
+  return before === tick ? tick : after;
+}
 /** The start of the cell of the grid `snap` that `tick` is in, or the tick while it is off: where a double click adds. */
 export const cellOf = (runs: Runs, tick: number, snap: number) => (snap > 0 ? linesAround(runs, Math.round(tick), snap)[0] : Math.max(Math.round(tick), 0));
 /** The line of the grid `snap` nearest `tick`, or the tick while it is off: where a click plays from. */

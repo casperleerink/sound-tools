@@ -60,12 +60,27 @@ test("copy, paste after the chosen, duplicate right after, and choose all work f
   expect(f.steps).toEqual(["Paste notes", "Duplicate notes"]);
 });
 
-test("a paste goes to the playhead inside the clip, and notes past the clip's end are left out", () => {
+/** The length of the open clip of `open`. */
+const lengthIn = (f: ReturnType<typeof open>) => (f.self.children[0] as any).children[1].state.length as number;
+
+test("a paste goes to the playhead inside the clip, and one past its end grows it to the bar line after, in the same step", () => {
   const f = open([note(0)], BAR, BAR + 3 * BEAT);
   f.memory.copied = [note(0), note(2 * BEAT)];
   noteCommand(f.song, "paste");
-  expect(f.notes().map((each) => each.start)).toEqual([0, 3 * BEAT]);
-  expect(f.memory.notes).toEqual([`${3 * BEAT}:60:960:100`]);
+  expect(f.notes().map((each) => each.start)).toEqual([0, 3 * BEAT, 5 * BEAT]);
+  expect(f.memory.notes).toEqual([`${3 * BEAT}:60:960:100`, `${5 * BEAT}:60:960:100`]);
+  expect([lengthIn(f), f.steps]).toEqual([2 * BAR, ["Paste notes"]]);
+});
+
+test("the last notes duplicated and a note added after the end grow the clip; what changes nothing is no undo step", () => {
+  const f = open([note(3 * BEAT)], BAR);
+  f.memory.notes = [`${3 * BEAT}:60:960:100`];
+  noteCommand(f.song, "duplicate");
+  expect([f.notes().map((each) => each.start), lengthIn(f)]).toEqual([[3 * BEAT, 4 * BEAT], 2 * BAR]);
+  f.edits.pressEmpty({ x: 2 * BAR + 100, y: 127 - 60, clicks: 2, shift: false, cmd: false });
+  expect([f.notes().at(-1)!.start, lengthIn(f)]).toEqual([2 * BAR, 3 * BAR]);
+  noteCommand(f.song, "quantize");
+  expect(f.steps).toEqual(["Duplicate notes", "Add a note"]);
 });
 
 test("notes pasted into a clip with no length are kept", () => {
@@ -162,7 +177,8 @@ test("a drag of the start keeps the end, down to 1/64, and shift-left and shift-
   noteCommand(f.song, "shorter");
   noteCommand(f.song, "shorter");
   expect(f.notes()[0]!.length).toBe(BEAT / 16);
-  expect(f.steps).toEqual(["Resize notes", "Resize notes", "Resize notes", "Resize notes", "Resize notes"]);
+  // The last changed nothing: no step.
+  expect(f.steps).toEqual(["Resize notes", "Resize notes", "Resize notes", "Resize notes"]);
 });
 
 test("notes moved past 0 or the clip's end stop there together, keeping their rhythm, and none goes", () => {

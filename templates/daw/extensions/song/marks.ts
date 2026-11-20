@@ -5,7 +5,7 @@
 import type { Pointer, Section, TempoMap } from "../sdk";
 import { lengthAt } from "./clips";
 import { itemAt, repeatOf, type Mark, type Song } from "./model";
-import { barNear, barStarts, BEAT, cellOf, linesAround, nearestOf, tickOfBar, type Runs } from "./time";
+import { barNear, barStarts, BEAT, cellOf, lineFrom, linesAround, nearestOf, tickOfBar, type Runs } from "./time";
 
 /** What the marks are read from: the clock, or a test's copy of `project.json`. */
 type Piece = { tempo_map: { time_signatures: Runs; tempo_changes: readonly { tick: number; bpm: number }[] }; sections: readonly Section[] };
@@ -223,9 +223,8 @@ export const markEdits = (song: Song) => {
         return edits.toggleRepeat();
       }
       const from = cellOf(runs(), Math.min(...spans.map((each) => each.from)), BEAT);
-      const last = Math.max(...spans.map((each) => each.to));
-      const [before, after] = linesAround(runs(), last, BEAT);
-      repeat({ from, to: before === last && last > from ? last : after }, true);
+      const to = lineFrom(runs(), Math.max(...spans.map((each) => each.to)), BEAT);
+      repeat({ from, to: to > from ? to : linesAround(runs(), from, BEAT)[1] }, true);
       return true;
     },
     /** A drag across the ruler from `x`: it repeats that range, on beats. */
