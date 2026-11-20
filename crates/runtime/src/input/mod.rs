@@ -20,7 +20,7 @@ use sound_core::{InstanceId, OutputStream, Project, ProjectEvent, StreamTiming};
 use sound_typescript::next::Take;
 
 pub use audio::{OpenInput, OpenedInput, system_input};
-pub use import::{Brought, Importing, import};
+pub use import::{Brought, Importing, Part, import};
 pub use live::KeyDown;
 pub use other_apps::{AppSounds, OpenedTap, OtherApps};
 pub use takes::{TakeNote, TakeNotes, TakeSound};

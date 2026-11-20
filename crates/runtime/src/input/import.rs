@@ -1,12 +1,13 @@
 //! A file of the composer brought into the project, dropped or chosen: a sound is copied into
-//! `assets/audio/`, and a MIDI file becomes the records of a `timeline` for each of its parts.
+//! `assets/audio/`, and a MIDI file becomes its parts.
 //! Both on a thread of their own; the caller polls for the result.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 
-use serde_json::Value;
+use serde::Serialize;
 use sound_core::Assets;
+use sound_notes::Note;
 
 use super::Waker;
 
@@ -15,8 +16,15 @@ use super::Waker;
 pub enum Brought {
     /// A sound, copied into `assets/audio/` under this name, for a `file` field.
     Sound(String),
-    /// The records of a `timeline` for each part of a MIDI file, in order.
-    Parts(Vec<Value>),
+    /// The parts of a MIDI file, in order.
+    Parts(Vec<Part>),
+}
+
+/// A part of a MIDI file, as a drop gives it to code: `{ name, notes }`.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct Part {
+    pub name: String,
+    pub notes: Vec<Note>,
 }
 
 /// A file on its way into the project.
@@ -50,16 +58,15 @@ pub fn import(assets: &Assets, path: PathBuf, waker: Waker) -> Importing {
 }
 
 fn bring(assets: &Assets, path: &Path) -> Result<Brought, String> {
-    if let Some(parts) = timelines_in(path) {
+    if let Some(parts) = parts_in(path) {
         return parts.map(Brought::Parts);
     }
     let imported = sound_media::import(assets, path).map_err(|error| error.to_string())?;
     Ok(Brought::Sound(imported.asset.to_string()))
 }
 
-/// The timelines of the parts of the MIDI file at `path`, or what went wrong: `None` when it is
-/// not a MIDI file.
-fn timelines_in(path: &Path) -> Option<Result<Vec<Value>, String>> {
+/// The parts of the MIDI file at `path`, or what went wrong: `None` when it is not a MIDI file.
+fn parts_in(path: &Path) -> Option<Result<Vec<Part>, String>> {
     let mut start = [0; 4];
     let mut file = std::fs::File::open(path).ok()?;
     std::io::Read::read_exact(&mut file, &mut start).ok()?;
@@ -75,9 +82,12 @@ fn timelines_in(path: &Path) -> Option<Result<Vec<Value>, String>> {
     let parts = read.and_then(|bytes| {
         sound_notes::midi_file::read(&bytes, &name).map_err(|error| not_imported(error.to_string()))
     });
-    Some(parts.and_then(|parts| {
-        (parts.iter())
-            .map(|(title, clip)| sound_typescript::timeline_state(clip, title))
+    Some(parts.map(|parts| {
+        (parts.into_iter())
+            .map(|(name, clip)| Part {
+                name,
+                notes: clip.notes,
+            })
             .collect()
     }))
 }
