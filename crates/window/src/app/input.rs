@@ -22,8 +22,13 @@ pub(crate) struct Incoming {
 
 impl Incoming {
     /// A run without a window has no device: the keyboard joins the offline engine and the
-    /// audio input never opens.
-    pub(super) fn open(project: &mut Project, output: Option<&OutputStream>, waker: Waker) -> Self {
+    /// audio input never opens. `input` is the input device the composer chose in Settings.
+    pub(super) fn open(
+        project: &mut Project,
+        output: Option<&OutputStream>,
+        input: Option<String>,
+        waker: Waker,
+    ) -> Self {
         let Some(output) = output else {
             return Self {
                 live: Input::new(project, Devices::default(), waker),
@@ -33,9 +38,7 @@ impl Incoming {
             };
         };
         let devices = Devices {
-            open_input: Some(input::system_input(
-                runtime::app::ChosenDevices::read().input,
-            )),
+            open_input: Some(input::system_input(input)),
             timing: Some(output.timing().clone()),
             midi_ports: true,
         };

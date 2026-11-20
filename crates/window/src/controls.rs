@@ -60,6 +60,12 @@ pub(crate) fn collect(state: &State) -> Found {
     if let Some(main) = state.main() {
         found.instance(state, main);
     }
+    // Settings hides the project: what it shows is not there to act on.
+    if state.settings.page.is_some() {
+        found
+            .controls
+            .retain(|control| matches!(control.target, Target::Chrome(_)));
+    }
     found.controls.extend(crate::app::dialog_controls(state));
     found
 }

@@ -2120,6 +2120,7 @@ mod frame;
 mod geometry;
 mod history;
 mod input;
+mod menu_settings;
 mod plays;
 mod projects;
 mod sidebar;

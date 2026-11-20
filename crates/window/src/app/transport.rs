@@ -15,6 +15,7 @@ use sound_core::{
 use sound_typescript::live::{Readout, TickReadout, text_of};
 
 use super::State;
+use super::keys::app_key_of;
 use crate::controls::{Control, Target};
 
 const TEMPO_STEP: &str = "Change the tempo";
@@ -484,7 +485,7 @@ pub(super) fn view(state: &State) -> El {
             )
             .ink("green")
             .lit(playing.then_some("fill"))
-            .keys(&["Space"])
+            .keys(app_key_of(state, "play"))
             .build(|s: &mut State| s.play_or_pause()),
         )
         .child(round(state, "stop", "Stop", &STOP).build(|s: &mut State| s.stop()))
@@ -509,14 +510,14 @@ pub(super) fn view(state: &State) -> El {
                 (true, _) => Some("selected"),
                 (false, _) => None,
             };
-            let (icon, help, keys): (&'static Icon, &str, &[&str]) = match act {
-                Act::Keys => (&KEYBOARD, "Play notes with the computer keys", &["⌘", "K"]),
+            let (icon, help, keys) = match act {
+                Act::Keys => (&KEYBOARD, "Play notes with the computer keys", app_key_of(state, "computer_keys")),
                 Act::Automation => (
                     &AUTOMATION,
                     "Write automation: while it plays, moving a knob or a fader that has a lane records into the lane",
-                    &[],
+                    None,
                 ),
-                _ => (&METRONOME, "Click: a tick on every beat", &[]),
+                _ => (&METRONOME, "Click: a tick on every beat", None),
             };
             let mut button = round(state, key, label, icon)
                 .small()
@@ -701,7 +702,8 @@ struct Round<'a> {
     lit: Option<&'a str>,
     role: &'static str,
     help: Option<&'a str>,
-    keys: &'a [&'a str],
+    /// The key that does it, as the keymap has it now.
+    keys: Option<String>,
     checked: Option<bool>,
     side: f32,
 }
@@ -716,7 +718,7 @@ fn round<'a>(state: &'a State, key: &'a str, label: &'a str, icon: &'static Icon
         lit: None,
         role: "button",
         help: None,
-        keys: &[],
+        keys: None,
         checked: None,
         side: 28.0,
     }
@@ -738,7 +740,7 @@ impl<'a> Round<'a> {
             ..self
         }
     }
-    fn keys(self, keys: &'a [&'a str]) -> Self {
+    fn keys(self, keys: Option<String>) -> Self {
         Self { keys, ..self }
     }
     fn checked(self, on: bool) -> Self {
@@ -774,8 +776,8 @@ impl<'a> Round<'a> {
                     .color(theme.color(self.ink))
                     .a11y_hidden(),
             );
-        if !self.keys.is_empty() {
-            e = e.help_keys(self.keys.iter().copied());
+        if let Some(keys) = &self.keys {
+            e = e.help_keys([keys.as_str()]);
         }
         if let Some(lit) = self.lit {
             e = e.fill(theme.color(lit));

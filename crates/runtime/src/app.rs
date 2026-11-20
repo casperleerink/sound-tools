@@ -182,26 +182,35 @@ pub fn remember_project_in(support: &Path, folder: &Path) -> Result<()> {
 pub struct ChosenDevices {
     pub output: Option<String>,
     pub input: Option<String>,
+    /// Their names, to say which is missing while it is unplugged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_name: Option<String>,
 }
 
 impl ChosenDevices {
-    /// What was chosen, or the defaults when nothing was or the file does not read.
-    pub fn read() -> Self {
-        let file = support_folder().map(|support| support.join(AUDIO_DEVICES_FILE));
-        let bytes = file.ok().and_then(|file| std::fs::read(file).ok());
+    /// What was chosen, or the defaults when nothing was or `file` does not read.
+    pub fn read(file: &Path) -> Self {
+        let bytes = std::fs::read(file).ok();
         bytes
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default()
     }
 
-    pub fn remember(&self) -> Result<()> {
-        let support = support_folder()?;
-        std::fs::create_dir_all(&support)
-            .with_context(|| format!("could not make {}", support.display()))?;
-        let file = support.join(AUDIO_DEVICES_FILE);
-        std::fs::write(&file, serde_json::to_vec_pretty(self)?)
+    pub fn remember(&self, file: &Path) -> Result<()> {
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("could not make {}", parent.display()))?;
+        }
+        std::fs::write(file, serde_json::to_vec_pretty(self)?)
             .with_context(|| format!("could not write {}", file.display()))
     }
+}
+
+/// Where the chosen audio devices are kept.
+pub fn audio_devices_file(support: &Path) -> PathBuf {
+    support.join(AUDIO_DEVICES_FILE)
 }
 
 /// The file that remembers whether the left panel is open.

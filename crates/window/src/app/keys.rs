@@ -17,9 +17,9 @@ use super::State;
 use super::projects::AppAction;
 
 /// The app's own group in the keymap.
-const APP: &str = "app";
+pub(crate) const APP: &str = "app";
 /// The app's actions a tool's key never takes the place of.
-const BEFORE_TOOLS: [&str; 3] = ["undo", "redo", "undo-keeping-version"];
+const BEFORE_TOOLS: [&str; 3] = ["undo", "redo", UNDO_KEEPING_VERSION];
 
 /// The keymap, and the keys a tool's `onKey` holds.
 pub(crate) struct Keys {
@@ -46,33 +46,85 @@ impl Keys {
     }
 }
 
+/// The app's actions: name, title and key. The names are those of the composer's keys file
+/// the GPUI app wrote, so it keeps working.
+const APP_ACTIONS: [(&str, &str, Option<&str>); 14] = [
+    ("undo", "Undo", Some("cmd-z")),
+    ("redo", "Redo", Some("cmd-shift-z")),
+    (
+        UNDO_KEEPING_VERSION,
+        "Undo and keep the work as a version",
+        Some("cmd-alt-z"),
+    ),
+    ("play", "Play or pause", Some("space")),
+    (
+        "computer_keys",
+        "Play notes with the computer keys",
+        Some("cmd-k"),
+    ),
+    (AGENT, "Go to the agent", Some("cmd-l")),
+    (STOP_AGENT, "Stop the agent", Some("cmd-.")),
+    (LEFT_PANEL, "Open or close the left panel", Some("cmd-b")),
+    ("export", "Export audio…", None),
+    ("new_project", "New project…", Some("cmd-n")),
+    ("save_as_template", "Save as template…", None),
+    ("open_project", "Open project…", Some("cmd-o")),
+    ("settings", "Settings…", Some("cmd-,")),
+    ("quit", "Quit Sound Tools", Some("cmd-q")),
+];
+
+/// Whether the app's action `name` comes before a tool's on its key, so the tool's never runs.
+pub(crate) fn before_tools(name: &str) -> bool {
+    BEFORE_TOOLS.contains(&name) || [AGENT, LEFT_PANEL, STOP_AGENT].contains(&name)
+}
+
+const UNDO_KEEPING_VERSION: &str = "undo_keeping_version";
+const AGENT: &str = "agent";
+const STOP_AGENT: &str = "stop_agent";
+const LEFT_PANEL: &str = "left_panel";
+
 fn app_group() -> Group {
-    let action = |name: &str, title: &str, key: &str| shortcuts::Action {
-        name: name.to_string(),
-        title: title.to_string(),
-        keys: vec![key.to_string()],
-    };
+    let actions = APP_ACTIONS
+        .iter()
+        .map(|(name, title, key)| shortcuts::Action {
+            name: name.to_string(),
+            title: title.to_string(),
+            keys: key.iter().map(ToString::to_string).collect(),
+        });
     Group {
         name: APP.to_string(),
         title: "Sound Tools".to_string(),
-        actions: vec![
-            action("undo", "Undo", "cmd-z"),
-            action("redo", "Redo", "cmd-shift-z"),
-            action(
-                "undo-keeping-version",
-                "Undo, keeping what it takes back as a version",
-                "cmd-alt-z",
-            ),
-            action("play", "Play or pause", "space"),
-            action(
-                "computer-keys",
-                "Play notes with the computer keys",
-                "cmd-k",
-            ),
-            action("new-project", "New project", "cmd-n"),
-            action("open-project", "Open project", "cmd-o"),
-            action("quit", "Quit", "cmd-q"),
-        ],
+        actions: actions.collect(),
+    }
+}
+
+/// The key the app's action `name` has now, as a menu or a tooltip draws it: `⇧⌘Z`.
+pub(crate) fn app_key_of(state: &State, name: &str) -> Option<String> {
+    let keys = state.keys.keymap.keys(&shortcuts::id(APP, name));
+    keys.first().map(|chord| key_label(chord))
+}
+
+/// A chord of the keymap as this system draws a key: `cmd-shift-z` is `⇧⌘Z` on a Mac and
+/// `Ctrl+Shift+Z` elsewhere.
+pub(crate) fn key_label(chord: &str) -> String {
+    let mut rest = chord;
+    let mut parts = Vec::new();
+    for (prefix, held) in [
+        ("cmd-", "mod"),
+        ("ctrl-", "ctrl"),
+        ("super-", "super"),
+        ("alt-", "alt"),
+        ("shift-", "shift"),
+    ] {
+        if let Some(after) = rest.strip_prefix(prefix) {
+            parts.push(held);
+            rest = after;
+        }
+    }
+    parts.push(rest);
+    match rune::Chord::parse(&parts.join("+")) {
+        Ok(parsed) => parsed.label(),
+        Err(_) => shortcuts::drawn(chord),
     }
 }
 
@@ -211,34 +263,35 @@ impl State {
         }
     }
 
-    /// The app's action `action` of the keymap.
+    /// The app's action `action` of the keymap. The left panel's are [`panel_key`]'s.
     fn app_key(&mut self, action: &str, tx: &mut Tx) {
         let done = match action {
             "undo" => self.undo(),
             "redo" => self.redo(),
-            "undo-keeping-version" => self.undo_keeping_version(),
-            "play" => {
-                self.play_or_pause();
+            UNDO_KEEPING_VERSION => self.undo_keeping_version(),
+            "computer_keys" => super::transport::Act::Keys.run(self, None),
+            other => {
+                self.app_command(other, tx);
                 Ok(())
             }
-            "computer-keys" => super::transport::Act::Keys.run(self, None),
-            "new-project" => {
-                self.app_action(AppAction::NewProject, tx);
-                Ok(())
-            }
-            "open-project" => {
-                self.app_action(AppAction::OpenProject, tx);
-                Ok(())
-            }
-            "quit" => {
-                tx.quit();
-                Ok(())
-            }
-            _ => Ok(()),
         };
         // What refused is the session's notice already.
         done.ok();
         self.handled();
+    }
+
+    fn app_command(&mut self, action: &str, tx: &mut Tx) {
+        let app = match action {
+            "play" => return self.play_or_pause(),
+            "quit" => return tx.quit(),
+            "export" => AppAction::Export,
+            "new_project" => AppAction::NewProject,
+            "save_as_template" => AppAction::SaveAsTemplate,
+            "open_project" => AppAction::OpenProject,
+            "settings" => AppAction::Settings,
+            _ => return,
+        };
+        self.app_action(app, tx);
     }
 
     /// The actions of the tools shown and of the app, with the keys they have now, for `--tree`.
@@ -301,7 +354,12 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
     if state.computer_key(&name, modified, repeat, false) {
         return true;
     }
-    if panel_key(state, key, false, tx) {
+    // Settings is over the project: only the app's keys, and its own.
+    let page = state.settings.page.is_some();
+    if page && super::settings::key(state, key, tx) {
+        return true;
+    }
+    if !page && panel_key(state, key, false, tx) {
         state.handled();
         return true;
     }
@@ -322,7 +380,11 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     let main = state.main().cloned();
-    for (instance, everywhere) in state.chain(tx.focused()) {
+    let chain = match page {
+        true => Vec::new(),
+        false => state.chain(tx.focused()),
+    };
+    for (instance, everywhere) in chain {
         if state.act_on_key(&instance, &chord, everywhere, repeat) {
             return true;
         }
@@ -348,26 +410,39 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     let Some(action) = app else {
-        return state.computer_key(&name, modified, repeat, true);
+        return !page && state.computer_key(&name, modified, repeat, true);
     };
     state.app_key(&action, tx);
     true
 }
 
-/// The keys of the left panel, from inside it or from the window: cmd-L, cmd-B, cmd-., and
-/// Escape inside it. Whether `key` was one.
+/// The keys of the left panel, from inside it or from the window: Go to the agent, Stop the
+/// agent, Open or close the left panel, and Escape inside it. Whether `key` was one.
 pub(super) fn panel_key(state: &mut State, key: &KeyEvent, inside: bool, tx: &mut Tx) -> bool {
-    match &key.key {
-        Key::Command('l') => state.agent_keys(inside, tx),
-        Key::Command('b') => state.open_or_close_panel(inside, tx),
-        Key::Command('.') => match state.panel.agent.as_mut() {
+    if inside && matches!(key.key, Key::Escape) {
+        state.give_keys_back(tx);
+        return true;
+    }
+    let Some(chord) = chord_of(key) else {
+        return false;
+    };
+    let bound = state.keys.keymap.bound(APP, &chord);
+    match bound.first().copied() {
+        Some(AGENT) => state.agent_keys(inside, tx),
+        Some(LEFT_PANEL) => state.open_or_close_panel(inside, tx),
+        Some(STOP_AGENT) => match state.panel.agent.as_mut() {
             Some(agent) => agent.stop(),
             None => return false,
         },
-        Key::Escape if inside => state.give_keys_back(tx),
         _ => return false,
     }
     true
+}
+
+/// `key` as the keymap names it, such as `cmd-shift-z`. None for a modifier alone.
+pub(crate) fn chord_of(key: &KeyEvent) -> Option<String> {
+    let name = name_of(&key.key)?;
+    Some(shortcuts::chord(&name, held_of(&name, key.mods)))
 }
 
 /// A key came up: to the computer keys or the `onKey` that took it going down, if one did.

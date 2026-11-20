@@ -216,7 +216,7 @@ pub(super) fn icon_button(state: &State) -> El {
         .variant(IconButtonVariant::Ghost)
         .control_size(ControlSize::Large)
         .label(PANEL_LABEL)
-        .shortcut("cmd+b")
+        .shortcut(super::keys::app_key_of(state, "left_panel").unwrap_or_default())
         .on_press_tx(|s: &mut State, tx: &mut Tx| {
             s.open_or_close_panel(false, tx);
             s.handled();

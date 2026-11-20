@@ -181,14 +181,14 @@ impl Export {
 }
 
 impl State {
-    /// Opens the export dialog with the last choice; says why when nothing can be exported or
-    /// another render runs.
-    pub(crate) fn export(&mut self) {
+    /// Opens the export dialog with the last choice, on the selection when `selection` and one
+    /// can be exported; says why when nothing can be exported or another render runs.
+    pub(crate) fn export(&mut self, selection: bool) {
         if self.session.rendering().is_some() {
             return self.session.report(BUSY);
         }
-        let (whole, selection) = self.parts();
-        if !whole && !selection {
+        let (whole, selected) = self.parts();
+        if !whole && !selected {
             return self.session.report(NOTHING);
         }
         let settings = remembered(self.export.kept.as_deref());
@@ -199,7 +199,7 @@ impl State {
         self.export.open = Some(Open::Choosing(Choice {
             settings,
             depth,
-            selection: !whole,
+            selection: !whole || (selection && selected),
         }));
     }
 

@@ -2,7 +2,7 @@
 //! files that are not live and the notice, and what of them `--tree` and `--act` see.
 
 use anyhow::Result;
-use rune::{Cx, El, Tx, col, el, row, text};
+use rune::{Cx, El, Tx, col, el, row};
 use rune_kit::{TooltipAppearance, TooltipStyle};
 use serde_json::Value;
 
@@ -53,17 +53,24 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
                 .clip_soft(0.0)
                 .child(body),
         );
+    let (menu, menu_layer) = super::menu::view(state);
+    // Settings is in place of the title row and the project.
+    let screen: Vec<El> = match super::settings::view(state) {
+        Some(page) => vec![page],
+        None => vec![title_row(state, menu), main],
+    };
     let base = col()
         .w_full()
         .h_full()
         .fill(theme.color("background"))
-        .child(title_row(state))
-        .child(main)
+        .children(screen)
         .children(notices::view(state));
     let overlays = tree::overlays(state)
         .into_iter()
         .chain(problems::list(state))
         .chain(super::history::overlays(state))
+        .chain(menu_layer)
+        .chain(super::menu::installed_dialog(state))
         .chain(super::dialog::view(state))
         .chain(super::export::view(state))
         .chain(crate::shell::overlay(state, theme))
@@ -72,7 +79,7 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
     rune_kit::root(base, overlays).on_key_up(super::keys::on_key_up)
 }
 
-fn title_row(state: &State) -> El {
+fn title_row(state: &State, menu: El) -> El {
     let theme = &state.theme;
     // Only the bare parts move the window: a drag that starts on a control is the control's.
     let drag = || el().h_full().window_drag();
@@ -85,12 +92,7 @@ fn title_row(state: &State) -> El {
         .items_center()
         .child(drag().w(TITLE_LEFT))
         .child(panel::icon_button(state))
-        .child(
-            text(state.name.clone())
-                .font(theme.text("title"))
-                .color(theme.color("text"))
-                .px(theme.space(2)),
-        )
+        .child(menu)
         .children(problems::sign(state))
         .child(drag().grow(1.0))
         .child(transport::view(state))
@@ -112,6 +114,9 @@ pub(crate) enum Act {
     Sidebar(crate::sidebar::Act),
     Export(super::export::Act),
     History(super::history::Act),
+    /// The project menu's name, which opens it, or one of its entries.
+    Menu(Option<super::menu::Pick>),
+    Settings(super::settings::Act),
 }
 
 impl Act {
@@ -133,6 +138,8 @@ impl Act {
             Act::Sidebar(act) => act.run(state, None),
             Act::Export(act) => state.export_act(act),
             Act::History(act) => super::history::run(state, act, "press", value)?,
+            Act::Menu(pick) => super::menu::act(state, pick),
+            Act::Settings(act) => super::settings::run(state, act, "press", value)?,
         }
         Ok(())
     }
@@ -153,8 +160,14 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
         menu: None,
         drag: None,
     };
+    if state.settings.page.is_some() {
+        let mut controls = super::settings::controls(state);
+        controls.extend(notices::controls(state));
+        return controls;
+    }
     let panel = &state.panel;
-    let mut controls = transport::controls(state);
+    let mut controls = super::menu::controls(state);
+    controls.extend(transport::controls(state));
     controls.extend([Control {
         expanded: Some(panel.open),
         ..control("left-panel-icon", panel::PANEL_LABEL, "button", Act::Panel)

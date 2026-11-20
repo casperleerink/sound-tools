@@ -160,6 +160,7 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
         state.problems_open = false;
     }
     state.imported();
+    changed |= state.menu_failures() | state.devices_listed();
     changed |= state.serve_wants();
     super::plays::settle(state);
     // What the views name changes only with what they show, and a lane bound or let go as a

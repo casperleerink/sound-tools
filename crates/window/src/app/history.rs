@@ -225,7 +225,7 @@ impl State {
         Ok(())
     }
 
-    fn pick(&mut self, pick: Pick) -> Result<()> {
+    fn pick_history(&mut self, pick: Pick) -> Result<()> {
         let menu = self.panel.history.menu.take();
         let start = menu
             .map(|menu| menu.line)
@@ -305,7 +305,7 @@ pub(super) fn run(state: &mut State, act: Act, action: &str, value: Option<Value
     match (act, action) {
         (Act::Item(item), "press") => state.go(item),
         (Act::Item(item), "open") => state.open_history_menu(item, None),
-        (Act::Pick(pick), "press") => state.pick(pick),
+        (Act::Pick(pick), "press") => state.pick_history(pick),
         (Act::Name, "commit") => {
             let name = value.as_ref().and_then(Value::as_str);
             let name = name.ok_or_else(|| anyhow!("a name is a text, such as \"Dry\""))?;
@@ -522,7 +522,7 @@ pub(super) fn overlays(state: &State) -> Vec<El> {
     for (pick, label) in menu_picks(state.project(), menu.line) {
         built = built.item(MenuItem::new(label).on_select(move |s: &mut State| {
             // What refused is the session's notice already.
-            s.pick(pick).ok();
+            s.pick_history(pick).ok();
             s.handled();
         }));
     }
@@ -834,7 +834,7 @@ impl<'a> Rows<'a> {
     fn undone_help(&self, row: El) -> El {
         let words = "Taken back with undo. Click to go there.";
         let keys = &self.state.keys.keymap;
-        match keys.keys("app.undo-keeping-version").first() {
+        match keys.keys("app.undo_keeping_version").first() {
             Some(key) => row
                 .help(format!("{words} This undo keeps work as a version:"))
                 .help_keys(caps(key)),
