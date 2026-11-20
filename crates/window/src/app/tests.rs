@@ -2213,6 +2213,18 @@ export const own = tool({ name: "own", title: "Own", when: "Never", doc: "Opens 
     );
 }
 
+/// A run without a window plays a copy of the project, and writes the SDK into the project
+/// itself, as `--inspect` does, so its code type-checks after a `--tree`.
+#[test]
+fn a_run_without_a_window_writes_the_sdk_into_the_project() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    let sdk = folder.join("extensions/sdk/view.ts");
+    assert!(!sdk.exists());
+    let _state = opened(&folder);
+    assert!(sdk.is_file());
+}
+
 mod audio;
 mod behaviours;
 mod budget;

@@ -197,6 +197,8 @@ impl State {
             .into_owned();
         let (folder, copy) = match (headless, act.is_none()) {
             (true, true) => {
+                // The copy's SDK goes into the project too, as `--inspect` writes it.
+                runtime::write_sdk(&folder)?;
                 let (copy, folder) = copied(&folder, &name)?;
                 (folder, Some(copy))
             }

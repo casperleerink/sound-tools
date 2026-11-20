@@ -1660,7 +1660,7 @@ impl Tools {
 
     /// A problem of the code of `instance`: its tool's, if it is one of the project's, or the
     /// card's that draws it.
-    fn problem_of(
+    pub fn problem_of(
         &self,
         project: &Project,
         instance: &InstanceId,

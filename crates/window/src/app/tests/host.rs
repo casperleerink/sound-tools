@@ -1143,7 +1143,6 @@ export const twins = tool({
 
 /// A key used twice in a view is a problem that names the key and says the fix.
 #[test]
-#[ignore = "missing: the window does not report a key used twice (win-sweep, crates/window/src/tree)"]
 fn a_key_used_twice_in_a_view_is_a_problem_that_says_the_fix() {
     let files = [
         ("extensions/twins.tsx", TWINS),

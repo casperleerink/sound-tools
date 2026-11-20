@@ -578,7 +578,7 @@ pub struct BuiltIn {
 
 /// Writes what the runtime owns in `extensions/`, only where the text changed: the SDK with
 /// the records, feeds and facts of the built-in tools.
-fn write_sdk(extensions: &Path, built_in: &BuiltIn) -> std::io::Result<()> {
+pub fn write_sdk(extensions: &Path, built_in: &BuiltIn) -> std::io::Result<()> {
     // Bun's own types, once installed, declare `Bun` as well.
     let bun_types = extensions.join("node_modules/bun-types").is_dir();
     let records = records::sdk_records(&built_in.schemas, &built_in.commands);

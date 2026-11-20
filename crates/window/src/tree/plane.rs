@@ -988,24 +988,47 @@ impl Planes {
         }
     }
 
-    /// What a view places outside a plane, as problems of the project.
+    /// What a view places outside a plane, and the keys it uses twice, as problems of the
+    /// project.
     pub(crate) fn misplaced(&self, state: &State) -> Option<Vec<Problem>> {
         let mut problems = Vec::new();
         for id in &state.shown {
             let Some(root) = state.root(id) else {
                 continue;
             };
+            let mut said = Vec::new();
             let mut keys = Vec::new();
             outside(state, id, &root, false, &mut keys);
             if !keys.is_empty() {
+                said.push(format!(
+                    "{} {} placed outside a plane: put {} in a box with `plane`",
+                    keys.join(", "),
+                    if keys.len() == 1 { "is" } else { "are" },
+                    if keys.len() == 1 { "it" } else { "them" },
+                ));
+            }
+            let mut keys = Vec::new();
+            keyed(state, id, &root, &mut keys);
+            keys.sort_unstable();
+            let mut twice: Vec<&str> = (keys.windows(2))
+                .filter(|pair| pair[0] == pair[1])
+                .map(|pair| pair[0].as_str())
+                .collect();
+            twice.dedup();
+            if !twice.is_empty() {
+                let tools = state.tools.as_ref();
+                let file = tools.and_then(|tools| tools.problem_of(state.project(), id, ""));
+                let file = file.map_or_else(|| "its view".to_string(), |problem| problem.path);
+                let twice: Vec<String> = twice.iter().map(|key| format!("{key:?}")).collect();
+                said.push(format!(
+                    "{file} uses the key {} twice: give each element a key of its own",
+                    twice.join(", ")
+                ));
+            }
+            if !said.is_empty() {
                 problems.push(Problem {
                     path: format!("{MISPLACED}{id}"),
-                    message: format!(
-                        "{} {} placed outside a plane: put {} in a box with `plane`",
-                        keys.join(", "),
-                        if keys.len() == 1 { "is" } else { "are" },
-                        if keys.len() == 1 { "it" } else { "them" },
-                    ),
+                    message: said.join("; "),
                 });
             }
         }
@@ -1042,6 +1065,26 @@ fn outside(state: &State, id: &InstanceId, node: &Node, in_plane: bool, keys: &m
         || matches!(node, Node::Row(b) | Node::Col(b) | Node::Plain(b) if b.plane.is_some());
     for child in children {
         outside(state, id, child, in_plane, keys);
+    }
+}
+
+/// Every key of an element `node` draws, its own view's but no child's.
+fn keyed(state: &State, id: &InstanceId, node: &Node, keys: &mut Vec<String>) {
+    let (key, children) = match node {
+        Node::Row(b) | Node::Col(b) | Node::Plain(b) => (b.key.as_deref(), &b.children[..]),
+        Node::Shapes(d) => (d.key.as_deref(), &[][..]),
+        Node::Field(f) => (Some(f.key.as_str()), &[][..]),
+        Node::Memo { key } => {
+            if let Some((_, inner)) = state.memo_of(id, key) {
+                keyed(state, id, &inner, keys);
+            }
+            return;
+        }
+        _ => return,
+    };
+    keys.extend(key.map(str::to_string));
+    for child in children {
+        keyed(state, id, child, keys);
     }
 }
 
