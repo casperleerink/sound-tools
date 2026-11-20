@@ -99,6 +99,9 @@ pub struct Shown {
     pub cards: BTreeMap<InstanceId, Value>,
     /// The numbers a lane moves of each shown instance, see `holds`.
     pub holds: BTreeMap<InstanceId, Vec<String>>,
+    /// The numbers a lane moves that a hand writes into now, as `holds` names them: an update
+    /// of one is a [`Want::Write`].
+    pub writes: BTreeMap<InstanceId, Vec<String>>,
     /// What the window knows of each shown instance and of each of its children that no record
     /// holds: `Facts` in `sdk/view.ts`.
     pub facts: BTreeMap<InstanceId, Value>,
@@ -146,6 +149,13 @@ pub enum Want {
     Click(bool),
     ComputerKeys(bool),
     WriteAutomation(bool),
+    /// An update of `instance`'s code named `label` set numbers a hand writes into a lane now,
+    /// by path as `drag.plays` names them: they go to the lane, not to the record.
+    Write {
+        instance: InstanceId,
+        label: String,
+        values: Vec<(String, f64)>,
+    },
     /// A yes or no, its yes button `confirm` and the other Cancel: [`Answer::Confirmed`].
     Confirm {
         question: u64,
@@ -201,10 +211,13 @@ pub struct Tools {
     /// When the folder last changed, while a restart waits for it to be quiet.
     changed_at: Option<Instant>,
     changed_records: BTreeSet<InstanceId>,
+    /// A drag plays numbers: changed records wait for its end, so no view runs as it moves.
+    deferred: bool,
     shown: BTreeSet<InstanceId>,
     cards: BTreeMap<InstanceId, Value>,
     /// The numbers a lane moves of each shown instance.
     holds: BTreeMap<InstanceId, Vec<String>>,
+    writes: BTreeMap<InstanceId, Vec<String>>,
     told_shown: bool,
     drawn: HashMap<InstanceId, Drawn>,
     /// Why a view does not draw, by instance, until it draws again.
@@ -216,6 +229,8 @@ pub struct Tools {
     /// Whether a gesture over several elements is held, such as a paint: its actions are one
     /// step of undo, which ends once it is let go and they ran.
     held: bool,
+    /// The label of the last update an action on a view made, until the window takes it.
+    updated: Option<String>,
     /// Why actions on views did nothing, oldest first, for whoever asked: `--act`, or a notice.
     failed_actions: Vec<String>,
     /// Whether Bun runs a frame of the control loops now.
@@ -278,15 +293,18 @@ impl Tools {
             changes,
             changed_at: None,
             changed_records: every_instance(project),
+            deferred: false,
             shown: BTreeSet::new(),
             cards: BTreeMap::new(),
             holds: BTreeMap::new(),
+            writes: BTreeMap::new(),
             told_shown: true,
             drawn: HashMap::new(),
             view_problems: BTreeMap::new(),
             acting: None,
             acts: 0,
             held: false,
+            updated: None,
             failed_actions: Vec::new(),
             ticking: false,
             told_transport: None,
@@ -370,10 +388,13 @@ impl Tools {
             instances,
             cards,
             holds,
+            writes,
             facts,
             catalog,
             keys,
         } = shown;
+        // Bun never reads it.
+        self.writes = writes;
         let told = serde_json::to_value(&catalog).unwrap_or_default();
         if instances == self.shown
             && cards == self.cards
@@ -426,6 +447,17 @@ impl Tools {
     /// Whether Bun said it ran every action sent to it.
     pub fn answered(&self) -> bool {
         self.acts == 0
+    }
+
+    /// While `deferred`, records that change are told to Bun only once it is not.
+    pub fn defer_records(&mut self, deferred: bool) {
+        self.deferred = deferred;
+    }
+
+    /// The label of the last update an action on a view made since the last call, landed or
+    /// written into a lane.
+    pub fn take_update(&mut self) -> Option<String> {
+        self.updated.take()
     }
 
     /// Holds a gesture over several elements, such as a paint, or lets it go: the actions while
@@ -1491,6 +1523,10 @@ impl Tools {
         &self.holds
     }
 
+    pub fn writes(&self) -> &BTreeMap<InstanceId, Vec<String>> {
+        &self.writes
+    }
+
     /// Whether a card draws `id`, as the window last showed it.
     pub fn draws_card(&self, id: &InstanceId) -> bool {
         self.cards.contains_key(id)
@@ -1547,6 +1583,17 @@ impl Tools {
         edits: Vec<RecordEdit>,
         gesture: bool,
     ) {
+        let edits = self.written(instance, label, edits);
+        if edits.is_empty() {
+            // All of it went to a lane.
+            if let Some(bun) = &self.bun {
+                bun.heard_edit();
+            }
+            if gesture {
+                self.updated = Some(label.to_string());
+            }
+            return;
+        }
         // A built-in tool, such as one a generic card shows, owns no children to change.
         let behaviour = (project.tool_of(instance))
             .map(|tool| find(&self.tools, tool).is_some_and(|info| info.behaviour));
@@ -1573,6 +1620,9 @@ impl Tools {
             }
         }
         let Some(refused) = refused else {
+            if gesture {
+                self.updated = Some(label.to_string());
+            }
             return;
         };
         let problem =
@@ -1587,6 +1637,52 @@ impl Tools {
                 self.report(project);
             }
         }
+    }
+
+    /// `edits` without the numbers they set that a hand writes into a lane now, which go to the
+    /// window as one [`Want::Write`]. An edit left with nothing to do goes.
+    fn written(
+        &mut self,
+        instance: &InstanceId,
+        label: &str,
+        mut edits: Vec<RecordEdit>,
+    ) -> Vec<RecordEdit> {
+        let Some(writes) = self.writes.get(instance) else {
+            return edits;
+        };
+        let mut values = Vec::new();
+        edits.retain_mut(|edit| {
+            let RecordEdit::Fields {
+                child,
+                set,
+                removed,
+            } = edit
+            else {
+                return true;
+            };
+            let at = child
+                .as_ref()
+                .map_or(String::new(), |child| format!("{child}."));
+            set.retain(|name, value| {
+                let path = format!("{at}{name}");
+                match value.as_f64().filter(|_| writes.contains(&path)) {
+                    Some(number) => {
+                        values.push((path, number));
+                        false
+                    }
+                    None => true,
+                }
+            });
+            !(set.is_empty() && removed.is_empty())
+        });
+        if !values.is_empty() {
+            self.wants.push(Want::Write {
+                instance: instance.clone(),
+                label: label.to_string(),
+                values,
+            });
+        }
+        edits
     }
 
     /// Bun hung or stopped: the file of the tool whose code ran then runs no more until the
@@ -1630,7 +1726,7 @@ impl Tools {
 
     /// Tells Bun the records that changed since it was last told, and what the window shows.
     fn tell(&mut self, project: &Project) {
-        let Some(bun) = &self.bun else {
+        let Some(bun) = (self.bun.as_ref()).filter(|_| !self.deferred) else {
             return;
         };
         let ids = std::mem::take(&mut self.changed_records);
