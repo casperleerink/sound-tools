@@ -81,7 +81,7 @@ impl State {
                 // A tool of the project gives its schema; a built-in one registered it.
                 let schema =
                     (project.tool_of(id)).and_then(|tool| self.tools.as_ref()?.schema(tool));
-                let facts = facts::of(project, self.feeds.sources(), id, schema.as_ref())?;
+                let facts = facts::of(project, &self.sources(), id, schema.as_ref())?;
                 Some((id.clone(), facts))
             })
             .collect()

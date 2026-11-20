@@ -378,8 +378,7 @@ impl Leaves for Sources<'_> {
                 tempo_map.change_at(Ticks(playhead as u64)).bpm.bpm()
             }
             Live::Feed { name, path } => {
-                let (project, tick) = (self.state.project(), self.state.playhead);
-                (self.state.feeds).number(project, tick, self.instance, path.as_deref(), name)
+                (self.state.feeds).number(self.state, self.instance, path.as_deref(), name)
             }
             Live::Value { name, child, .. } => (self.state.tools.as_ref()).map_or(0.0, |tools| {
                 let project = self.state.project();

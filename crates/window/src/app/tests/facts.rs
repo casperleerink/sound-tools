@@ -80,3 +80,133 @@ fn the_generic_card_of_every_built_in_device_has_a_control_for_each_value_of_its
         }
     }
 }
+
+/// A tool whose view shows the file of a region that is a grandchild: its facts.
+const PEEK: &str = r#"import { h, tool } from "./sdk";
+export const peek = tool({
+  name: "peek", title: "Peek", when: "Never", doc: "Peeks.", state: {},
+  behaviour: () => ({ connections: [{ from: { port: "audio" }, to: { port: "audio" } }] }),
+  view: (self) => {
+    const region = self.children[0]?.children[0];
+    const file = region?.tool === "region" ? region.facts.file.state : "none";
+    return <text key="file">{file}</text>;
+  },
+});
+"#;
+
+#[test]
+fn a_view_runs_again_when_a_fact_of_a_grandchild_changes_and_not_while_none_does() {
+    let (_scratch, folder) = with_tools(&[("peek", PEEK)]);
+    let chain = folder.join("state/song/t00/chain");
+    std::fs::remove_file(chain.join("peek.json")).unwrap();
+    std::fs::create_dir_all(chain.join("peek/box")).unwrap();
+    let files = [
+        ("peek/instance.json", json!({ "tool": "peek", "state": {} })),
+        (
+            "peek/box/instance.json",
+            json!({ "tool": "chain", "state": {} }),
+        ),
+        (
+            "peek/box/late.json",
+            json!({ "tool": "region", "state": { "asset": "late.wav" } }),
+        ),
+    ];
+    for (name, record) in files {
+        std::fs::write(chain.join(name), record.to_string()).unwrap();
+    }
+    let mut state = opened(&folder);
+    let file = |state: &State| match state
+        .drawn(&InstanceId::new(&format!("song/t00/chain/peek")).unwrap())
+    {
+        Some(Drawn::View { root, .. }) => root.to_string(),
+        Some(Drawn::Failed(why)) => why.clone(),
+        other => format!("{}", other.is_some()),
+    };
+    assert!(file(&state).contains("missing"), "{}", file(&state));
+    let runs = state.tools.as_ref().unwrap().view_runs();
+    for step in 1..=60 {
+        frame(&mut state, f64::from(step) / 60.0);
+    }
+    assert_eq!(state.tools.as_ref().unwrap().view_runs(), runs);
+    let audio = state.project().root().join("assets/audio");
+    std::fs::create_dir_all(&audio).unwrap();
+    super::host::wav(&audio.join("late.wav"));
+    // As the watcher of a window tells it.
+    let arrived = [audio.join("late.wav")];
+    (state.session)
+        .background(|project| project.apply_outside_changes(&arrived))
+        .unwrap();
+    for step in 61..=180 {
+        frame(&mut state, f64::from(step) / 60.0);
+        state.settle();
+    }
+    assert!(file(&state).contains("plays"), "{}", file(&state));
+    assert!(state.tools.as_ref().unwrap().view_runs() > runs);
+}
+
+/// The input of a test: its levels, and a take of notes that began at 960.
+struct Recorded(Vec<f32>, runtime::input::TakeNotes);
+
+impl crate::feeds::Recording for Recorded {
+    fn levels(&self) -> &[f32] {
+        &self.0
+    }
+    fn notes(&self, _: &InstanceId) -> Option<&runtime::input::TakeNotes> {
+        Some(&self.1)
+    }
+    fn began(&self, _: &InstanceId) -> Option<(sound_core::Ticks, f64)> {
+        Some((self.1.start, 2.0))
+    }
+    /// The seconds of the file each edge is at, to see where they fall.
+    fn peaks(&self, _: &InstanceId, edges: &[f64]) -> Option<Vec<f32>> {
+        Some(edges.iter().map(|seconds| *seconds as f32).collect())
+    }
+}
+
+#[test]
+fn a_recorder_shows_its_input_its_take_and_when_it_began() {
+    use runtime::input::{TakeNote, TakeNotes};
+    use sound_core::Ticks;
+    use sound_core::feeds::{Feed, FeedRequest, Readings, read};
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    let rec = json!({ "tool": "recorder", "state": { "channels": [1] } });
+    std::fs::write(folder.join("state/song/t00/rec.json"), rec.to_string()).unwrap();
+    let mut state = opened(&folder);
+    state.playhead = Ticks(1920);
+    let id = InstanceId::new("song/t00/rec").unwrap();
+    let held = TakeNote {
+        pitch: 62,
+        start: Ticks(1200),
+        end: None,
+    };
+    let ended = TakeNote {
+        pitch: 60,
+        start: Ticks(960),
+        end: Some(Ticks(1440)),
+    };
+    let take = TakeNotes {
+        recorder: id.clone(),
+        start: Ticks(960),
+        notes: vec![ended, held],
+    };
+    let recorded = Recorded(vec![0.25, 0.5], take);
+    let sources = state.recorded(&recorded);
+    let project = state.project();
+    let feed = |name: &str, points: usize| {
+        let request = FeedRequest {
+            tick: Ticks(1920),
+            points,
+            range: None,
+        };
+        read(project, &Readings::new(), &sources, &id, name, request)
+    };
+    assert_eq!(feed("input", 0), Some(Feed::Number(0.5)));
+    // A held note lasts up to now.
+    let notes = [0.0, 60.0, 480.0, 1.0, 240.0, 62.0, 720.0, 1.0];
+    assert_eq!(feed("notes", 0), Some(Feed::List(notes.to_vec())));
+    // The take began at the second 2 of its file; a quarter note at 120 bpm is half a second.
+    assert_eq!(feed("take", 2), Some(Feed::List(vec![2.0, 2.25, 2.5])));
+    let facts = sound_core::facts::of(project, &sources, &id, None).unwrap();
+    assert_eq!(facts.to_value()["taking"], json!({ "from": 960 }));
+}

@@ -249,7 +249,7 @@ impl State {
             theme,
             schemas,
             lives: Lives::new(),
-            feeds: Feeds::new(Box::new(runtime::files::Files::new())),
+            feeds: Feeds::new(),
             playing: false,
             playhead: Ticks(0),
             engine_time: 0.0,
