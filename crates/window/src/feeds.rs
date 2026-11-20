@@ -169,7 +169,7 @@ impl State {
     pub(crate) fn sources(&self) -> Read<'_> {
         Read {
             files: &self.feeds.files,
-            recording: None,
+            recording: Some(&self.incoming.live),
             project: self.project(),
             now: self.playhead,
         }

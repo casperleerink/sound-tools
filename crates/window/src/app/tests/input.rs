@@ -61,6 +61,42 @@ fn children_of(state: &State, track: &str, tool: &str) -> Vec<String> {
         .collect()
 }
 
+/// What the recorder `recorder` shows of the take that runs, read as the views read it: the
+/// level of its input, the numbers of its `take` and `notes` feeds, and where it began.
+fn shown_of_take(state: &State, recorder: &str) -> (f32, usize, usize, Value) {
+    use sound_core::feeds::{Feed, FeedRequest, Readings, read};
+    let (id, sources) = (InstanceId::new(recorder).unwrap(), state.sources());
+    let feed = |name: &str| {
+        let request = FeedRequest {
+            tick: state.playhead,
+            points: 0,
+            range: None,
+        };
+        read(
+            state.project(),
+            &Readings::new(),
+            &sources,
+            &id,
+            name,
+            request,
+        )
+    };
+    let length = |name: &str| match feed(name) {
+        Some(Feed::List(list)) => list.len(),
+        other => panic!("{name}: {other:?}"),
+    };
+    let Some(Feed::Number(input)) = feed("input") else {
+        panic!("no input level");
+    };
+    let facts = sound_core::facts::of(state.project(), &sources, &id, None).unwrap();
+    (
+        input,
+        length("take"),
+        length("notes"),
+        facts.to_value()["taking"].clone(),
+    )
+}
+
 fn record_button(state: &State) -> Option<controls::Control> {
     let controls = controls::collect(state).controls;
     controls
@@ -88,6 +124,10 @@ fn r_records_the_computer_keys_on_the_first_track_as_one_step_and_undo_waits_for
     for _ in 0..12 {
         redraw(&mut window);
     }
+    // Its recorder shows the note held, and where the take began; no sound, as none comes in.
+    let (input, take, notes, taking) = shown_of_take(&window.state, "song/t00/rec");
+    assert_eq!((input, take, notes), (0.0, 0, 4));
+    assert!(taking["from"].is_u64(), "{taking}");
     release(&mut window, "a");
     press(&mut window, "cmd-z");
     assert_eq!(window.state.session.notice(), Some("Stop recording first."));
@@ -209,6 +249,11 @@ fn an_armed_audio_track_opens_the_input_and_records_a_region_as_one_step() {
         microphone.write_until(window.state.session.status().frames + 2_048);
         redraw(&mut window);
     }
+    // Its recorder shows the level of the channel it records, the sound so far, no notes, and
+    // where the take began.
+    let (input, take, notes, taking) = shown_of_take(&window.state, "song/audio-1/rec");
+    assert_eq!((input, take, notes), (0.5, 96, 0));
+    assert!(taking["from"].is_u64(), "{taking}");
     // Space pauses, which ends the take.
     press(&mut window, "space");
     until(&mut window, "the region of the take", |state| {
