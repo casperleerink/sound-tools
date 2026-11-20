@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import { act, find, h, press, render, type Self } from "../../../sdk";
 import { song } from "../../../song";
-import { regionOf, tapeOf, trackOf } from "../../../song/fake";
+import { fakeSong, regionOf, tapeOf, trackOf } from "../../../song/fake";
+import type { Page } from "../../../song/view";
+import { trimsOf } from "./regions";
 import { BAR, BEAT } from "../../../song/time";
 
 type Song = Self<typeof song>;
@@ -76,4 +78,12 @@ test("an armed audio track shows the level of its input beside its name", () => 
   expect(find("Input level of Audio 1")).toBeUndefined();
   press("arm-audio-1");
   expect(find("Input level of Audio 1")).toMatchObject({ role: "meter" });
+});
+
+test("the start of an audio clip after a slower tempo drags back only as far as its file begins", () => {
+  // 60 bpm for a bar, then 120: a second trimmed off a clip at bar 2 is a beat of the slow bar.
+  const piece = { tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 60 }, { tick: BAR, bpm: 120 }] } };
+  const fake = fakeSong({ children: [] }, { piece });
+  const clip = { ...region("r", BAR, 2, 3), state: { ...region("r", BAR, 2, 3).state, file_start_seconds: 1 } };
+  expect(trimsOf({ song: fake.song } as Page, "audio-1/r", clip as never, BAR, BAR, 240).start.x[0]).toBe(-BEAT);
 });

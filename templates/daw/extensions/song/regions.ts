@@ -2,7 +2,7 @@
 // gain, each change one undo step. Its handles' plane: x in ticks of the song; the gain's y in dB down.
 import type { FilledStateOfTool, Pointer } from "../sdk";
 import { itemAt, rowOfKey, type Song } from "./model";
-import { secondsBetween, ticksAcross } from "./time";
+import { secondsBetween, ticksAcross, ticksBefore } from "./time";
 
 type Region = FilledStateOfTool<"region">;
 /** The gain a region's handle and keys move it in, in dB. */
@@ -29,21 +29,11 @@ export const regionEdits = (song: Song) => {
   const fadeMs = (region: Region, ticks: number, seconds: number, other: number) =>
     clamp(Math.round(secondsBetween(changes(), region.start, region.start + Math.max(ticks, 0)) * 1000), 0, Math.max(seconds * 1000 - other, 0));
   const fadeTicks = (region: Region, ms: number) => ticksAcross(changes(), region.start, ms / 1000);
-  /** The ticks `seconds` take up to `tick`, through each tempo before it; at most `tick`. */
-  const ticksBefore = (tick: number, seconds: number) => {
-    let [low, high] = [0, tick];
-    for (let i = 0; i < 48; i++) {
-      const middle = (low + high) / 2;
-      if (secondsBetween(changes(), middle, tick) > seconds) low = middle;
-      else high = middle;
-    }
-    return tick - high;
-  };
   const edits = {
-    /** A drag of its left edge by `dx`: it starts later or earlier, what it plays of its file with it. */
+    /** A drag of its left edge by `dx`: it starts later or earlier, what it plays of its file with it, no earlier than its file begins. */
     trimStart(key: string, p: Pick<Pointer, "dx">) {
       edit("Trim a region", [key], (region) => {
-        const ticks = Math.max(Math.round(p.dx), -region.start);
+        const ticks = Math.max(Math.round(p.dx), -Math.min(region.start, Math.floor(ticksBefore(changes(), region.start, region.file_start_seconds))));
         const moved = secondsBetween(changes(), region.start, region.start + ticks);
         region.start += ticks;
         region.file_start_seconds = Math.max(region.file_start_seconds + moved, 0);
@@ -62,8 +52,13 @@ export const regionEdits = (song: Song) => {
     fadeIn(key: string, p: Pick<Pointer, "dx">, seconds: number) {
       edit("Change fade in", [key], (region) => (region.fade_in_ms = fadeMs(region, fadeTicks(region, region.fade_in_ms) + p.dx, seconds, region.fade_out_ms)));
     },
+    /** A fade out is measured back from the end, in the tempo there. */
     fadeOut(key: string, p: Pick<Pointer, "dx">, seconds: number) {
-      edit("Change fade out", [key], (region) => (region.fade_out_ms = fadeMs(region, fadeTicks(region, region.fade_out_ms) - p.dx, seconds, region.fade_in_ms)));
+      edit("Change fade out", [key], (region) => {
+        const end = region.start + ticksAcross(changes(), region.start, seconds);
+        const ticks = Math.min(Math.max(ticksBefore(changes(), end, region.fade_out_ms / 1000) - p.dx, 0), end);
+        region.fade_out_ms = clamp(Math.round(secondsBetween(changes(), end - ticks, end) * 1000), 0, Math.max(seconds * 1000 - region.fade_in_ms, 0));
+      });
     },
     /** A drag of its gain handle `dy` dB down. */
     gain(key: string, p: Pick<Pointer, "dy">) {
@@ -96,7 +91,7 @@ export const regionEdits = (song: Song) => {
       const { start, file_start_seconds } = region.state;
       const to = clamp(at, 0, (fileEndOf(region) ?? Infinity) - 0.05);
       const later = to - file_start_seconds;
-      edits.trimStart(key, { dx: later >= 0 ? ticksAcross(changes(), start, later) : -ticksBefore(start, -later) });
+      edits.trimStart(key, { dx: later >= 0 ? ticksAcross(changes(), start, later) : -ticksBefore(changes(), start, -later) });
     },
     /** A knob of its card: where in its file it ends, in seconds. */
     setEnd(key: string, at: number) {

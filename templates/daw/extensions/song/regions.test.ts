@@ -45,3 +45,24 @@ test("alt-up and alt-down step the chosen region's gain a dB, one step each; wit
   regionEdits(fake.song).step(-1);
   expect([region(fake).gain_db, fake.steps]).toEqual([-4, ["Change gain", "Change gain", "Change gain"]]);
 });
+
+/** 60 bpm for a bar, then 120. */
+const slowFirst = { tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 60 }, { tick: 3840, bpm: 120 }] } };
+
+test("a start dragged back over a slower tempo stops where its file begins, and the sound stays where it was in time", () => {
+  const fake = fakeSong({ children: [tapeOf("audio-1", [{ ...regionOf("r1", 3840, 6), state: { ...regionOf("r1", 3840, 6).state, file_start_seconds: 1 } }])] }, { piece: slowFirst });
+  const heard = (state: Record<string, number>) => secondsBetween(slowFirst.tempo_map.tempo_changes, 0, state.start!) - state.file_start_seconds!;
+  const before = heard(region(fake));
+  regionEdits(fake.song).trimStart("audio-1/r1", { dx: -1920 });
+  expect(region(fake).start).toBe(3840 - 960);
+  expect(near(heard(region(fake)))).toBe(near(before));
+});
+
+test("a fade out dragged is measured at the end of the region, in the tempo there", () => {
+  // 120 bpm for a bar, then 60: a region of 4 seconds from 0 ends 2 beats into the slow part.
+  const piece = { tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }, { tick: 3840, bpm: 60 }] } };
+  const fake = fakeSong({ children: [tapeOf("audio-1", [{ ...regionOf("r1", 0, 4), state: { ...regionOf("r1", 0, 4).state, fade_out_ms: 500 } }])] }, { piece });
+  // Half a beat longer at 60 bpm is half a second more.
+  regionEdits(fake.song).fadeOut("audio-1/r1", { dx: -480 }, 4);
+  expect(region(fake).fade_out_ms).toBe(1000);
+});

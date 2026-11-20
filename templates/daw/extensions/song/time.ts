@@ -42,6 +42,17 @@ export function ticksAcross(changes: TempoChanges, from: number, seconds: number
   return tick - from;
 }
 
+/** The ticks `seconds` take up to `to`, through each tempo before it; at most `to`. */
+export function ticksBefore(changes: TempoChanges, to: number, seconds: number): number {
+  let [low, high] = [0, to];
+  for (let i = 0; i < 48; i++) {
+    const middle = (low + high) / 2;
+    if (secondsBetween(changes, middle, to) > seconds) low = middle;
+    else high = middle;
+  }
+  return to - high;
+}
+
 const ticksOfBar = (signature: string) => {
   const [count, unit] = signature.split("/").map(Number);
   return ((count ?? 4) * 4 * BEAT) / (unit ?? 4);
