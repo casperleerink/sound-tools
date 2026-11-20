@@ -92,7 +92,7 @@ fn an_empty_project_starts_from_a_template_in_place() {
     let folder = scratch.path().join("empty");
     runtime::templates::write(&folder, runtime::templates::named("Bare").unwrap()).unwrap();
     let mut state = opened(&folder);
-    state.shell = Projects::new(None, true, Some(folder.clone()));
+    state.shell = Projects::new(None, true, Some(folder));
     let mut window = laid_out(state);
     redraw(&mut window);
     assert!(window.find("empty-project").is_some());
