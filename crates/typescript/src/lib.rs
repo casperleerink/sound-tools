@@ -579,7 +579,7 @@ fn launch(
                 let (sounds, mut problems) = checked(loaded, &skipped, &bun);
                 if views && !card {
                     problems.push(folder_problem(format!(
-                        "{} is missing, so a device whose tool has no view shows no card: write one that exports `card`, a `GenericCard`",
+                        "{} is missing, so a device whose tool has no view shows no card: write one that exports `card`, a `Card`",
                         next::GENERIC_CARD
                     )));
                 }
