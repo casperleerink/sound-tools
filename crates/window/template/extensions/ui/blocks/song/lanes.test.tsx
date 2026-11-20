@@ -106,7 +106,7 @@ test("an envelope's head opens its four times and sustain, which take a typed va
 
 test("a pick from the menu of a new lane starts it where its number is, the numbers by device", () => {
   shown();
-  expect(find("add-lane-search-t00")).toBeDefined();
+  expect(find("add-lane-t00-search")).toBeDefined();
   // What a lane moves already is not offered.
   expect(find("add-lane-t00-synth.cutoff_hz")).toBeUndefined();
   act("add-lane-t00-synth.resonance", "press");

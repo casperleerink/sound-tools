@@ -1,6 +1,7 @@
 import { h, live, type Child, type Color, type Drag, type IconName, type Node, type Pointer } from "../../sdk";
 import theme from "../../theme.json";
-import { Picker, type PickGroup } from "../picker";
+import { height } from "../control";
+import { MenuList, type Group, type Item } from "../menu";
 import { Tooltip } from "../tooltip";
 
 const [ROW, PAD, ICON] = [theme.size.row, theme.space[4], theme.size.sm];
@@ -95,7 +96,7 @@ export type FrameProps = {
   id: string;
   title: string;
   /** The title as a menu: another device in its place, or what to do with it. */
-  menu?: { label: string; groups: readonly PickGroup[]; notes?: readonly string[] };
+  menu?: { label: string; items: readonly (Item | Group)[]; notes?: readonly string[] };
   /** Off, the device is passed by: its title and body are muted. */
   on?: boolean;
   onPower?: () => void;
@@ -120,10 +121,11 @@ export const Frame = ({ id, title, menu, on = true, onPower, onRemove, end, chos
     <row key={`${id}-header`} label={`Choose ${title}`} role="toolbar" group h={HEADER} px={1} gap={1} align="center"
       {...(drag ? { drag: { ...drag, id }, onDragEnd } : {})} {...(onChoose ? { onPress: onChoose } : {})}>
       {menu ? (
-        <Picker id={`${id}-title`} label={menu.label} groups={menu.groups} notes={menu.notes}>
+        <row key={`${id}-title`} label={menu.label} role="button" h={height("sm")} px={2} gap={1} align="center" radius="md" hover="fill">
           <text style="heading" color={on ? "text" : "text-muted"} truncate>{title}</text>
           <icon name="chevron-down" size={12} color="text-muted" />
-        </Picker>
+          <MenuList id={`${id}-title`} label={menu.label} items={menu.items} notes={menu.notes} w={280} search />
+        </row>
       ) : (
         <row px={2}><text style="heading" color={on ? "text" : "text-muted"} truncate>{title}</text></row>
       )}

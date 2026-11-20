@@ -7,7 +7,7 @@ import { Button } from "../../button";
 import { Dot } from "../../dot";
 import { keysOf } from "../../kbd";
 import { Knob } from "../../knob";
-import { Picker, type PickGroup } from "../../picker";
+import { MenuList, type Group, type Item } from "../../menu";
 import { Segmented } from "../../segmented";
 import { Select } from "../../select";
 import { SHORTEST_FADER, STRIP, Strip } from "../../strip";
@@ -56,12 +56,12 @@ const nameOf = (catalog: readonly Offer[], tool: string, state: unknown) => {
 };
 
 /** The devices the window offers that take `takes`, group by group, a pick each. */
-const offered = (catalog: readonly Offer[], takes: Offer["takes"], here: string | null, pick: (key: string) => void): PickGroup[] => {
+const offered = (catalog: readonly Offer[], takes: Offer["takes"], here: string | null, pick: (key: string) => void): Group[] => {
   const groups = new Map<string, Offer[]>();
   for (const offer of catalog.filter((each) => each.takes === takes)) groups.set(offer.group, [...(groups.get(offer.group) ?? []), offer]);
   return [...groups].map(([heading, offers]) => ({
     heading,
-    picks: offers.map((offer) => ({ key: offer.key, text: offer.name, detail: offer.detail, icon: offer.icon, checked: offer.key === here, unavailable: offer.unavailable, onPick: () => pick(offer.key) })),
+    items: offers.map((offer) => ({ key: offer.key, text: offer.name, detail: offer.detail, icon: offer.icon, checked: offer.key === here, disabled: offer.unavailable, onPress: () => pick(offer.key) })),
   }));
 };
 
@@ -92,7 +92,7 @@ const Devices = ({ page, each }: { page: Page; each: Channel }) => {
       {each.tool === "tape" && [clip !== null ? <RegionCard page={page} region={clip} /> : <NoClip />, <box w={1} h={CARD_HEIGHT} fill="border" />]}
       {synth && (
         <Frame id="slot-instrument" title={nameOf(song.catalog, String(synth.tool), synth.state)}
-          menu={{ label: `Instrument of ${titleOf(each)}`, groups: offered(song.catalog, "notes", String(synth.tool), (key) => effects.replace(key)) }}>
+          menu={{ label: `Instrument of ${titleOf(each)}`, items: offered(song.catalog, "notes", String(synth.tool), (key) => effects.replace(key)) }}>
           <child path={`${name}/synth`} />
         </Frame>
       )}
@@ -100,15 +100,13 @@ const Devices = ({ page, each }: { page: Page; each: Channel }) => {
         const device = chain?.children.find((child) => child.name === effect);
         const tool = String(device?.tool ?? "");
         const title = nameOf(song.catalog, tool, device?.state);
-        const moves: PickGroup = {
-          picks: order.length < 2 ? [] : [
-            { key: "earlier", text: "Move earlier", icon: "arrow-left", keys: shortcut(song.shortcut("effect_earlier")), unavailable: at === 0 ? "" : null, onPick: () => (effects.choose(effect), effects.step(effect, -1)) },
-            { key: "later", text: "Move later", icon: "arrow-right", keys: shortcut(song.shortcut("effect_later")), unavailable: at === order.length - 1 ? "" : null, onPick: () => (effects.choose(effect), effects.step(effect, 1)) },
-          ],
-        };
+        const moves: Item[] = order.length < 2 ? [] : [
+          { key: "earlier", text: "Move earlier", icon: "arrow-left", keys: keysOf(song.shortcut("effect_earlier")), disabled: at === 0 ? "" : null, onPress: () => (effects.choose(effect), effects.step(effect, -1)) },
+          { key: "later", text: "Move later", icon: "arrow-right", keys: keysOf(song.shortcut("effect_later")), disabled: at === order.length - 1 ? "" : null, onPress: () => (effects.choose(effect), effects.step(effect, 1)) },
+        ];
         return (
           <Frame id={`slot-${effect}`} title={title} on={!chain?.state.off.includes(effect)} chosen={chosen?.name === effect}
-            menu={{ label: `Menu of ${title}`, groups: [moves, { heading: "Replace with", picks: [] }, ...offered(song.catalog, "audio", tool, (key) => effects.replace(key, effect))] }}
+            menu={{ label: `Menu of ${title}`, items: [...moves, { heading: "Replace with", items: [] }, ...offered(song.catalog, "audio", tool, (key) => effects.replace(key, effect))] }}
             onPower={() => effects.toggle(effect)} onRemove={() => effects.remove(effect)} onChoose={() => effects.choose(effect)}
             end={KEYED.has(tool) && <Sidechain page={page} name={name} effect={effect} title={title} />}
             drag={{ x: true }} onDragEnd={dropped(effect)}>
@@ -122,16 +120,13 @@ const Devices = ({ page, each }: { page: Page; each: Channel }) => {
         </col>
       )}
       <col h={HEADER} justify="center">
-        <Picker id="add-effect" label="Add effect" size="md" groups={offered(song.catalog, "audio", null, (key) => effects.add(key))}>
-          <icon name="plus" size={16} color="text-secondary" />
-          <text style="heading" color="text-secondary">Add effect</text>
-        </Picker>
+        <Button id="add-effect" label="Add effect" text="Add effect" icon="plus" variant="ghost">
+          <MenuList id="add-effect" label="Add effect" items={offered(song.catalog, "audio", null, (key) => effects.add(key))} w={280} search />
+        </Button>
       </col>
     </row>
   );
 };
-
-const shortcut = (keys: string | null) => (keys === null ? null : keysOf(keys));
 
 /** The first card of an audio track while none of its regions is chosen alone. */
 const NoClip = () => (

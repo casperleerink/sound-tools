@@ -48,6 +48,9 @@ fn an_effect_picked_by_a_typed_search_in_add_effect_joins_the_chain_as_one_step(
     }
     assert!(window.find("add-effect-compressor").is_some());
     assert!(window.find("add-effect-delay").is_none());
+    // A heading shows while the search keeps one of its effects.
+    assert!(window.find("add-effect-group-Dynamics").is_some());
+    assert!(window.find("add-effect-group-Space").is_none());
     key(&mut window, rune::Key::Enter);
     assert_eq!(order(&window.state), serde_json::json!(["compressor"]));
     let label = window.state.project().undo_label();

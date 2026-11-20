@@ -125,21 +125,11 @@ const AddLane = ({ page, row }: { page: Page; row: Extract<Row, { kind: "add-lan
     return (
       <row place={[0, row.top, HEAD - 1, row.height]} px={2} align="center" border="border" borderSides={[0, 0, 1, 0]}>
         <Button id={`add-lane-${row.track.name}`} label={`Add a lane to ${title}`} text="Add lane" icon="plus" variant="ghost" size="sm">
-          <col overlay={{ open: "press", side: "bottom", align: "start", gap: 4 }} role="menu" group label={`What a new lane of ${title} moves`} w={260} maxH={340} scroll="y" pad={1} radius="lg" fill="raised" border="border-strong" shadow="md">
-            <row h={28} px={2} gap={1} align="center">
-              <icon name="search" size={14} color="text-muted" />
-              <field key={`add-lane-search-${row.track.name}`} label={`Search what a new lane of ${title} moves`} value="" placeholder="Search" focus style="label" w={210} onCommit={() => {}} />
-            </row>
-            {offered.length === 0 && <row h={28} px={2} align="center"><text style="label" color="text-muted">A lane moves every number already</text></row>}
-            {groups.map((group) => [
-              <row h={24} px={2} align="end"><text style="label" color="text-muted">{group}</text></row>,
-              ...offered.filter((each) => each.group === group).map((each) => (
-                <row key={`add-lane-${row.track.name}-${each.target}`} label={laneName(each.target, group, each.text)} role="menuitem" w="full" h={28} px={2} align="center" radius="md" hover="fill" onPress={() => page.edits.lanes.add(row.track.name, each.target, each.value)}>
-                  <text style="label" color="text" truncate>{each.text}</text>
-                </row>
-              )),
-            ])}
-          </col>
+          <MenuList id={`add-lane-${row.track.name}`} label={`What a new lane of ${title} moves`} w={260} search notes={offered.length === 0 ? ["A lane moves every number already"] : []}
+            items={groups.map((group) => ({
+              heading: group,
+              items: offered.filter((each) => each.group === group).map((each) => ({ key: each.target, label: laneName(each.target, group, each.text), text: each.text, onPress: () => page.edits.lanes.add(row.track.name, each.target, each.value) })),
+            }))} />
         </Button>
       </row>
     );

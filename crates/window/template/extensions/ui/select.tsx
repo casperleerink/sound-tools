@@ -1,5 +1,6 @@
 import { h } from "../sdk";
 import { corner, height, type Size } from "./control";
+import { Search } from "./menu";
 import type { Option } from "./segmented";
 
 /** One option of many, as a button that opens the list of them; `search` adds a line that keeps the options it names. An option's `detail` shows under it. */
@@ -8,12 +9,7 @@ export const Select = <T extends string | number>({ id, label, options, value, s
     <text style="label" color="text" truncate>{options.find((option) => option.value === value)?.text ?? ""}</text>
     <icon name="chevron-down" size={14} color="text-muted" />
     <col overlay={{ open: "press", side: "bottom", align: "start", gap: 4 }} role="listbox" group label={label} w={menuW} maxH={320} scroll="y" pad={1} radius="lg" fill="raised" border="border-strong" shadow="md">
-      {search && (
-        <row h={height("sm")} px={2} gap={1} align="center">
-          <icon name="search" size={14} color="text-muted" />
-          <field key={`${id}-search`} label={`Search ${label}`} value="" placeholder="Search" focus style="label" w={menuW - 40} onCommit={() => {}} />
-        </row>
-      )}
+      {search && <Search id={id} label={label} w={menuW} />}
       {options.map((option) => {
         const chosen = option.value === value;
         return (
