@@ -2088,4 +2088,5 @@ fn a_held_control_s_accessibility_value_follows_its_lane() {
     assert!((spoken - value).abs() < value * 0.01, "{spoken} {value}");
 }
 
+mod budget;
 mod geometry;

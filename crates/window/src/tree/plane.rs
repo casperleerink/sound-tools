@@ -72,7 +72,8 @@ enum Axis {
 }
 
 /// What a plane's content is built for: the points per unit and the stretch of each axis. A
-/// stretch is as long as the plane; what is built reaches a stretch further each way.
+/// stretch is as long as the plane; what is built reaches to the end of the next, so a scroll
+/// inside a stretch shows only what is built.
 #[derive(Clone, Copy, PartialEq, Debug)]
 struct Stretch {
     per: [f32; 2],
@@ -569,7 +570,7 @@ pub(super) fn plane(scope: &Scope, e: El, b: &BoxNode, key: &str, spec: &PlaneSp
         let shows: [[f32; 2]; 2] = std::array::from_fn(|i| {
             let long = size[i] / built.per[i];
             let from = built.at[i] as f32 * long;
-            [from - long, from + 2.0 * long]
+            [from, from + 2.0 * long]
         });
         (shows, built)
     };
@@ -817,7 +818,11 @@ fn gather(scope: &Scope, node: &Node, into: &mut Gathered) {
         return;
     };
     let rect = scope.rect(place, size);
-    let [x, y, w, h] = rect;
+    // A mark spans its point: a playhead at the start lets the plane begin there.
+    let [x, y, w, h] = match place {
+        Place::Box(_) => rect,
+        Place::Mark(_) => [rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0, 0.0, 0.0],
+    };
     into.extent = Some(match into.extent {
         Some([l, t, r, b]) => [l.min(x), t.min(y), r.max(x + w), b.max(y + h)],
         None => [x, y, x + w, y + h],
