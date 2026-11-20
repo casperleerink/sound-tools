@@ -19,9 +19,9 @@ const kept = (id: string, path: string): Live => live.feed("peak", path).max(-cl
  * The level of the instance at `path`, a bar a channel filling a well from the bottom, on the
  * fader's scale so it reads against a fader beside it: green, yellow from -6 dB, a peak line that
  * holds and falls, and a red light on top once it clipped, until a click. A meter is the one place
- * colour fills an area.
+ * colour fills an area. `quiet`, its well does not show: in silence it is not there.
  */
-export const Meter = ({ id, label, path, w, h: height }: { id: string; label: string; path: string; w: number; h: number }) => {
+export const Meter = ({ id, label, path, w, h: height, quiet = false }: { id: string; label: string; path: string; w: number; h: number; quiet?: boolean }) => {
   const gap = w < 8 ? 1 : 2;
   const bar = (w - gap) / 2;
   const clip = Math.min(bar * 2 + gap, 4);
@@ -32,7 +32,7 @@ export const Meter = ({ id, label, path, w, h: height }: { id: string; label: st
     const green = filled.min(HOT * (height - clip - 1));
     const top = height;
     return [
-      <box at={[x, clip + 1]} w={bar} h={height - clip - 1} fill="well" />,
+      <box at={[x, clip + 1]} w={bar} h={height - clip - 1} fill={quiet ? undefined : "well"} />,
       <box at={[x, green.negate().plus(top)]} w={bar} h={green} fill="sound" />,
       <box at={[x, filled.negate().plus(top)]} w={bar} h={filled.minus(green).max(0)} fill="hot" />,
       <box at={[x, peak.negate().plus(top - 1)]} w={bar} h={1} fill="text" opacity={peak.gt(1)} />,

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { act, apply, find, h, press, render, type Self } from "../../../sdk";
 import { song } from "../../../song";
-import { tapeOf, trackOf } from "../../../song/fake";
+import { clipOf, tapeOf, trackOf } from "../../../song/fake";
 
 type Song = Self<typeof song>;
 const songOf = (children: unknown[], order: string[]) => ({ name: "song", state: { order, solo: [], sidechains: [], limit_off: false }, children }) as unknown as Song;
@@ -59,6 +59,13 @@ test("a right press opens a track's menu with the key of each; delete asks first
   expect(find("menu-t00-Render to audio track")).toMatchObject({ label: "Render to audio track" });
   // Cancel: the track stays.
   expect(press("menu-t00-Delete")).toEqual([]);
+});
+
+test("render says under it what rings out after the end, or that it stops at the end of the clips", () => {
+  opened(songOf([trackOf("t00", [clipOf("c00", 0, 3840)])], ["t00"]));
+  press("track-t00", { right: true });
+  expect(JSON.stringify(find("menu-t00-Render to audio track"))).toContain("Reverbs and releases ring out after the end");
+  expect(JSON.stringify(find("menu-t00-Render without the tail"))).toContain("It stops where the clips end");
 });
 
 test("a track with no clips cannot render, and says why", () => {

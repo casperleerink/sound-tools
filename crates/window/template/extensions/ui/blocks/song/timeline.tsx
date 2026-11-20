@@ -10,7 +10,7 @@ import { MenuList, type Item } from "../../menu";
 import { TextField } from "../../text-field";
 import { Tooltip } from "../../tooltip";
 import { EmptyState } from "../empty-state";
-import { DIM } from "./heads";
+import { DIM, renders } from "./heads";
 import { LaneTimes } from "./lanes";
 import { lostOf, RegionHandles, RegionWave, trimsOf, type Region } from "./regions";
 import { Take } from "./takes";
@@ -120,7 +120,7 @@ function itemMenu(page: Page, key: string, region: boolean): Item[] {
           { text: "Rename", icon: "pencil", onPress: () => (page.song.memory.renamingClip = key) } satisfies Item,
           { text: "Export notes…", onPress: () => void page.song.exportNotes(key, { name: (clip?.tool === "timeline" && clip.state.title) || (owner ? titleOf(owner) : track) }) } satisfies Item,
         ]),
-    ...[true, false].map((tail): Item => ({ text: tail ? "Render to audio track" : "Render without the tail", icon: "audio-lines", ...(why === undefined ? {} : { disabled: why }), onPress: () => void page.edits.tracks.render(track, ofTrack(), tail) })),
+    ...renders(page, track, ofTrack, why),
     { ...command("Delete", "delete", "delete_clips", "trash-2"), danger: true },
   ];
 }

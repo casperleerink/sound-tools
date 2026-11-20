@@ -1,7 +1,7 @@
 import { h, live, memo, type Child, type Offer } from "../../../sdk";
 import { colourOf, lanesOf, muted, PALETTE, titleOf, words } from "../../../song/model";
 import { cannotRender } from "../../../song/tracks";
-import { chosenTrack, HEAD, laneGroups, LOW_ROW, PLANE, ROW, type Page, type Row, type Strip, type Track } from "../../../song/view";
+import { chosenTrack, HEAD, laneGroups, LOW_ROW, PLANE, RETURNS, ROW, type Page, type Row, type Strip, type Track } from "../../../song/view";
 import { freeName } from "../../../track";
 import { Button } from "../../button";
 import { Dot } from "../../dot";
@@ -17,8 +17,6 @@ export type HeadsProps = { page: Page };
 
 /** How much of a muted track shows: its colour, its name and its clips. */
 export const DIM = 0.4;
-/** The returns shown open before they scroll: half a row says there are more. */
-const RETURNS = 4.5;
 
 /**
  * The column left of the timeline: a head for each track and its lanes, which scroll with it, the
@@ -102,14 +100,21 @@ function trackMenu(page: Page, each: Strip): Item[] {
     const shown = song.memory.lanes.includes(each.name);
     items.push({ text: shown ? "Hide automation" : "Show automation", icon: "automation", onPress: () => page.edits.lanes.show(each.name, !shown) });
     const keys = each.children.flatMap((child) => (child.tool === "timeline" || child.tool === "region" ? [`${each.name}/${child.name}`] : []));
-    const why = keys.length === 0 ? "The track has no clips" : cannotRender(each);
-    for (const tail of [true, false]) {
-      items.push({ text: tail ? "Render to audio track" : "Render without the tail", icon: "audio-lines", ...(why === undefined ? {} : { disabled: why }), onPress: () => void page.edits.tracks.render(each.name, keys, tail) });
-    }
+    items.push(...renders(page, each.name, () => keys, keys.length === 0 ? "The track has no clips" : cannotRender(each)));
   }
   items.push({ text: "Delete", icon: "trash-2", danger: true, keys: keysOf(song.shortcut("delete_track")), onPress: () => void page.edits.tracks.askToRemove(each.name) });
   return items;
 }
+
+/** Render to audio track, with what rings out after the end or without: of the clips `keys` gives of `track`, or why it cannot. */
+export const renders = (page: Page, track: string, keys: () => string[], why: string | undefined): Item[] =>
+  [true, false].map((tail) => ({
+    text: tail ? "Render to audio track" : "Render without the tail",
+    detail: tail ? "Reverbs and releases ring out after the end" : "It stops where the clips end",
+    icon: "audio-lines",
+    ...(why === undefined ? {} : { disabled: why }),
+    onPress: () => void page.edits.tracks.render(track, keys(), tail),
+  }));
 
 /** The colours a track can have, its own ticked. */
 const colours = (page: Page, each: Strip): Item[] =>
@@ -142,7 +147,7 @@ const Head = ({ page, row }: { page: Page; row: Row }) => {
   const key = `track-${each.name}`;
   return memo(`head-${each.name}`, [title, kind, chosen, isMuted, soloed, armed, colour, row.top, lanes, shown, renaming, order, ...keys, each.children], () => (
     <row key={key} label={`Choose ${title}`} role="tab" checked={chosen} hoverGroup place={[0, live.drag(key).dy.plus(row.top), HEAD - 1, 1]} opacity={live.drag(key).active.times(-0.4).plus(1)}
-      px={2} gap={3} align="center" fill={chosen ? "selected" : undefined} hover={chosen ? undefined : "fill"} border="border" borderSides={[0, 0, 1, 0]}
+      px={2} gap={2} align="center" fill={chosen ? "selected" : undefined} hover={chosen ? undefined : "fill"} border="border" borderSides={[0, 0, 1, 0]}
       drag={{ y: true }} onDragEnd={(p) => { const before = trackUnder(page, p.over); if (before) page.edits.tracks.moveBefore(each.name, before); }}
       onPress={(p) => { if (p.right) return; if (p.clicks === 2) memory.renaming = each.name; else page.edits.tracks.openPanel(each.name); }}>
       <row key={`colour-${each.name}`} label={`Colour of ${title}`} role="button" w={12} h={ROW - 16} align="center">
@@ -150,16 +155,18 @@ const Head = ({ page, row }: { page: Page; row: Row }) => {
         <MenuList id={`colour-${each.name}`} label={`Colour of ${title}`} items={colours(page, each)} w={180} />
       </row>
       <col grow={1} gap={1}>
-        <row gap={2} align="center"><Name page={page} each={each} title={title} />{armed && <InputLevel path={`${each.name}/rec`} title={title} />}</row>
+        <row h={24} gap={2} align="center">
+          <row grow={1} gap={2} align="center"><Name page={page} each={each} title={title} />{armed && <InputLevel path={`${each.name}/rec`} title={title} />}</row>
+          {each.tool === "tape" && <Quiet shown={armed || chosen}><Toggle id={`arm-${each.name}`} label={`Arm ${title}`} on={armed} color="danger" dot tip="Arm for recording" onToggle={() => page.edits.tracks.arm(each.name)} /></Quiet>}
+        </row>
         <row h={24} gap={1} align="center">
           <row grow={1}><text style="label" color="text-muted" opacity={isMuted ? DIM : 1} truncate>{kind}</text></row>
           <Quiet shown={shown || chosen}><Toggle id={`lanes-${each.name}`} label={`Automation of ${title}`} icon="automation" on={shown} tip={lanes > 0 ? `Automation: ${lanes}` : "Automation"} onToggle={() => page.edits.lanes.show(each.name, !shown)} /></Quiet>
-          {each.tool === "tape" && <Quiet shown={armed || chosen}><Toggle id={`arm-${each.name}`} label={`Arm ${title}`} on={armed} color="danger" dot tip="Arm for recording" onToggle={() => page.edits.tracks.arm(each.name)} /></Quiet>}
           <Quiet shown={isMuted || chosen}><Toggle id={`mute-${each.name}`} label={`Mute ${title}`} text="M" on={isMuted} color="warning" tip="Mute" onToggle={() => page.edits.tracks.mute(each.name)} /></Quiet>
           <Quiet shown={soloed || chosen}><Toggle id={`solo-${each.name}`} label={`Solo ${title}`} text="S" on={soloed} color="hot" tip="Solo" onToggle={() => page.edits.tracks.solo(each.name)} /></Quiet>
         </row>
       </col>
-      <Meter id={`meter-head-${each.name}`} label={`Level ${title}`} path={`${each.name}/mix`} w={4} h={ROW - 16} />
+      <Meter id={`meter-head-${each.name}`} label={`Level ${title}`} path={`${each.name}/mix`} w={4} h={ROW - 16} quiet />
       <MenuList id={`menu-${each.name}`} label={`Menu of ${title}`} items={trackMenu(page, each)} open="menu" />
     </row>
   ));

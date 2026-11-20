@@ -10,7 +10,7 @@ import { Tooltip } from "./tooltip";
 export const Toggle = ({ id, label, text, icon, on, color = "on", dot = false, size = "sm", w, tip, keys, onToggle }: { id: string; label: string; text?: string; icon?: IconName; on: boolean; color?: Color; dot?: boolean; size?: Size; w?: number; tip?: string; keys?: string; onToggle: () => void }) => {
   const face = text ?? label;
   const tall = height(size);
-  const width = dot || icon !== undefined ? tall : face.length === 1 ? tall + 4 : w;
+  const width = dot || icon !== undefined || face.length === 1 ? tall : w;
   const ink: Color = on ? color : "text-secondary";
   return (
     <row key={id} label={label} role="switch" checked={on} h={tall} {...(width === undefined ? { px: 2 } : { w: width })} align="center" justify="center" radius={corner(size)} fill={on ? tint(color) : undefined} border={on ? "#00000000" : "border-strong"} hover="fill" onPress={onToggle} actions={{ toggle: onToggle }}>

@@ -24,7 +24,7 @@ export const [RULER, TEMPO, GUTTER] = [44, 32, 8];
 /** What shows below: a track's panel, the mixer, and the note editor at its shortest and its line over it. */
 export const [RACK, MIXER, SHORTEST, DIVIDER] = [216, 298, 184, 5];
 /** The returns shown open before they scroll: half a row says there are more. */
-const RETURNS = 4.5;
+export const RETURNS = 4.5;
 /** The song shows at least 64 bars, and 32 after what it holds. */
 const [SHOWN, AFTER] = [64 * BAR, 32 * BAR];
 
