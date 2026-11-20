@@ -300,6 +300,65 @@ fn rig() -> (tempfile::TempDir, rune::Runtime<State>) {
     page(&files, "rig")
 }
 
+/// A page whose action on `m`, and a button a memo kept from its first run, write down the
+/// seconds of its region: a fact no record holds.
+const MEASURE: &str = r#"import { h, input, memo, text, tool, type Context } from "./sdk";
+type Measuring = Pick<Context<{ did: string }>, "children" | "update">;
+const measured = (ctx: Measuring) => {
+  const region = ctx.children.find((child) => child.tool === "region") as { facts?: { seconds?: number } } | undefined;
+  ctx.update("Measure", (part) => void (part.state.did = `${part.state.did} ${region?.facts?.seconds}`.trim()));
+};
+export const measure = tool({
+  name: "measure", title: "Measure", when: "Never", doc: "Says how long its region is.",
+  state: { did: text() }, sound: () => input,
+  behaviour: () => ({ connections: [] }),
+  actions: { measure: { title: "Measure", keys: ["m"], run: measured } },
+  view: (_, ctx) => memo("kept", [], () => <box key="measure" w={120} h={20} label={`Measure ${ctx.children.length}`} onPress={() => measured(ctx)} />),
+});
+"#;
+
+/// The facts of children are the same in a key action and a kept handler as in a view: there,
+/// and the newest, though no record changed since the handler's run read them.
+#[test]
+fn a_key_action_and_a_kept_handler_read_the_newest_facts_of_a_child() {
+    let files = [
+        ("extensions/measure.tsx", MEASURE),
+        (
+            "state/measure/instance.json",
+            r#"{"tool": "measure", "state": {}}"#,
+        ),
+        (
+            "state/measure/take.json",
+            r#"{"tool": "region", "state": {"asset": "take.wav"}}"#,
+        ),
+    ];
+    let (_scratch, mut window) = page(&files, "measure");
+    let audio = window.state.project().root().join("assets/audio");
+    std::fs::create_dir_all(&audio).unwrap();
+    wav(&audio.join("take.wav"));
+    let arrived = [audio.join("take.wav")];
+    (window.state.session)
+        .background(|project| project.apply_outside_changes(&arrived))
+        .unwrap();
+    for _ in 0..120 {
+        redraw(&mut window);
+        window.state.settle();
+    }
+    act(
+        &mut window.state,
+        json!({ "key": "measure", "action": "press" }),
+    );
+    keys(&mut window, "m");
+    // 4800 samples at 48 kHz, each time.
+    let did = did(&window.state, "measure");
+    let seconds: Vec<f64> = did.split(' ').map(|each| each.parse().unwrap()).collect();
+    assert!(
+        seconds.len() == 2 && seconds.iter().all(|each| (each - 0.1).abs() < 1e-6),
+        "{did}"
+    );
+    assert_eq!(problems(&window.state), Vec::<String>::new());
+}
+
 #[test]
 fn a_key_a_card_has_no_action_for_reaches_the_actions_of_the_page_around_it() {
     let (_scratch, mut window) = rig();

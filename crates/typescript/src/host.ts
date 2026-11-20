@@ -1131,13 +1131,13 @@ function contextOf<Extra extends object>(
   return Object.defineProperties(context, newest(instance, (entry) => filledState(spec, entry), record)) as typeof context & { state: State; children: OwnedChild[]; catalog: unknown[] };
 }
 
-/** How many times the records code reads changed: the runtime told some, or code sent an edit. */
+/** How many times what code reads changed: the runtime told records or facts, or code sent an edit. */
 let recordsChanged = 0;
 
 /**
- * `state` and `children` of `instance` as they are when read, made again only after the records
- * changed: children only when read, so code of a parent of a thousand takes that does not costs
- * nothing for them. `record` while the instance is gone.
+ * `state` and `children` of `instance`, with their facts, as they are when read, made again only
+ * after the records or facts changed: children only when read, so code of a parent of a thousand
+ * takes that does not costs nothing for them. `record` while the instance is gone.
  */
 function newest(instance: string, fill: (entry: Entry) => unknown, record: Entry): PropertyDescriptorMap {
   let state: [number, unknown] | undefined;
@@ -1485,7 +1485,7 @@ function handle(request: Request): string | undefined {
       );
       carded = new Set(request.cards);
       heldFields = request.held;
-      if (factsMoved.length > 0 || all) recordsChanged += 1;
+      if (factsMoved.length > 0) recordsChanged += 1;
       known = sent;
       show(request.instances);
       changed.forEach(drawNext);
