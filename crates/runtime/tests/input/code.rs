@@ -3,7 +3,11 @@
 
 use std::time::Duration;
 
-use crate::support::{open_watched, write};
+use runtime::input::Devices;
+use serde_json::Value;
+use sound_core::Problem;
+
+use crate::support::{Opened, open, open_watched, write};
 
 /// A sine at the level `extensions/<module>.ts` exports.
 fn hum(module: &str) -> String {
@@ -50,4 +54,144 @@ fn a_save_in_a_folder_made_after_the_project_opened_is_heard() {
     opened.until("the code of the new folder", at(0.125));
     write(&root, "extensions/drums/level.ts", &level(0.0625));
     opened.until("a save in the new folder", at(0.0625));
+}
+
+/// An effect `name` that keeps the last note of the MIDI keyboard in its record and plays at
+/// half the level with `half`. When it `hangs`, its tick hangs once the engine runs: its check
+/// at load runs at time 0, so it loads.
+fn noted(name: &str, hangs: bool) -> String {
+    let tick = match hangs {
+        true => "tick: ({ time }) => { while (time > 0) {} },",
+        false => "",
+    };
+    format!(
+        r#"import {{ choice, input, number, tool }} from "./sdk";
+export const {name} = tool({{
+  name: "{name}", title: "{name}", when: "Never", doc: "Keeps the last note.",
+  state: {{ last: number({{ min: 0, max: 127, default: 0 }}), mode: choice({{ options: ["full", "half"], default: "full" }}) }},
+  sound: ({{ mode }}) => (mode === "half" ? input.times(0.5) : input),
+  {tick}
+  onNotes: ({{ update }}, event) => {{
+    if (event.type !== "noteOn") return;
+    update("Keep the note", ({{ state }}) => {{ state.last = event.pitch; }});
+  }},
+}});
+"#
+    )
+}
+
+const NOTHING_PLAYS: &str = r#"{"format": 1, "extensions": [],
+  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+  "connections": []}"#;
+
+/// A project of `tools`, each a file `extensions/<name>.ts` with an instance `<name>` at the
+/// top, where the keyboard plays with nothing selected.
+fn open_tools(tools: &[(&str, &str)]) -> Opened {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path();
+    write(root, "project.json", NOTHING_PLAYS);
+    write(root, "extensions/theme.json", "{}");
+    for (name, code) in tools {
+        write(root, &format!("extensions/{name}.ts"), code);
+        let record = format!(r#"{{"tool": "{name}", "state": {{}}}}"#);
+        write(root, &format!("state/{name}.json"), &record);
+    }
+    open(folder, Devices::default())
+}
+
+/// The problems but the one of a project with no card for devices, which these have not.
+fn problems(opened: &Opened) -> Vec<Problem> {
+    let problems = opened.project.problems();
+    (problems.into_iter())
+        .filter(|problem| !problem.message.contains("generic-card.tsx is missing"))
+        .collect()
+}
+
+#[test]
+fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_back() {
+    let (heard, stuck) = (noted("heard", false), noted("stuck", true));
+    let mut opened = open_tools(&[("heard", &heard), ("stuck", &stuck)]);
+    opened.project.engine().play();
+    opened.render(64);
+    // The window does not wait for a Bun that hangs: a poll is a frame.
+    for _ in 0..10 {
+        let started = std::time::Instant::now();
+        opened.poll();
+        assert!(started.elapsed() < Duration::from_millis(200));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    opened.until("the hang among the problems", |opened| {
+        problems(opened)
+            .iter()
+            .any(|problem| problem.path == "extensions/stuck.ts")
+    });
+    // A new Bun runs the other tools.
+    opened.play_midi(64);
+    opened.until("the note in the other tool", |opened| {
+        opened.record("heard")["last"] == 64
+    });
+
+    write(opened.folder.path(), "extensions/stuck.ts", &noted("stuck", false));
+    opened.tools.code_changed();
+    opened.until("the fix", |opened| problems(opened).is_empty());
+    opened.play_midi(65);
+    opened.until("the note in the fixed tool", |opened| {
+        opened.record("stuck")["last"] == 65
+    });
+}
+
+/// A loop that never ends but keeps saying things, here moving a number input, is a hang of
+/// its tool too.
+#[test]
+fn a_tick_that_never_ends_while_it_plays_is_a_problem() {
+    let flood = r#"import { input, number, tool } from "./sdk";
+export const flood = tool({
+  name: "flood", title: "Flood", when: "Never", doc: "Its loop never ends and moves an input all the time.",
+  state: {}, inputs: { x: number({ min: 0, max: 1, default: 0 }) },
+  sound: ({ x }) => input.times(x),
+  tick: ({ time, send }) => { while (time > 0) send("x", 0); },
+});
+"#;
+    let mut opened = open_tools(&[("flood", flood)]);
+    opened.start_playing();
+    opened.until("the flood among the problems", |opened| {
+        problems(opened)
+            .iter()
+            .any(|problem| problem.path == "extensions/flood.ts")
+    });
+}
+
+/// Code a timer of a tool runs between two requests hangs Bun: the request that waits then is
+/// not to blame, and no tool is. No tool runs until the code is saved again.
+#[test]
+fn a_hang_in_code_a_timer_runs_blames_no_tool() {
+    let timer = r#"import { input, tool } from "./sdk";
+export const timer = tool({
+  name: "timer", title: "Timer", when: "Never", doc: "Its loop starts a timer that never ends.",
+  state: {}, memory: () => ({ armed: false }), sound: () => input,
+  tick: ({ memory, time }) => {
+    if (time > 0 && !memory.armed) {
+      memory.armed = true;
+      setTimeout(() => { while (true) {} }, 0);
+    }
+  },
+});
+"#;
+    let heard = noted("heard", false);
+    let mut opened = open_tools(&[("heard", &heard), ("timer", timer)]);
+    opened.start_playing();
+    opened.until("the hang among the problems", |opened| {
+        !problems(opened).is_empty()
+    });
+    let problems = problems(&opened);
+    let [problem] = problems.as_slice() else {
+        panic!("{problems:?}");
+    };
+    assert_eq!(problem.path, "extensions/");
+    assert!(problem.message.contains("no tool to blame"), "{problem:?}");
+    opened.play_midi(64);
+    for _ in 0..20 {
+        opened.settle();
+    }
+    assert_eq!(opened.record("heard")["last"], Value::Null);
 }
