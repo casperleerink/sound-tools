@@ -157,7 +157,7 @@ test("in the bend lane a double click adds a point on the snap, a drag moves it,
   editor.apply(act(`${ROLL}-points`, "press", { x: 500, y: 0.25, clicks: 2 }));
   expect(find("point-0")).toMatchObject({ value: 4095 });
   editor.apply(act("point-0", "drag", { dx: 250, dy: 0.25 }));
-  expect(find("point-0")).toMatchObject({ value: -1, place: [expect.anything(), expect.anything()] });
+  expect(find("point-0")).toMatchObject({ value: -1, drag: { from: [720, 0.5000305194408838] } });
   editor.apply(act("point-0", "press", { alt: true }));
   expect(find("point-0")).toBeUndefined();
 });

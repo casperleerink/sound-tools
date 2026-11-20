@@ -30,7 +30,7 @@ export const RollPlane = ({ roll }: { roll: Roll }) => {
             <box>{notes.flatMap(({ note, index }) => noteParts(roll, note, index))}</box>
           )),
         )}
-        <box place={[left, upper, marquee.dx.abs(), marquee.dy.abs()]} radius="sm" fill="fill/60" border="border-strong" opacity={marquee.active} inert />
+        <box place={[left, upper, marquee.dx.abs(), marquee.dy.abs()]} radius="sm" fill="focus/15" border="focus" opacity={marquee.active} inert />
         <Playhead roll={roll} />
         <MenuList id="note-menu" label="Note menu" items={noteItems(roll)} open="menu" w={220} />
       </box>

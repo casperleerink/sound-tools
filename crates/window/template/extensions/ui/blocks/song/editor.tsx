@@ -1,7 +1,7 @@
-import { h, memo } from "../../../sdk";
+import { h, live, memo } from "../../../sdk";
 import { titleOf } from "../../../song/model";
 import { controllerName, CONTROLLERS, LANE_NAMES, LANES, type NoteLane } from "../../../song/notes";
-import { nearestOf } from "../../../song/time";
+import { BEAT, nearestOf } from "../../../song/time";
 import type { Page } from "../../../song/view";
 import { GUTTER, HEAD } from "../../../song/view";
 import { Button } from "../../button";
@@ -75,19 +75,31 @@ const Ruler = ({ roll }: { roll: Roll }) => {
   const { at, inside } = playheadOf(roll);
   return (
     <box key={`${key}-ruler`} label="Bars of the clip" grow={1} h={HEADER} clip plane={{ x: key }} onPress={(p) => page.song.clock.jump(state.start + nearestOf(p.x, snap))}>
-      {memo(`ruler-${key}`, [roll.runs, state.start, roll.end], () => (
-        <box>
-          {bars.map(({ tick, bar }) => (
-            <box place={[tick, HEADER - 10, 1, 10]} fill="border-strong">
-              <text at={[5, -14]} style="label" color="text-muted">{bar}</text>
-            </box>
-          ))}
-        </box>
-      ))}
+      {memo(`ruler-${key}`, [roll.runs, state.start, roll.end, roll.across], () => {
+        // A beat says its number once the zoom leaves it room for one.
+        const beats = live.plane(key).zoom.ge(BEAT_ROOM / (BEAT * roll.across));
+        return (
+          <box>
+            {bars.map(({ tick, bar }, index) => [
+              <box place={[tick, HEADER - 10, 1, 10]} fill="border-strong">
+                <text at={[5, -14]} style="label" color="text-muted">{bar}</text>
+              </box>,
+              ...Array.from({ length: Math.max(Math.round(((bars[index + 1]?.tick ?? tick) - tick) / BEAT) - 1, 0) }, (_, beat) => (
+                <box place={[tick + (beat + 1) * BEAT, HEADER - 5, 1, 5]} fill="border" opacity={beats}>
+                  <text at={[4, -19]} style="label" color="text-muted">{`${bar}.${beat + 2}`}</text>
+                </box>
+              )),
+            ])}
+          </box>
+        );
+      })}
       <box place={[at, HEADER / 2]} w={1} h={HEADER} fill="text" opacity={inside} inert />
     </box>
   );
 };
+
+/** The points a beat needs to say its number in the ruler. */
+const BEAT_ROOM = 48;
 
 /** Larger or smaller, the note menu, and close. */
 const Buttons = ({ roll }: { roll: Roll }) => {
