@@ -305,7 +305,7 @@ const RegionWave = () => null;
  * and at least an octave, under its title while it has one. Drawn again only when its notes change.
  */
 const Miniature = ({ itemKey, chosen, notes, x, y, length, titled, colour }: { itemKey: string; chosen: boolean; notes: ItemProps["notes"]; x: Num; y: Num; length: number; titled: boolean; colour: Color }) =>
-  memo(`notes-${itemKey}`, [notes, length, titled, colour, chosen], () => {
+  memo(`notes-${itemKey}`, [notes, length, titled, colour, chosen, JSON.stringify([x, y])], () => {
     const tall = ROW - 2 * INSET;
     const pitches = notes.map((note) => note.pitch);
     const [lowest, highest] = [Math.min(...pitches), Math.max(...pitches)];
