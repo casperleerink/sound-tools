@@ -77,8 +77,12 @@ fn project(folder: &Path) -> PathBuf {
 /// What the element `key` says.
 fn said(window: &rune::Runtime<Start>, key: &str) -> String {
     let elements = window.elements().into_iter();
-    let element = elements.into_iter().find(|element| element.key.as_deref() == Some(key));
-    element.and_then(|element| element.text).unwrap_or_else(|| panic!("no {key}"))
+    let element = elements
+        .into_iter()
+        .find(|element| element.key.as_deref() == Some(key));
+    element
+        .and_then(|element| element.text)
+        .unwrap_or_else(|| panic!("no {key}"))
 }
 
 fn opened(window: &rune::Runtime<Start>) -> Option<&Path> {
@@ -97,7 +101,10 @@ fn enter_opens_the_last_project_and_remembers_it_first() {
     runtime::app::remember_project_in(&support, &song).unwrap();
     let mut window = window(&support);
     window.frame(0.1);
-    assert!(window.find("recent-1").is_some(), "both projects are listed");
+    assert!(
+        window.find("recent-1").is_some(),
+        "both projects are listed"
+    );
     press(&mut window, Key::Enter);
     assert_eq!(opened(&window), Some(song.as_path()));
     press(&mut window, Key::Down);
@@ -123,6 +130,16 @@ fn a_folder_of_other_files_is_refused_in_plain_words() {
         "{shown}"
     );
     assert_eq!(std::fs::read_dir(&papers).unwrap().count(), 1);
+
+    let gone = scratch.path().join("gone");
+    chord(&mut window, 'o');
+    window.resolve_file_dialog(Some(gone.clone())).unwrap();
+    window.frame(0.1);
+    assert_eq!(
+        said(&window, "start-message"),
+        format!("{} is not there anymore.", gone.display())
+    );
+    assert!(!gone.exists());
 }
 
 #[test]
@@ -172,7 +189,10 @@ fn a_new_project_takes_a_free_name_and_opens_where_it_was_made() {
     }
     type_text(&mut window, "Day/off");
     let note = said(&window, "new-project-note");
-    assert_eq!(note, "“Day/off” cannot be the name of a project. Pick another name.");
+    assert_eq!(
+        note,
+        "“Day/off” cannot be the name of a project. Pick another name."
+    );
     for _ in 0..4 {
         press(&mut window, Key::Backspace);
     }

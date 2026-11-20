@@ -92,8 +92,14 @@ pub(crate) struct Pressable {
 }
 
 impl Projects {
-    /// `support` None for a run that keeps nothing, such as a test.
+    /// `support` None for a run that keeps nothing, such as a test. The open project, `here`,
+    /// becomes the first of the recent ones, but in a run without a window.
     pub(crate) fn new(support: Option<PathBuf>, headless: bool, here: Option<PathBuf>) -> Self {
+        if let (Some(support), Some(here), false) = (&support, &here, headless)
+            && let Err(error) = runtime::app::remember_project_in(support, here)
+        {
+            eprintln!("error: {error:#}");
+        }
         let mut projects = Self {
             support,
             headless,
@@ -103,7 +109,9 @@ impl Projects {
             opened: None,
             templates: Vec::new(),
         };
-        projects.templates = projects.choices().unwrap_or_else(|_| app_templates().collect());
+        projects.templates = projects
+            .choices()
+            .unwrap_or_else(|_| app_templates().collect());
         projects
     }
 
@@ -130,7 +138,9 @@ impl Projects {
             Some(support) => templates::saved_in(&support.join(SAVED))?,
             None => Vec::new(),
         };
-        Ok(app_templates().chain(saved.into_iter().map(Choice::Saved)).collect())
+        Ok(app_templates()
+            .chain(saved.into_iter().map(Choice::Saved))
+            .collect())
     }
 
     fn saved_folder(&self) -> Result<PathBuf> {
@@ -149,8 +159,12 @@ impl Projects {
     }
 
     /// Opens `folder` as the project of the window, in place of the one open: refused with
-    /// plain words for a folder that is someone's other files.
+    /// plain words for a folder that is gone or holds someone's other files.
     pub(crate) fn open(&mut self, folder: &Path, tx: &mut Tx) -> Result<()> {
+        // A recent project that went away is no new project.
+        if !folder.is_dir() {
+            anyhow::bail!("{} is not there anymore.", folder.display());
+        }
         runtime::app::check_project_folder(folder)?;
         self.opened = Some(folder.to_path_buf());
         if self.headless {
@@ -185,7 +199,11 @@ impl Projects {
     pub(crate) fn new_project(&mut self) {
         let place = (self.here.as_deref().and_then(Path::parent))
             .map(Path::to_path_buf)
-            .or_else(|| self.recent().first().and_then(|last| Some(last.parent()?.to_path_buf())))
+            .or_else(|| {
+                self.recent()
+                    .first()
+                    .and_then(|last| Some(last.parent()?.to_path_buf()))
+            })
             .or_else(std::env::home_dir)
             .unwrap_or_default();
         let (choices, message) = match self.choices() {

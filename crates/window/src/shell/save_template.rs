@@ -70,9 +70,7 @@ impl SaveTemplate {
         controls.push(pressable("save-cancel", "Cancel", "button", Act::Close));
         match Self::saving(shell) {
             Saving::New => controls.push(pressable("save", "Save", "button", Act::Confirm)),
-            Saving::Replaces => {
-                controls.push(pressable("save", "Replace", "button", Act::Confirm))
-            }
+            Saving::Replaces => controls.push(pressable("save", "Replace", "button", Act::Confirm)),
             Saving::Refused(_) => {}
         }
         controls

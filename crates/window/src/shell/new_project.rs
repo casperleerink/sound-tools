@@ -53,9 +53,17 @@ impl NewProject {
             value: None,
             act,
         };
-        if let Some(saved) = self.removing.and_then(|index| saved_of(&self.choices, index)) {
+        if let Some(saved) = self
+            .removing
+            .and_then(|index| saved_of(&self.choices, index))
+        {
             return vec![
-                pressable("remove-cancel".into(), "Cancel".into(), "button", Act::Close),
+                pressable(
+                    "remove-cancel".into(),
+                    "Cancel".into(),
+                    "button",
+                    Act::Close,
+                ),
                 pressable(
                     "remove-confirm".into(),
                     format!("Remove {}", saved.name),
@@ -95,15 +103,28 @@ impl NewProject {
             "button",
             Act::Place,
         ));
-        controls.push(pressable("new-cancel".into(), "Cancel".into(), "button", Act::Close));
+        controls.push(pressable(
+            "new-cancel".into(),
+            "Cancel".into(),
+            "button",
+            Act::Close,
+        ));
         if refused(name, &self.place).is_none() {
-            controls.push(pressable("create".into(), "Create".into(), "button", Act::Confirm));
+            controls.push(pressable(
+                "create".into(),
+                "Create".into(),
+                "button",
+                Act::Confirm,
+            ));
         }
         controls
     }
 
     pub(super) fn view<S: Host>(&self, shell: &Projects, theme: &Theme) -> Vec<El> {
-        if let Some(saved) = self.removing.and_then(|index| saved_of(&self.choices, index)) {
+        if let Some(saved) = self
+            .removing
+            .and_then(|index| saved_of(&self.choices, index))
+        {
             return Dialog::<S> {
                 key: "remove-template",
                 title: format!("Remove the template “{}”?", saved.name),
@@ -314,8 +335,10 @@ fn refused(name: &str, place: &Path) -> Option<Refused> {
         return Some(Refused::Empty);
     }
     let bad = |character: char| {
-        matches!(character, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
-            || character.is_control()
+        matches!(
+            character,
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+        ) || character.is_control()
     };
     // A leading dot hides the folder; Windows drops dots and spaces at the end.
     if name.starts_with('.') || name.ends_with('.') || name.chars().any(bad) {
@@ -339,9 +362,7 @@ pub(super) fn run<S: Host>(s: &mut S, act: Act, tx: &mut Tx) {
         Act::Close if new.removing.is_some() => new.removing = None,
         Act::Close => shell.dialog = None,
         Act::Pick(index) if index < new.choices.len() => new.picked = index,
-        Act::Remove(index) if saved_of(&new.choices, index).is_some() => {
-            new.removing = Some(index)
-        }
+        Act::Remove(index) if saved_of(&new.choices, index).is_some() => new.removing = Some(index),
         Act::Place => {
             let options = rune::FileDialogOptions {
                 title: "Where the project goes".into(),
@@ -358,7 +379,9 @@ pub(super) fn run<S: Host>(s: &mut S, act: Act, tx: &mut Tx) {
                 match picked {
                     Ok(Some(folder)) => new.place = folder,
                     Ok(None) => {}
-                    Err(error) => new.message = Some(format!("The folder panel did not open: {error}")),
+                    Err(error) => {
+                        new.message = Some(format!("The folder panel did not open: {error}"))
+                    }
                 }
             });
         }
