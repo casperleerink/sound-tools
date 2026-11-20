@@ -1619,7 +1619,9 @@ fn fed_as_before(live: &mut serde_json::Value) {
     *live = match (name, path, pitch) {
         ("peak", Some(path), _) => serde_json::json!({ "op": "peak", "name": path }),
         ("peak", None, _) => serde_json::json!({ "op": "device_peak" }),
-        (_, child, Some(pitch)) => serde_json::json!({ "op": "sounding", "pitch": pitch, "child": child }),
+        (_, child, Some(pitch)) => {
+            serde_json::json!({ "op": "sounding", "pitch": pitch, "child": child })
+        }
         _ => return,
     };
 }
