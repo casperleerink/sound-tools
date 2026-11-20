@@ -415,7 +415,7 @@ pub(crate) fn key_down(state: &mut State, key: &KeyEvent, repeat: bool, tx: &mut
     }
     // A dialog keeps every key until it closes, but Quit, which works in any window as the
     // GPUI app's did: its own buttons and fields take theirs.
-    if !state.waiting.asked.is_empty() || state.shell.dialog.is_some() {
+    if !super::chrome::dialogs(state).is_empty() {
         if app_action(state, key).as_deref() == Some("quit") {
             tx.quit();
         }

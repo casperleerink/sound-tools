@@ -291,3 +291,40 @@ fn a_held_key_does_the_apps_action_once_but_undo_goes_on() {
     redraw(&mut window);
     assert_eq!(undo_label(&window.state), None);
 }
+
+/// Behind every dialog the window's keys do nothing: Space does not play, Cmd-Z does not undo,
+/// Cmd-K does not turn on the computer keys.
+#[test]
+fn a_dialog_keeps_the_keys() {
+    let scratch = new_project();
+    std::fs::write(scratch.path().join("song/state/song/quiet.json"), "{").unwrap();
+    let mut window = laid_out(opened(&scratch.path().join("song")));
+    redraw(&mut window);
+    act(
+        &mut window.state,
+        json!({ "label": "Mute Track 2", "action": "toggle" }),
+    );
+    let opens: [fn(&mut State); 3] = [
+        |state| act(state, json!({ "action": "app.export" })),
+        |state| state.problems_open = true,
+        |state| state.project_menu.installed = Some(("Installed".into(), "Done.".into())),
+    ];
+    for open in opens {
+        open(&mut window.state);
+        redraw(&mut window);
+        chord(&mut window, Key::Command('z'), false);
+        chord(&mut window, Key::Command('k'), false);
+        redraw(&mut window);
+        assert!(!crate::app::chrome::dialogs(&window.state).is_empty());
+        assert!(undo_label(&window.state).is_some());
+        assert!(!window.state.incoming.live.computer_keys());
+        // Space presses the dialog's button that has the keys, if any.
+        key(&mut window, Key::Text(" ".into()));
+        frames(&mut window, 0.1);
+        assert!(!window.state.playing);
+        key(&mut window, Key::Escape);
+        window.state.problems_open = false;
+        window.state.project_menu.installed = None;
+        redraw(&mut window);
+    }
+}
