@@ -163,7 +163,21 @@ fn a_closed_panel_shows_the_agent_working_on_its_icon() {
         ..Agent::default()
     };
     let mut window = framed(&scratch, Some(busy), None);
-    assert!(window.find("left-panel-busy").is_some());
+    let opacity = |window: &rune::Runtime<State>| {
+        let elements = window.elements().into_iter();
+        let mut found =
+            elements.filter(|element| element.key.as_deref() == Some("left-panel-busy"));
+        found.next().unwrap().opacity
+    };
+    let mut seen = Vec::new();
+    for _ in 0..12 {
+        window.frame(0.1);
+        seen.push(opacity(&window));
+    }
+    assert!(
+        seen.iter().any(|opacity| *opacity < 0.9),
+        "it breathes: {seen:?}"
+    );
     chord(&mut window, 'b');
     assert!(window.find("left-panel-busy").is_none());
     assert!(window.find("left-panel-agent-busy").is_some());

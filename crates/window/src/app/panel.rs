@@ -222,7 +222,7 @@ impl State {
     }
 }
 
-/// The icon that opens and closes the panel. While the agent works, a lavender dot says so.
+/// The icon that opens and closes the panel. While the agent works, a lavender dot breathes.
 pub(super) fn icon_button(state: &State) -> El {
     let kit = &state.theme.kit;
     let button = IconButton::new(&PANEL_LEFT)
@@ -240,6 +240,7 @@ pub(super) fn icon_button(state: &State) -> El {
     let busy = (state.panel.busy() && !state.panel.open).then(|| {
         dot(state.theme.color("focus"))
             .key("left-panel-busy")
+            .cycle(crate::sidebar::pulse())
             .absolute(20.0, 4.0)
     });
     el().child(button).children(busy)

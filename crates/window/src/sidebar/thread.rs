@@ -344,7 +344,7 @@ fn working_line(theme: &Theme, index: usize, working: sound_agent::Working) -> E
 }
 
 /// A gentle breath, for what waits.
-fn pulse() -> Cycle {
+pub(crate) fn pulse() -> Cycle {
     Cycle {
         period: 1.6,
         phase: 0.0,
