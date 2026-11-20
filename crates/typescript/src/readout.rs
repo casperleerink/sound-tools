@@ -12,20 +12,24 @@ pub(crate) fn pan(pan: f32) -> String {
     }
 }
 
-/// A number with three significant digits and no zeros at its end: `2`, `15.5`, `632`, and a
-/// minus sign, not a hyphen, before a negative one: `−4.5`, as wide as the plus. So a value at
-/// rest is short and a moving one does not jump between widths.
+/// A number with three significant digits, two decimals at most, and no zeros at its end: `2`,
+/// `15.5`, `632`, `0.05`, and a minus sign, not a hyphen, before a negative one: `−4.5`, as wide
+/// as the plus. So a value at rest is short, one a hair from 0 reads 0, and a moving one does
+/// not jump between widths.
 pub(crate) fn short(value: f32) -> String {
     if value == 0. {
         return "0".into();
     }
-    let decimals = (2 - value.abs().log10().floor() as i32).max(0) as usize;
+    let decimals = (2 - value.abs().log10().floor() as i32).clamp(0, 2) as usize;
     let text = format!("{value:.decimals$}");
     let text = match text.contains('.') {
         true => text.trim_end_matches('0').trim_end_matches('.'),
         false => &text,
     };
-    text.replace('-', "\u{2212}")
+    match text {
+        "-0" => "0".into(),
+        text => text.replace('-', "\u{2212}"),
+    }
 }
 
 /// A frequency: `632 Hz`, `1.2 kHz`.
@@ -81,6 +85,8 @@ mod tests {
         assert_eq!(decibels(0.), "0 dB");
         assert_eq!(decibels(-4.5), "−4.5 dB");
         assert_eq!(decibels(12.26), "12.3 dB");
+        assert_eq!(decibels(3.58e-7), "0 dB");
+        assert_eq!(decibels(-3.58e-7), "0 dB");
         assert_eq!(percent(0.), "0%");
         assert_eq!(percent(0.123_456), "12.3%");
         assert_eq!(percent(1.5), "150%");
