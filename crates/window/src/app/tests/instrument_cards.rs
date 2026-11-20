@@ -99,3 +99,26 @@ fn a_drag_up_the_wavetable_plays_its_position_before_release_as_one_step() {
     act(&mut window.state, json!({ "action": "undo" }));
     assert_eq!(played(&window.state)["osc_1"]["position"], json!(0.5));
 }
+
+/// The loudest the feed `name` of the track's instrument read in the last frame.
+fn level(state: &State, name: &str) -> f64 {
+    let read = state.feeds.read_now();
+    (read.get(&format!("song/t00/synth {name}")).and_then(Value::as_f64)).unwrap_or(0.0)
+}
+
+#[test]
+fn a_press_on_a_drum_pad_plays_that_pad() {
+    let (_scratch, mut window) = with_instrument(json!({ "tool": "drum-pad", "state": {} }));
+    let (x, y) = centre(&window, "pad-38");
+    window.pointer_down(x, y);
+    window.pointer_up(x, y);
+    let mut loudest = [0.0f64; 2];
+    for _ in 0..20 {
+        wait(&mut window, 1.0 / 60.0);
+        for (pad, kept) in loudest.iter_mut().enumerate() {
+            *kept = kept.max(level(&window.state, &format!("levels.{}", pad + 1)));
+        }
+    }
+    assert!(loudest[1] > 0.1, "pad 2 played {}", loudest[1]);
+    assert_eq!(loudest[0], 0.0, "pad 1 played too");
+}

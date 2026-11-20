@@ -1346,13 +1346,25 @@ impl Tools {
         child: Option<&str>,
         performed: Performed,
     ) -> Result<(), String> {
-        (self.performed_on).insert((instance.clone(), child.map(str::to_string)));
         let error = |error: sound_core::ProjectError| error.to_string();
         let Some(child) = child else {
-            let info = (self.info_of(project, instance)).ok_or("has no voices to play")?;
-            let update = SignalsUpdate::Note(performed);
-            return (project.send::<Signals>(instance, info.processor(), update)).map_err(error);
+            if let Some(info) = self.info_of(project, instance) {
+                self.performed_on.insert((instance.clone(), None));
+                let update = SignalsUpdate::Note(performed);
+                return (project.send::<Signals>(instance, info.processor(), update))
+                    .map_err(error);
+            }
+            // A built-in device, played by its card: through the feed of the nearest tool of
+            // the project that owns it, as that tool would play its child.
+            let owner = (instance.ancestors())
+                .find(|owner| self.info_of(project, owner).is_some())
+                .ok_or("has no voices to play")?;
+            let path = (instance.as_str().strip_prefix(&format!("{owner}/")))
+                .ok_or("has no voices to play")?
+                .to_string();
+            return self.play_note(project, &owner, Some(&path), performed);
         };
+        (self.performed_on).insert((instance.clone(), Some(child.to_string())));
         let played = self.played_on(project, instance, Some(child))?;
         if project.input_port(&played, NOTES_INPUT).is_none() {
             return Err("has no `notes` input".to_string());
