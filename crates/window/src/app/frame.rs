@@ -112,6 +112,7 @@ pub(crate) fn setup(state: &mut State, waker: rune::Waker) {
 /// The start of every frame: Bun, the project, the engine and what moves.
 pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
     let (changed, next) = frame(state, seconds);
+    crate::sidebar::open_pages(state, tx);
     if let Some(next) = next {
         tx.wake_after(next);
     }
@@ -146,6 +147,7 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
         state.notice = Some(error.to_string());
     }
     let events = state.project.drain_events();
+    changed |= crate::sidebar::pump(state, &events);
     // The list of the files that are not live goes with the last of them.
     if state.problems_open && state.files_not_live() == 0 {
         state.problems_open = false;

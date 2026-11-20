@@ -15,7 +15,7 @@ use super::{REPORT, Sound, State};
 impl State {
     /// Input was handled. A run without a window answers it at once, so the frame it came in
     /// draws it and the report says it: Rune runs input after `poll`, and the last frame has none after.
-    pub(super) fn handled(&mut self) {
+    pub(crate) fn handled(&mut self) {
         if self.headless() {
             self.settle();
             *REPORT.lock().unwrap_or_else(PoisonError::into_inner) = Some(self.report());

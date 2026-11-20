@@ -31,6 +31,7 @@ use headless::copied;
 pub(crate) use chrome::{Act, MIN_SIZE, WINDOW_BUTTONS, controls as chrome_controls, view};
 pub(crate) use frame::{poll, setup};
 pub(crate) use keys::on_key;
+pub(crate) use panel::{PanelTab, Tab};
 
 /// The template of a new project: the DAW with views of `sdk/view.ts`.
 pub(crate) const TEMPLATE: runtime::Template = runtime::Template {
@@ -185,6 +186,7 @@ impl State {
         let schemas = (runtime::tool_schemas()?.into_iter())
             .map(|schema| (schema.tool, schema.schema))
             .collect();
+        let agent = crate::sidebar::open(&project, headless, &waker);
         Ok(Self {
             name,
             project,
@@ -211,7 +213,7 @@ impl State {
             waker,
             first: headless.then(|| (act.unwrap_or_default(), play)),
             panel: panel::LeftPanel::new(
-                Some(panel::LeftPanel::waiting_agent()),
+                agent,
                 (!headless)
                     .then(runtime::app::support_folder)
                     .and_then(Result::ok)

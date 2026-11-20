@@ -15,6 +15,7 @@ mod app;
 mod controls;
 mod fields;
 mod lives;
+mod sidebar;
 mod theme;
 mod tree;
 
@@ -161,6 +162,7 @@ fn window(arguments: &[String]) -> Result<()> {
         on_key: Some(app::on_key),
         fonts: &FONTS,
         families: ("Inter Display", "ui-monospace"),
+        scenes: sidebar::SCENES,
         ..rune::AppSpec::new(
             title,
             (1470.0, 920.0),
@@ -176,6 +178,7 @@ fn window(arguments: &[String]) -> Result<()> {
         })
         // Every control is a stop of Tab, whatever the system's keyboard setting.
         .tab_visits_controls(true)
+        .on_quit(sidebar::before_quit)
         .args(rune_arguments)
         .init(move || state)
         .run();

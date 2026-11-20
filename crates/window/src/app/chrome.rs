@@ -69,7 +69,8 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
         .children(notice);
     let overlays = tree::overlays(state)
         .into_iter()
-        .chain(problems::list(state));
+        .chain(problems::list(state))
+        .chain(crate::sidebar::overlays(state));
     rune_kit::root(base, overlays)
 }
 
@@ -136,6 +137,7 @@ pub(crate) enum Act {
     Tab(Tab),
     Problems,
     AskToFix,
+    Sidebar(crate::sidebar::Act),
 }
 
 impl Act {
@@ -150,6 +152,7 @@ impl Act {
                 state.problems_open = false;
                 state.ask_to_fix(None::<&mut Tx>);
             }
+            Act::Sidebar(act) => act.run(state, None),
         }
     }
 }
@@ -203,5 +206,6 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
             Act::AskToFix,
         ));
     }
+    controls.extend(crate::sidebar::controls(state));
     controls
 }
