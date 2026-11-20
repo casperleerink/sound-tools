@@ -1335,13 +1335,17 @@ export const cut = tool({
         ("state/cut.json", r#"{"tool": "cut", "state": {}}"#),
     ];
     let (_scratch, mut window) = page(&files, "cut");
-    let tip = |window: &rune::Runtime<State>| window.help_tooltip().map(|(text, _)| text.to_string());
+    let tip =
+        |window: &rune::Runtime<State>| window.help_tooltip().map(|(text, _)| text.to_string());
     let (x, y) = window.find("long").unwrap();
     window.pointer_move(x, y);
     for _ in 0..60 {
         redraw(&mut window);
     }
-    assert_eq!(tip(&window).as_deref(), Some("A name far too long for forty points"));
+    assert_eq!(
+        tip(&window).as_deref(),
+        Some("A name far too long for forty points")
+    );
     let (x, y) = window.find("short").unwrap();
     window.pointer_move(x, y);
     for _ in 0..60 {
