@@ -39,7 +39,7 @@ export const card: Card<"limiter"> = (self, ctx) => {
         <Knob {...field.number("gain_db", "Gain")} />,
         <Knob {...ceiling} />,
         <Knob {...field.number("release_ms", "Release")} />,
-        <Cell text="Lookahead"><Select {...lookahead} options={lookahead.options.map((option) => ({ ...option, text: `${option.value} ms` }))} w={56} menuW={96} /></Cell>,
+        <Cell text="Lookahead"><Select {...lookahead} options={lookahead.options.map((option) => ({ ...option, text: `${option.value} ms` }))} w={62} menuW={96} /></Cell>,
       ]} />
   );
 };
