@@ -50,13 +50,26 @@ tool({
 });
 "#;
 
-/// The owner of the doc for agents that write tools, as it is written there.
-fn doc_owner() -> String {
-    let mut blocks =
-        (sound_typescript::AGENT_DOCS.iter()).flat_map(|doc| doc.markdown.split("```ts\n"));
-    let block = blocks.find(|block| block.contains("behaviour:")).unwrap();
-    block.split("```").next().unwrap().to_string()
-}
+/// Plays the child `lead` through the children `effects` names, in order.
+const CHAIN: &str = r#"import { list, text, tool, type Connection, type Declaration } from "./sdk";
+
+tool({
+  name: "band",
+  title: "Band",
+  when: "You want a sound through a chain of effects that a record names",
+  doc: "Plays the child `lead` through the children `effects` names, in order.",
+  state: { lead: text({ default: "drone" }), effects: list(text(), { max: 4 }) },
+  behaviour: ({ state: { lead, effects } }): Declaration => {
+    const chain = [lead, ...effects];
+    const connections: Connection[] = chain.slice(1).map((effect, index) => ({
+      from: { child: chain[index] },
+      to: { child: effect },
+    }));
+    connections.push({ from: { child: chain[chain.length - 1] }, to: { port: "audio" } });
+    return { connections };
+  },
+});
+"#;
 
 /// A project of `band` at the top, connected to the device, with three drones and a delay.
 fn band(record: &str) -> Harness {
@@ -114,7 +127,7 @@ fn record(state: &str) -> String {
 
 #[test]
 fn an_owner_plays_its_source_child_through_its_effect_child_into_its_own_sound() {
-    let mut harness = band_of(&doc_owner(), &record(r#"{"effects": ["echo"]}"#));
+    let mut harness = band_of(CHAIN, &record(r#"{"effects": ["echo"]}"#));
     assert_eq!(harness.project.problems(), []);
     let played = harness.play(48_000);
     let peak = played
@@ -309,7 +322,7 @@ fn an_owner_in_the_chain_of_a_rack_plays_its_children_into_it() {
     );
     let harness = Harness::new();
     harness.write("extensions/drone.ts", DRONE);
-    harness.write("extensions/band.ts", &doc_owner());
+    harness.write("extensions/band.ts", CHAIN);
     harness.write("extensions/rack.tsx", crate::rack::RACK);
     harness.write(
         "state/pad/instance.json",

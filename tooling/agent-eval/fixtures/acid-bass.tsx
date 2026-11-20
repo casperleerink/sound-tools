@@ -1,4 +1,4 @@
-import { adsr, beat, clamp, floor, h, Knob, number, lowpass, pattern, phasor, playing, pow, saturate, smooth, Steps, tool, output, wrap } from "./sdk";
+import { adsr, beat, clamp, floor, number, lowpass, pattern, phasor, playing, pow, saturate, smooth, tool, output, wrap } from "./sdk";
 
 tool({
   name: "acid-bass",
@@ -46,17 +46,4 @@ tool({
     const filtered = lowpass(lowpass(saw, hz), hz, q);
     return saturate(filtered.times(amp).times(level).times(0.9)).times(0.13);
   },
-  view: () => (
-    <div style={{ gap: 8 }}>
-      <div style={{ direction: "row", gap: 8, align: "center" }}>
-        <Knob field="cutoff" label="Cutoff" min={60} max={4000} default={400} unit="hz" />
-        <Knob field="resonance" label="Resonance" min={0} max={1} default={0.6} />
-        <Knob field="note" label="Note" min={24} max={60} default={36} />
-      </div>
-      <div style={{ color: "#9ca3af" }}>Steps</div>
-      <Steps field="steps" playing="step" />
-      <div style={{ color: "#9ca3af" }}>Accents</div>
-      <Steps field="accents" playing="step" />
-    </div>
-  ),
 });

@@ -43,11 +43,10 @@ use crate::timeline::{self, Timeline, TimelineUpdate};
 use crate::tools::{Choice, Field, NOTES_TAP, SOUNDING_TAP, ToolInfo, feed_child, feed_processor};
 use crate::{Extensions, FOLDER, Launched, NoteMessage, path};
 
-/// The file of a project's design tokens, in `extensions/`. A project that has one is a project
-/// of the new window: it gets `sdk/view.ts` and its agent docs.
+/// The file of a project's design tokens, in `extensions/`.
 pub const THEME: &str = "theme.json";
 
-/// The file of a project of the new window that draws the card of a device whose tool has no
+/// The file of a project that draws the card of a device whose tool has no
 /// view, from the fields of its record. Bun loads it with the tools.
 pub const GENERIC_CARD: &str = "ui/blocks/generic-card.tsx";
 
@@ -72,11 +71,6 @@ pub(crate) fn card_files(extensions: &Path) -> Vec<String> {
 /// Whether the file `file` of `extensions/` is a card: the generic one or one of a tool.
 fn is_card(file: &str) -> bool {
     file == GENERIC_CARD || file.starts_with(&format!("{CARDS}/"))
-}
-
-/// Whether the project in `folder` is one of the new window, see [`THEME`].
-pub fn has_views(folder: &Path) -> bool {
-    folder.join(FOLDER).join(THEME).is_file()
 }
 
 /// What a device shows whose card has a mistake.

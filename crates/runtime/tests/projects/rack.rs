@@ -1,18 +1,18 @@
 //! A host for the built-in devices, written with the SDK as any tool of a project: a `rack` plays
 //! its timelines and what reaches its notes on its child `instrument`, and on each plugin of its
-//! chain, then through the children its `order` names, and shows the card of each. Each of its `automation` moves a number of a
-//! child with a `lane` child, as a track of the DAW template does. The tests of a device's card
-//! and sound put the device in one.
+//! chain, then through the children its `order` names. Each of its `automation` moves a number
+//! of a child with a `lane` child, as a track of the DAW template does. The tests of a device's
+//! sound put the device in one.
 
 use serde_json::json;
 
-pub(crate) const RACK: &str = r#"import { DeviceCard, For, h, list, text, tool, type Connection, type Declaration } from "./sdk";
+pub(crate) const RACK: &str = r#"import { list, text, tool, type Connection, type Declaration } from "./sdk";
 
 tool({
   name: "rack",
   title: "Rack",
   when: "Never: the tests' host of built-in devices",
-  doc: "Plays its timelines and what reaches its notes on `instrument`, then through the children `order` names, and shows the card of each. Each of `automation` moves the number `target` of a child, such as `filter.cutoff_hz`, with the lane child `lane`.",
+  doc: "Plays its timelines and what reaches its notes on `instrument`, then through the children `order` names. Each of `automation` moves the number `target` of a child, such as `filter.cutoff_hz`, with the lane child `lane`.",
   state: { order: list(text()), automation: list({ lane: text(), target: text() }) },
   behaviour: ({ state, children }): Declaration => {
     const has = (name: string) => children.some((child) => child.name === name);
@@ -32,20 +32,6 @@ tool({
       connections.push({ from: { child: lane, number: "value" }, to: { child: target.slice(0, dot), number: target.slice(dot + 1) } });
     }
     return { connections };
-  },
-  view: ({ state, children }) => {
-    const shown = () => [...(children.some((child) => child.name === "instrument") ? ["instrument"] : []), ...state.order];
-    return (
-      <div style={{ gap: 8, padding: 8, align: "start" }}>
-        <For each={shown}>
-          {(name) => (
-            <div key={`card-${name}`}>
-              <DeviceCard path={name} />
-            </div>
-          )}
-        </For>
-      </div>
-    );
   },
 });
 "#;

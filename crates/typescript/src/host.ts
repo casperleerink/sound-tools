@@ -3,9 +3,9 @@
 // message per line: the runtime tells on stdin, this says on stdout. What a tool logs goes to
 // stderr, so it cannot break a message.
 
-import { existsSync, realpathSync, writeSync } from "node:fs";
+import { realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, NoteEvent, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
+import type { Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, NoteEvent, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
@@ -15,8 +15,8 @@ const stackPaths = files.map((file) => [file, `${realpathSync(join(folder, file)
 // So the stack `tool` keeps reaches its file through any number of helpers.
 Error.stackTraceLimit = Infinity;
 const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
-/** What the host uses of `sdk/view.ts`, which only a project of the new window has: there a tool's `view` is one of it. */
-type Next = {
+/** What the host uses of `sdk/view.ts`: a tool's `view` is one of it. */
+type Views = {
   host: {
     run(instance: string, draw: unknown, self: unknown, ctx: unknown): unknown;
     perform(instance: string, key: string, action: string, value?: unknown): void;
@@ -26,7 +26,7 @@ type Next = {
 };
 /** What the window knows of an instance that no record holds, see `Facts` in `sdk/view.ts`. */
 type Facts = { title: string; fields: { name: string; default?: unknown }[] };
-const next: Next | undefined = existsSync(join(folder, "sdk/view.ts")) ? await import(join(folder, "sdk/view.ts")) : undefined;
+const views: Views = await import(join(folder, "sdk/view.ts"));
 
 for (const name of ["log", "info", "debug", "warn"] as const) {
   console[name] = (...values: unknown[]) => console.error(...values);
@@ -37,9 +37,6 @@ process.on("unhandledRejection", (error) => console.error(error));
 type Spec = ToolSpec<Fields, Inputs, unknown>;
 type State = ValuesOf<Fields>;
 type Choices = Record<string, string | number>;
-type Size = { width: number; height: number };
-/** The room of a view in the check without a window: the default window's. */
-const CHECKED_ROOM: Size = { width: 1422, height: 824 };
 /** An instance whose code runs. */
 type Played = { instance: string };
 /** A record as the runtime tells it: its `state` as the file holds it. */
@@ -66,7 +63,7 @@ type Request =
   /** The answer to a question of `ask`. */
   | { type: "answer"; question: number; answer: unknown }
   /**
-   * The instances whose views the new window shows: each sends its tree now, and again when its
+   * The instances whose views the window shows: each sends its tree now, and again when its
    * records change. `cards` names those a card draws; `facts` are those of each and of what
    * it holds at any depth, `catalog` what `addOffer` puts, `keys` each action's key by `tool.action`.
    */
@@ -473,12 +470,7 @@ function declare({ question, tool, instance }: Extract<Request, { type: "behavio
   say({ type: "declared", question, declaration, reads });
 }
 
-/** What draws the view of a tool. */
-function drawerOf(spec: Spec) {
-  return (spec.view ?? sdk.defaultView(spec.state, spec.inputs)) as (view: unknown) => Child;
-}
-
-/** The memory of an instance, made when it is first needed: a store its cards follow. */
+/** The memory of an instance, made when it is first needed. */
 function memoryOf(instance: string, spec: Spec): unknown {
   // A record that becomes another tool's starts its memory again.
   const key = `${instance} ${spec.name}`;
@@ -489,7 +481,7 @@ function memoryOf(instance: string, spec: Spec): unknown {
 }
 
 function freshMemory(spec: Spec): unknown {
-  return sdk.host.store((spec.memory ? spec.memory() : {}) as object, true);
+  return spec.memory ? spec.memory() : {};
 }
 
 /** The `time` of the last frame. */
@@ -678,7 +670,7 @@ function hear({ records, gone, edits: heard }: Extract<Request, { type: "records
 }
 
 // ---------------------------------------------------------------------------------------------
-// Views of the new window (`sdk/view.ts`): a plain function of the records, run again on every
+// Views (`sdk/view.ts`): a plain function of the records, run again on every
 // change of them. The window gets the whole tree; what a `memo` kept it has already.
 
 const shown = new Set<string>();
@@ -699,13 +691,13 @@ function draw(instance: string) {
   const record = recordOf(instance);
   const spec = sdk.host.tools.get(record?.tool ?? "");
   // The runtime says which instances a card draws: it and Bun read one list.
-  if (next && record && carded.has(instance)) {
+  if (record && carded.has(instance)) {
     // Without a generic card that loaded, the runtime says why in its problems.
     if (genericCard) drawCard(instance, record);
     else say({ type: "tree", instance, none: true });
     return;
   }
-  if (!next || !record || !spec?.view) {
+  if (!record || !spec?.view) {
     say({ type: "tree", instance, none: true });
     return;
   }
@@ -714,7 +706,7 @@ function draw(instance: string) {
   try {
     // Its handlers get what `tick` gets.
     const context = contextOf(instance, spec, record, { time: now, transport }, {});
-    say({ type: "tree", instance, tree: next.host.run(instance, spec.view, self, context) });
+    say({ type: "tree", instance, tree: views.host.run(instance, spec.view, self, context) });
   } catch (error) {
     say({ type: "tree", instance, error: String(error) });
   }
@@ -785,7 +777,7 @@ function drawCard(instance: string, record: Entry) {
   Object.defineProperties(context, { ...newest(instance, fill, record), children: { enumerable: true, value: [] } });
   runs(cardFile(instance)!, "card");
   try {
-    say({ type: "tree", instance, tree: next!.host.run(instance, toolCards.get(record.tool) ?? genericCard, self, context) });
+    say({ type: "tree", instance, tree: views.host.run(instance, toolCards.get(record.tool) ?? genericCard, self, context) });
   } catch (error) {
     say({ type: "tree", instance, error: String(error) });
   }
@@ -796,7 +788,7 @@ function show(instances: string[]) {
   for (const instance of shown) {
     if (!asked.has(instance)) {
       shown.delete(instance);
-      next?.host.forget(instance);
+      views.host.forget(instance);
     }
   }
   for (const instance of asked) {
@@ -816,7 +808,7 @@ function act({ instance, key, action, value }: Extract<Request, { type: "act" }>
   let error: string | undefined;
   acting = instance;
   try {
-    next?.host.perform(instance, key, action, value);
+    views.host.perform(instance, key, action, value);
   } catch (thrown) {
     error = thrown instanceof Error ? thrown.message : String(thrown);
   } finally {
@@ -1116,7 +1108,7 @@ function updater(instance: string, defaults?: Record<string, unknown>) {
     });
     change(part);
     const [before, after] = children as [OwnedChild[]?, unknown?];
-    next?.host.refuseHeld(heldFields[instance] ?? [], { state, children: before }, { state: part.state, children: after as object });
+    views.host.refuseHeld(heldFields[instance] ?? [], { state, children: before }, { state: part.state, children: after as object });
     const changes = changesOf(instance, [state, part.state], children);
     if (changes.length === 0) {
       return;
@@ -1181,7 +1173,6 @@ function doers(instance: string, spec: Spec) {
     openWindow: (path: string) => say({ type: "open_window", instance, path }),
     show: shower(instance),
     shortcut: shortcutOf(spec.name),
-    now: sdk.now as Context<State>["now"],
     ...askers(instance),
     ...performer(instance),
   };
@@ -1238,9 +1229,9 @@ function offerAdder(instance: string) {
 /** Where the piece plays as last told: what moves on every frame, which no binding follows. */
 let transport: Transport = { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120, repeat: null, click: false, keys: false, automation: false };
 /** What of the clock bindings follow, one for every tool. */
-const following = sdk.host.adopted({ playing: false, repeat: null as { from: number; to: number } | null, click: false, keys: false, automation: false });
+const following = ({ playing: false, repeat: null as { from: number; to: number } | null, click: false, keys: false, automation: false });
 let flushing = false;
-const song = sdk.host.adopted<Song>({ tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] }, sections: [] });
+const song: Song = { tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] }, sections: [] };
 
 /** A tick as the window takes it: a whole number from 0. */
 function wholeTick(tick: number, what: string): number {
@@ -1250,27 +1241,20 @@ function wholeTick(tick: number, what: string): number {
 
 /** The clock as the code of `instance` gets it: what bindings follow, and what moves it. */
 function clockFor(instance: string): SdkClock {
-  const followed = sdk.host.store(following, false);
-  const songOf = sdk.host.store(song, false);
-  const moving = (name: "tick" | "bar" | "beat" | "bpm") => {
-    if (sdk.host.binding()) {
-      throw new Error(`clock.${name} moves on every frame, so no binding follows it: show it with now.tick or now.bpm, or read it in a handler`);
-    }
-    return transport[name];
-  };
+  const moving = (name: "tick" | "bar" | "beat" | "bpm") => transport[name];
   const op = (message: object) => say({ type: "transport", ...message });
   const follows = <T>(into: Set<string>, value: T) => {
     if (drawing === instance) into.add(instance);
     return value;
   };
   return {
-    get playing() { return follows(followsClock.playing, followed.playing); },
-    get repeat() { return follows(followsClock.repeat, followed.repeat); },
-    get click() { return follows(followsClock.click, followed.click); },
-    get computerKeys() { return follows(followsClock.keys, followed.keys); },
-    get writeAutomation() { return follows(followsClock.automation, followed.automation); },
-    get tempo_map() { return follows(followsSong, songOf.tempo_map); },
-    get sections() { return follows(followsSong, songOf.sections); },
+    get playing() { return follows(followsClock.playing, following.playing); },
+    get repeat() { return follows(followsClock.repeat, following.repeat); },
+    get click() { return follows(followsClock.click, following.click); },
+    get computerKeys() { return follows(followsClock.keys, following.keys); },
+    get writeAutomation() { return follows(followsClock.automation, following.automation); },
+    get tempo_map() { return follows(followsSong, song.tempo_map); },
+    get sections() { return follows(followsSong, song.sections); },
     get tick() { return moving("tick"); },
     get bar() { return moving("bar"); },
     get beat() { return moving("beat"); },
@@ -1290,7 +1274,7 @@ function clockFor(instance: string): SdkClock {
       const line = JSON.stringify({ type: "song_edit", instance, label, ...draft, ...(acting === instance ? { gesture: true } : {}) }) + "\n";
       writeSync(1, line);
       // What its views show follows at once, before the runtime answers.
-      sdk.host.batch(() => sdk.host.reconcile(song as never, draft as never));
+      Object.assign(song, draft);
       later();
     },
   };
@@ -1304,7 +1288,7 @@ function setClock({ time, transport: next }: Clock) {
   const moved = (Object.keys(followed) as (keyof typeof followed)[]).filter((name) => JSON.stringify(followed[name]) !== JSON.stringify(following[name]));
   if (moved.length === 0) return;
   const views = new Set(moved.flatMap((name) => [...followsClock[name]]));
-  sdk.host.batch(() => sdk.host.reconcile(following as never, followed as never));
+  Object.assign(following, followed);
   [...views].filter((id) => shown.has(id)).forEach(drawNext);
 }
 
@@ -1367,29 +1351,16 @@ function checkView(spec: Spec): unknown {
   const state = frozen(filledObject(spec.state, {}));
   // What the check plays on the clock goes nowhere.
   const clock = { ...clockFor(""), play() {}, pause() {}, stop() {}, jump() {}, setRepeat() {}, setClick() {}, setComputerKeys() {}, update() {} };
-  const context = { state, children: [], memory, time: 0, clock, now: sdk.now, ...performs };
+  const context = { state, children: [], memory, time: 0, clock, ...performs };
   try {
     spec.tick?.({ ...context, dt: 1 / 30 } as never);
   } catch (error) {
     throw new Error(`its tick fails: ${error}`);
   }
-  if (next) {
-    const checked = `check ${spec.name}`;
-    if (spec.view) next.host.run(checked, spec.view, { name: spec.name, state, children: [], facts: { title: spec.title, fields: [] } }, context);
-    next.host.forget(checked);
-    return [];
-  }
-  // The DAW template of the old window still checks its views here: its context had these too.
-  const openMenu = async () => null;
-  const old = { openMenu, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [], outputs: {} };
-  const drawn = { ...context, ...old, state: sdk.host.store(structuredClone(state), false), size: sdk.host.store({ ...CHECKED_ROOM }, false) };
-  const root = sdk.host.mount(-1, () => drawerOf(spec)(drawn), { state: drawn.state as never, children: [], fields: spec.state, tool: spec.name, update() {}, openMenu, clock });
-  const taken = sdk.host.takeOps(root);
-  root.dispose();
-  if ("error" in taken) {
-    throw new Error(taken.error);
-  }
-  return taken.ops;
+  const checked = `check ${spec.name}`;
+  if (spec.view) views.host.run(checked, spec.view, { name: spec.name, state, children: [], facts: { title: spec.title, fields: [] } }, context);
+  views.host.forget(checked);
+  return null;
 }
 
 /**
@@ -1415,8 +1386,6 @@ function run<Extra extends object>(
     const failed = (error: unknown) => fail(spec.name, `its ${what} failed: ${error}`);
     try {
       runs(spec.name, what);
-      // The SDK of the old window still names its calls `openMenu`, `offers`, `numbers` and
-      // `outputs` until the DAW template moves to the new one; nothing answers them now.
       const context = contextOf(instance, spec, record, clock, extra) as unknown as Context<State, Inputs, unknown> & Extra;
       caught(call(spec, context), failed);
     } catch (error) {
@@ -1442,7 +1411,7 @@ function handle(request: Request): string | undefined {
       setClock(request);
       break;
     case "song":
-      sdk.host.reconcile(song as never, { tempo_map: request.tempo_map, sections: request.sections } as never);
+      Object.assign(song, { tempo_map: request.tempo_map, sections: request.sections });
       [...followsSong].filter((id) => shown.has(id)).forEach(drawNext);
       break;
     case "frame":
@@ -1529,7 +1498,6 @@ function handle(request: Request): string | undefined {
   return undefined;
 }
 
-sdk.host.changed = later;
 
 await load();
 
@@ -1539,7 +1507,7 @@ for await (const line of console) {
     continue;
   }
   try {
-    const answered = sdk.host.batch(() => handle(JSON.parse(line) as Request));
+    const answered = handle(JSON.parse(line) as Request);
     if (answered !== undefined) {
       // Its code goes on in the microtasks before this; whatever it awaits next waits on.
       await new Promise((resolve) => setTimeout(resolve, 0));

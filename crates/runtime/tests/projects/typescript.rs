@@ -1,6 +1,5 @@
-//! Tools a project writes in TypeScript in its `extensions/` folder, run by Bun: the first
-//! example of their agent doc loads as it is written and plays, and a bank of combs whose shape
-//! is a choice plays with every choice. Bun is not part of the build, so where it is not
+//! Tools a project writes in TypeScript in its `extensions/` folder, run by Bun: a tremolo and a
+//! freeze play, and a bank of combs whose shape is a choice plays with every choice. Bun is not part of the build, so where it is not
 //! installed, these tests say so and pass.
 
 use std::path::Path;
@@ -8,24 +7,47 @@ use std::path::Path;
 use crate::rack::racks_files;
 use crate::support::{BAR, Harness, clip, synth, write};
 
-/// The first TypeScript example of the doc for agents that write tools: a whole tool.
-fn doc_example() -> String {
-    example_of("extensions", "")
-}
+/// A tremolo: the volume dips `depth` of the way to silence `rate` times a second.
+const WOBBLE: &str = r#"import { input, number, phasor, sin, TAU, tool } from "./sdk";
 
-/// The first TypeScript example of the agent doc `doc` that holds `holding`.
-fn example_of(doc: &str, holding: &str) -> String {
-    let doc = (sound_typescript::AGENT_DOCS.iter())
-        .find(|each| each.name == doc)
-        .unwrap()
-        .markdown;
-    let blocks = doc.split("```ts\n").skip(1);
-    let mut examples = blocks.map(|block| block.split("```").next().unwrap());
-    examples
-        .find(|example| example.contains(holding))
-        .unwrap()
-        .to_string()
-}
+tool({
+  name: "wobble",
+  title: "Wobble",
+  when: "You want the volume of a sound to pulse",
+  doc: "A tremolo: the volume moves up and down `rate` times a second. `depth` is how far it dips, 0 not at all, 1 to silence.",
+  state: {
+    rate: number({ min: 0.1, max: 20, default: 4, unit: "hz" }),
+    depth: number({ min: 0, max: 1, default: 0.5 }),
+  },
+  sound: ({ rate, depth }) => {
+    const wave = sin(phasor(rate).times(TAU)).times(0.5).plus(0.5);
+    return input.times(depth.times(wave).negate().plus(1));
+  },
+});
+"#;
+
+/// While `frozen` is on, the sound of that moment rings on, by its spectrum.
+const FREEZE: &str = r#"import { boolean, feedback, hold, input, mix, spectral, tool } from "./sdk";
+
+tool({
+  name: "freeze",
+  title: "Freeze",
+  when: "You want to hold a sound and let it ring on",
+  doc: "While `frozen` is on, the sound of that moment rings on; off, the sound passes.",
+  state: { frozen: boolean({ default: false }) },
+  sound: ({ frozen }) =>
+    spectral(input, 2048, (bin) => {
+      const live = frozen.lt(0.5);
+      const last = feedback();
+      last.set(bin.phase);
+      const step = hold(bin.phase.minus(last), live);
+      const turned = feedback();
+      const phase = mix(turned.plus(step), bin.phase, live);
+      turned.set(phase);
+      return { mag: hold(bin.mag, live), phase };
+    }),
+});
+"#;
 
 /// Combs whose number is a choice: `sound` builds a different graph for each.
 const COMBS: &str = r#"import { choice, delay, feedback, input, number, lowpass, mix, tool, type Signal } from "./sdk";
@@ -54,9 +76,8 @@ tool({
 });
 "#;
 
-/// A project whose `extensions/` holds the first example of the doc, `wobble`, the freeze of the
-/// doc of sounds, `COMBS` and `LEVEL`, with a rack `pad` that plays a held chord through
-/// `effects`.
+/// A project whose `extensions/` holds [`WOBBLE`], [`FREEZE`], [`COMBS`] and `LEVEL`, with a
+/// rack `pad` that plays a held chord through `effects`.
 fn pad_through(effects: &[(&str, &str)]) -> Harness {
     pad_through_with(effects, &[])
 }
@@ -69,9 +90,8 @@ fn pad_through_with(effects: &[(&str, &str)], lanes: &[(&str, &str, &str)]) -> H
         "these tests run tools in Bun: see tooling/fetch-bun.sh"
     );
     let folder = tempfile::tempdir().unwrap();
-    write(folder.path(), "extensions/wobble.ts", &doc_example());
-    let freeze = example_of("extensions-sound", "spectral(");
-    write(folder.path(), "extensions/freeze.ts", &freeze);
+    write(folder.path(), "extensions/wobble.ts", WOBBLE);
+    write(folder.path(), "extensions/freeze.ts", FREEZE);
     write(folder.path(), "extensions/combs.ts", COMBS);
     write(folder.path(), "extensions/level.ts", LEVEL);
     let (synth, chord) = (
@@ -117,7 +137,7 @@ fn loudness_at(samples: &[f32], seconds: f32) -> f32 {
 }
 
 #[test]
-fn the_tremolo_of_the_doc_dips_to_silence_at_its_rate() {
+fn the_tremolo_dips_to_silence_at_its_rate() {
     let mut harness = pad_through(&[("wobble", r#"{"rate": 2, "depth": 1}"#)]);
     let output = harness.play_from_the_start(BAR);
     // At 2 Hz and full depth the wave is at its top, and the sound at silence, a quarter of
@@ -152,7 +172,7 @@ fn combs_play_with_every_choice_and_ring_on_after_the_sound() {
 }
 
 #[test]
-fn the_freeze_of_the_doc_passes_the_sound_and_once_frozen_rings_on_after_it() {
+fn the_freeze_passes_the_sound_and_once_frozen_rings_on_after_it() {
     let mut harness = pad_through(&[("freeze", r#"{"frozen": false}"#)]);
     // The chord plays for 8 s.
     let passed = harness.play_from_the_start(BAR);
@@ -169,7 +189,7 @@ fn a_knob_the_record_leaves_out_is_automated_from_its_default() {
     let harness = pad_through(&[("wobble", r#"{"rate": 2}"#)]);
     let wobble = sound_core::InstanceId::new("pad/wobble").unwrap();
     let depth = harness.project.automation(&wobble, "depth").unwrap();
-    // A lane added for it starts where it plays: at the default of the doc's `depth`.
+    // A lane added for it starts where it plays: at the default of `depth`.
     assert_eq!(depth.record, Some(0.5));
 }
 
