@@ -4,10 +4,10 @@ import { BEAT, placeOf } from "../../../song/time";
 import { keysOf } from "../../kbd";
 import { MenuList, type Item } from "../../menu";
 import { EmptyState } from "../empty-state";
-import { barsOf, BEFORE, END, MOVE, PITCH, playheadOf, SHORTEST, signatureOf, START, ticksOf, zoomOf, type Roll } from "./roll-view";
+import { barsOf, BEFORE, END, MOVE, PITCH, playheadOf, SHORTEST, signatureOf, START, zoomOf, type Roll } from "./roll-view";
 
-/** The fewest points between two lines of the grid: closer, they do not show. */
-const ROOM = 6;
+/** The fewest points between two lines of the grid: closer, they do not show. How many ticks wide the ends of a note are that resize it. */
+const [ROOM, HANDLE] = [6, 90];
 const BLACK = [1, 3, 6, 8, 10];
 
 /**
@@ -27,7 +27,7 @@ export const RollPlane = ({ roll }: { roll: Roll }) => {
         <Grid roll={roll} />
         {barsOf(state.notes).map(([bar, notes]) =>
           memo(`notes-${key}-${bar}`, [signatureOf(roll, notes), top, roll.across, roll.colour, roll.page.song.memory.snap, roll.runs], () => (
-            <box>{notes.flatMap(({ note, index }) => noteParts(roll, note, index))}</box>
+            <box>{notes.map(({ note, index }) => noteParts(roll, note, index))}</box>
           )),
         )}
         <box place={[left, upper, marquee.dx.abs(), marquee.dy.abs()]} radius="sm" fill="focus/15" border="focus" opacity={marquee.active} inert />
@@ -70,9 +70,9 @@ const Grid = ({ roll }: { roll: Roll }) => {
 };
 
 /**
- * A note: a point short of its length and its row, its shade its velocity, bright while chosen.
- * The chosen notes share their drags, so they move and resize as one; a drag of one not chosen
- * chooses it alone.
+ * A note: a point short of its row, its shade its velocity, bright while chosen. The chosen notes
+ * share their drags, so they move and resize as one; a drag of one not chosen chooses it alone.
+ * A chosen note's ends resize it: only a chosen one has them, as a zoom walks every element.
  */
 function noteParts(roll: Roll, note: Frozen<Note>, index: number) {
   const chosen = roll.chosen.has(noteKey(note));
@@ -80,35 +80,28 @@ function noteParts(roll: Roll, note: Frozen<Note>, index: number) {
   const snap = page.song.memory.snap;
   const key = `note-${index}`;
   const row = 127 - note.pitch - top;
-  const shared = (id: string, own: string) => (chosen ? id : own);
-  const [move, front, back] = [live.drag(shared(MOVE, key)), live.drag(shared(START, `${key}-start`)), live.drag(shared(END, `${key}-end`))];
-  const x = move.dx.plus(front.dx).plus(note.start);
-  const y = move.dy.plus(row);
-  const w = back.dx.minus(front.dx).plus(note.length).max(SHORTEST);
-  const handle = Math.min(90, note.length / 4);
-  const own = () => !chosen && edits.choose(note);
+  const [move, front, back] = [live.drag(chosen ? MOVE : key), live.drag(START), live.drag(END)];
   const press = (p: Pointer) => (p.clicks === 2 ? edits.remove(note) : edits.press(note, p));
   const name = `${pitchName(note.pitch)} at ${placeOf(page.song.clock.tempo_map.time_signatures, roll.state.start + note.start).join(".")}`;
-  const marquee = live.drag(roll.key);
-  const across = [marquee.x, marquee.x.plus(marquee.dx)];
-  const down = [marquee.y, marquee.y.plus(marquee.dy)];
-  const boxed = marquee.active
-    .times(across[0]!.min(across[1]!).lt(note.start + note.length))
-    .times(across[0]!.max(across[1]!).gt(note.start))
-    .times(down[0]!.min(down[1]!).lt(row + 1))
-    .times(down[0]!.max(down[1]!).gt(row));
   const shade = Math.round(35 + (65 * note.velocity) / 127);
-  return [
-    <box key={key} label={`Note ${name}`} role="button" checked={chosen} value={note.velocity} place={[x, y, w.minus(ticksOf(roll, 1)), (PITCH - 1) / PITCH]} radius="sm"
-      fill={chosen ? "text" : (`${colour}/${shade}` as Color)} border={colour} drag={{ x: true, y: true, snap: [snap, 1], from: [note.start, row], id: shared(MOVE, key) }}
-      onPress={press} onDragEnd={(p) => (own(), edits.move(p))}>
-      <box inset={[0, 0, 0, 0]} radius="sm" fill="text/50" opacity={boxed} inert />
-    </box>,
-    <box key={`${key}-start`} label={`Start of note ${name}`} place={[x, y, handle, 1]} drag={{ x: true, snap: [snap, 1], from: [note.start, row], id: shared(START, `${key}-start`) }}
-      onPress={press} onDragEnd={(p) => (own(), edits.resizeStart(p))} />,
-    <box key={`${key}-end`} label={`End of note ${name}`} place={[x.plus(w).minus(handle), y, handle, 1]} drag={{ x: true, snap: [snap, 1], from: [note.start + note.length, row], id: shared(END, `${key}-end`) }}
-      onPress={press} onDragEnd={(p) => (own(), edits.resize(p))} />,
-  ];
+  const [x, y] = [move.dx.plus(chosen ? front.dx.plus(note.start) : note.start), move.dy.plus(row)];
+  const length = chosen ? back.dx.minus(front.dx).plus(note.length).max(SHORTEST) : note.length;
+  // An end is a third of the note at most, so a short note still moves; in ticks, so a scroll moves none of it.
+  const handle = Math.min(HANDLE, note.length / 3);
+  const end = (side: "start" | "end") => (
+    <box key={`${key}-${side}`} label={`${side === "start" ? "Start" : "End"} of note ${name}`} place={[side === "start" ? x : x.plus(length).minus(handle), y, handle, 1]}
+      drag={{ x: true, snap: [snap, 1], from: [side === "start" ? note.start : note.start + note.length, row], id: side === "start" ? START : END }}
+      onPress={press} onDragEnd={(p) => (side === "start" ? edits.resizeStart(p) : edits.resize(p))} />
+  );
+  return (
+    <box key={key} label={`Note ${name}`} role="button" checked={chosen} value={note.velocity}
+      place={[x, y, length, (PITCH - 1) / PITCH]} radius="sm"
+      fill={chosen ? "text" : (`${colour}/${shade}` as Color)} border={colour} drag={{ x: true, y: true, snap: [snap, 1], from: [note.start, row], id: chosen ? MOVE : key }}
+      onPress={press} onDragEnd={(p) => (!chosen && edits.choose(note), edits.move(p))}>
+      {chosen && end("start")}
+      {chosen && end("end")}
+    </box>
+  );
 }
 
 /** Where the piece plays, while it plays inside the clip. */

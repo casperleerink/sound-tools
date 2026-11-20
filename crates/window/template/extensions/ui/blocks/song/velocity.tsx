@@ -1,9 +1,14 @@
-import { h, Live, live, memo, type Color } from "../../../sdk";
+import { h, live, memo, type Color } from "../../../sdk";
 import { noteKey, pitchName } from "../../../song/notes";
-import { barsOf, LANE, MOVE, playheadOf, signatureOf, START, ticksOf, VELOCITY, type Roll } from "./roll-view";
+import { barsOf, LANE, MOVE, playheadOf, signatureOf, START, VELOCITY, type Roll } from "./roll-view";
 
 /** How many dots draw the line a drag across the lane draws. */
 const DOTS = 24;
+/** Down the lane, from above the loudest to under the softest, and its points per velocity. */
+const RANGE: [number, number] = [-10, 128];
+const PER = (LANE - 1) / (RANGE[1] - RANGE[0]);
+/** How tall a bar is, in points: past the lane's foot from any velocity. */
+const TALL = 2 * LANE;
 
 /**
  * The velocity of each note as a bar from the bottom, the chosen ones bright and on top: a drag
@@ -15,7 +20,7 @@ export const VelocityLane = ({ roll }: { roll: Roll }) => {
   const line = live.drag(key);
   const { at, inside } = playheadOf(roll);
   return (
-    <box key={key} label="Velocity lane" grow={1} h={LANE - 1} clip plane={{ x: roll.key, y: [-10, 128] }} drag={{ x: true, y: true }} onDragEnd={(p) => roll.edits.drawVelocities(p)}>
+    <box key={key} label="Velocity lane" grow={1} h={LANE - 1} clip plane={{ x: roll.key, y: RANGE }} drag={{ x: true, y: true }} onDragEnd={(p) => roll.edits.drawVelocities(p)}>
       {barsOf(roll.state.notes).map(([bar, notes]) =>
         memo(`velocities-${roll.key}-${bar}`, [signatureOf(roll, notes), roll.across, roll.colour], () => {
           const chosen = (note: (typeof notes)[number]) => roll.chosen.has(noteKey(note.note));
@@ -30,17 +35,20 @@ export const VelocityLane = ({ roll }: { roll: Roll }) => {
   );
 };
 
+/**
+ * A bar from the top of its velocity down past the lane's foot, which cuts it: only its top
+ * follows a drag. A mark of the plane, so its width is in points at any zoom. One not chosen
+ * follows no drag, as a zoom walks every element: it lands where it is let go.
+ */
 const Bar = ({ roll, note, index }: { roll: Roll; note: Roll["state"]["notes"][number]; index: number }) => {
   const chosen = roll.chosen.has(noteKey(note));
   const key = `velocity-${index}`;
-  const [move, front, loud] = chosen ? [live.drag(MOVE), live.drag(START), live.drag(VELOCITY)] : [null, null, live.drag(key)];
-  const x = move && front ? move.dx.plus(front.dx).plus(note.start).max(0) : Live.of(note.start);
-  const top = loud.dy.plus(127 - note.velocity).clamp(0, 126);
+  const top = 127 - note.velocity + TALL / 2 / PER;
   const colour = chosen ? "text" : roll.colour;
   return (
-    <box key={key} label={`Velocity of note ${pitchName(note.pitch)} ${index + 1}`} role="button" value={note.velocity} place={[x, top, ticksOf(roll, 3), Live.of(127).minus(top)]} fill={`${colour}/${chosen ? 100 : 70}` as Color}
-      drag={{ y: true, id: chosen ? VELOCITY : key }} onPress={(p) => roll.edits.press(note, p)} onDragEnd={(p) => (!chosen && roll.edits.choose(note), roll.edits.velocity(p))}>
-      <box at={[-2, -3]} w={7} h={7} radius="full" fill={colour} />
+    <box key={key} label={`Velocity of note ${pitchName(note.pitch)} ${index + 1}`} role="button" value={note.velocity}
+      place={chosen ? [live.drag(MOVE).dx.plus(live.drag(START).dx).plus(note.start).max(0), live.drag(VELOCITY).dy.clamp(note.velocity - 127, note.velocity - 1).plus(top)] : [note.start, top]} w={4} h={TALL}
+      radius="sm" fill={`${colour}/${chosen ? 100 : 70}` as Color} drag={{ y: true, id: chosen ? VELOCITY : key }} onPress={(p) => roll.edits.press(note, p)} onDragEnd={(p) => (!chosen && roll.edits.choose(note), roll.edits.velocity(p))}>
     </box>
   );
 };

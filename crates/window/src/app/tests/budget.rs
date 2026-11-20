@@ -120,7 +120,20 @@ fn view_runs(window: &rune::Runtime<State>) -> u64 {
 /// Scrolls, plays, zooms and drags the plane `plane` of `tool`; what each frame took.
 fn budgets(tool: &str, code: &str, plane: &str, dragged: &str) -> [Duration; 3] {
     let (_scratch, mut window) = shown(tool, code);
-    let runs = view_runs(&window);
+    let (times, rebuilt) = measure(&mut window, tool, plane, dragged);
+    assert!(!rebuilt, "a scroll built the plane again");
+    times
+}
+
+/// Scrolls, plays, zooms and drags the plane `plane` of the window, named `name`; what each
+/// frame took, and whether a scroll built a plane again. Bun runs no view meanwhile.
+pub(super) fn measure(
+    window: &mut rune::Runtime<State>,
+    name: &str,
+    plane: &str,
+    dragged: &str,
+) -> ([Duration; 3], bool) {
+    let runs = view_runs(window);
     let [x, y, w, h] = window.presented(plane).unwrap().0;
     let at = [x + w / 2.0, y + h / 2.0];
     let builds = window.state.planes.builds.get();
@@ -134,11 +147,7 @@ fn budgets(tool: &str, code: &str, plane: &str, dragged: &str) -> [Duration; 3] 
             window.frame(1.0 / 60.0);
         })
     });
-    assert_eq!(
-        window.state.planes.builds.get(),
-        builds,
-        "a scroll built the plane again"
-    );
+    let rebuilt = window.state.planes.builds.get() != builds;
     // The window's part of a frame of a playing piece: its live values and Rune's frame, not
     // the engine, which a window plays on a thread of its own.
     (window.state.session).background(|project| project.engine().play());
@@ -171,15 +180,15 @@ fn budgets(tool: &str, code: &str, plane: &str, dragged: &str) -> [Duration; 3] 
         window.frame(1.0 / 60.0);
     }
     assert!(window.state.lives.hand(dragged).active);
-    assert_eq!(view_runs(&window), runs, "Bun ran a view");
-    eprintln!("{tool}: scroll {scroll:?}, play {play:?}, zoom {zoom:?} a frame");
-    [scroll, play, zoom]
+    assert_eq!(view_runs(window), runs, "Bun ran a view");
+    eprintln!("{name}: scroll {scroll:?}, play {play:?}, zoom {zoom:?} a frame");
+    ([scroll, play, zoom], rebuilt)
 }
 
 /// The budgets of the window's work in a frame, as the app is built. A test build of the window
 /// is not optimized, which makes this work about three times slower.
-const SCROLL_AND_PLAY: Duration = Duration::from_millis(4 * UNOPTIMIZED);
-const ZOOM: Duration = Duration::from_millis(8 * UNOPTIMIZED);
+pub(super) const SCROLL_AND_PLAY: Duration = Duration::from_millis(4 * UNOPTIMIZED);
+pub(super) const ZOOM: Duration = Duration::from_millis(8 * UNOPTIMIZED);
 const UNOPTIMIZED: u64 = if cfg!(debug_assertions) { 3 } else { 1 };
 
 #[test]

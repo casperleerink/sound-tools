@@ -10,7 +10,7 @@ import { BLACK_KEY, KEYS, type Roll } from "./roll-view";
  */
 export const PianoKeys = ({ roll }: { roll: Roll }) => {
   const { key, top, track } = roll;
-  return memo(`keys-${key}`, [top, track.name], () => {
+  const keys = memo(`keys-${key}`, [top, track.name], () => {
     const sounding = (pitch: number) => <box inset={[0, 0, 0, 0]} radius="sm" fill="sound/60" opacity={live.feed(`sounding.${pitch}`, track.name)} inert />;
     const piano = (pitch: number, place: [number, number, number, number], fill: "fill-strong" | "well") => (
       <box key={`piano-${pitch}`} label={`Play ${pitchName(pitch)}`} role="button" place={place} radius="sm" fill={fill} hover="text-muted" onPress={() => roll.hear(pitch)}>
@@ -18,7 +18,7 @@ export const PianoKeys = ({ roll }: { roll: Roll }) => {
       </box>
     );
     return (
-      <box key={`${key}-keys`} label="Piano keys" w={HEAD} h="full" clip plane={{ y: key }} border="border" borderSides={[0, 1, 0, 0]}>
+      <box>
         {WHITE.map(({ pitch, low, high }) => piano(pitch, [HEAD - 1 - KEYS, 128 - high - top + 0.04, KEYS, high - low - 0.08], "fill-strong"))}
         {PITCHES.filter(isBlack).map((pitch) => piano(pitch, [HEAD - 1 - KEYS, 127 - pitch - top + 0.08, BLACK_KEY, 0.84], "well"))}
         {PITCHES.filter((pitch) => pitch % 12 === 0).map((pitch) => (
@@ -29,6 +29,11 @@ export const PianoKeys = ({ roll }: { roll: Roll }) => {
       </box>
     );
   });
+  return (
+    <box key={`${key}-keys`} label="Piano keys" w={HEAD} h="full" plane={{ y: key }} border="border" borderSides={[0, 1, 0, 0]}>
+      {keys}
+    </box>
+  );
 };
 
 const PITCHES = Array.from({ length: 128 }, (_, pitch) => pitch);

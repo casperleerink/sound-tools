@@ -5,7 +5,10 @@ use crate::app::keys::on_key;
 
 /// A new project with the editor of its first clip open, `t00/bass`.
 fn editor() -> (tempfile::TempDir, rune::Runtime<State>) {
-    let scratch = new_project();
+    opened_on(new_project())
+}
+
+fn opened_on(scratch: tempfile::TempDir) -> (tempfile::TempDir, rune::Runtime<State>) {
     let mut window = laid_out(opened(&scratch.path().join("song")));
     window.on_key = Some(on_key);
     act(
@@ -130,3 +133,53 @@ fn the_arrows_move_a_chosen_note_and_with_shift_resize_it() {
     assert_eq!(after["pitch"], before["pitch"].as_i64().unwrap() + 1);
     assert_eq!(after["length"], before["length"].as_i64().unwrap() + 240);
 }
+
+/// The editor of a clip of 2,000 notes, once they show.
+fn many_notes() -> (tempfile::TempDir, rune::Runtime<State>) {
+    let scratch = new_project();
+    let clip = scratch.path().join("song/state/song/t00/bass.json");
+    let mut record: Value = serde_json::from_str(&std::fs::read_to_string(&clip).unwrap()).unwrap();
+    let notes: Vec<Value> = (0..2000)
+        .map(|at| json!({ "start": at * 240, "length": 240, "pitch": 36 + (at * 7) % 48, "velocity": 40 + (at * 13) % 87 }))
+        .collect();
+    record["state"]["notes"] = json!(notes);
+    record["state"]["length"] = Value::Null;
+    std::fs::write(&clip, record.to_string()).unwrap();
+    let (scratch, mut window) = opened_on(scratch);
+    for _ in 0..600 {
+        if window.find("note-1999").is_some() {
+            break;
+        }
+        redraw(&mut window);
+    }
+    assert!(
+        window.find("note-1999").is_some(),
+        "{}",
+        window.state.report()["problems"]
+    );
+    (scratch, window)
+}
+
+#[test]
+fn two_thousand_notes_of_the_editor_scroll_play_zoom_and_drag_within_their_budgets_and_run_no_view()
+{
+    let (_scratch, mut window) = many_notes();
+    // Some bars across, as a composer edits them.
+    act(
+        &mut window.state,
+        json!({ "key": "roll-t00-bass", "action": "view", "value": { "zoom": 20, "left": 7680, "top": 10 } }),
+    );
+    settle(&mut window);
+    let ([scroll, play, zoom], _) =
+        super::budget::measure(&mut window, "editor", "roll-t00-bass", "note-42");
+    assert!(
+        scroll < super::budget::SCROLL_AND_PLAY,
+        "a scroll frame took {scroll:?}"
+    );
+    assert!(
+        play < super::budget::SCROLL_AND_PLAY,
+        "a play frame took {play:?}"
+    );
+    assert!(zoom < super::budget::ZOOM, "a zoom frame took {zoom:?}");
+}
+

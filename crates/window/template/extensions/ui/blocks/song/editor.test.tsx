@@ -103,8 +103,10 @@ test("a drag of a note not chosen moves it alone, and with alt copies it", () =>
   expect(find("note-0")).toMatchObject({ checked: false });
 });
 
-test("a drag of the end of a note resizes it on the snap, and of its start keeps its end", () => {
+test("a chosen note's ends resize it on the snap, the start keeping its end; one not chosen has none", () => {
   const editor = shown([note(0)]);
+  expect(find("note-0-end")).toBeUndefined();
+  editor.apply(press("note-0"));
   editor.apply(act("note-0-end", "drag", { dx: 130 }));
   expect(editor.notes()[0]!.length).toBe(BEAT + 240);
   editor.apply(act("note-0-start", "drag", { dx: 470 }));

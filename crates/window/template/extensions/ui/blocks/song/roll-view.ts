@@ -2,7 +2,7 @@
 // share, and where the roll of a clip opens. Across, the roll is in ticks of the clip; down, in
 // rows from the row it opened on, `top`: a pitch is on row `127 - pitch - top`, and the edits
 // take `127 - pitch`.
-import { Live, live, type Frozen, type Note } from "../../../sdk";
+import { live, type Frozen, type Note } from "../../../sdk";
 import { lengthOf } from "../../../song/clips";
 import { colourOf, itemAt, rowOfKey } from "../../../song/model";
 import { noteKey } from "../../../song/notes";
@@ -65,8 +65,6 @@ export function rollOf(page: Page, clip: string) {
 }
 export type Roll = NonNullable<ReturnType<typeof rollOf>>;
 
-/** `points` of the roll's zoom now, in ticks. */
-export const ticksOf = (roll: Roll, points: number) => Live.of(points).over(live.plane(roll.key).zoom.times(roll.across));
 /** How far the roll zooms, about where it opened. */
 export const zoomOf = (roll: Roll): [number, number] => [FARTHEST / roll.across, CLOSEST / roll.across];
 
