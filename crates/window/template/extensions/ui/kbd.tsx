@@ -9,8 +9,11 @@ export const Kbd = ({ keys }: { keys: string }) => (
 
 const SIGNS: Record<string, string> = {
   cmd: "⌘", shift: "⇧", alt: "⌥", ctrl: "⌃", enter: "⏎", backspace: "⌫", delete: "⌦", escape: "Esc", space: "Space", tab: "⇥",
-  up: "↑", down: "↓", left: "←", right: "→",
+  up: "↑", down: "↓", left: "←", right: "→", pageup: "PgUp", pagedown: "PgDn", home: "Home", end: "End",
 };
 /** A key as an action names it, `"cmd-shift-z"`, as the composer reads it, `⌘⇧Z`; none for none. */
 export const keysOf = (key: string | null): string | undefined =>
   key === null ? undefined : key.split("-").map((part) => SIGNS[part] ?? part.toUpperCase()).join("");
+/** A key as the window names it, `alt-shift-right`, as the composer reads it: `⌥⇧→`. */
+export const keyText = (key: string) =>
+  key.split(/-(?!$)/).map((part) => SIGNS[part] ?? part.toUpperCase()).join("");

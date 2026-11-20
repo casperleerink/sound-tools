@@ -2124,6 +2124,7 @@ mod input;
 mod menu_settings;
 mod plays;
 mod projects;
+mod ruler;
 mod sidebar;
 mod song;
 mod transport;

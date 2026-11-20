@@ -47,8 +47,11 @@ export type Memory = {
   lanes: string[];
   tempoLane: boolean;
   returnsOpen: boolean;
-  /** The range the ruler shows to repeat while the clock does not repeat: none until the composer made one. */
+  /** Where the ruler's menu opened last, in ticks, and the mark it opened on. */
+  rulerMenu: { x: number; mark: Mark | null };
+  /** The range the ruler shows to repeat, none until the composer made one, and whether it repeats. */
   repeatRange: { from: number; to: number } | null;
+  repeating: boolean;
   /** The grid of drags, nudges and new clips in ticks: 0 is off. */
   snap: number;
   /** How tall the note editor is, in points, and whether it takes all the window but one track. */
@@ -72,7 +75,7 @@ export const EDITOR = 352;
 
 export const memory = (): Memory => ({
   selected: [], below: null, track: null, armed: [], recording: null, clipboard: null, renaming: null, renamingClip: null, renamingSection: null, menu: null,
-  mark: null, point: null, effect: null, lanes: [], tempoLane: false, returnsOpen: false, repeatRange: null, snap: SNAP, editor: EDITOR, editorLarge: false, opened: false,
+  mark: null, point: null, effect: null, lanes: [], tempoLane: false, returnsOpen: false, rulerMenu: { x: 0, mark: null }, repeatRange: null, repeating: false, snap: SNAP, editor: EDITOR, editorLarge: false, opened: false,
   notes: [], lane: "velocity", length: BEAT / 2, copied: null, strength: 1, swing: 0, humanized: 0,
 });
 

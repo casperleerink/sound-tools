@@ -31,6 +31,7 @@ export const actions: Record<string, Action<Song>> = {
   add_section: on(["shift-s"], "Add a section at the playhead", (song) => editsOf(song).marks.addSection(song.clock.tick)),
   next_mark: on(["alt-shift-right"], "Go to the next section, tempo or time signature change", (song) => editsOf(song).marks.step(1)),
   previous_mark: on(["alt-shift-left"], "Go to the section, tempo or time signature change before", (song) => editsOf(song).marks.step(-1)),
+  repeat: on(["l"], "Repeat the chosen clips, or turn the repeat on and off", (song) => editsOf(song).marks.repeatChosen()),
   back: on(["escape"], "Let go of what is chosen, or close what is open", back),
 
   select_all_notes: notes(["cmd-a"], "Choose all notes", "all"),
