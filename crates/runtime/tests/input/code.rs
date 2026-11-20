@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use runtime::input::Devices;
 use serde_json::Value;
-use sound_core::Problem;
+use sound_core::{Changes, Problem};
 
 use crate::support::{Opened, open, open_watched, write};
 
@@ -23,17 +23,13 @@ fn level(value: f32) -> String {
     format!("export const LEVEL = {value};\n")
 }
 
-const ONLY_HUM: &str = r#"{"format": 1, "extensions": [],
-  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
-  "connections": [{"from": {"instance": "hum", "port": "audio"}, "to": {"device_output": 0}}]}"#;
-
 /// The one test of the system's watcher on `extensions/`: the others tell the host of their
 /// saves. An agent makes a folder for new code after the project opened, and saves in it again.
 #[test]
 fn a_save_in_a_folder_made_after_the_project_opened_is_heard() {
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path().to_path_buf();
-    write(&root, "project.json", ONLY_HUM);
+    write(&root, "project.json", &project(Some("hum"), false));
     write(&root, "extensions/theme.json", "{}");
     write(&root, "extensions/lib/level.ts", &level(0.5));
     write(&root, "extensions/hum.ts", &hum("lib/level"));
@@ -80,16 +76,26 @@ export const {name} = tool({{
     )
 }
 
-const NOTHING_PLAYS: &str = r#"{"format": 1, "extensions": [],
-  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
-  "connections": []}"#;
+/// A project whose instance `heard`, if any, plays to the output, with the built-in
+/// `instrument` when `instrument`.
+fn project(heard: Option<&str>, instrument: bool) -> String {
+    let connections = heard.map_or(String::new(), |heard| {
+        format!(r#"{{"from": {{"instance": "{heard}", "port": "audio"}}, "to": {{"device_output": 0}}}}"#)
+    });
+    let extensions = if instrument { r#""instrument""# } else { "" };
+    format!(
+        r#"{{"format": 1, "extensions": [{extensions}],
+  "tempo_map": {{"time_signature": "4/4", "tempo_changes": [{{"tick": 0, "bpm": 120.0}}]}},
+  "connections": [{connections}]}}"#
+    )
+}
 
 /// A project of `tools`, each a file `extensions/<name>.ts` with an instance `<name>` at the
-/// top, where the keyboard plays with nothing selected.
-fn open_tools(tools: &[(&str, &str)]) -> Opened {
+/// top, where the keyboard plays with nothing selected; `heard` plays to the output.
+fn open_tools(heard: Option<&str>, tools: &[(&str, &str)]) -> Opened {
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
-    write(root, "project.json", NOTHING_PLAYS);
+    write(root, "project.json", &project(heard, false));
     write(root, "extensions/theme.json", "{}");
     for (name, code) in tools {
         write(root, &format!("extensions/{name}.ts"), code);
@@ -110,7 +116,7 @@ fn problems(opened: &Opened) -> Vec<Problem> {
 #[test]
 fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_back() {
     let (heard, stuck) = (noted("heard", false), noted("stuck", true));
-    let mut opened = open_tools(&[("heard", &heard), ("stuck", &stuck)]);
+    let mut opened = open_tools(None, &[("heard", &heard), ("stuck", &stuck)]);
     opened.project.engine().play();
     opened.render(64);
     // The window does not wait for a Bun that hangs: a poll is a frame.
@@ -156,7 +162,7 @@ export const flood = tool({
   tick: ({ time, send }) => { while (time > 0) send("x", 0); },
 });
 "#;
-    let mut opened = open_tools(&[("flood", flood)]);
+    let mut opened = open_tools(None, &[("flood", flood)]);
     opened.start_playing();
     opened.until("the flood among the problems", |opened| {
         problems(opened)
@@ -182,7 +188,7 @@ export const timer = tool({
 });
 "#;
     let heard = noted("heard", false);
-    let mut opened = open_tools(&[("heard", &heard), ("timer", timer)]);
+    let mut opened = open_tools(None, &[("heard", &heard), ("timer", timer)]);
     opened.start_playing();
     opened.until("the hang among the problems", |opened| {
         !problems(opened).is_empty()
@@ -205,7 +211,7 @@ export const timer = tool({
 fn a_tool_gone_from_the_code_is_a_problem_and_its_records_play_on() {
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path().to_path_buf();
-    write(&root, "project.json", ONLY_HUM);
+    write(&root, "project.json", &project(Some("hum"), false));
     write(&root, "extensions/theme.json", "{}");
     write(&root, "extensions/lib/level.ts", &level(0.5));
     write(&root, "extensions/hum.ts", &hum("lib/level"));
@@ -229,4 +235,130 @@ fn a_tool_gone_from_the_code_is_a_problem_and_its_records_play_on() {
     }
     assert_eq!(problems(&opened).len(), 1, "{:?}", problems(&opened));
     assert!((opened.loudest(4_800) - 0.5).abs() < 0.02);
+}
+
+const SYNTH: &str = r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#;
+
+/// A tool `pads` whose control loop runs `once` the first time it steps, with a child `synth`
+/// it plays into. Saved again with no loop, its code holds and sends nothing.
+fn pads(once: Option<&str>) -> String {
+    let tick = once.map_or(String::new(), |body| {
+        format!(
+            "memory: () => ({{ done: false }}),\n  tick: ({{ memory, send, time }}) => {{ if (memory.done) return; memory.done = true; {body} }},"
+        )
+    });
+    format!(
+        r#"import {{ tool }} from "./sdk";
+const ON = {{ type: "noteOn", pitch: 60, velocity: 0.8 }} as const;
+const TO = {{ child: "synth", notes: "notes" }} as const;
+export const pads = tool({{
+  name: "pads", title: "Pads", when: "Never", doc: "Holds notes on its synth.", state: {{}},
+  behaviour: () => ({{ connections: [{{ from: {{ child: "synth" }}, to: {{ port: "audio" }} }}] }}),
+  {tick}
+}});
+"#
+    )
+}
+
+fn open_pads(once: &str) -> Opened {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path();
+    write(root, "project.json", &project(Some("pads"), true));
+    write(root, "extensions/theme.json", "{}");
+    write(root, "extensions/pads.ts", &pads(Some(once)));
+    write(
+        root,
+        "state/pads/instance.json",
+        r#"{"tool": "pads", "state": {}}"#,
+    );
+    write(root, "state/pads/synth.json", SYNTH);
+    open(folder, Devices::default())
+}
+
+impl Opened {
+    /// Saves the code of `pads` without its loop, and waits for the new Bun.
+    fn save_pads(&mut self) {
+        let loads = self.tools.loads();
+        write(self.folder.path(), "extensions/pads.ts", &pads(None));
+        self.tools.code_changed();
+        self.until("the new Bun", |opened| opened.tools.loads() > loads);
+    }
+}
+
+/// The new Bun knows nothing of what the old one held, and still each note it held ends.
+#[test]
+fn a_pitch_code_holds_twice_on_a_child_ends_with_a_new_bun() {
+    let mut opened = open_pads("send(TO, ON); send(TO, ON);");
+    opened.until("the note", |opened| opened.loudest(480) > 0.05);
+    opened.save_pads();
+    opened.until("the release of the note", |opened| {
+        opened.loudest(4_800) == 0.0
+    });
+}
+
+/// What old code sent for later is not played by the new one: a bang 5 s ahead that would
+/// start noise that never ends.
+#[test]
+fn a_bang_old_code_sent_for_later_does_not_fire_with_a_new_bun() {
+    let hits = |saved: bool| {
+        let tick = match saved {
+            true => "",
+            false => {
+                r#"memory: () => ({ done: false }),
+  tick: ({ memory, send, time, update }) => {
+    if (memory.done) return;
+    memory.done = true;
+    send("hit", { at: time + 5 });
+    update("Send", ({ state }) => void (state.sent = true));
+  },"#
+            }
+        };
+        format!(
+            r#"import {{ bang, boolean, feedback, max, noise, tool }} from "./sdk";
+export const hits = tool({{
+  name: "hits", title: "Hits", when: "Never", doc: "A hit later starts noise.", state: {{ sent: boolean({{ default: false }}) }},
+  inputs: {{ hit: bang() }},
+  sound: ({{ hit }}) => {{ const level = feedback(); level.set(max(hit, level)); return noise().times(level).times(0.2); }},
+  {tick}
+}});
+"#
+        )
+    };
+    let mut opened = open_tools(Some("hits"), &[("hits", &hits(false))]);
+    opened.start_playing();
+    opened.until("the hit sent", |opened| {
+        opened.record("hits")["sent"] == true
+    });
+    let loads = opened.tools.loads();
+    write(opened.folder.path(), "extensions/hits.ts", &hits(true));
+    opened.tools.code_changed();
+    opened.until("the new Bun", |opened| opened.tools.loads() > loads);
+    // Past the frame the old code sent its bang for.
+    opened.render(6 * 48_000);
+    assert_eq!(opened.loudest(4_800), 0.0);
+}
+
+/// A child deleted and made again is another instrument: the note the old code held on the
+/// first does not end what the second plays.
+#[test]
+fn a_child_made_again_keeps_its_note_when_the_code_that_held_one_on_the_old_child_ends() {
+    let mut opened = open_pads("send(TO, ON);");
+    opened.until("the note", |opened| opened.loudest(480) > 0.05);
+    let synth = crate::support::id("pads/synth");
+    let mut changes = Changes::new();
+    changes.delete(&synth);
+    opened.project.commit("Delete the synth", changes).unwrap();
+    opened.until("the child gone", |opened| opened.loudest(4_800) == 0.0);
+    opened.project.undo().unwrap();
+    opened.until("the child back", |opened| {
+        opened.project.tool_of(&synth).is_some()
+    });
+    opened.selected = Some(synth);
+    opened.play_midi(60);
+    opened.until("the note of the keyboard", |opened| {
+        opened.loudest(480) > 0.05
+    });
+    opened.save_pads();
+    opened.render(4_800);
+    assert!(opened.loudest(4_800) > 0.05);
 }
