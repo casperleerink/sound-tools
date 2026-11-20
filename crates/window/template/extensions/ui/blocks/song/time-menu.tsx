@@ -1,17 +1,13 @@
-import { h, live, type Num } from "../../../sdk";
+import { h } from "../../../sdk";
 import type { Mark } from "../../../song/model";
-import { ACROSS, PLANE, type Page } from "../../../song/view";
+import type { Page } from "../../../song/view";
 import { keysOf } from "../../kbd";
 import { MenuList, type Item } from "../../menu";
 
-// What the ruler and the tempo lane share: their menu, and where a thing of a set width in
-// points sits in time.
+// What the ruler and the tempo lane share: their menu.
 
 /** A tempo as the ruler and the tempo lane say it, to a tenth. */
 export const bpmText = (bpm: number) => String(Math.round(bpm * 10) / 10);
-
-/** The middle of something `points` wide whose left edge is at `tick`: where a mark of it is placed. */
-export const after = (tick: Num, points: number) => live.plane(PLANE).zoom.times(ACROSS).pow(-1).times(points / 2).plus(tick);
 
 /** What a press on the ruler or the tempo lane keeps for its menu: a right press opens it there, on `mark` when it was on one. */
 export const pointed = (page: Page, x: number, mark: Mark | null = null) => (page.song.memory.rulerMenu = { x, mark });

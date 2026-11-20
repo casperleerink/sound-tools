@@ -484,8 +484,8 @@ const RANGE: &str = r#"import { h, input, tool } from "./sdk";
 export const range = tool({
   name: "range", title: "Range", when: "Never", doc: "A range.", state: {}, sound: () => input,
   view: () => (
-    <row>
-      <box key="bands" label="Bands" w={200} h={100} plane={{ x: [1000, 3000], y: [-24, 24], zoom: [1, 4] }}>
+    <row w={200} h={100}>
+      <box key="bands" label="Bands" grow={1} h="full" plane={{ x: [1000, 3000], y: [-24, 24], zoom: [1, 4] }}>
         <box key="band" label="Band" place={[2000, 0]} w={10} h={10} onPress={() => {}} />
       </box>
     </row>
@@ -494,7 +494,7 @@ export const range = tool({
 "#;
 
 #[test]
-fn a_range_shows_stretched_to_the_box_and_opens_where_it_says_once() {
+fn a_range_shows_stretched_to_the_box_the_layout_gives_and_opens_where_it_says_once() {
     let (_scratch, folder) = with_tools(&[("range", RANGE)]);
     let mut window = laid_out(opened(&folder));
     redraw(&mut window);
@@ -692,3 +692,4 @@ fn a_plane_placed_in_the_plane_whose_time_it_shares_starts_where_it_is_placed_an
     let middle = |rect: [f32; 4]| [rect[0] + rect[2] / 2.0 - moved[0], rect[1] + rect[3] / 2.0 - moved[1]];
     assert_eq!(middle(at(&window, "point")), [100.0, 12.5]);
 }
+
