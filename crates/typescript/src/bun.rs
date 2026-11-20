@@ -401,6 +401,13 @@ pub(crate) enum Event {
     },
     /// The code of `instance` opens the window of its own of its child at `path`.
     OpenWindow { instance: InstanceId, path: String },
+    /// The code of `instance` shows a range of the plane `key` of its view, across and down.
+    ShowRange {
+        instance: InstanceId,
+        key: String,
+        x: Option<[f32; 2]>,
+        y: Option<[f32; 2]>,
+    },
     /// The code of `instance` selected its child at `path`, or nothing, and the ticks `span`.
     Select {
         instance: InstanceId,

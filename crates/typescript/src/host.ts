@@ -757,7 +757,7 @@ function drawCard(instance: string, record: Entry, card: (typeof fieldCards)[str
   const key = `${instance} card`;
   if (!memories.has(key)) memories.set(key, {});
   // A card gets what a tool's view gets.
-  const context = { ...performer(instance), memory: memories.get(key), clock: clockFor(instance), time: now, update: updater(instance, defaults), held: heldIn(instance), select: selector(instance), addOffer: offerAdder(instance), openWindow: (path: string) => say({ type: "open_window", instance, path }), shortcut: () => null, ...askers(instance) };
+  const context = { ...performer(instance), memory: memories.get(key), clock: clockFor(instance), time: now, update: updater(instance, defaults), held: heldIn(instance), select: selector(instance), addOffer: offerAdder(instance), openWindow: (path: string) => say({ type: "open_window", instance, path }), show: shower(instance), shortcut: () => null, ...askers(instance) };
   Object.defineProperties(context, { ...newest(instance, fill, record), children: { enumerable: true, value: [] } });
   runs(cardFile(instance)!, "card");
   try {
@@ -1152,6 +1152,7 @@ function doers(instance: string, spec: Spec) {
     select: selector(instance),
     addOffer: offerAdder(instance),
     openWindow: (path: string) => say({ type: "open_window", instance, path }),
+    show: shower(instance),
     shortcut: shortcutOf(spec.name),
     now: sdk.now as Context<State>["now"],
     ...askers(instance),
@@ -1164,6 +1165,14 @@ function selector(instance: string) {
   return (path: string | null, { span }: { span?: { from: number; to: number } } = {}) => {
     const range = span && [wholeTick(span.from, "span from"), wholeTick(span.to, "span to")];
     say({ type: "select", instance, path, span: range ?? null });
+  };
+}
+
+/** `show`: the window shows a range of a plane of the view of `instance`. */
+function shower(instance: string) {
+  return (key: string, { x, y }: { x?: [number, number]; y?: [number, number] }) => {
+    const range = (axis: [number, number] | undefined, what: string) => axis && [finite(axis[0], `${what} from`), finite(axis[1], `${what} to`)];
+    say({ type: "show_range", instance, key, x: range(x, "x") ?? null, y: range(y, "y") ?? null });
   };
 }
 
@@ -1325,7 +1334,7 @@ function defaultOf(field: Field): unknown {
 /** The ops of a tool's view at its defaults, after one tick: a check without a window. */
 function checkView(spec: Spec): unknown {
   const memory = freshMemory(spec);
-  const performs = { play() {}, send() {}, update() {}, held: () => false, select() {}, openFile: async () => null, render: async () => null, confirm: async () => false, addOffer() {}, openWindow() {}, catalog: [], shortcut: () => null };
+  const performs = { play() {}, send() {}, update() {}, held: () => false, select() {}, openFile: async () => null, render: async () => null, confirm: async () => false, addOffer() {}, openWindow() {}, show() {}, catalog: [], shortcut: () => null };
   const state = frozen(filledObject(spec.state, {}));
   // What the check plays on the clock goes nowhere.
   const clock = { ...clockFor(""), play() {}, pause() {}, stop() {}, jump() {}, setRepeat() {}, setClick() {}, setComputerKeys() {}, update() {} };

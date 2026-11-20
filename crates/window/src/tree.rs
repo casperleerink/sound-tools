@@ -280,13 +280,15 @@ impl From<BoundWire> for Bound {
 }
 
 /// `plane` of `sdk/view.ts`: units of a box's own, which the window scrolls and zooms.
-#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[derive(Deserialize, Clone, Debug)]
 #[cfg_attr(test, serde(deny_unknown_fields))]
 pub(crate) struct PlaneSpec {
     pub(crate) x: Option<AxisSpec>,
     pub(crate) y: Option<AxisSpec>,
     /// How far across it zooms, least and most: not at all when left out.
     pub(crate) zoom: Option<[f32; 2]>,
+    /// A place across it keeps in view while it moves.
+    pub(crate) follow: Option<Num>,
 }
 
 /// Points per unit, a range shown stretched to the box, or the key of a plane it moves with.

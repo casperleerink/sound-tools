@@ -145,6 +145,13 @@ pub enum Want {
         instance: Option<InstanceId>,
         span: Option<Range<Ticks>>,
     },
+    /// Show a range of the plane `key` of the view of `instance`, across and down.
+    Show {
+        instance: InstanceId,
+        key: String,
+        x: Option<[f32; 2]>,
+        y: Option<[f32; 2]>,
+    },
     /// Playback repeats over the range, or stops repeating and keeps its range.
     Repeat(Option<Range<Ticks>>),
     Click(bool),
@@ -1201,6 +1208,10 @@ impl Tools {
                 gesture,
             } => {
                 self.add_offer(project, &instance, (&path, &key), (&label, gesture));
+                false
+            }
+            Event::ShowRange { instance, key, x, y } => {
+                self.wants.push(Want::Show { instance, key, x, y });
                 false
             }
             Event::OpenWindow { instance, path } => {
