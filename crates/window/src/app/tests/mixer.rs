@@ -135,7 +135,28 @@ fn a_mixer_fader_writes_its_volume_lane_while_it_plays() {
     assert_eq!(label.as_deref(), Some("Write automation"));
 }
 
-/// A click on the fader's number gives it the keys, Enter types into it: -inf and Enter silence the track.
+/// Grabbed while it writes, a fader a lane holds starts from what the lane plays, not from what
+/// the record says.
+#[test]
+fn a_held_fader_grabbed_while_it_writes_starts_from_what_plays() {
+    let scratch = new_project();
+    lane(&scratch, "mix.gain_db", -20.0);
+    let mut window = mixer(&scratch);
+    window.state.session.set_writes_automation(true);
+    (window.state.session).background(|project| project.engine().play());
+    wait(&mut window, 1.0);
+    pull_down(&mut window, 2, 0.1, |_| {});
+    let written: Vec<_> = (points(&window.state).into_iter())
+        .filter(|(tick, _)| *tick > 0)
+        .collect();
+    assert!(!written.is_empty());
+    assert!(
+        written.iter().all(|(_, db)| *db <= -20.0 && *db > -30.0),
+        "{written:?}"
+    );
+}
+
+/// A click on the fader's number types into it, as in the old app: -inf and Enter silence the track.
 #[test]
 fn minus_inf_typed_at_a_faders_number_silences_its_track() {
     let scratch = new_project();
@@ -154,7 +175,6 @@ fn minus_inf_typed_at_a_faders_number_silences_its_track() {
     window.frame(1.0 / 60.0);
     window.pointer_up(x, y);
     redraw(&mut window);
-    key(&mut window, rune::Key::Enter);
     assert_eq!(window.state.open, [format!("{FADER}-value")]);
     for typed in ["-", "i", "n", "f"] {
         key(&mut window, rune::Key::Text(typed.into()));

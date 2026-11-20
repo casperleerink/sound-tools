@@ -141,8 +141,7 @@ fn a_list_that_rests_is_not_drawn_again_until_its_record_changes() {
 }
 
 #[test]
-fn a_list_in_a_plane_reads_and_draws_only_the_part_the_plane_shows_and_stretches_while_it_zooms()
-{
+fn a_list_in_a_plane_reads_and_draws_only_the_part_the_plane_shows_and_stretches_while_it_zooms() {
     // The compressor's curve from -60 to 0 dB in, 1200 units long in a plane that shows 300.
     let code = r#"import { h, live, tool } from "./sdk";
 export const scope = tool({

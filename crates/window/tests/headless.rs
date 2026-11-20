@@ -15,7 +15,11 @@ fn tree(size: &str) -> Value {
         .arg(&tree)
         .output()
         .unwrap();
-    assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
+    assert!(
+        ran.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
     serde_json::from_slice(&std::fs::read(tree).unwrap()).unwrap()
 }
 

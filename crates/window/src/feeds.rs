@@ -198,7 +198,9 @@ impl Feeds {
         (pixels, rect): (&rune::Pixels, Option<&rune::Live<[f32; 4]>>),
         last: &RefCell<Drew>,
     ) {
-        let stretched = listed.plane().map_or(1.0, |plane| state.planes.stretched(plane));
+        let stretched = listed
+            .plane()
+            .map_or(1.0, |plane| state.planes.stretched(plane));
         if let Some(rect) = rect.filter(|_| stretched != 1.0) {
             let [x, y, w, h] = last.borrow().rect;
             rect.set([x * stretched, y, w * stretched, h]);

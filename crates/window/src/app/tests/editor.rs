@@ -211,9 +211,6 @@ fn two_thousand_notes_of_the_editor_scroll_play_zoom_and_drag_within_their_budge
         scroll < super::budget::FRAME,
         "a scroll frame took {scroll:?}"
     );
-    assert!(
-        play < super::budget::FRAME,
-        "a play frame took {play:?}"
-    );
+    assert!(play < super::budget::FRAME, "a play frame took {play:?}");
     assert!(zoom < super::budget::FRAME, "a zoom frame took {zoom:?}");
 }

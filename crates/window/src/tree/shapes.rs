@@ -29,9 +29,12 @@ impl Points {
         let state = scope.state;
         match self {
             Self::Fixed(numbers) => Some(numbers.clone()),
-            Self::Moving(numbers) => {
-                Some(numbers.iter().map(|num| state.lives.value(state, scope.instance, num)).collect())
-            }
+            Self::Moving(numbers) => Some(
+                numbers
+                    .iter()
+                    .map(|num| state.lives.value(state, scope.instance, num))
+                    .collect(),
+            ),
             Self::Fed(_) => None,
         }
     }
@@ -353,7 +356,11 @@ pub(super) fn drawing(scope: &Scope, d: &ShapesNode) -> El {
 pub(super) fn moving(d: &ShapesNode) -> Vec<Num> {
     let lines = d.lines.iter().map(|lines| &lines.points);
     let rects = d.rects.iter().map(|rects| &rects.rects);
-    lines.chain(rects).flat_map(Points::moving).cloned().collect()
+    lines
+        .chain(rects)
+        .flat_map(Points::moving)
+        .cloned()
+        .collect()
 }
 
 /// The area a run of a line closes: itself when it ends where it starts, else down to `bottom`

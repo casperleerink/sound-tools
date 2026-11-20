@@ -220,7 +220,11 @@ pub(super) fn drawn_now(scope: &Scope, node: &Node) -> u64 {
             Node::Shapes(d) => {
                 for num in super::shapes::moving(d) {
                     let state = scope.state;
-                    state.lives.value(state, scope.instance, &num).to_bits().hash(into);
+                    state
+                        .lives
+                        .value(state, scope.instance, &num)
+                        .to_bits()
+                        .hash(into);
                 }
             }
             Node::Memo { key } => {

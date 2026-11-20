@@ -158,6 +158,10 @@ pub(super) fn pointer(scope: &Scope, mut e: El, b: &BoxNode, key: &str, press: &
                             per,
                         }
                     });
+                    if let Some(plays) = (drag.as_ref()).and_then(|drag| drag.plays.as_ref()) {
+                        let values = played(s, &press.instance, plays);
+                        plays::grab(s, &press.instance, &values);
+                    }
                     s.gesture = Some(Gesture {
                         key: key.clone(),
                         drag: dragging,
@@ -307,13 +311,21 @@ fn plays_moved(state: &mut State, instance: &InstanceId, plays: Option<&Plays>) 
     let Some(plays) = plays else {
         return true;
     };
-    let values: Vec<(&str, f64)> = (plays.iter())
-        .map(|(path, value)| {
-            let value = state.lives.value(state, instance, value);
-            (path.as_str(), f64::from(value))
-        })
-        .collect();
+    let values = played(state, instance, plays);
+    let values: Vec<(&str, f64)> = values.iter().map(|(path, value)| (*path, *value)).collect();
     plays::moved(state, instance, &values)
+}
+
+/// What a drag plays now, by path.
+fn played<'a>(state: &State, instance: &InstanceId, plays: &'a Plays) -> Vec<(&'a str, f64)> {
+    (plays.iter())
+        .map(|(path, value)| {
+            (
+                path.as_str(),
+                f64::from(state.lives.value(state, instance, value)),
+            )
+        })
+        .collect()
 }
 
 /// The numbers of a record a drag plays, by path, and what they play.

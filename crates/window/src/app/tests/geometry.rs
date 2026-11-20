@@ -297,8 +297,7 @@ fn a_wheel_scrolls_a_plane_and_its_ruler_with_no_view_run_and_no_build() {
 }
 
 #[test]
-fn a_pinch_zooms_about_the_pointer_moving_what_is_placed_and_builds_again_in_rust_once_it_rests()
- {
+fn a_pinch_zooms_about_the_pointer_moving_what_is_placed_and_builds_again_in_rust_once_it_rests() {
     let (_scratch, mut window) = lanes();
     redraw(&mut window);
     let song = rect(&window, "song");
@@ -312,19 +311,29 @@ fn a_pinch_zooms_about_the_pointer_moving_what_is_placed_and_builds_again_in_rus
     let view = window.state.planes.view(&format!("{PREFIX}song")).unwrap();
     assert_eq!(view.zoom, 2.0);
     assert_eq!(rect(&window, "clip-0")[2], 384.0);
-    assert_eq!(window.state.planes.builds.get(), builds, "a zoom frame built");
+    assert_eq!(
+        window.state.planes.builds.get(),
+        builds,
+        "a zoom frame built"
+    );
     // A press finds what is placed where it shows, not where it was built.
     let clip = rect(&window, "clip-0");
     let picked = window.element_at(clip[0] + clip[2] - 10.0, clip[1] + 5.0);
     let key = format!("{PREFIX}clip-0");
-    assert_eq!(picked.as_ref().and_then(rune::Picked::key), Some(key.as_str()));
+    assert_eq!(
+        picked.as_ref().and_then(rune::Picked::key),
+        Some(key.as_str())
+    );
     for _ in 0..12 {
         let seconds = window.state.last + 1.0 / 60.0;
         drawn_frame(&mut window, seconds);
     }
     assert_eq!(rect(&window, "clip-0")[2], 384.0);
     assert_eq!(view_runs(&window), runs);
-    assert!(window.state.planes.builds.get() > builds, "the rested zoom never built");
+    assert!(
+        window.state.planes.builds.get() > builds,
+        "the rested zoom never built"
+    );
     // Cmd and the wheel zoom too, within the plane's zoom.
     let cmd = rune::Mods {
         cmd: true,
@@ -663,17 +672,26 @@ export const nested = tool({
 "#;
 
 #[test]
-fn a_plane_placed_in_the_plane_whose_time_it_shares_starts_where_it_is_placed_and_a_range_runs_up() {
+fn a_plane_placed_in_the_plane_whose_time_it_shares_starts_where_it_is_placed_and_a_range_runs_up()
+{
     let (_scratch, folder) = with_tools(&[("nested", NESTED)]);
     let mut window = laid_out(opened(&folder));
     redraw(&mut window);
     let at = |window: &rune::Runtime<State>, key: &str| {
         let key = format!("t00/chain/nested:{key}");
-        window.presented(&key).unwrap_or_else(|| panic!("no {key}")).0
+        window
+            .presented(&key)
+            .unwrap_or_else(|| panic!("no {key}"))
+            .0
     };
     let lane = at(&window, "lane");
     assert_eq!(lane[2..], [200.0, 50.0]);
-    let middle = |rect: [f32; 4]| [rect[0] + rect[2] / 2.0 - lane[0], rect[1] + rect[3] / 2.0 - lane[1]];
+    let middle = |rect: [f32; 4]| {
+        [
+            rect[0] + rect[2] / 2.0 - lane[0],
+            rect[1] + rect[3] / 2.0 - lane[1],
+        ]
+    };
     // Tick 2000 of the song is 100 points into a lane that starts at its tick 1000; 0.75 is a
     // quarter of the way down, and 0.5 to 1 the top half.
     assert_eq!(middle(at(&window, "point")), [100.0, 12.5]);
@@ -685,14 +703,23 @@ fn a_plane_placed_in_the_plane_whose_time_it_shares_starts_where_it_is_placed_an
         shift: true,
         ..rune::Mods::default()
     };
-    wheel(&mut window, [song[0] + 10.0, song[1] + 10.0], [0.0, -50.0], shift);
+    wheel(
+        &mut window,
+        [song[0] + 10.0, song[1] + 10.0],
+        [0.0, -50.0],
+        shift,
+    );
     redraw(&mut window);
     let moved = at(&window, "lane");
     assert_eq!(moved[0], lane[0] - 50.0);
-    let middle = |rect: [f32; 4]| [rect[0] + rect[2] / 2.0 - moved[0], rect[1] + rect[3] / 2.0 - moved[1]];
+    let middle = |rect: [f32; 4]| {
+        [
+            rect[0] + rect[2] / 2.0 - moved[0],
+            rect[1] + rect[3] / 2.0 - moved[1],
+        ]
+    };
     assert_eq!(middle(at(&window, "point")), [100.0, 12.5]);
 }
-
 
 /// A line in a memo through a point that drags.
 const LINE: &str = r#"import { h, input, live, memo, tool } from "./sdk";

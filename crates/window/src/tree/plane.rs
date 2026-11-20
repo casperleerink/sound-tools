@@ -592,7 +592,9 @@ impl Camera {
 /// The plane `outer` the plane `b` is placed in, and where it starts there.
 fn within<'a>(scope: &Scope, outer: Option<&'a str>, b: &BoxNode) -> Option<(&'a str, [f32; 2])> {
     let origin = b.place.as_ref()?.origin();
-    let start = origin.each_ref().map(|num| scope.state.lives.value(scope.state, scope.instance, num));
+    let start = origin
+        .each_ref()
+        .map(|num| scope.state.lives.value(scope.state, scope.instance, num));
     Some((outer?, start))
 }
 
@@ -955,7 +957,8 @@ impl Planes {
     fn find(&self, state: &State, id: &InstanceId, prefix: &str, node: &Node, outer: Option<&str>) {
         match node {
             Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
-                let key = (b.plane.as_ref()).zip(b.key.as_ref().map(|key| format!("{prefix}{key}")));
+                let key =
+                    (b.plane.as_ref()).zip(b.key.as_ref().map(|key| format!("{prefix}{key}")));
                 if let Some((spec, key)) = &key {
                     let within = within(&Scope::new(state, id, prefix), outer, b);
                     self.ensure(key, (spec, id), prefix, given(b), within);

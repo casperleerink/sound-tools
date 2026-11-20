@@ -57,7 +57,11 @@ pub(crate) enum Shown {
     Opacity(rune::Live<f32>),
     Trim(rune::Live<[f32; 2]>),
     /// What it drew last, and in a plane where the part that shows is.
-    Pixels(rune::Pixels, Rc<RefCell<Drew>>, Option<rune::Live<[f32; 4]>>),
+    Pixels(
+        rune::Pixels,
+        Rc<RefCell<Drew>>,
+        Option<rune::Live<[f32; 4]>>,
+    ),
     /// What the numbers of a drawing were when it was built.
     Drawn(Rc<RefCell<Vec<f32>>>),
 }
