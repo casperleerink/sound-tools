@@ -97,6 +97,19 @@ impl Opened {
         self.settle();
     }
 
+    /// Polls, without playing on, until the take of `recorder` has its first frames. Its thread
+    /// runs in real time while the engine here renders as fast as it can: on a busy machine the
+    /// input could otherwise run past what a take that starts keeps of it.
+    fn wait_for_take(&mut self, recorder: &str) {
+        let recorder = id(recorder);
+        let start = std::time::Instant::now();
+        while self.input.take_sound(&recorder).is_none() {
+            assert!(start.elapsed().as_secs() < 30, "{recorder} took nothing");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            self.poll();
+        }
+    }
+
     fn delete(&mut self, instance: &str) {
         let mut changes = Changes::new();
         changes.delete(&id(instance));
@@ -243,9 +256,13 @@ fn a_recorder_that_starts_while_another_records_keeps_its_own_take() {
     let (mut studio, input) = open_studio(true);
     studio.press("studio", "arm");
     studio.start_playing();
-    studio.record_for(&input, 24_000);
+    studio.record_for(&input, 2_048);
+    studio.wait_for_take("studio/rec");
+    studio.record_for(&input, 22_000);
     studio.press("studio", "arm-2");
-    studio.record_for(&input, 24_000);
+    studio.record_for(&input, 2_048);
+    studio.wait_for_take("studio/rec-2");
+    studio.record_for(&input, 22_000);
     studio.press("studio", "done");
     studio.press("studio", "done-2");
     studio.until("two regions", |studio| {
