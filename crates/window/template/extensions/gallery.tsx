@@ -44,7 +44,7 @@ type Memory = {
 
 const pattern = (on: number[]): Step[] => Array.from({ length: 16 }, (_, i) => ({ on: on.includes(i), velocity: on.includes(i) ? 0.5 + (i % 4) * 0.15 : 0.8 }));
 
-/** Every component and block of `ui/` in its states, to look at the kit at once: `sound-tools-next . --main gallery --snap gallery.png`. */
+/** Every component and block of `ui/` in its states, to look at the kit at once: `sound-tools . --main gallery --snap gallery.png`. */
 export const gallery = tool({
   name: "gallery",
   title: "Gallery",

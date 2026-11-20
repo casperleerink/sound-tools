@@ -31,12 +31,11 @@ CI builds and tests on Ubuntu. Playback, MIDI, recording and plugins go through 
 
 A release has a tarball for x86_64 and one for aarch64, see "Releases". `tooling/bundle-linux.sh` makes it: the program, Bun, a menu entry, the icon and `install.sh`, which puts them in `~/.local`. It needs glibc 2.39 or later (Ubuntu 24.04 or newer) and the runtime libraries the page of the release names, not the `-dev` packages above.
 
-With no folder, `runtime` opens the last project, which it keeps in `~/.config/sound-tools/`, or else a folder panel. The panel needs the XDG desktop portal, which GNOME and KDE have. **Install command line tool** links `sound-tools` into `~/.local/bin`.
+With no folder, `sound-tools` opens the last project, which it keeps in `~/.config/sound-tools/`, or else a folder panel. The panel needs the XDG desktop portal, which GNOME and KDE have. **Install command line tool** links `sound-tools` into `~/.local/bin`.
 
 Not on Linux:
 
 - Plugin windows. The card of a plugin says why it has no `Open window`. The plugin plays, and its state is saved.
-- The snapshot tests. They render with Metal, so on Linux they only say so. The rest of the tests run.
 - **Open terminal in project folder** starts `$TERMINAL`, or else `x-terminal-emulator`, so it needs one of the two.
 
 ### Windows
@@ -47,13 +46,12 @@ Windows 10 or later, x86_64. CI builds and tests it on Windows, but nobody has t
 - Plugins are looked for in `%COMMONPROGRAMFILES%\CLAP` and `%LOCALAPPDATA%\Programs\Common\CLAP`, and the same two folders with `VST3`. Plugin windows open, but typing into a plugin's own text fields likely does not work yet: gpui keeps the keys.
 - There is no **Install command line tool**: the setup program puts the `sound-tools` command on your `PATH`. Run from a terminal, the command line forms print after the prompt comes back, because the program is a window program. Pipe it (`| more`) to wait for it.
 - **Open terminal in project folder** opens Windows Terminal, or else a Command Prompt.
-- The snapshot tests render with Metal, so on Windows they only say so.
 - The Claude Code agent uses PowerShell for its commands, and Bash too when Git for Windows is installed.
 
 ## Run it
 
 ```sh
-cargo run -p runtime -- ~/Music/my-piece
+cargo run -p sound-window -- ~/Music/my-piece
 ```
 
 The folder is the project. When it is empty or missing, the app makes a Bare project in it: 120 bpm, 4/4 and nothing else. A folder with other files and no project does not open. There is no save: every finished edit is in the folder.
@@ -69,7 +67,7 @@ The script makes a release build and puts `Sound Tools.app` in `dist/`. Double c
 
 The app is signed on this Mac only ("ad hoc"), not by a known developer. If macOS says it cannot check the app, right-click it in the Finder, pick **Open**, and confirm once. macOS asks for the microphone the first time you record audio, and whether the app may record other apps the first time a project hears one; a new build of the app asks again. Run from a terminal, macOS asks for the terminal app instead.
 
-The app and `cargo run -p runtime` are the same program. Opening a folder on the command line also makes it the last project of the app. `tooling/bundle-macos.sh --zip` also writes a zip of the app, for a release.
+The app and `cargo run -p sound-window` are the same program. Opening a folder on the command line also makes it the last project of the app. `tooling/bundle-macos.sh --zip` also writes a zip of the app, for a release.
 
 ## Releases
 
@@ -118,19 +116,19 @@ What the agent uses:
 
 - `AGENTS.md`. The app writes it into the project, with a `CLAUDE.md` that imports it. It is a short map: the folder layout, the bar math of this project, how to check the work, and a list of docs in `agent-docs/` with one line each saying when to open it. The record formats live in those docs, one per extension. Agents read the map by themselves and open only the doc their task needs.
 - `problems.txt`. The app keeps it current while it runs. It lists every file that did not load, and why. `No problems. Every file is live.` means all of it plays. The agent reads it to check its work.
-- `sound-tools . --inspect`. It prints the tempo, every instance with its record, the connections and the problems. It works next to the running app and loads no plugin. Install `sound-tools` once with **Install command line tool** in the project menu. From a checkout, `cargo run -p runtime -- . --inspect` is the same.
+- `sound-tools . --inspect`. It prints the tempo, every instance with its record, the connections and the problems. It works next to the running app and loads no plugin. Install `sound-tools` once with **Install command line tool** in the project menu. From a checkout, `cargo run -p sound-window -- . --inspect` is the same.
 
 ## Without the window
 
 ```sh
-cargo run -p runtime -- ~/Music/my-piece --inspect
-cargo run -p runtime -- ~/Music/my-piece --render /tmp/my-piece.wav
-cargo run -p runtime -- ~/Music/my-piece --headless
-cargo run -p runtime -- --plugins
-cargo run -p runtime -- --version
+cargo run -p sound-window -- ~/Music/my-piece --inspect
+cargo run -p sound-window -- ~/Music/my-piece --render /tmp/my-piece.wav
+cargo run -p sound-window -- ~/Music/my-piece --headless
+cargo run -p sound-window -- --plugins
+cargo run -p sound-window -- --version
 ```
 
-With the command line tool installed, `sound-tools` takes the place of `cargo run -p runtime --` in all of these.
+With the command line tool installed, `sound-tools` takes the place of `cargo run -p sound-window --` in all of these.
 
 - `--inspect` prints a summary and changes nothing. It loads no plugin.
 - `--render` writes a WAV offline at 48 kHz, stereo, 32-bit float. By default it plays to the end of the last clip, then keeps going until reverbs and releases are silent for half a second, at most 10 s more. `--from <ticks> --to <ticks>` renders a range the same way, and with `--no-tail` stops at its end. `--seconds <n>` renders exactly the first n seconds. **Export audio…** and **Export selection…** in the project menu run the same render. A notice in the corner shows how far it is. Export selection covers the time from the first selected clip to the last one, with all tracks playing. In the DAW, **Render to audio track** in a clip's or a track's menu renders that track alone onto a new audio track under it, and mutes the track.
@@ -138,7 +136,7 @@ With the command line tool installed, `sound-tools` takes the place of `cargo ru
 - `--plugins` prints the installed CLAP and VST 3 plugins with their ids and kind (instrument, effect, both or neither). It scans every plugin again, so it also retries one that failed before.
 - `--version` prints the version.
 
-A release build is `cargo build --release -p runtime`. The binary is `target/release/runtime`.
+A release build is `cargo build --release -p sound-window`. The binary is `target/release/sound-tools`.
 
 ## Checks
 
@@ -153,7 +151,7 @@ cargo deny check
 
 Locally, `cargo verify` runs fmt, clippy and the tests for what a branch changed. CI runs them all on macOS with the realtime sanitizer on, and the tests on Linux and Windows, see [ENGINEERING.md](ENGINEERING.md). The tools come from `cargo install cargo-nextest cargo-shear cargo-deny typos-cli`.
 
-The two snapshot tests render the UI components and the window to PNGs without opening a window: `cargo test -p gallery --test snapshots` and `cargo test -p runtime --test snapshots`. They print the folder they write to; look at the PNGs after a UI change. `cargo run -p runtime -- <project> --screenshot <png>` does the same for a project folder as it opens, its TypeScript cards and pages included; agents use it too. The new window on Rune is `cargo run -p sound-window -- <project>`; with `--snap <png>`, `--tree <json>`, `--play <seconds>` and `--act <steps.json>` it runs without a window, the agent's checks. `cargo run -p gallery` opens the component gallery in a window, and `cp -R crates/runtime/tests/sdk-gallery /tmp && cargo run -p runtime -- /tmp/sdk-gallery` a copy of the project that tries every part of the view SDK; the app writes into the project it opens.
+With `--snap <png>`, `--tree <json>`, `--play <seconds>` and `--act <steps.json>`, `cargo run -p sound-window -- <project>` runs without a window, the agent's checks; look at the PNG after a UI change.
 
 ## Docs
 
@@ -161,7 +159,7 @@ The two snapshot tests render the UI components and the window to PNGs without o
 - [ARCHITECTURE.md](ARCHITECTURE.md): the technical decisions and why.
 - [ENGINEERING.md](ENGINEERING.md): how to work in this code: audio thread rules, testing, rules for agents.
 - [DESIGN.md](DESIGN.md): the look and the interaction rules.
-- [crates/core/README.md](crates/core/README.md) and [crates/ui/README.md](crates/ui/README.md): how to write an extension and its view.
+- [crates/core/README.md](crates/core/README.md): how to write an extension.
 - `extensions/*/agent-doc.md`: the docs the app writes into each project for the agent.
 
 ## License

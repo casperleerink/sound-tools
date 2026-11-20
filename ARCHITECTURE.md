@@ -23,7 +23,7 @@ The technical decisions, why we made them, and what we rejected. How something w
 - One process, the runtime (`crates/runtime`), opens one project folder: as a window, headless, or read-only to inspect, render or analyze.
 - Agents only edit files in the project folder, and the runtime applies them live. There is no edit API for agents.
 - Every extension is compiled into the one binary. `project.json` enables extensions by name.
-- Rust for the core and extensions, and for the window (GPUI, moving to Rune: it checks a window for an agent built in, and was as fast on the DAW template). Audio and saved data never depend on the toolkit.
+- Rust for the core and extensions, and for the window (Rune, not GPUI: it checks a window for an agent built in, and was as fast on the DAW template). Audio and saved data never depend on the toolkit.
 - The project, the views and every plugin handle share the main thread, which plugins require. Rejected: a separate control thread; it would split the project from its plugins, and every view would need a synced copy.
 - macOS is the main platform. No plugin windows on Linux: plugins there need an X11 parent and a host run loop.
 - System programs come from the system, never the `PATH` (`sound_core::process`).
@@ -183,15 +183,14 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 ## The window
 
-`crates/ui` and `crates/runtime/src/window`; the new window in `crates/window`.
+`crates/window`.
 
 - Musical interfaces such as a piano roll belong to a project's tools.
-- What moves every frame draws over a page, not in it: in GPUI a view that changes renders every view it is in. Rejected: a meter node of the window, which drew the whole page as it moved.
+- What moves every frame draws over a page, not in it. Rejected: a meter node of the window, which drew the whole page as it moved.
 - Every div that scrolls fades where more waits, painted by the window. Rejected: a style; a fade in the view, which lies over the cards.
 - A number shown only while its control is touched is `quiet` on the control. Rejected: a hover and a timer in the view, through Bun, which hid the number from the keys.
 - "Open project…" starts a new process, which tears down the device, plugins and their windows.
 - Settings covers the whole window; audio devices are picked there. Rejected: a window of its own; a dialog, which blocks.
-- The window moves to Rune (`sound-tools-next`) beside the GPUI app, the release until parity. Plan: `spikes/tool-sdk/PORT-MAP.md`.
 - There a tool's `view` (v2) is a plain function of its records, run again on every change, with `memo`; what moves is a live value v1's evaluator works out. Rejected: signals, a runtime to own; Luau, worse for agents.
 - A project with `extensions/theme.json` is made for the new window, not the old: one `./sdk` without v1's views, its own tokens and components.
 - Every control declares its meaning once (role, label, state, actions), so an agent lists and runs it as a click would. A run without a window waits for Bun each frame, so it repeats.
@@ -199,7 +198,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 ## Shortcuts
 
-`crates/ui/src/shortcuts.rs`, `crates/runtime/src/window/app_keys.rs`.
+`crates/typescript/src/shortcuts.rs`.
 
 - **Actions first, keys on top**, as REAPER does: a tool or the app declares actions (a name, a title, default keys), and one keymap says which keys do each. So every action can be listed, shown beside its button and given another key. Rejected: keys only in a tool's `onKey`, which nothing can list or change.
 - **The composer's own keys are one file in the support folder**, by action id (`song.record`), for every project: they are the composer's habits, not part of a piece. An agent gives a key by changing an action's defaults in the tool's code, and the composer's keys win. Rejected: a file in the project, which an agent could change under the composer and every project would need again.
