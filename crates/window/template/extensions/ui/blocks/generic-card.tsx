@@ -7,6 +7,7 @@ import { Segmented } from "../segmented";
 import { Select } from "../select";
 import { Toggle } from "../toggle";
 import { DeviceCard } from "./device-card";
+import { STEP, StepRow } from "./steps";
 
 type Path = readonly (string | number)[];
 /** A control in its place: how many columns it takes, and where it sits among the others. */
@@ -19,9 +20,9 @@ const RANK = { number: 0, switch: 1, choice: 2 };
 
 /**
  * The card of every device whose tool has no view and no card of its own: a knob for a number, a
- * switch for a yes or no, a choice of options, and for a list or a map of records, a choice of
- * which item its controls change. The first few in the order of the record show, the rest behind
- * More.
+ * switch for a yes or no, a choice of options, a row of steps for a `pattern`, and for a list or
+ * a map of records, a choice of which item its controls change. The first few in the order of
+ * the record show, the rest behind More.
  */
 export const card: Card = ({ state, facts }, { update, memory, held }) => {
   const title = facts.title;
@@ -39,6 +40,16 @@ export const card: Card = ({ state, facts }, { update, memory, held }) => {
   const one = (field: FieldInfo, path: Path, label: string): Placed[] => {
     const id = path.join(".");
     const named = `${title} ${label}`;
+    if (field.kind === "list" && field.pattern && field.item.kind === "number") {
+      const { min, max, integer, default: initial } = field.item;
+      const values = Array.isArray(at(path)) ? (at(path) as number[]) : [];
+      const valueOf = (strength: number) => (integer ? Math.round(min + strength * (max - min)) : min + strength * (max - min));
+      const steps = values.map((value) => ({ on: value > min, velocity: (value - min) / (max - min) }));
+      const setStep = (step: number, to: number) => set(path, label, values.map((value, i) => (i === step ? to : value)));
+      const span = Math.ceil((values.length * (STEP + theme.space[1])) / theme.size.cell);
+      const row = <StepRow id={id} label={named} steps={steps} onToggle={(step) => setStep(step, values[step]! > min ? min : initial > min ? initial : max)} onVelocity={(step, strength) => setStep(step, valueOf(strength))} />;
+      return [{ span, rank: RANK.choice, node: <Cell text={field.label} span={span}>{row}</Cell> }];
+    }
     switch (field.kind) {
       case "number": {
         const value = typeof at(path) === "number" ? (at(path) as number) : field.default;
@@ -94,9 +105,9 @@ export const card: Card = ({ state, facts }, { update, memory, held }) => {
   const byRank = (some: Placed[]) => [...some].sort((a, b) => a.rank - b.rank);
   const [cells, more] = [byRank(shown), byRank(hidden)];
   for (const block of blocks) {
-    // A card of lists alone shows the first of them as far as it fits.
+    // A card of lists alone shows the first of them as far as it fits, and a row of steps whole.
     const split = cells.length === 0 ? block.findIndex((_, i) => block.slice(0, i + 1).reduce((sum, each) => sum + each.span, 0) > FEW) : 0;
-    const cut = split < 0 ? block.length : split;
+    const cut = split < 0 ? block.length : cells.length === 0 ? Math.max(split, 1) : split;
     cells.push(...block.slice(0, cut));
     more.push(...block.slice(cut));
   }

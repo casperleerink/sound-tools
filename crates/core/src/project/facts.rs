@@ -64,6 +64,11 @@ pub enum FieldKind {
         item: Box<FieldInfo>,
         #[serde(rename = "maxItems")]
         max_items: Option<u64>,
+        /// A row of steps, such as a sequence's: a card shows them as steps, and no lane moves one.
+        pattern: bool,
+        /// The items a record that leaves it out holds.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        default: Option<Vec<Value>>,
     },
     /// An object of `item`s by key, such as the pads of the drum pad.
     Map {
@@ -263,6 +268,7 @@ fn mark_lanes(fields: &mut [FieldInfo], prefix: &str, moves: &dyn Fn(&str, bool)
         match &mut field.kind {
             FieldKind::Number { integer, lane, .. } => *lane = moves(&path, *integer),
             FieldKind::Group { fields } => mark_lanes(fields, &format!("{path}."), moves),
+            FieldKind::List { pattern: true, .. } => {}
             FieldKind::List { item, .. } | FieldKind::Map { item } => {
                 mark_lanes(
                     std::slice::from_mut(item.as_mut()),
@@ -382,6 +388,8 @@ fn field(
             FieldKind::List {
                 item: Box::new(item),
                 max_items: property.get("maxItems").and_then(Value::as_u64),
+                pattern: property.get("x-pattern") == Some(&Value::Bool(true)),
+                default: default.as_ref().and_then(Value::as_array).cloned(),
             }
         }
         _ => return None,

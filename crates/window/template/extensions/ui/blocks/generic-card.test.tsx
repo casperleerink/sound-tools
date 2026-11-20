@@ -54,3 +54,12 @@ test("a knob a lane plays takes no change", () => {
   draw({ depth: 0.2 }, [number("depth", "Depth")], ["depth"]);
   expect(() => act("Dev Depth", "set", 0.5)).toThrow();
 });
+
+test("a pattern is a row of steps: a press turns a step on or off, a drag sets how strong it plays", () => {
+  const hits = { name: "hits", label: "Hits", kind: "list", maxItems: 4, pattern: true, item: number("", "", 0, 1, { default: 0.75 }) };
+  draw({ hits: [1, 0, 0.5, 0] }, [hits]);
+  expect(find("Dev Hits step 3")).toMatchObject({ role: "gridcell", value: true });
+  expect(press("Dev Hits step 2")).toEqual([[["state", "hits", 1], 0.75]]);
+  expect(press("Dev Hits step 1")).toEqual([[["state", "hits", 0], 0]]);
+  expect(act("Dev Hits step 3", "set", 0.25)).toEqual([[["state", "hits", 2], 0.25]]);
+});

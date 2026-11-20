@@ -2101,6 +2101,15 @@ fn field_schema(field: &Field) -> Option<Value> {
         } => {
             json!({ "enum": options.iter().map(choice).collect::<Vec<_>>(), "default": choice(default), "title": label })
         }
+        Field::List {
+            item,
+            max,
+            label,
+            default,
+            pattern: true,
+        } => {
+            json!({ "type": "array", "items": field_schema(item)?, "maxItems": max, "default": default, "title": label, "x-pattern": true })
+        }
         Field::Text { .. } | Field::File { .. } | Field::List { .. } | Field::Object { .. } => {
             return None;
         }

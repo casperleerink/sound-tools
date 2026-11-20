@@ -277,6 +277,40 @@ fn a_tool_with_a_view_shows_in_the_panel_and_one_without_shows_its_fields() {
     );
 }
 
+/// A `pattern` of a tool with no view shows as steps on its card, which turn in its record, and
+/// no lane offers to move a step.
+#[test]
+fn a_pattern_of_a_tool_without_a_view_shows_as_steps() {
+    const HITS: &str = r#"import { input, pattern, tool } from "./sdk";
+export const hits = tool({ name: "hits", title: "Hits", when: "Never", doc: "Hits.", state: { hits: pattern({ length: 8, min: 0, max: 1, default: 0 }) }, sound: () => input });
+"#;
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    std::fs::write(folder.join("extensions/hits.ts"), HITS).unwrap();
+    let chain = folder.join("state/song/t00/chain");
+    std::fs::write(
+        chain.join("instance.json"),
+        r#"{"tool": "chain", "state": {"order": ["hits"]}}"#,
+    )
+    .unwrap();
+    std::fs::write(chain.join("hits.json"), r#"{"tool": "hits", "state": {}}"#).unwrap();
+    let mut state = opened(&folder);
+    let id = InstanceId::new("song/t00/chain/hits").unwrap();
+    let facts = state.facts_now(&std::collections::BTreeSet::from([id.clone()]));
+    let field = &facts[&id].to_value()["fields"][0];
+    assert_eq!(
+        (field["kind"].as_str(), &field["pattern"]),
+        (Some("list"), &json!(true))
+    );
+    assert_eq!(field["item"]["lane"], false);
+    act(
+        &mut state,
+        json!({ "label": "Hits Hits step 3", "action": "toggle" }),
+    );
+    let hits = &record(&state, "song/t00/chain/hits.json")["state"]["hits"];
+    assert_eq!(hits[2], 1.0);
+}
+
 /// Runs Bun with `arguments` in `extensions/` of `state`'s project, which must succeed.
 fn run_bun(state: &State, arguments: &[&str]) {
     let bun = sound_typescript::bun_program().expect("Bun is installed, see tooling/fetch-bun.sh");

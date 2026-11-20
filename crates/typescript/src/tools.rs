@@ -168,6 +168,9 @@ pub(crate) enum Field {
         /// `[]` when left out.
         default: Option<Value>,
         label: Option<String>,
+        /// Made by `pattern`: a card shows it as a row of steps.
+        #[serde(default)]
+        pattern: bool,
     },
     /// An item of a list that holds several fields.
     Object { fields: Named<Field> },

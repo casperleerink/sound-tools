@@ -267,15 +267,16 @@ export type Child = Node | string | number | null | undefined | false | Child[];
 /**
  * A field of a record as a card shows it, by its `name` in the record or the object around it:
  * a number with its range, a switch, a choice of options, an object of fields (`group`), a list
- * of `item`s, or an object of `item`s by key (`map`). `scale` spreads a number over a knob's
- * travel: `log` in octaves, as a frequency; `fader` as a volume. `lane`: a lane can move it.
+ * of `item`s (steps, when `pattern` made it), or an object of `item`s by key (`map`). `scale`
+ * spreads a number over a knob's travel: `log` in octaves, as a frequency; `fader` as a volume.
+ * `lane`: a lane can move it.
  */
 export type FieldInfo = { name: string; label: string } & (
   | { kind: "number"; min: number; max: number; scale: "linear" | "log" | "fader"; integer: boolean; lane: boolean; unit: Unit | null; default: number }
   | { kind: "switch"; default: boolean }
   | { kind: "choice"; options: { value: string | number; text: string }[]; default: string | number }
   | { kind: "group"; fields: FieldInfo[] }
-  | { kind: "list"; item: FieldInfo; maxItems: number | null }
+  | { kind: "list"; item: FieldInfo; maxItems: number | null; pattern: boolean; default?: unknown[] }
   | { kind: "map"; item: FieldInfo }
 );
 /** What the window knows of an instance of the tool `T` that no record holds and that rarely changes: its title, the fields of its record, and more of some tools. A change runs the view. */

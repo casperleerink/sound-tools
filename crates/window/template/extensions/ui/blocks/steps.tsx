@@ -2,7 +2,9 @@ import { h, live } from "../../sdk";
 import { tint } from "../control";
 
 export type Step = { on: boolean; velocity: number };
-const [W, H, TRAVEL] = [28, 36, 60];
+const [H, TRAVEL] = [36, 60];
+/** How wide a step is. */
+export const STEP = 28;
 
 /**
  * A row of steps `ticks` apart: a press turns one on or off, a drag up or down sets how hard it
@@ -16,11 +18,11 @@ export const StepRow = ({ id, label, steps, ticks = 240, onToggle, onVelocity }:
         const key = `${id}-${i}`;
         const velocity = live.drag(key).dy.over(-TRAVEL).plus(step.velocity).clamp(0, 1);
         return (
-          <box key={key} label={`${label} step ${i + 1}`} role="gridcell" value={step.on} w={W} h={H} radius="sm" fill={step.on ? tint("on") : "fill"} hover="fill" border={i % 4 === 0 ? "border-strong" : undefined} clip
+          <box key={key} label={`${label} step ${i + 1}`} role="gridcell" value={step.on} w={STEP} h={H} radius="sm" fill={step.on ? tint("on") : "fill"} hover="fill" border={i % 4 === 0 ? "border-strong" : undefined} clip
             onPress={() => onToggle(i)} actions={{ toggle: () => onToggle(i), set: (to) => onVelocity(i, Math.min(Math.max(to, 0), 1)) }}
             drag={{ y: [-(1 - step.velocity) * TRAVEL, step.velocity * TRAVEL] }} onDragEnd={({ dy }) => onVelocity(i, Math.min(Math.max(step.velocity - dy / TRAVEL, 0), 1))}>
-            {step.on && <box at={[4, velocity.times(-(H - 8)).plus(H - 6)]} w={W - 8} h={2} radius="full" fill="text" />}
-            <box at={[0, H - 2]} w={W} h={2} fill="sound" opacity={now.eq(i).times(live.playing)} inert />
+            {step.on && <box at={[4, velocity.times(-(H - 8)).plus(H - 6)]} w={STEP - 8} h={2} radius="full" fill="text" />}
+            <box at={[0, H - 2]} w={STEP} h={2} fill="sound" opacity={now.eq(i).times(live.playing)} inert />
           </box>
         );
       })}
