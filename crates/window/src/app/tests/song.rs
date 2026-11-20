@@ -179,3 +179,26 @@ fn a_double_click_on_a_head_names_its_track_in_place() {
     act(&mut window.state, json!({ "action": "undo" }));
     assert_eq!(title(&window.state), "Track 2");
 }
+
+#[test]
+fn a_clip_is_named_in_place_from_its_menu() {
+    let (_scratch, mut window) = song();
+    act(
+        &mut window.state,
+        json!({ "key": "clip-t00/bass", "action": "press", "value": { "right": true } }),
+    );
+    act(
+        &mut window.state,
+        json!({ "label": "Rename", "action": "press" }),
+    );
+    redraw(&mut window);
+    assert_eq!(
+        super::focused(&window).as_deref(),
+        Some("clip-name-t00/bass")
+    );
+    for letter in ["R", "o", "o", "t"] {
+        key(&mut window, rune::Key::Text(letter.into()));
+    }
+    key(&mut window, rune::Key::Enter);
+    assert_eq!(record(&window.state, "song/t00/bass.json")["state"]["title"], "Root");
+}

@@ -192,6 +192,43 @@ fn keys_typed_in_a_field_are_typing_never_a_shortcut() {
     assert!(!window.state.playing);
 }
 
+/// As [`RENAME`], the name placed in a plane, as a clip's on a timeline.
+const PLACED_RENAME: &str = r#"import { h, input, text, tool } from "./sdk";
+export const placed = tool({
+  name: "placed", title: "Placed", when: "Never", doc: "Placed.", state: { name: text({ default: "Bass" }) }, sound: () => input,
+  memory: () => ({ renaming: false }),
+  view: (self, { memory, update }) => (
+    <box key="plane" label="Plane" w={400} h={100} plane={{ x: 0.1, y: 50 }}>
+      <row key="clip" label="Clip" place={[960, 0, 1920, 1]} onPress={() => (memory.renaming = true)}>
+        {memory.renaming
+          ? <field key="rename" label="Name" value={self.state.name} focus w={120} onCommit={(name) => {
+              memory.renaming = false;
+              if (name !== null) update("Rename", (draft) => void (draft.state.name = name));
+            }} />
+          : <text>{self.state.name}</text>}
+      </row>
+    </box>
+  ),
+});
+"#;
+
+#[test]
+fn a_field_in_a_plane_takes_the_keys_as_it_appears() {
+    let (_scratch, folder) = with_tools(&[("placed", PLACED_RENAME)]);
+    let mut window = laid_out(opened(&folder));
+    click(&mut window, "t00/chain/placed:clip");
+    redraw(&mut window);
+    assert_eq!(
+        focused(&window).as_deref(),
+        Some("t00/chain/placed:rename")
+    );
+    type_in(&mut window, "Kick");
+    key(&mut window, rune::Key::Enter);
+    let id = InstanceId::new("song/t00/chain/placed").unwrap();
+    let state: Value = serde_json::from_str(&window.state.project().state_json(&id).unwrap()).unwrap();
+    assert_eq!(state["name"], "Kick");
+}
+
 /// A list to pick a wave from, with a search line.
 const WAVES: &str = r#"import { h, input, text, tool } from "./sdk";
 const WAVES = ["Saw", "Square", "Sine"];

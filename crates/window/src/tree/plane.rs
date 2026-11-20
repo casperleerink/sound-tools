@@ -911,12 +911,30 @@ fn gather(scope: &Scope, node: &Node, into: &mut Gathered) {
         rect,
         &mut planes.found.borrow_mut(),
     );
-    // Built again when its tree or the zoom changes.
+    // Built again when its tree or the zoom changes; one with a field each time, as what the
+    // field says and whether it has the keys are the window's.
+    if holds_field(scope, node) {
+        into.placed.push(build(scope, node));
+        return;
+    }
     let version = (
         version_of(scope, node),
         planes.per(&plane).map(f32::to_bits),
     );
     into.placed.push(memo(key, version, || build(scope, node)));
+}
+
+fn holds_field(scope: &Scope, node: &Node) -> bool {
+    match node {
+        Node::Field(_) => true,
+        Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
+            b.children.iter().any(|child| holds_field(scope, child))
+        }
+        Node::Memo { key } => scope
+            .memo(key)
+            .is_some_and(|inner| holds_field(scope, &inner)),
+        _ => false,
+    }
 }
 
 /// What tells a placed element's tree from the one before: the memo it came in, or the tree.

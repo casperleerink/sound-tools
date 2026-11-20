@@ -26,7 +26,6 @@ const RETURNS = 4.5;
 export const Heads = ({ page }: HeadsProps) => {
   const { song, rows, returns, tracks, height } = page;
   const { memory } = song;
-  const renamed = rows.find((row) => row.kind === "track" && row.track.name === memory.renaming);
   return (
     <col w={HEAD} h="full" border="border" borderSides={[0, 1, 0, 0]}>
       <box key="heads" label="Tracks" grow={1} w="full" plane={{ y: PLANE }}>
@@ -41,7 +40,6 @@ export const Heads = ({ page }: HeadsProps) => {
           </row>
         )}
       </box>
-      {renamed && <box at={[32, live.plane(PLANE).top.negate().plus(renamed.top).times(ROW).plus(8)]}><Rename page={page} each={renamed.track} /></box>}
       {returns.length > 0 && (
         <col w="full" border="border" borderSides={[1, 0, 0, 0]}>
           <row w="full" h={LOW_ROW} pad={2} gap={1} align="center">
@@ -116,15 +114,13 @@ function trackMenu(page: Page, each: Strip): Item[] {
 const colours = (page: Page, each: Strip): Item[] =>
   PALETTE.map(({ name, colour }) => ({ text: name, checked: colourOf(each) === colour, onPress: () => page.edits.tracks.colour(each.name, colour) }));
 
-/** The field that renames `each` in place of its name. */
-const Rename = ({ page, each }: { page: Page; each: Strip }) => {
-  const title = titleOf(each);
-  return <TextField id={`rename-${each.name}`} label={`Name of ${title}`} value={title} focus size="sm" w={120} onCommit={(text) => page.edits.tracks.rename(each.name, text)} />;
-};
-
-/** A track's name, or the field that renames it in place: a return's; a track's lies over its head, out of the plane, where a field takes the keys. */
+/** A track's name, or the field that renames it in place. */
 const Name = ({ page, each, title }: { page: Page; each: Strip; title: string }) =>
-  page.song.memory.renaming === each.name && each.tool === "bus" ? <Rename page={page} each={each} /> : <text style="heading" color="text" opacity={muted(each) ? DIM : 1} truncate>{title}</text>;
+  page.song.memory.renaming === each.name ? (
+    <TextField id={`rename-${each.name}`} label={`Name of ${title}`} value={title} focus size="sm" w={120} onCommit={(text) => page.edits.tracks.rename(each.name, text)} />
+  ) : (
+    <text style="heading" color="text" opacity={muted(each) ? DIM : 1} truncate>{title}</text>
+  );
 
 /**
  * A track's head: its colour, which picks another, its name, what plays it, and of its toggles

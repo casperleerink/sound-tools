@@ -71,7 +71,6 @@ export const Timeline = ({ page }: TimelineProps) => {
           <MenuList id="timeline-menu" label="Menu of the timeline" items={emptyMenu(page)} open="menu" />
         </box>
       </row>
-      <ClipName page={page} />
       <box key="timeline-foot" label="Under the tracks" w="full" h={low} border="border" borderSides={[1, 0, 0, 0]} onPress={() => page.edits.clips.clear()} />
       {tracks.length === 0 && <EmptySong page={page} />}
       <box inset={[GUTTER, 0, 0, 0]} clip inert>
@@ -172,7 +171,8 @@ const TrackTime = ({ page, row, tempo: tempoKey, chosen, bounds, hint }: { page:
   const under = page.rows.filter((each) => each.kind !== "track" && each.track === track).reduce((sum, each) => sum + each.height, 0);
   const keys = ["cut_clips", "copy_clips", "duplicate_clips", "delete_clips"].map((action) => song.shortcut(action)).join(" ");
   const quiet = memory.recording !== null || track.children.some((child) => child.tool === "timeline" || child.tool === "region");
-  return memo(`time-${track.name}`, [track.children, colour, tempoKey, row.top, here.join(" "), here.length > 0 ? JSON.stringify(bounds) : null, memory.snap, dim, under, keys, quiet ? "" : hint], () => (
+  const naming = memory.renamingClip !== null && rowOfKey(memory.renamingClip) === track.name ? memory.renamingClip : null;
+  return memo(`time-${track.name}`, [track.children, colour, tempoKey, row.top, here.join(" "), here.length > 0 ? JSON.stringify(bounds) : null, memory.snap, dim, under, keys, quiet ? "" : hint, naming], () => (
     <box>
       <box place={[0, row.top, page.end, 1]} border="border" borderSides={[0, 0, 1, 0]} />
       {!quiet && hint !== "" && (
@@ -252,7 +252,14 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
           edits.clips.move({ dx: p.dx, dy: trackAt(rows, tracks, top + p.dy + 0.5) - row, alt: p.alt });
         }}>
         {notes.length > 0 && <Miniature itemKey={key} chosen={chosen} notes={notes} x={moved.dx.plus(start)} y={y} length={length} titled={name !== ""} colour={colour} />}
-        {name !== "" && <text at={[8, 6]} style="label" color="text-secondary" truncate>{name}</text>}
+        {memory.renamingClip === key ? (
+          <box at={[4, 4]}>
+            <TextField id={`clip-name-${key}`} label={`Name of ${words}`} value={name} focus size="sm" w={140}
+              onCommit={(text) => (text === null ? (memory.renamingClip = null) : page.edits.clips.rename(key, text))} />
+          </box>
+        ) : (
+          name !== "" && <text at={[8, 6]} style="label" color="text-secondary" truncate>{name}</text>
+        )}
         {/* Where a region's waveform draws, from the `wave` feed. */}
         {region && <RegionWave />}
         {dim < 1 && !muted(track) && <Tooltip text={UNPLAYED} />}
@@ -266,26 +273,6 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
         )}
         <MenuList id={`menu-${key}`} label={`Menu of ${words}`} items={itemMenu(page, key, region)} open="menu" w={260} />
       </box>
-    </box>
-  );
-};
-
-/**
- * The field that names the clip being named, over it: out of the plane, where a field takes the
- * keys, following the plane's scroll and zoom.
- */
-const ClipName = ({ page }: { page: Page }) => {
-  const key = page.song.memory.renamingClip;
-  const clip = key === null ? undefined : itemAt(page.song.children, key);
-  const row = key === null ? undefined : page.rows.find((each) => each.kind === "track" && each.track.name === rowOfKey(key));
-  if (key === null || clip?.tool !== "timeline" || !row) return null;
-  const view = live.plane(PLANE);
-  const x = view.left.negate().plus(clip.state.start).times(view.zoom.times(ACROSS)).max(0).plus(GUTTER + 4);
-  const title = clip.state.title || "";
-  return (
-    <box at={[x, view.top.negate().plus(row.top).times(ROW).plus(INSET + 4)]}>
-      <TextField id={`clip-name-${key}`} label={`Name of Clip ${title || wordsOf(key)}`} value={title} focus size="sm" w={140}
-        onCommit={(text) => (text === null ? (page.song.memory.renamingClip = null) : page.edits.clips.rename(key, text))} />
     </box>
   );
 };
