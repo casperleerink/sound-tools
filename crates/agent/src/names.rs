@@ -109,6 +109,9 @@ mod tests {
         assert_eq!(name("state/song/t00/c00/instance.json"), "Bass · Verse");
         assert_eq!(name("state/song/t01/instance.json"), "T01");
         assert_eq!(name("project.json"), "the project's settings");
-        assert_eq!(name("extensions/song-tracks.tsx"), "the code of Song tracks");
+        assert_eq!(
+            name("extensions/song-tracks.tsx"),
+            "the code of Song tracks"
+        );
     }
 }

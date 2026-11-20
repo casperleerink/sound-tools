@@ -389,7 +389,9 @@ fn write_sine(folder: &std::path::Path, level: f32) {
     let mut writer = hound::WavWriter::create(&path, spec).unwrap();
     for frame in 0..44_100 {
         let sample = (frame as f32 * 441.0 / 44_100.0 * std::f32::consts::TAU).sin() * level;
-        writer.write_sample((sample * f32::from(i16::MAX)) as i16).unwrap();
+        writer
+            .write_sample((sample * f32::from(i16::MAX)) as i16)
+            .unwrap();
     }
     writer.finalize().unwrap();
 }
@@ -401,7 +403,11 @@ fn a_save_of_a_tool_keeps_its_sample_playing_and_does_not_read_it_again() {
     let root = folder.path().to_path_buf();
     write(&root, "project.json", &project(Some("player"), false));
     write(&root, "extensions/theme.json", "{}");
-    write(&root, "state/player.json", r#"{"tool": "player", "state": {"sound": "sine.wav"}}"#);
+    write(
+        &root,
+        "state/player.json",
+        r#"{"tool": "player", "state": {"sound": "sine.wav"}}"#,
+    );
     write(&root, "extensions/player.ts", &player(1.0));
     write_sine(&root, 0.5);
     let mut opened = open(folder, Devices::default());
