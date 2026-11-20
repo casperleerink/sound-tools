@@ -26,6 +26,7 @@ impl State {
     fn discover(&mut self, settle: bool) -> bool {
         let changed = self.show_named(settle);
         self.lives.keep(&tree::bound(self));
+        tree::report_missing(self);
         changed
     }
 

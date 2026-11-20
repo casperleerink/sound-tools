@@ -106,6 +106,8 @@ pub(crate) struct State {
     last: f64,
     /// A run without a window opens a copy, so it writes nothing and works next to a window.
     _copy: Option<tempfile::TempDir>,
+    /// The project's icons, each read once per load of the code.
+    pub(crate) icons: tree::Icons,
     // The areas of the window's chrome follow, a field each. An area is a module of `app` that
     // owns its state: `open` makes it, `chrome::view` draws it, `keys::on_key` gives it keys.
 }
@@ -207,6 +209,7 @@ impl State {
             first: headless.then(|| (act.unwrap_or_default(), play)),
             last: 0.0,
             _copy: copy,
+            icons: tree::Icons::default(),
         })
     }
 

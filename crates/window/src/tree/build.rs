@@ -144,7 +144,7 @@ pub(super) fn build(scope: &Scope, node: &Node) -> El {
         Node::Text(t) => label(scope, t),
         Node::Shapes(shapes) => drawing(scope, shapes),
         Node::Field(field) => typed(scope, field),
-        Node::Icon(_) => el(),
+        Node::Icon(icon) => super::icon::drawn(scope, icon),
         Node::Child { path } => match scope.instance.child(path) {
             Ok(child) => match scope.state.drawn(&child) {
                 _ if scope.state.code_failed(&child) => code_failed(scope.state, &child),

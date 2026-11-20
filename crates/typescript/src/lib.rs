@@ -477,6 +477,9 @@ fn launch(
     let mut files = tool_files(extensions);
     // A project of the new window runs Bun for its generic card too, or says it has none.
     let views = extensions.join(next::THEME).is_file();
+    if views {
+        write_icon_names(extensions).map_err(|error| error.to_string())?;
+    }
     if files.is_empty() && !views {
         return Ok(None);
     }
@@ -593,6 +596,33 @@ fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
         if std::fs::read_to_string(&path).ok().as_deref() != Some(text) {
             std::fs::write(&path, text)?;
         }
+    }
+    Ok(())
+}
+
+/// `sdk/icons.ts`: the names of the icons in `ui/icons/`, so a view that draws one without a
+/// file does not type-check. Written as the code loads, so an icon added meanwhile is there.
+fn write_icon_names(extensions: &Path) -> std::io::Result<()> {
+    let mut names: Vec<String> = std::fs::read_dir(extensions.join("ui/icons"))
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().into_string().ok()?;
+            Some(format!("{:?}", name.strip_suffix(".svg")?))
+        })
+        .collect();
+    names.sort();
+    let union = match names.is_empty() {
+        true => "never".to_string(),
+        false => names.join(" | "),
+    };
+    let text = format!(
+        "// The icons of `ui/icons/`, by file name. Written as the code loads.\nexport type IconName = {union};\n"
+    );
+    let path = extensions.join("sdk/icons.ts");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
+        std::fs::create_dir_all(extensions.join("sdk"))?;
+        std::fs::write(path, text)?;
     }
     Ok(())
 }

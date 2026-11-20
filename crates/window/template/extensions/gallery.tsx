@@ -80,7 +80,8 @@ export const gallery = tool({
                 <Button id="primary" label="Add a track" text="Add track" variant="primary" />
                 <Button id="subtle" label="Duplicate" text="Duplicate" />
                 <Button id="ghost" label="Rename" text="Rename" variant="ghost" />
-                <Button id="glyph" label="Add" glyph="+" tip="Add a device" />
+                <Button id="glyph" label="Add" icon="plus" tip="Add a device" />
+                <Button id="with-icon" label="Record" text="Record" icon="mic" />
               </Grid>
               <Grid>
                 <Button id="small" label="Small" text="Small" size="sm" />
@@ -95,6 +96,7 @@ export const gallery = tool({
                 {toggle("arm", "Arm", "danger", true)}
                 {toggle("freeze", "Freeze")}
                 {toggle("sync", "Sync")}
+                <Toggle id="lanes" label="Show lanes" icon="automation" on={memory.toggles.lanes ?? false} onToggle={flip("lanes")} />
               </Grid>
             </Section>
             <Section title="Choices">
@@ -103,7 +105,7 @@ export const gallery = tool({
                 <Select id="shape" label="Filter" options={SHAPES} value={memory.shape} onChange={(shape) => (memory.shape = shape)} />
               </Grid>
               <Grid>
-                <Menu id="menu" label="Track menu" items={[{ text: "Rename", onPress: () => {}, keys: "⏎" }, { text: "Duplicate", onPress: () => {}, keys: "⌘D" }, { text: "Delete", onPress: () => {}, danger: true }]} />
+                <Menu id="menu" label="Track menu" items={[{ text: "Rename", icon: "pencil", onPress: () => {}, keys: "⏎" }, { text: "Duplicate", icon: "copy", onPress: () => {}, keys: "⌘D" }, { text: "Delete", icon: "trash-2", onPress: () => {}, danger: true }]} />
                 <Popover id="popover" label="Swing" text="Swing" title="Swing">
                   {knob("swing", "Swing", { min: 0, max: 1, unit: "percent" })}
                 </Popover>
@@ -188,7 +190,7 @@ export const gallery = tool({
             </Section>
           </row>
           <row gap={8}>
-            <Panel title="Panel" end={<Button id="panel-add" label="Add a device" glyph="+" size="sm" variant="ghost" />}>
+            <Panel title="Panel" end={<Button id="panel-add" label="Add a device" icon="plus" size="sm" variant="ghost" />}>
               <text style="body" color="text-secondary">A surface with a title, for a part of a page.</text>
             </Panel>
             <box w={360} radius="lg" border="border">

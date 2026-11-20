@@ -6,7 +6,7 @@ import type { Option } from "./segmented";
 export const Select = <T extends string | number>({ id, label, options, value, size = "sm", w = 120, onChange }: { id: string; label: string; options: readonly Option<T>[]; value: T; size?: Size; w?: number; onChange: (value: T) => void }) => (
   <row key={id} label={label} role="button" value={options.find((option) => option.value === value)?.text ?? ""} w={w} h={height(size)} px={2} gap={1} align="center" justify="between" radius={corner(size)} fill="fill" hover="fill">
     <text style="label" color="text" truncate>{options.find((option) => option.value === value)?.text ?? ""}</text>
-    <text style="label" color="text-muted">▾</text>
+    <icon name="chevron-down" size={14} color="text-muted" />
     <col overlay={{ open: "press", side: "bottom", align: "start", gap: 4 }} role="listbox" group label={label} w={w} pad={1} radius="lg" fill="raised" border="border-strong" shadow="md">
       {options.map((option) => {
         const chosen = option.value === value;

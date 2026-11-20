@@ -5,6 +5,7 @@
 import type theme from "../theme.json";
 import type { Clock, Offer as Offered } from "./clock";
 import type { Fields, Inputs, Note, Unit, ValuesOf } from "./fields";
+import type { IconName } from "./icons";
 import type { Tools } from "./records";
 import { registry, type ChildTools, type Context, type FilledStateOfTool, type OwnedChild, type ProjectTool, type ToolSpec } from "./tools";
 import { Live, splitPath, type Num } from "./values";
@@ -235,7 +236,7 @@ export type FieldProps = {
   placeholder?: string;
 };
 /** `extensions/ui/icons/<name>.svg` of the project, `size` points square (16 when left out), tinted `color`. */
-export type IconProps = { name: string; size?: number; color?: Color };
+export type IconProps = { name: IconName; size?: number; color?: Color };
 /** The card of a child at `path` inside this tool, such as `t00/synth`: its own view, or one control per field. */
 export type ChildProps = { path: string };
 

@@ -16,12 +16,14 @@ use crate::lives::Shows;
 mod build;
 mod field;
 mod gesture;
+mod icon;
 mod overlay;
 mod semantics;
 mod shapes;
 
 pub(crate) use build::{bound, code_failed, enterable, view};
 pub(crate) use gesture::Gesture;
+pub(crate) use icon::{Icons, report_missing};
 pub(crate) use overlay::overlays;
 pub(crate) use semantics::Press;
 
@@ -37,8 +39,7 @@ pub(crate) enum Node {
     Text(TextNode),
     Shapes(ShapesNode),
     Field(FieldNode),
-    /// Not drawn yet, so it takes no room.
-    Icon(serde::de::IgnoredAny),
+    Icon(icon::IconNode),
     Child {
         path: String,
     },
