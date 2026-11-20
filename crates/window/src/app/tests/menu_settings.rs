@@ -471,3 +471,48 @@ fn the_search_finds_actions_by_their_words_or_their_key() {
         .collect();
     assert_eq!(rows, ["Go to the agent", "Stop the agent"]);
 }
+
+/// Audio with simulated devices, the chosen output gone, for an agent to look at:
+/// `SNAPS=<folder> cargo nextest run -p sound-window audio_picture`.
+#[test]
+fn audio_picture() {
+    let Ok(folder) = std::env::var("SNAPS") else {
+        return;
+    };
+    let scratch = new_project();
+    let mut state = kept(&scratch);
+    let file = scratch.path().join("support/audio-devices.json");
+    let chosen = runtime::app::ChosenDevices {
+        output: Some("interface".into()),
+        output_name: Some("Studio Interface".into()),
+        ..Default::default()
+    };
+    chosen.remember(&file).unwrap();
+    state.settings = super::super::settings::Settings::new(
+        Arc::new(|| DeviceList {
+            outputs: vec![
+                device("speakers", "MacBook Pro Speakers"),
+                device("blackhole", "BlackHole 2ch"),
+            ],
+            inputs: vec![device("mic", "MacBook Pro Microphone")],
+        }),
+        Some(file),
+        "MacBook Pro Speakers".into(),
+    );
+    act(&mut state, json!({ "action": "app.settings" }));
+    let png = std::path::PathBuf::from(folder).join("settings-audio.png");
+    let spec = rune::AppSpec {
+        min_size: Some(MIN_SIZE),
+        poll: Some(poll),
+        setup: Some(setup),
+        on_key: Some(on_key),
+        fonts: &crate::FONTS,
+        families: ("Inter Display", "ui-monospace"),
+        ..rune::AppSpec::new("song", (1470.0, 920.0), || unreachable!(), view)
+    };
+    rune::App::new(spec)
+        .args(["--snap".to_string(), png.display().to_string()])
+        .init(move || state)
+        .run();
+    assert!(png.exists());
+}

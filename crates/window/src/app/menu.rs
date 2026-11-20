@@ -149,11 +149,23 @@ fn recent(state: &State) -> Vec<Entry> {
         .map(|(index, folder)| {
             let name = folder.file_name().unwrap_or(folder.as_os_str());
             Entry {
-                description: folder.parent().map(|parent| parent.display().to_string()),
+                description: folder.parent().map(short_path),
                 ..Entry::new(Pick::Recent(index), name.to_string_lossy())
             }
         })
         .collect()
+}
+
+/// A folder as a menu can show it: the home folder is `~`.
+fn short_path(folder: &Path) -> String {
+    let home = std::env::home_dir();
+    let inside = home
+        .as_deref()
+        .and_then(|home| folder.strip_prefix(home).ok());
+    match inside {
+        Some(inside) => Path::new("~").join(inside).display().to_string(),
+        None => folder.display().to_string(),
+    }
 }
 
 fn item(entry: Entry) -> MenuItem {

@@ -16,31 +16,53 @@ pub(crate) struct DeviceList {
 
 const DEFAULT: &str = "System default";
 
-/// The rows of a list: its name, whether it is the chosen one, and what is said beside it.
+/// The rows of a list: its name, whether it is the chosen one, and what is said beside it. A
+/// chosen device that is not there is the last row, picked, saying so.
 fn rows(state: &State, devices: &DeviceList, output: bool) -> Vec<(String, bool, Option<String>)> {
-    let (list, chosen) = match output {
-        true => (&devices.outputs, &state.settings.chosen.output),
-        false => (&devices.inputs, &state.settings.chosen.input),
+    let settings = &state.settings;
+    let (list, chosen, name) = match output {
+        true => (
+            &devices.outputs,
+            &settings.chosen.output,
+            &settings.chosen.output_name,
+        ),
+        false => (
+            &devices.inputs,
+            &settings.chosen.input,
+            &settings.chosen.input_name,
+        ),
     };
+    let playing = &settings.playing;
     let each = list
         .iter()
         .map(|device| (Some(device.id.as_str()), device.name.as_str()));
-    let all = std::iter::once((None, DEFAULT)).chain(each);
-    all.map(|(id, name)| {
-        let picked = id == chosen.as_deref();
-        // Beside the picked output, what plays when its name does not say. Only the output in
-        // use is known: the engine reports no input.
-        let playing = &state.settings.playing;
-        let note = (output && picked && !playing.is_empty())
-            .then(|| match (id, name == playing) {
-                (None, _) => Some(playing.clone()),
-                (Some(_), true) => None,
-                (Some(_), false) => Some(format!("Not available. Playing on {playing}")),
-            })
-            .flatten();
-        (name.to_string(), picked, note)
-    })
-    .collect()
+    let rows = std::iter::once((None, DEFAULT))
+        .chain(each)
+        .map(|(id, name)| {
+            let picked = id == chosen.as_deref();
+            // Beside the picked output, what plays when its name does not say. Only the output in
+            // use is known: the engine reports no input.
+            let note = (output && picked && !playing.is_empty())
+                .then(|| match (id, name == playing) {
+                    (None, _) => Some(playing.clone()),
+                    (Some(_), true) => None,
+                    (Some(_), false) => Some(format!("Not available. Playing on {playing}")),
+                })
+                .flatten();
+            (name.to_string(), picked, note)
+        });
+    let mut rows: Vec<_> = rows.collect();
+    if chosen.is_some() && !rows.iter().any(|(_, picked, _)| *picked) {
+        let note = match (output, playing.is_empty()) {
+            (true, false) => format!("Not available. Playing on {playing}"),
+            _ => "Not available".to_string(),
+        };
+        let name = name
+            .clone()
+            .unwrap_or_else(|| "The device you picked".into());
+        rows.push((name, true, Some(note)));
+    }
+    rows
 }
 
 fn key(output: bool, row: usize) -> String {

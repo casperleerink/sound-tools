@@ -182,6 +182,11 @@ pub fn remember_project_in(support: &Path, folder: &Path) -> Result<()> {
 pub struct ChosenDevices {
     pub output: Option<String>,
     pub input: Option<String>,
+    /// Their names, to say which is missing while it is unplugged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_name: Option<String>,
 }
 
 impl ChosenDevices {

@@ -239,17 +239,18 @@ impl State {
         } else {
             &devices.inputs
         };
-        let id = match row {
+        let device = match row {
             0 => None,
             row => match list.get(row - 1) {
-                Some(device) => Some(device.id.clone()),
+                Some(device) => Some(device),
                 None => return,
             },
         };
+        let (id, name) = (device.map(|d| d.id.clone()), device.map(|d| d.name.clone()));
         let mut chosen = self.settings.chosen.clone();
         match output {
-            true => chosen.output = id,
-            false => chosen.input = id,
+            true => (chosen.output, chosen.output_name) = (id, name),
+            false => (chosen.input, chosen.input_name) = (id, name),
         }
         if chosen == self.settings.chosen {
             return;

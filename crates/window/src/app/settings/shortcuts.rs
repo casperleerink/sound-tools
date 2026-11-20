@@ -273,7 +273,7 @@ pub(super) fn view(state: &State, page: &Page) -> El {
                 .w_full()
                 .gap(theme.space(2))
                 .items_center()
-                .child(search)
+                .child(rune::el().grow(1.0).min_w(0.0).child(search))
                 .children(reset_all),
         )
         .children(unread)
@@ -352,11 +352,17 @@ fn shortcut_row(state: &State, page: &Page, line: Line, rule: bool) -> El {
         .role("button")
         .label(line.title.clone())
         .a11y_value(said)
-        .w_full()
         .h(48.0)
+        // Room for its ring and fill around what it shows, which stays in line with the title.
+        .mx(-8.0)
+        .px(8.0)
         .gap(12.0)
         .items_center()
         .radius(theme.radius("md").unwrap_or(6.0))
+        .fill(match waiting {
+            true => theme.color("selected"),
+            false => rune::Color::TRANSPARENT,
+        })
         .hover_group()
         .focusable(true)
         .on_press(move |s: &mut State| s.wait_for_key(record.clone()))
