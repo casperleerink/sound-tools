@@ -77,6 +77,55 @@ fn a_drag_over_empty_space_chooses_the_clips_it_covers_and_delete_removes_them()
     assert_ne!(start(&window.state, "t01/chords"), Value::Null);
 }
 
+/// The old rule: audio lands at the nearest beat on the audio track under it, and a MIDI file of
+/// one part becomes a clip in the cell under it on that instrument track.
+#[test]
+fn files_dropped_on_the_timeline_land_on_their_row_and_tick_as_one_undo_step_each() {
+    let (_scratch, mut window) = song();
+    let outside = tempfile::tempdir().unwrap();
+    for _ in 0..2 {
+        act(
+            &mut window.state,
+            json!({ "key": "add-track-kind", "action": "open" }),
+        );
+        act(
+            &mut window.state,
+            json!({ "label": "Audio track", "action": "press" }),
+        );
+        redraw(&mut window);
+    }
+    let (sound, tune) = (
+        outside.path().join("kick.wav"),
+        outside.path().join("tune.mid"),
+    );
+    super::host::wav(&sound);
+    super::drops::midi(&tune, &[("Lead", 60)]);
+    let drop = |window: &mut rune::Runtime<State>, file: &std::path::Path, x: u32, y: f32| {
+        let value = json!({ "files": [file], "x": x, "y": y });
+        act(
+            &mut window.state,
+            json!({ "key": "song", "action": "drop", "value": value }),
+        );
+        redraw(window);
+    };
+    // Rows: t00, t01, audio-1, then audio-1-2, the one dropped on. Bar 3 is tick 7680.
+    drop(&mut window, &sound, 7680 + 300, 3.5);
+    assert_eq!(start(&window.state, "audio-1-2/region"), 7680);
+    let region = record(&window.state, "song/audio-1-2/region.json");
+    assert_eq!(region["state"]["asset"], "kick.wav");
+    drop(&mut window, &tune, 7680 + 100, 1.5);
+    assert_eq!(start(&window.state, "t01/clip"), 7680);
+    let clip = record(&window.state, "song/t01/clip.json");
+    assert_eq!(clip["state"]["notes"][0]["pitch"], 60);
+    act(&mut window.state, json!({ "action": "undo" }));
+    assert_eq!(start(&window.state, "t01/clip"), Value::Null);
+    assert_eq!(start(&window.state, "audio-1-2/region"), 7680);
+    act(&mut window.state, json!({ "action": "undo" }));
+    assert_eq!(start(&window.state, "audio-1-2/region"), Value::Null);
+    let audio_track = window.state.project().root().join("state/song/audio-1-2");
+    assert!(audio_track.exists());
+}
+
 #[test]
 fn a_double_click_on_a_head_names_its_track_in_place() {
     let (_scratch, mut window) = song();

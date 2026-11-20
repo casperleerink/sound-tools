@@ -56,8 +56,8 @@ fn drop_on(window: &mut rune::Runtime<State>, files: &[&Path], at: (f32, f32)) {
     redraw(window);
 }
 
-/// A MIDI file of two tracks, Bass playing C3 and Lead C4.
-fn two_parts(path: &Path) {
+/// A MIDI file of a track for each of `parts`, named and playing one note of that pitch.
+pub(super) fn midi(path: &Path, parts: &[(&str, u8)]) {
     let track = |name: &[u8], pitch: u8| {
         let mut events = vec![0x00, 0xFF, 0x03, name.len() as u8];
         events.extend(name);
@@ -70,9 +70,10 @@ fn two_parts(path: &Path) {
     };
     let mut bytes = b"MThd".to_vec();
     bytes.extend(6_u32.to_be_bytes());
-    bytes.extend([0, 1, 0, 2, 0x01, 0xE0]);
-    bytes.extend(track(b"Bass", 48));
-    bytes.extend(track(b"Lead", 60));
+    bytes.extend([0, 1, 0, parts.len() as u8, 0x01, 0xE0]);
+    for (name, pitch) in parts {
+        bytes.extend(track(name.as_bytes(), *pitch));
+    }
     std::fs::write(path, bytes).unwrap();
 }
 
@@ -119,7 +120,7 @@ fn a_drop_on_a_plane_hears_where_it_fell_in_units_and_every_file_in_order() {
 fn a_midi_file_comes_as_its_parts() {
     let (_scratch, mut window) = pads();
     let (_dir, file) = outside();
-    two_parts(&file("tune.mid"));
+    midi(&file("tune.mid"), &[("Bass", 48), ("Lead", 60)]);
     let ([x, y, ..], _) = window.presented(&format!("{PREFIX}lane")).unwrap();
     drop_on(&mut window, &[&file("tune.mid")], (x, y));
     assert_eq!(wrote(&window.state, "heard"), "0 0 |  | Bass:48,Lead:60");
