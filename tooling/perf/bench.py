@@ -26,13 +26,6 @@ ENV = dict(os.environ, HOME=str(ROOT / "home"), SOUND_TOOLS_NO_UPDATES="1",
            PATH=os.pathsep.join([str(Path.home() / ".bun/bin"), os.environ.get("PATH", "")]))
 # ru_maxrss is bytes on macOS and kilobytes on Linux.
 MAXRSS_BYTES = 1 if platform.system() == "Darwin" else 1024
-# A `+edit` live run changes the `root` choice of the gravity-harp track every few seconds, so
-# its sound is built again while the piece plays. A save of a tool file would do the same, but
-# only the window reloads tool files; headless does not.
-EDIT_EVERY = 5
-ROOTS = ["C", "E", "F", "G", "A", "D"]
-# Tools that are silent without a window: their sound only starts from their page.
-SILENT = {"one-gravity-harp": "plucks only when a ball drops on its page"}
 
 
 def git(*arguments, cwd=REPO):
@@ -69,7 +62,7 @@ class Build:
         return self.base / "projects" / name
 
     def make_projects(self, names):
-        for name in dict.fromkeys(name.removesuffix("+edit") for name in names):
+        for name in dict.fromkeys(names):
             projects.make(self.program, self.source, self.project(name), name, ENV)
 
 
@@ -160,17 +153,11 @@ def process_tree(root):
     return found
 
 
-def edit_choice(folder, edits):
-    record = {"tool": "gravity-harp", "state": {"root": ROOTS[edits % len(ROOTS)]}}
-    (folder / "state/song/gravity-harp/synth.json").write_text(json.dumps(record))
-
-
 def live_once(build, job, window):
     """Plays a copy of a project headless at -60 dB for `window` seconds."""
-    name = job.removesuffix("+edit")
-    folder = build.base / "live" / name
+    folder = build.base / "live" / job
     shutil.rmtree(folder, ignore_errors=True)
-    shutil.copytree(build.project(name), folder)
+    shutil.copytree(build.project(job), folder)
     projects.set_master_gain(folder, -60.0)
     process = subprocess.Popen([build.program, folder, "--headless"], env=ENV, text=True, bufsize=1,
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -190,15 +177,12 @@ def live_once(build, job, window):
     process.stdin.write("play\n")
     time.sleep(2)  # past the first blocks of playback
     before, started = process_tree(process.pid), time.monotonic()
-    rss, bun_rss, edits = [], [], 0
-    while (elapsed := time.monotonic() - started) < window:
+    rss, bun_rss = [], []
+    while time.monotonic() - started < window:
         time.sleep(1)
         tree = process_tree(process.pid)
         rss.append(sum(row[1] for row in tree.values()))
         bun_rss.append(sum(row[1] for row in tree.values() if "bun" in row[2]))
-        if job.endswith("+edit") and elapsed // EDIT_EVERY > edits:
-            edit_choice(folder, edits)
-            edits += 1
     after, elapsed = process_tree(process.pid), time.monotonic() - started
     process.stdin.write("status\nquit\n")
     process.stdin.flush()
@@ -274,7 +258,7 @@ def null(builds, names, seconds):
             wav = ROOT / "null" / f"{name}-{index}.wav"
             wav.parent.mkdir(exist_ok=True)
             peak = render_once(build, name, seconds, wav)["peak"]
-            if peak < 1e-4 and name not in SILENT:
+            if peak < 1e-4:
                 raise SystemExit(f"{name} on {build} rendered silence (peak {peak})")
             renders.append(read_wav(wav))
         first, second = renders
@@ -283,8 +267,7 @@ def null(builds, names, seconds):
         difference = max((abs(a - b) for a, b in zip(first, second)), default=0.0)
         db = 20 * math.log10(difference) if difference > 0 else float("-inf")
         failed |= db > -100
-        note = f" (silent: {SILENT[name]})" if name in SILENT else ""
-        rows.append(f"| {name} | {max(map(abs, first)):.3f} | {db:.1f}{note} |")
+        rows.append(f"| {name} | {max(map(abs, first)):.3f} | {db:.1f} |")
     print(f"\nNull test, {seconds} s, {builds[0]} against {builds[1]}. Target: under -100 dB.\n")
     print("| project | peak | peak difference dB |\n| --- | ---: | ---: |")
     print("\n".join(rows))
@@ -330,7 +313,7 @@ def main():
     arguments = parser.parse_args()
     defaults = {
         "render": projects.names(),
-        "live": ["builtin12", "mixed", "mixed-x2", "mixed+edit"],
+        "live": ["builtin12", "mixed", "mixed-x2"],
         "null": [name for name in projects.names() if name.startswith(("one-", *projects.REBUILDS))],
         "profile": ["one-grain-cloud"],
     }

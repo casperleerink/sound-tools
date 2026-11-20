@@ -13,16 +13,12 @@ HERE = Path(__file__).resolve().parent
 BAR = 3840  # ticks in a 4/4 bar; at the default 120 bpm a bar is 2 s
 BARS = 32  # 64 s, longer than the longest render
 
-# Example tools: file in the repo, state, whether it plays the notes of a clip.
+# Example tools: file in the repo, state.
 TOOLS = {
     "acid-bass": ("tooling/agent-eval/fixtures/acid-bass.tsx",
                   {"steps": [1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0],
-                   "accents": [1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0]}, False),
-    "dorian-drift": ("tooling/agent-eval/examples/dorian-drift.tsx", {}, False),
-    "gravity-harp": ("tooling/agent-eval/examples/gravity-harp.tsx", {}, False),
-    "storm": ("tooling/agent-eval/examples/storm.tsx", {}, False),
-    "life": ("tooling/agent-eval/examples/life.tsx", {}, True),
-    "grain-cloud": ("tooling/agent-eval/examples/grain-cloud.ts", {"sound": "texture.wav"}, False),
+                   "accents": [1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0]}),
+    "grain-cloud": ("tooling/agent-eval/examples/grain-cloud.ts", {"sound": "texture.wav"}),
 }
 # TypeScript rebuilds of built-in instruments: rebuild tool -> built-in tool id.
 REBUILDS = {"ts-synth": "instrument.synth"}
@@ -131,11 +127,10 @@ def texture(folder):
 
 def tool(folder, source, name, order, suffix=""):
     """Adds an example tool on a track. `source` is the checkout of the commit."""
-    file, state, plays_notes = TOOLS[name]
+    file, state = TOOLS[name]
     (folder / "extensions").mkdir(exist_ok=True)
     shutil.copy(source / file, folder / "extensions" / Path(file).name)
-    clip_notes = notes("arp", order) if plays_notes else None
-    track(folder, f"{name}{suffix}", order, {"tool": name, "state": state}, clip_notes)
+    track(folder, f"{name}{suffix}", order, {"tool": name, "state": state}, None)
 
 
 def rebuild_file(source, name):

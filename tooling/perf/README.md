@@ -28,8 +28,7 @@ memory that grew between them is a leak. Frame times are wall time: on a busy ma
 so compare runs of a similar load average. Headless, every frame builds the whole window, which a
 window at rest does not. Rejected: `--native --trace`, which opens a window.
 
-`--projects a,b` picks projects (`projects.names()`); `--runs` and `--seconds` change the
-counts. Builds, projects and logs go to `/tmp/st-perf` (`PERF_DIR` moves it). Remove it and run
+Builds, projects and logs go to `/tmp/st-perf` (`PERF_DIR` moves it). Remove it and run
 `git worktree prune` to clean up.
 
 Built-ins must stay bit for bit the same (`null`). Only the reverb may change its sound. B
