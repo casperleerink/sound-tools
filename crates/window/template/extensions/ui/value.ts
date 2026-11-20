@@ -2,9 +2,18 @@
 // is typed: typed text is read in what the control shows.
 import { Live, type Unit } from "../sdk";
 
-/** `log` spreads it in octaves, as a frequency. `step`: whole steps from `min`. */
-export type Scale = "linear" | "log";
+/**
+ * `log` spreads it in octaves, as a frequency; `fader` is a volume in dB as a mixer's fader
+ * spreads it: silence, -inf, at the bottom, 0 dB at 0.8 of the travel and +6 dB at the top.
+ * `step`: whole steps from `min`.
+ */
+export type Scale = "linear" | "log" | "fader";
 export type Range = { min: number; max: number; scale?: Scale; step?: number };
+
+/** The fader's power law on the amplitude, as the old app's fader had it: 0 dB at `UNITY`, ten times the amplitude every `DECADE` dB. */
+const [UNITY, DECADE] = [0.8, 61.94];
+/** What a volume fader takes: silence to +6 dB, in tenths of a dB. */
+export const VOLUME: Range = { min: -Infinity, max: 6, scale: "fader" };
 
 const clamp = (at: number) => Math.min(Math.max(at, 0), 1);
 /** What an arrow key moves of the travel when there is no `step`. */
@@ -14,15 +23,15 @@ const clean = (value: number) => Number(value.toPrecision(12));
 
 /** Where `value` is on the travel, 0 to 1. */
 export const travelled = (value: number, { min, max, scale }: Range): number =>
-  clamp(scale === "log" ? Math.log(value / min) / Math.log(max / min) : (value - min) / (max - min || 1));
+  clamp(scale === "fader" ? UNITY * 10 ** (value / DECADE) : scale === "log" ? Math.log(value / min) / Math.log(max / min) : (value - min) / (max - min || 1));
 
 /** The highest whole step from `min` that is not past `max`. */
-const top = ({ min, max, step }: Range) => (step ? min + Math.floor((max - min) / step + 1e-9) * step : max);
+const top = ({ min, max, step }: Range) => (step && Number.isFinite(min) ? min + Math.floor((max - min) / step + 1e-9) * step : max);
 
-/** `value` in whole `step`s from `min`, within the range: what every `set`, key and typed value goes through. */
+/** `value` in whole `step`s from `min`, within the range: what every `set`, key and typed value goes through. A fader's is in tenths of a dB. */
 export const fitted = (value: number, range: Range): number => {
-  const { min, step } = range;
-  const stepped = step ? clean(min + Math.round((value - min) / step) * step) : value;
+  const { min, step, scale } = range;
+  const stepped = scale === "fader" && Number.isFinite(value) ? Math.round(value * 10) / 10 : step && Number.isFinite(value) ? clean(min + Math.round((value - min) / step) * step) : value;
   return Math.min(Math.max(stepped, min), top(range));
 };
 
@@ -33,17 +42,26 @@ export const stepped = (value: number, by: number, range: Range): number =>
 /** The value at `at` on the travel. */
 export const valueAt = (at: number, range: Range): number => {
   const { min, max, scale } = range;
+  if (scale === "fader") return fitted(at <= 0 ? -Infinity : DECADE * Math.log10(clamp(at) / UNITY), range);
   return fitted(scale === "log" ? min * (max / min) ** clamp(at) : min + clamp(at) * (max - min), range);
 };
 
 /** {@link travelled} of a live value, such as what a lane plays. */
 export const liveTravelled = (value: Live, { min, max, scale }: Range): Live =>
   // `decibels` is 20 log10: a ratio in dB over the range's, a place on a log scale.
-  (scale === "log" ? value.over(min).decibels().over(20 * Math.log10(max / min)) : value.minus(min).over(max - min || 1)).clamp(0, 1);
+  (scale === "fader" ? Live.of(10).pow(value.over(DECADE)).times(UNITY)
+    : scale === "log" ? value.over(min).decibels().over(20 * Math.log10(max / min)) : value.minus(min).over(max - min || 1)).clamp(0, 1);
 
-/** {@link valueAt} as a live value, for what shows while a drag goes on: exactly what a release there sets. */
+/** Where an amplitude, such as a meter's peak, is on a fader: a level beside it reads on its scale. */
+export const liveLevel = (amplitude: Live): Live => amplitude.pow(20 / DECADE).times(UNITY).min(1);
+
+/** The quietest a fader plays while it drags, as a lane writes silence: a live value holds no -inf. */
+const SILENT_DB = -100;
+
+/** {@link valueAt} as a live value, for the sound while a drag goes on: what a release there sets, a fader's -inf as -100 dB. */
 export const liveValueAt = (at: Live, range: Range): Live => {
   const { min, max, scale, step } = range;
+  if (scale === "fader") return at.over(UNITY).decibels().times(DECADE / 20).min(max).times(10).round().over(10).max(SILENT_DB);
   const value = scale === "log" ? Live.of(max / min).pow(at).times(min) : at.times(max - min).plus(min);
   if (!step) return value;
   // A live value's numbers are 32-bit: a step below 1 as a whole number of them per unit, so
@@ -53,6 +71,11 @@ export const liveValueAt = (at: Live, range: Range): Live => {
   const steps = value.minus(min).over(step).round();
   return (whole ? steps.over(per) : steps.times(step)).plus(min).clamp(min, top(range));
 };
+
+/** {@link liveValueAt} as a readout shows it: a fader at its bottom says -inf, as a release there sets. */
+export const liveShownAt = (at: Live, range: Range): Live =>
+  // The window shows a number as 32-bit, which 1e60 is past: -inf. 0 times 1e30 stays 0.
+  range.scale === "fader" ? liveValueAt(at, range).minus(at.le(0).times(1e30).times(1e30)) : liveValueAt(at, range);
 
 /** Three significant digits, no zeros at the end, and a minus sign: as the window shows a number. */
 const short = (value: number): string => {
@@ -82,6 +105,7 @@ const pitchOf = (typed: string): number | undefined => {
 
 /** `value` as the window shows it in `unit`, such as `2 kHz`, `25L` or `C4`. */
 export const shown = (value: number, unit?: Unit): string => {
+  if (value === -Infinity && unit === "db") return "−inf dB";
   switch (unit) {
     case "pitch": return note(value);
     case "hz": return value < 1000 ? `${short(value)} Hz` : `${short(value / 1000)} kHz`;
@@ -123,6 +147,7 @@ const NUMBER = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)\s*([a-z%]*)$/;
 export const typedValue = (text: string, unit?: Unit): number | undefined => {
   const typed = text.trim().toLowerCase().replace("−", "-");
   if (unit === "pan" && typed === "c") return 0;
+  if (unit === "db" && /^-\s*inf/.test(typed)) return -Infinity;
   if (unit === "pitch" && /^[a-g]/.test(typed)) return pitchOf(typed);
   const match = NUMBER.exec(typed);
   if (!match) return undefined;
