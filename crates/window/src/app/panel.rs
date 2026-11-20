@@ -95,7 +95,7 @@ impl Tab {
 pub(crate) struct LeftPanel {
     /// None without an agent: then the panel has History only, and starts closed.
     pub(crate) agent: Option<Box<dyn PanelTab>>,
-    pub(crate) history: Box<dyn PanelTab>,
+    pub(crate) history: super::history::History,
     pub(crate) open: bool,
     pub(crate) tab: Tab,
     /// Remembers open or closed for every project, in the machine's support folder, never in a
@@ -117,7 +117,7 @@ impl LeftPanel {
                 Tab::History
             },
             agent,
-            history: Box::new(Waiting("Your changes and versions will show here.")),
+            history: super::history::History::default(),
             open,
             file,
             back: None,
@@ -139,7 +139,7 @@ impl LeftPanel {
     fn shown(&self) -> &dyn PanelTab {
         match (self.tab, &self.agent) {
             (Tab::Agent, Some(agent)) => agent.as_ref(),
-            _ => self.history.as_ref(),
+            _ => &self.history,
         }
     }
 

@@ -63,6 +63,7 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
     let overlays = tree::overlays(state)
         .into_iter()
         .chain(problems::list(state))
+        .chain(super::history::overlays(state))
         .chain(super::dialog::view(state))
         .chain(crate::shell::overlay(state, theme));
     // On the root, which hears the key ups when nothing has the focus.
@@ -104,6 +105,7 @@ pub(crate) enum Act {
     Problems,
     AskToFix,
     Shell(crate::shell::Act),
+    History(super::history::Act),
 }
 
 impl Act {
@@ -121,6 +123,7 @@ impl Act {
                 state.ask_to_fix(None::<&mut Tx>);
             }
             Act::Shell(act) => crate::shell::run(state, act, None, &mut Tx::default()),
+            Act::History(act) => super::history::run(state, act, "press", value)?,
         }
         Ok(())
     }
@@ -165,6 +168,7 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
             Act::AskToFix,
         ));
     }
+    controls.extend(super::history::controls(state));
     controls.extend(notices::controls(state));
     controls.extend(super::projects::controls(state));
     controls

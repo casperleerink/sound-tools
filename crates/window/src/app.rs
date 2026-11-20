@@ -26,6 +26,7 @@ mod chrome;
 mod dialog;
 mod frame;
 mod headless;
+mod history;
 mod host;
 mod keys;
 mod notices;
