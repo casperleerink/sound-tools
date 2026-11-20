@@ -272,21 +272,22 @@ pub fn register(registry: &mut Registry, plugins: Plugins) -> Result<(), Registr
         .facts(move |record, context| facts::Facts::of(&shown, record, context.instance()))
         .command("start_again", {
             let plugins = plugins.clone();
-            move |_, id, _| {
-                plugins.start_again(id);
+            move |_, context, _| {
+                plugins.start_again(context.instance);
                 None
             }
         })
         .command("close_window", {
             let plugins = plugins.clone();
-            move |_, id, _| {
-                plugins.close_window(id);
+            move |_, context, _| {
+                plugins.close_window(context.instance);
                 None
             }
         })
         // Pins the parameter of the id sent at what the plugin plays now, so pinning changes no
         // sound.
-        .command("pin", move |record, id, parameter| {
+        .command("pin", move |record, context, parameter| {
+            let id = context.instance;
             let parameter = u32::try_from(parameter? as i64).ok()?;
             let parameters = pin_plugins.parameters(id)?;
             let pin = pin_plugins.pin_now(id, parameters.get(&parameter)?);

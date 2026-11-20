@@ -41,8 +41,8 @@ pub use history::{
 };
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
 pub use registry::{
-    AgentDoc, AgentDocText, JsonTool, JsonToolDoc, Registry, RegistryError, ToolRegistration,
-    ToolSchema, parse_state,
+    AgentDoc, AgentDocText, CommandContext, JsonTool, JsonToolDoc, Registry, RegistryError,
+    ToolRegistration, ToolSchema, parse_state,
 };
 pub use runs::{RUN_LONGEST, RUN_QUIET};
 pub use storage::StorageError;
@@ -439,7 +439,11 @@ impl Project {
         else {
             return Ok(false);
         };
-        if let Some((label, record)) = (command.run)(record.state.as_any(), id, value) {
+        let context = registry::CommandContext {
+            instance: id,
+            assets: &self.assets,
+        };
+        if let Some((label, record)) = (command.run)(record.state.as_any(), &context, value) {
             let mut changes = Changes::new();
             changes.changes.push(Change::Set(id.clone(), record));
             self.publish_run(id, &label, changes)?;

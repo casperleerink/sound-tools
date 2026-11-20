@@ -218,7 +218,13 @@ pub(crate) struct Shown {
 /// See [`ToolRegistration::command`].
 pub(crate) struct RegisteredCommand {
     pub name: &'static str,
-    pub run: Box<dyn Fn(&dyn Any, &InstanceId, Option<f64>) -> Option<(String, Record)>>,
+    pub run: Box<dyn Fn(&dyn Any, &CommandContext<'_>, Option<f64>) -> Option<(String, Record)>>,
+}
+
+/// What a command reads besides its record, see [`ToolRegistration::command`].
+pub struct CommandContext<'a> {
+    pub instance: &'a InstanceId,
+    pub assets: &'a super::Assets,
 }
 
 impl Shown {
@@ -556,19 +562,19 @@ impl<S: State> ToolRegistration<'_, S> {
     }
 
     /// An input `name` that code plays with `send(name)` or `send(name, value)`, such as a
-    /// card's Download button: `run` gets the record, the instance and the value, on the main
-    /// thread. What it gives back, a label and a record, is one undo step; what it starts
+    /// card's Download button: `run` gets the record, the instance and its assets, and the
+    /// value, on the main thread. What it gives back, a label and a record, is one undo step; what it starts
     /// otherwise reaches the card through the facts.
     pub fn command(
         self,
         name: &'static str,
-        run: impl Fn(&S, &InstanceId, Option<f64>) -> Option<(String, S)> + 'static,
+        run: impl Fn(&S, &CommandContext<'_>, Option<f64>) -> Option<(String, S)> + 'static,
     ) -> Self {
         self.shown.commands.retain(|kept| kept.name != name);
         self.shown.commands.push(RegisteredCommand {
             name,
-            run: Box::new(move |state, id, value| {
-                let (label, state) = run(state.downcast_ref::<S>()?, id, value)?;
+            run: Box::new(move |state, context, value| {
+                let (label, state) = run(state.downcast_ref::<S>()?, context, value)?;
                 Some((label, Record::new(state)))
             }),
         });

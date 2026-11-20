@@ -557,9 +557,27 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
                     .collect::<Vec<f32>>()
             },
         )
-        .facts(|state, context| Facts::of(state, context.assets()));
+        .facts(|state, context| Facts::of(state, context.assets()))
+        .command("fit_decay", fit_decay);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
+}
+
+/// The pad on the note sent, which a card just made play a file, decays over half again the
+/// length of that file, as [`Pad::load_sample`] says: one step with the load, of its label.
+fn fit_decay(
+    state: &DrumPadState,
+    context: &sound_core::CommandContext<'_>,
+    note: Option<f64>,
+) -> Option<(String, DrumPadState)> {
+    let pad = pad_of(Pitch::nearest(note? as i64))?;
+    let Source::Sample(asset) = &state.pads[pad].source else {
+        return None;
+    };
+    let seconds = sound_media::info(context.assets, asset).ok()?.seconds();
+    let mut state = state.clone();
+    state.pads[pad].load_sample(asset.clone(), seconds);
+    Some(("Load sample".to_string(), state))
 }
 
 /// What its card knows that is no record.

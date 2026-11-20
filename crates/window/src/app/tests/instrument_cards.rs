@@ -55,6 +55,11 @@ fn a_file_dropped_on_a_drum_pad_makes_that_pad_play_it_as_one_undo_step() {
     let (_scratch, mut window) = with_instrument(json!({ "tool": "drum-pad", "state": {} }));
     let _file = dropped(&mut window, "pad-39");
     assert_eq!(played(&window.state)["pads"]["39"]["sample"], "clap.wav");
+    // Half again as long as the file of 0.1 s, so its fade takes almost nothing off its end.
+    assert_eq!(
+        played(&window.state)["pads"]["39"]["decay_ms"],
+        json!(150.0)
+    );
     assert_eq!(played(&window.state)["pads"]["38"]["sound"], Value::Null);
     act(&mut window.state, json!({ "action": "undo" }));
     assert_eq!(played(&window.state)["pads"], json!({}));
