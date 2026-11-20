@@ -120,3 +120,9 @@ test("an empty song offers an instrument track and an audio track", () => {
   opened(songOf([]));
   expect([find("Add an instrument track"), find("Add an audio track"), find("add-track")]).toMatchObject([{ role: "button" }, { role: "button" }, undefined]);
 });
+
+test("a clip without a title is called by where it plays and its track, an audio clip by its file", () => {
+  opened(songOf([trackOf("t00", [clipOf("clip", BAR + BEAT, BAR)]), tapeOf("audio-1", [regionOf("voice-2", 0, 2)])], ["t00", "audio-1"]));
+  expect(find("clip-t00/clip")).toMatchObject({ label: "Clip at 2.2 on Track 1" });
+  expect(find("clip-audio-1/voice-2")).toMatchObject({ label: "Audio clip Voice 2" });
+});

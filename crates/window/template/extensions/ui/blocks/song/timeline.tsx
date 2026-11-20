@@ -2,7 +2,7 @@ import { h, hearsNotes, live, Live, memo, type Color, type Num } from "../../../
 import { lengthAt, lengthOf } from "../../../song/clips";
 import { colourOf, itemAt, muted, rowOfKey, titleOf, words } from "../../../song/model";
 import { cannotRender } from "../../../song/tracks";
-import { BAR, barStarts, beatRuns, type Runs } from "../../../song/time";
+import { BAR, barStarts, beatRuns, placeOf, type Runs } from "../../../song/time";
 import { ACROSS, GUTTER, laneGroups, PLANE, ROW, trackAt, trackY, ZOOM, type Page, type Row, type Track } from "../../../song/view";
 import { Button } from "../../button";
 import { keysOf } from "../../kbd";
@@ -236,7 +236,7 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
   const width = resizes ? end.dx.minus(begin.dx).plus(length) : Live.of(length);
   const y = moved.dy.plus(top + INSET / ROW);
   const step = memory.snap || 1;
-  const words = region ? `Audio clip ${wordsOf(key)}` : `Clip ${name || wordsOf(key)}`;
+  const called = region ? `Audio clip ${words(name)}` : name ? `Clip ${name}` : `Clip at ${placeOf(page.song.clock.tempo_map.time_signatures, start).slice(0, 2).join(".")} on ${titleOf(track)}`;
   // A clip's edge is EDGE points wide at any zoom.
   const edge = Live.of(EDGE / ACROSS).over(live.plane(PLANE).zoom);
   const drag = {
@@ -250,7 +250,7 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
     <box>
       {chosen && <box place={[start, top + INSET / ROW, length, (ROW - 2 * INSET) / ROW]} radius="md" fill="fill" border="border-strong" opacity={moved.alt.times(moved.active).times(dim)} />}
       {chosen && under > 0 && <box place={[x, moved.dy.plus(top + 1), width, under]} fill="selected" />}
-      <box key={`clip-${key}`} label={words} role="button" checked={chosen} place={[x, y, width, (ROW - 2 * INSET) / ROW]} radius="md" fill="fill" border={chosen ? "text" : "border-strong"} opacity={dim} clip
+      <box key={`clip-${key}`} label={called} role="button" checked={chosen} place={[x, y, width, (ROW - 2 * INSET) / ROW]} radius="md" fill="fill" border={chosen ? "text" : "border-strong"} opacity={dim} clip
         drag={drag}
         onPress={(p) => page.edits.clips.press(key, p)}
         onDragEnd={(p) => {
@@ -262,7 +262,7 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
         {notes.length > 0 && <Miniature itemKey={key} chosen={chosen} notes={notes} x={moved.dx.plus(start)} y={y} length={length} titled={name !== ""} colour={colour} />}
         {memory.renamingClip === key ? (
           <box at={[4, 4]}>
-            <TextField id={`clip-name-${key}`} label={`Name of ${words}`} value={name} focus size="sm" w={140}
+            <TextField id={`clip-name-${key}`} label={`Name of ${called}`} value={name} focus size="sm" w={140}
               onCommit={(text) => (text === null ? (memory.renamingClip = null) : page.edits.clips.rename(key, text))} />
           </box>
         ) : (
@@ -272,21 +272,18 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
         {dim < 1 && !muted(track) && <Tooltip text={UNPLAYED} />}
         {resizes && (
           <box>
-            <box key={`clip-end-${key}`} label={`End of ${words}`} place={[x.plus(width).minus(edge), y, edge, (ROW - 2 * INSET) / ROW]}
+            <box key={`clip-end-${key}`} label={`End of ${called}`} place={[x.plus(width).minus(edge), y, edge, (ROW - 2 * INSET) / ROW]}
               drag={{ x: trims ? trims.end.x : [-(length - (memory.snap || 240)), 1e9], snap: [step, 1], from: [start + length, top], id: RESIZE }} onDragEnd={trims ? trims.end.onDragEnd : (p) => page.edits.clips.resizeEnd(p)} />
-            <box key={`clip-start-${key}`} label={`Start of ${words}`} place={[x, y, edge, (ROW - 2 * INSET) / ROW]}
+            <box key={`clip-start-${key}`} label={`Start of ${called}`} place={[x, y, edge, (ROW - 2 * INSET) / ROW]}
               drag={{ x: trims ? trims.start.x : [-start, length - (memory.snap || 240)], snap: [step, 1], from: [start, top], id: RESIZE_START }} onDragEnd={trims ? trims.start.onDragEnd : (p) => page.edits.clips.resizeStart(p)} />
           </box>
         )}
-        <MenuList id={`menu-${key}`} label={`Menu of ${words}`} items={itemMenu(page, key, region !== undefined)} open="menu" w={260} />
+        <MenuList id={`menu-${key}`} label={`Menu of ${called}`} items={itemMenu(page, key, region !== undefined)} open="menu" w={260} />
       </box>
-      {region && resizes && <RegionHandles page={page} itemKey={key} region={region} words={words} x={x} y={y} width={width} tall={(ROW - 2 * INSET) / ROW} />}
+      {region && resizes && <RegionHandles page={page} itemKey={key} region={region} words={called} x={x} y={y} width={width} tall={(ROW - 2 * INSET) / ROW} />}
     </box>
   );
 };
-
-/** `track/clip` as words: `t00/c01` is `C01`. */
-const wordsOf = (key: string) => words(key.slice(key.indexOf("/") + 1));
 
 /**
  * A clip's notes as the old timeline drew them: a bar each, between its lowest and highest pitch

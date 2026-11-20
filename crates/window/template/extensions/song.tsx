@@ -1,5 +1,6 @@
 import { h, live, tool, type Child, type Connection, type Declaration } from "./sdk";
 import { Editor } from "./ui/blocks/song/editor";
+import { PITCH } from "./ui/blocks/song/roll-view";
 import { Heads } from "./ui/blocks/song/heads";
 import { Mixer } from "./ui/blocks/song/mixer";
 import { Rack } from "./ui/blocks/song/rack";
@@ -107,10 +108,10 @@ const Below = ({ h: tall, children }: { h: number; children?: Child }) => (
   </box>
 );
 
-/** How much an arrow on the editor's line makes it taller or shorter. */
-const STEP = 16;
+/** How much a step of the editor's line makes it taller or shorter: a row of notes. */
+const STEP = PITCH;
 
-/** The line over the note editor: a drag makes the editor taller, a double click puts it back, the arrows step it. */
+/** The line over the note editor: a drag makes the editor taller a row of notes at a time, a double click puts it back, the arrows step it. */
 const Divider = ({ page }: { page: Page }) => {
   const { memory } = page.song;
   const resize = (height: number) => {
@@ -118,8 +119,8 @@ const Divider = ({ page }: { page: Page }) => {
     memory.editorLarge = false;
   };
   return (
-    <box key="editor-divider" label="Note editor height" role="slider" value={memory.editor} w="full" h={DIVIDER} drag={{ y: true }}
-      onDragEnd={(p) => resize(memory.editor - p.dy)} onPress={(p) => p.clicks === 2 && resize(EDITOR)}
+    <box key="editor-divider" label="Note editor height" role="slider" value={memory.editor} w="full" h={DIVIDER} drag={{ y: true, snap: [1, STEP], from: [0, 0] }}
+      onDragEnd={(p) => resize(memory.editor - Math.round(p.dy / STEP) * STEP)} onPress={(p) => p.clicks === 2 && resize(EDITOR)}
       actions={{ increment: (by) => resize(memory.editor + by * STEP), decrement: (by) => resize(memory.editor - by * STEP), reset: () => resize(EDITOR) }}>
       <box at={[0, live.drag("editor-divider").dy.plus((DIVIDER - 1) / 2)]} w={100000} h={1} fill="border-strong" />
     </box>

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { act, apply, find, h, press, render, type Self } from "./sdk";
 import { song } from "./song";
+import { clipOf } from "./song/fake";
 
 type Song = Self<typeof song>;
 const track = (name: string, title: string, mute: boolean) => ({
@@ -75,4 +76,18 @@ test("the song opens on its first track's panel; escape closes it and the master
   expect(find("strip-master")).toBeDefined();
   act("Close the panel", "press");
   expect(find("strip-master")).toBeUndefined();
+});
+
+test("the note editor's line makes it taller a row of notes at a time, and a double click puts it back", () => {
+  const first = self(false);
+  (first.children[0] as unknown as { children: unknown[] }).children.push(clipOf("c00", 0, 3840));
+  render(song, first);
+  press("clip-t00/c00", { clicks: 2 });
+  render(song, first);
+  act("editor-divider", "drag", { dy: -150 });
+  render(song, first);
+  expect(find("editor-divider")).toMatchObject({ value: 352 + 144 });
+  press("editor-divider", { clicks: 2 });
+  render(song, first);
+  expect(find("editor-divider")).toMatchObject({ value: 352 });
 });
