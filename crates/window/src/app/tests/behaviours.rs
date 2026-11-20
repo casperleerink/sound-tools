@@ -1,6 +1,7 @@
 //! Fields, icons, shapes and the keys of the views.
 
 use super::*;
+use crate::app::MAIN_MODIFIER;
 
 const ICONS: &str = r#"import { h, input, tool } from "./sdk";
 export const icons = tool({
@@ -174,10 +175,7 @@ fn keys_typed_in_a_field_are_typing_never_a_shortcut() {
     assert!(!window.state.playing);
     window.key(rune::KeyEvent {
         key: rune::Key::Text("z".into()),
-        mods: rune::Mods {
-            cmd: true,
-            ..rune::Mods::default()
-        },
+        mods: MAIN_MODIFIER,
     });
     redraw(&mut window);
     // Undo took back typing in the field, not the rename to A.

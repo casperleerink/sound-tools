@@ -49,6 +49,8 @@ use headless::copied;
 pub(crate) use chrome::{Act, MIN_SIZE, WINDOW_BUTTONS, controls as chrome_controls, view};
 pub(crate) use dialog::controls as dialog_controls;
 pub(crate) use frame::{closing, poll, quitting, setup};
+#[cfg(test)]
+pub(crate) use keys::MAIN_MODIFIER;
 pub(crate) use keys::{on_focus, on_key, on_modifiers};
 pub(crate) use panel::{PanelTab, Tab};
 

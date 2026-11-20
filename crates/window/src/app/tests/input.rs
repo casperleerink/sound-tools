@@ -291,10 +291,12 @@ fn the_computer_keys_play_the_plain_keys_no_one_takes_and_let_go_on_cmd() {
     press(&mut window, "t");
     assert!(!held(&mut window.state, "t"));
     release(&mut window, "t");
-    // Cmd going down lets go: macOS sends no key up under it.
+    // Cmd going down lets go on macOS, which sends no key up under it; elsewhere the up comes.
     press(&mut window, "s");
     assert!(held(&mut window.state, "s"));
     window.update(|state, tx| on_modifiers(state, event("cmd-c").mods, tx));
+    assert_eq!(held(&mut window.state, "s"), !cfg!(target_os = "macos"));
+    release(&mut window, "s");
     assert!(!held(&mut window.state, "s"));
     // So does losing the window.
     press(&mut window, "d");

@@ -4,6 +4,7 @@
 use crate::shell::{Dialog, Projects};
 
 use super::*;
+use crate::app::MAIN_MODIFIER;
 
 /// The window of a new project in `scratch`, keeping templates in its `support`.
 fn kept(scratch: &tempfile::TempDir) -> State {
@@ -136,10 +137,7 @@ fn cmd_n_opens_the_new_project_and_escape_closes_it() {
     window.on_key = Some(on_key);
     window.key(rune::KeyEvent {
         key: rune::Key::Command('n'),
-        mods: rune::Mods {
-            cmd: true,
-            ..rune::Mods::default()
-        },
+        mods: MAIN_MODIFIER,
     });
     redraw(&mut window);
     assert!(matches!(window.state.shell.dialog, Some(Dialog::New(_))));
