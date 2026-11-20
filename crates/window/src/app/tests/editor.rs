@@ -50,6 +50,41 @@ fn drag_from(window: &mut rune::Runtime<State>, from: (f32, f32), by: (f32, f32)
     redraw(window);
 }
 
+/// Frames of the window, a 60th of a second apart, playing until `seconds` after it opened.
+fn played_until(window: &mut rune::Runtime<State>, seconds: f64) {
+    (window.state.session).background(|project| project.engine().play());
+    while window.state.last < seconds {
+        let next = window.state.last + 1.0 / 60.0;
+        drawn_frame(window, next);
+    }
+}
+
+/// Zoomed in as far as it goes, the roll pages on as the playhead leaves it inside the clip,
+/// which starts at tick 0, and Bun runs no view for it.
+#[test]
+fn the_roll_follows_the_playhead_inside_its_clip() {
+    let (_scratch, mut window) = editor();
+    let roll = "roll-t00-bass";
+    act(
+        &mut window.state,
+        json!({ "key": roll, "action": "view", "value": { "x": [0, 960] } }),
+    );
+    settle(&mut window);
+    let runs = super::budget::view_runs(&window);
+    let right = window.state.planes.view(roll).unwrap().right;
+    // Five seconds at 120 beats a minute: 9600 ticks, past what shows.
+    let end = window.state.last + 5.0;
+    played_until(&mut window, end);
+    let view = window.state.planes.view(roll).unwrap();
+    let at = window.state.playhead.0 as f32;
+    assert!(at > right, "{at} {right}");
+    assert!(
+        view.left > 0.0 && (view.left..view.right).contains(&at),
+        "{view:?} {at}"
+    );
+    assert_eq!(super::budget::view_runs(&window), runs);
+}
+
 #[test]
 fn a_drag_moves_the_chosen_notes_on_the_snap_as_one_step_of_undo() {
     let (_scratch, mut window) = editor();

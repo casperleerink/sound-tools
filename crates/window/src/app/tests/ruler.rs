@@ -82,3 +82,29 @@ fn a_double_press_on_the_ruler_adds_a_section_at_the_nearest_bar_whose_name_is_t
     );
     assert!(window.find("section-3").is_some());
 }
+
+/// The ruler shares the timeline's plane, so it follows the playhead with it: zoomed in, both
+/// page on as it leaves them.
+#[test]
+fn the_ruler_follows_the_playhead_with_the_timeline() {
+    let (_scratch, mut window) = window();
+    act(
+        &mut window.state,
+        json!({ "key": "song", "action": "view", "value": { "x": [0, 3840] } }),
+    );
+    redraw(&mut window);
+    (window.state.session).background(|project| project.engine().play());
+    let end = window.state.last + 5.0;
+    while window.state.last < end {
+        let next = window.state.last + 1.0 / 60.0;
+        drawn_frame(&mut window, next);
+    }
+    let at = window.state.playhead.0 as f32;
+    let [ruler, song] = ["ruler", "song"].map(|key| window.state.planes.view(key).unwrap());
+    assert!(at > 3840.0, "{at}");
+    assert!(
+        song.left > 0.0 && (song.left..song.right).contains(&at),
+        "{song:?} {at}"
+    );
+    assert_eq!((ruler.left, ruler.right), (song.left, song.right));
+}

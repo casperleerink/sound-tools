@@ -113,7 +113,7 @@ fn spent() -> Duration {
     START.get_or_init(std::time::Instant::now).elapsed()
 }
 
-fn view_runs(window: &rune::Runtime<State>) -> u64 {
+pub(super) fn view_runs(window: &rune::Runtime<State>) -> u64 {
     window.state.tools.as_ref().unwrap().view_runs()
 }
 

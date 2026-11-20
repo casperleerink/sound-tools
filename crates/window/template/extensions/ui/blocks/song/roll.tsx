@@ -20,9 +20,11 @@ export const RollPlane = ({ roll }: { roll: Roll }) => {
   const marquee = live.drag(key);
   const [left, upper] = [marquee.x.plus(marquee.dx.min(0)), marquee.y.plus(marquee.dy.min(0))];
   const inRows = (p: Pointer) => ({ ...p, y: p.y + top });
+  // Held at the clip's ends, so a playhead outside the clip moves no roll.
+  const follow = playheadOf(roll).at.max(0).min(roll.length);
   return (
     <box grow={1} h="full">
-      <box key={key} label="Notes" w="full" h="full" clip plane={{ x: roll.across, y: PITCH, zoom: zoomOf(roll) }} drag={{ x: true, y: true }}
+      <box key={key} label="Notes" w="full" h="full" clip plane={{ x: roll.across, y: PITCH, zoom: zoomOf(roll), follow }} drag={{ x: true, y: true }}
         onPress={(p) => !p.right && edits.pressEmpty(inRows(p))} onDragEnd={(p) => edits.marquee(inRows(p))}>
         <Grid roll={roll} />
         {barsOf(state.notes).map(([bar, notes]) =>
