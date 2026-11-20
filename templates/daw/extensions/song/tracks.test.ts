@@ -96,11 +96,24 @@ test("arm opens the recorder's input, and R records every armed track and the ke
     [{ child: "audio-1/rec", number: "record" }, 1],
     [{ child: "t00/rec", number: "record" }, 1],
   ]);
-  expect(f.clock.playing).toBe(true);
+  expect(f.clock.asked).toBe(true);
+  f.clock.playing = true;
+  tracks.stopped();
   f.clock.playing = false;
   tracks.stopped();
   expect(f.memory.recording).toBe(null);
   expect(f.sent.slice(3)).toEqual([[{ child: "t00/rec", number: "record" }, 0], [{ child: "audio-1/rec", number: "record" }, 0]]);
+});
+
+test("R on a stopped song records on while the engine has not yet said it plays", () => {
+  const rec = { name: "rec", tool: "recorder", state: { channels: [] } };
+  const f = fakeSong({ state: { order: ["t00"] }, children: [trackOf("t00", [rec])] });
+  const { tracks } = editsOf(f.song);
+  tracks.record();
+  tracks.stopped();
+  tracks.stopped();
+  expect(f.memory.recording).not.toBe(null);
+  expect(f.sent).toEqual([[{ child: "t00/rec", number: "record" }, 1]]);
 });
 
 test("R with nothing armed and an audio track chosen arms it", () => {

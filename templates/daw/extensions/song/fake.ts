@@ -14,11 +14,12 @@ export function fakeSong(records: Records, { tick = 0, piece, answers = {} }: { 
   const offers: [string, string, string][] = [];
   const shown: [string, { x?: [number, number]; y?: [number, number] }][] = [];
   const clock = {
-    tick, playing: false, repeat: null as { from: number; to: number } | null,
+    tick, playing: false, asked: false, repeat: null as { from: number; to: number } | null,
     get tempo_map() { return song.tempo_map; },
     get sections() { return song.sections; },
     jump(to: number) { clock.tick = to; },
-    play() { clock.playing = true; },
+    // The engine says it plays a few frames later, so a test sets `playing` itself.
+    play() { clock.asked = true; },
     setRepeat(range: { from: number; to: number } | null) { clock.repeat = range; },
     update(label: string, change: (piece: Piece) => void) {
       const draft = structuredClone(song);

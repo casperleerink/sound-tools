@@ -264,13 +264,14 @@ export const trackEdits = (song: Song) => {
       const chosen = strip(memory.track ?? "");
       if (memory.armed.length === 0 && chosen?.tool === "tape" && all.includes(chosen.name)) edits.arm(chosen.name);
       const notes = notesTrackOf(song.children, song.state.order, memory.track);
-      memory.recording = song.clock.tick;
+      memory.recording = song.clock.playing ? "rolling" : "starting";
       for (const name of new Set([...memory.armed, ...(notes ? [notes] : [])])) if (all.includes(name)) record(name, true);
       song.clock.play();
     },
-    /** A pause or a stop ends the recording: what the song's control loop checks. */
+    /** A pause or a stop ends the recording, once the song played: what the song's control loop checks. */
     stopped() {
-      if (!song.clock.playing && memory.recording !== null) edits.record();
+      if (memory.recording === "starting" && song.clock.playing) memory.recording = "rolling";
+      else if (memory.recording === "rolling" && !song.clock.playing) edits.record();
     },
     /**
      * Renders the clips and regions `keys` of the track `name`, from the first to the last, after
