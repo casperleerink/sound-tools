@@ -196,3 +196,14 @@ test("choosing a clip of another track moves the panel there, and an open editor
   expect(f.memory.below).toEqual({ kind: "editor", clip: "t00/a" });
   expect(f.selected.at(-1)).toBe("t00/a");
 });
+
+test("clips dragged past tick 0 stop there together, and so do their starts", () => {
+  const f = fakeSong({ children: [trackOf("t00", [clipOf("c00", BEAT, BAR), clipOf("c01", 2 * BAR, BAR)])] });
+  const { clips } = editsOf(f.song);
+  clips.all();
+  clips.move({ dx: -BAR, dy: 0, alt: false });
+  expect(starts(f.self, "t00")).toEqual([0, 2 * BAR - BEAT]);
+  clips.move({ dx: BEAT, dy: 0, alt: false });
+  clips.resizeStart({ dx: -BAR });
+  expect(starts(f.self, "t00")).toEqual([0, 2 * BAR - BEAT]);
+});

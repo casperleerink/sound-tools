@@ -164,3 +164,23 @@ test("a drag of the start keeps the end, down to 1/64, and shift-left and shift-
   expect(f.notes()[0]!.length).toBe(BEAT / 16);
   expect(f.steps).toEqual(["Resize notes", "Resize notes", "Resize notes", "Resize notes", "Resize notes"]);
 });
+
+test("notes moved past 0 or the clip's end stop there together, keeping their rhythm, and none goes", () => {
+  const f = open([note(0), note(BEAT, 64), note(3 * BEAT, 67)]);
+  noteCommand(f.song, "all");
+  noteCommand(f.song, "left");
+  f.edits.move({ dx: -BEAT, dy: 0, alt: false });
+  expect(f.notes().map((each) => each.start)).toEqual([0, BEAT, 3 * BEAT]);
+  f.edits.move({ dx: 2 * BAR, dy: 0, alt: false });
+  expect(f.notes().map((each) => each.start)).toEqual([BAR - 1 - 3 * BEAT, BAR - 1 - 2 * BEAT, BAR - 1]);
+  f.edits.move({ dx: 0, dy: -100, alt: false });
+  expect(f.notes().map((each) => each.pitch)).toEqual([67, 71, 74].map((pitch) => pitch + 127 - 74));
+  expect(f.memory.notes.length).toBe(3);
+});
+
+test("the starts of notes dragged past 0 stop there together", () => {
+  const f = open([note(BEAT / 2), note(BEAT)]);
+  noteCommand(f.song, "all");
+  f.edits.resizeStart({ dx: -BEAT });
+  expect(f.notes().map((each) => each.start)).toEqual([0, BEAT / 2]);
+});

@@ -38,24 +38,31 @@ export const noteKey = (note: Frozen<Note>) => `${note.start}:${note.pitch}:${no
 /** Where the notes `chosen` names are in `notes`. */
 const indexesOf = (notes: readonly Frozen<Note>[], chosen: readonly string[]) => new Set(notes.flatMap((note, index) => (chosen.includes(noteKey(note)) ? [index] : [])));
 
-/** `notes` with `chosen` moved by `ticks` and `pitches`, or copied there: the notes, and which are chosen after. */
-export function moved(notes: readonly Note[], chosen: ReadonlySet<number>, ticks: number, pitches: number, copy: boolean) {
-  const shifted = (note: Note) => ({ ...note, start: Math.max(note.start + ticks, 0), pitch: clamp(note.pitch + pitches, 0, 127) });
+/**
+ * `notes` with `chosen` moved by `ticks` and `pitches`, or copied there: the notes, and which are
+ * chosen after. They stop together at tick 0, before `end` and at the lowest and highest pitch.
+ */
+export function moved(notes: readonly Note[], chosen: ReadonlySet<number>, ticks: number, pitches: number, copy: boolean, end: number) {
+  const picked = [...chosen].map((index) => notes[index]!);
+  const [starts, heights] = [picked.map((note) => note.start), picked.map((note) => note.pitch)];
+  const by = clamp(ticks, -Math.min(...starts), end - 1 - Math.max(...starts));
+  const up = clamp(pitches, -Math.min(...heights), 127 - Math.max(...heights));
+  const shifted = (note: Note) => ({ ...note, start: note.start + by, pitch: note.pitch + up });
   if (!copy) return { notes: notes.map((note, index) => (chosen.has(index) ? shifted(note) : note)), chosen };
   const copies = [...chosen].map((index) => shifted(notes[index]!));
   return { notes: [...notes, ...copies], chosen: new Set(copies.map((_, index) => notes.length + index)) };
 }
 
-type Next = (notes: Note[], chosen: ReadonlySet<number>) => { notes: Note[]; chosen: ReadonlySet<number> };
+type Next = (notes: Note[], chosen: ReadonlySet<number>, end: number) => { notes: Note[]; chosen: ReadonlySet<number> };
 /**
- * Changes the notes of the clip `key` as `next` says, given the places of the chosen ones, as one
- * undo step, and chooses what it chose. A note that would start at or past the end of the clip
- * is left out: the timeline plays none there. A clip with no `length` plays to its last note.
+ * Changes the notes of the clip `key` as `next` says, given the places of the chosen ones and the
+ * end of the clip, as one undo step, and chooses what it chose. A note added at or past the end is
+ * left out: the timeline plays none there. A clip with no `length` plays to its last note.
  */
 function change(song: Song, key: string, label: string, next: Next) {
   editClips(song, label, [key], (draft) => {
-    const result = next(draft.notes, indexesOf(draft.notes, song.memory.notes));
     const end = draft.length ?? Infinity;
+    const result = next(draft.notes, indexesOf(draft.notes, song.memory.notes), end);
     draft.notes = result.notes.filter((note) => note.start < end);
     song.memory.notes = [...result.chosen].flatMap((index) => {
       const note = result.notes[index];
@@ -156,7 +163,7 @@ export function noteCommand(song: Song, command: NoteCommand): boolean {
     if (command === "cut") change(song, key, "Cut notes", without);
   } else if (command === "duplicate") {
     const { span } = spanOf(picked());
-    change(song, key, "Duplicate notes", (notes, all) => moved(notes, all, span, 0, true));
+    change(song, key, "Duplicate notes", (notes, all) => moved(notes, all, span, 0, true, Infinity));
   } else if (command === "shorter" || command === "longer") {
     const by = (command === "longer" ? 1 : -1) * stepOf(memory.snap);
     change(song, key, "Resize notes", (notes, all) => ({ notes: notes.map((note, index) => (all.has(index) ? { ...note, length: Math.max(note.length + by, SHORTEST) } : note)), chosen: all }));
@@ -165,7 +172,7 @@ export function noteCommand(song: Song, command: NoteCommand): boolean {
     change(song, key, "Change velocity", (notes, all) => ({ notes: notes.map((note, index) => (all.has(index) ? { ...note, velocity: clamp(note.velocity + by, 1, 127) } : note)), chosen: all }));
   } else {
     const [steps, pitches] = NOTE_MOVES[command];
-    change(song, key, "Move notes", (notes, all) => moved(notes, all, steps * stepOf(memory.snap), pitches, false));
+    change(song, key, "Move notes", (notes, all, end) => moved(notes, all, steps * stepOf(memory.snap), pitches, false, end));
   }
   return true;
 }
@@ -266,12 +273,13 @@ export const noteEdits = (song: Song, key: string) => {
       const pitches = -Math.round(p.dy);
       const first = said();
       if (first && pitches !== 0) hear(clamp(first.pitch + pitches, 0, 127));
-      edit(p.alt ? "Copy notes" : "Move notes", (list, chosen) => moved(list, chosen, Math.round(p.dx), pitches, p.alt));
+      edit(p.alt ? "Copy notes" : "Move notes", (list, chosen, end) => moved(list, chosen, Math.round(p.dx), pitches, p.alt, end));
     },
-    /** A drag of the start of the chosen notes: their ends stay, and each keeps at least 1/64. */
+    /** A drag of the start of the chosen notes: their ends stay, the earliest stops at 0, and each keeps at least 1/64. */
     resizeStart(p: Pick<Pointer, "dx">) {
+      const by = Math.max(Math.round(p.dx), -(said()?.start ?? 0));
       edit("Resize notes", all((note) => {
-        const start = clamp(note.start + Math.round(p.dx), 0, note.start + note.length - SHORTEST);
+        const start = Math.min(note.start + by, note.start + note.length - SHORTEST);
         return { ...note, start, length: note.start + note.length - start };
       }));
     },
@@ -311,13 +319,13 @@ export const noteEdits = (song: Song, key: string) => {
     /** The values of the head, typed: a pitch by name, a start as bar.beat.sixteenth of the song, a length as 3/16, a velocity 1 to 127. Unreadable text changes nothing. */
     typePitch(text: string) {
       const [note, pitch] = [said(), pitchOf(text)];
-      if (note && pitch !== null) edit("Move notes", (list, chosen) => moved(list, chosen, 0, pitch - note.pitch, false));
+      if (note && pitch !== null) edit("Move notes", (list, chosen, end) => moved(list, chosen, 0, pitch - note.pitch, false, end));
     },
     typeStart(tick: number | null) {
       const [note, clip] = [said(), clipAt(song, key)];
       if (!note || !clip || tick === null) return;
       const at = tick - clip.start;
-      if (at >= 0 && at < lengthOf(clip)) edit("Move notes", (list, chosen) => moved(list, chosen, at - note.start, 0, false));
+      if (at >= 0 && at < lengthOf(clip)) edit("Move notes", (list, chosen, end) => moved(list, chosen, at - note.start, 0, false, end));
     },
     typeLength(text: string) {
       const note = said();

@@ -244,13 +244,15 @@ export function putTaken({ children }: Draft, placed: Placed): string[] {
 }
 
 /**
- * Moves the clips and regions `keys` names by `dx` ticks and `dy` rows, each onto its own row
- * where that row holds the other kind, or copies them there, with the automation under them,
- * as one undo step. The keys of where they are after.
+ * Moves the clips and regions `keys` names by `ticks` and `dy` rows, the earliest stopping at
+ * tick 0, each onto its own row where that row holds the other kind, or copies them there, with
+ * the automation under them, as one undo step. The keys of where they are after.
  */
-export function moveItems(song: Song, keys: readonly string[], dx: number, dy: number, copy: boolean): string[] {
+export function moveItems(song: Song, keys: readonly string[], ticks: number, dy: number, copy: boolean): string[] {
   const rows = rowsOf(song.children, song.state.order);
   const taken = take(song, rows, keys);
+  const dx = Math.max(ticks, -Math.min(...taken.map((each) => each.item.state.start)));
+  if (dx === 0 && dy === 0 && !copy) return [...keys];
   const rowOf = new Map(taken.map((each) => [each, itemsOf(rows[each.row + dy] ?? { tool: "" }) === each.item.tool && rows[each.row + dy] ? each.row + dy : each.row]));
   // A volume and a pan go along to any track, a lane of a device only on its own.
   const goes = (each: Taken, target: string) => target.startsWith("mix.") || rows[rowOf.get(each) ?? -1]?.name === each.track;
@@ -354,9 +356,10 @@ export const clipEdits = (song: Song) => {
     resizeEnd(p: Pick<Pointer, "dx">) {
       editClips(song, "Resize clips", memory.selected, (clip) => endMoved(clip, Math.max(lengthOf(clip) + Math.round(p.dx), stepOf(memory.snap))));
     },
-    /** A drag of the start of the chosen clips: their notes stay where they are in the song. */
+    /** A drag of the start of the chosen clips: their notes stay where they are in the song, and the earliest stops at tick 0. */
     resizeStart(p: Pick<Pointer, "dx">) {
-      editClips(song, "Resize clips", memory.selected, (clip) => startMoved(clip, Math.round(p.dx), stepOf(memory.snap)));
+      const dx = Math.max(Math.round(p.dx), -Math.min(...memory.selected.map((key) => itemAt(song.children, key)?.state.start ?? 0)));
+      editClips(song, "Resize clips", memory.selected, (clip) => startMoved(clip, dx, stepOf(memory.snap)));
     },
     /** A drag over empty space from `x`, `y` (rows): what it covers is chosen; shift or cmd adds it. */
     marquee(p: Pick<Pointer, "x" | "y" | "dx" | "dy" | "shift" | "cmd">) {
@@ -409,9 +412,7 @@ export const clipEdits = (song: Song) => {
     /** Moves the chosen by a step of the snap in time, the earliest stopping at tick 0. */
     nudge(by: -1 | 1): boolean {
       if (memory.selected.length === 0) return false;
-      const starts = memory.selected.map((key) => itemAt(song.children, key)?.state.start ?? 0);
-      const dx = Math.max(by * stepOf(memory.snap), -Math.min(...starts));
-      if (dx !== 0) choose(song, moveItems(song, memory.selected, dx, 0, false));
+      choose(song, moveItems(song, memory.selected, by * stepOf(memory.snap), 0, false));
       return true;
     },
     /** Moves the chosen to the nearest rows above or below where every one lands on a row of its own kind. */
