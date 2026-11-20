@@ -17,8 +17,8 @@ use sound_core::{
     EngineStatus, InputEndpoint, InstanceId, PlayedLanes, PointId, Project, ProjectEdit,
     ProjectError, ProjectEvent, Ticks,
 };
-use sound_typescript::next::{Clock, Transport};
 pub use sound_typescript::next::Waker;
+use sound_typescript::next::{Clock, Transport};
 use sound_typescript::touch;
 
 pub use gesture::{Drag, Held};
@@ -134,7 +134,11 @@ impl Session {
     /// One poll: the engine, the folder, the background work of the extensions, the open
     /// gesture, then what changed in the project. The window calls it every frame.
     pub fn poll(&mut self) -> Polled {
-        let before = (self.notice.clone(), self.status.playing, self.rendering_now());
+        let before = (
+            self.notice.clone(),
+            self.status.playing,
+            self.rendering_now(),
+        );
         match self.project.engine().poll() {
             Ok(status) => self.status = status,
             Err(error) if !self.engine_stopped => {
@@ -156,7 +160,11 @@ impl Session {
         let events = self.project.drain_events();
         self.finish_if_deleted(&events);
         let rendered = self.take_rendered();
-        let after = (self.notice.clone(), self.status.playing, self.rendering_now());
+        let after = (
+            self.notice.clone(),
+            self.status.playing,
+            self.rendering_now(),
+        );
         Polled {
             events,
             redraw: before != after || rendered.is_some(),
@@ -319,7 +327,9 @@ impl Session {
                 bar: at.bar,
                 beat: at.beat,
                 bpm: tempo_map.change_at(tick).bpm.bpm(),
-                repeat: looped.on.then_some([looped.range.start.0, looped.range.end.0]),
+                repeat: looped
+                    .on
+                    .then_some([looped.range.start.0, looped.range.end.0]),
                 click: *click,
                 keys: *keys,
                 automation: *automation,

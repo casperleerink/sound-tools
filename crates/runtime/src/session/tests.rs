@@ -34,8 +34,11 @@ impl Opened {
         for (path, contents) in files {
             std::fs::write(folder.path().join(path), contents.to_string()).unwrap();
         }
-        let plugins =
-            Plugins::listing(Vec::new(), ScanCommand::this_program().unwrap(), ScanCache::none());
+        let plugins = Plugins::listing(
+            Vec::new(),
+            ScanCommand::this_program().unwrap(),
+            ScanCache::none(),
+        );
         let (control, engine) = Engine::new(crate::OFFLINE);
         let project = crate::open_or_create_with(folder.path(), control, plugins.clone()).unwrap();
         let (wake, woken) = mpsc::channel();
@@ -109,7 +112,10 @@ impl Opened {
             Some(contents) => std::fs::write(&file, contents.to_string()).unwrap(),
             None => std::fs::remove_file(&file).unwrap(),
         }
-        (self.session.background(|project| project.apply_outside_changes(&[file]))).unwrap();
+        (self
+            .session
+            .background(|project| project.apply_outside_changes(&[file])))
+        .unwrap();
     }
 
     /// The cutoff the lane holds, by tick.
@@ -117,7 +123,12 @@ impl Opened {
         let lane = self.record("song/t00/lane-cutoff");
         let points = lane["points"].as_array().cloned().unwrap_or_default();
         (points.iter())
-            .map(|point| (point["tick"].as_u64().unwrap(), point["value"].as_f64().unwrap()))
+            .map(|point| {
+                (
+                    point["tick"].as_u64().unwrap(),
+                    point["value"].as_f64().unwrap(),
+                )
+            })
             .collect()
     }
 }
@@ -142,7 +153,10 @@ fn a_drag_is_one_undo_step_and_a_press_that_moves_nothing_is_none() {
 
     let mut drag = Drag::new("Change cutoff");
     for cutoff in [600.0, 700.0, 800.5] {
-        (opened.session.play(&mut drag, &id(TRACK), &[("synth.cutoff_hz", cutoff)])).unwrap();
+        opened
+            .session
+            .play(&mut drag, &id(TRACK), &[("synth.cutoff_hz", cutoff)])
+            .unwrap();
         assert_eq!(opened.cutoff(), cutoff);
     }
     assert!(opened.session.gesture_open());
@@ -160,7 +174,10 @@ fn escape_puts_back_the_state_from_before_the_drag() {
     let mut opened = Opened::daw(&[]);
     let before = (opened.record(SYNTH), opened.undo_label());
     let mut drag = Drag::new("Change cutoff");
-    (opened.session.play(&mut drag, &id(SYNTH), &[("cutoff_hz", 600.0)])).unwrap();
+    opened
+        .session
+        .play(&mut drag, &id(SYNTH), &[("cutoff_hz", 600.0)])
+        .unwrap();
     opened.session.cancel(drag);
     assert_eq!((opened.record(SYNTH), opened.undo_label()), before);
 }
@@ -169,7 +186,10 @@ fn escape_puts_back_the_state_from_before_the_drag() {
 #[test]
 fn a_typed_value_is_one_step() {
     let mut opened = Opened::daw(&[]);
-    (opened.session.set("Change cutoff", &id(SYNTH), &[("cutoff_hz", 440.0)])).unwrap();
+    opened
+        .session
+        .set("Change cutoff", &id(SYNTH), &[("cutoff_hz", 440.0)])
+        .unwrap();
     assert!(!opened.session.gesture_open());
     assert_eq!(opened.cutoff(), 440.0);
     assert_eq!(opened.undo_label().as_deref(), Some("Change cutoff"));
@@ -181,11 +201,20 @@ fn a_gesture_another_closed_opens_again_on_the_next_move() {
     let mut opened = Opened::daw(&[]);
     let mut cutoff = Drag::new("Change cutoff");
     let mut resonance = Drag::new("Change resonance");
-    (opened.session.play(&mut cutoff, &id(SYNTH), &[("cutoff_hz", 600.0)])).unwrap();
-    (opened.session.play(&mut resonance, &id(SYNTH), &[("resonance", 0.5)])).unwrap();
+    opened
+        .session
+        .play(&mut cutoff, &id(SYNTH), &[("cutoff_hz", 600.0)])
+        .unwrap();
+    opened
+        .session
+        .play(&mut resonance, &id(SYNTH), &[("resonance", 0.5)])
+        .unwrap();
     assert_eq!(opened.undo_label().as_deref(), Some("Change cutoff"));
     opened.session.finish(resonance);
-    (opened.session.play(&mut cutoff, &id(SYNTH), &[("cutoff_hz", 700.0)])).unwrap();
+    opened
+        .session
+        .play(&mut cutoff, &id(SYNTH), &[("cutoff_hz", 700.0)])
+        .unwrap();
     assert!(opened.session.gesture_open());
     opened.session.finish(cutoff);
     assert_eq!(opened.undo_label().as_deref(), Some("Change cutoff"));
@@ -199,7 +228,10 @@ fn a_gesture_another_closed_opens_again_on_the_next_move() {
 fn a_record_deleted_during_its_drag_finishes_the_gesture() {
     let mut opened = Opened::daw(&[]);
     let mut drag = Drag::new("Change cutoff");
-    (opened.session.play(&mut drag, &id(SYNTH), &[("cutoff_hz", 600.0)])).unwrap();
+    opened
+        .session
+        .play(&mut drag, &id(SYNTH), &[("cutoff_hz", 600.0)])
+        .unwrap();
     opened.write_outside("state/song/t00/synth.json", None);
     opened.session.poll();
     assert!(!opened.session.gesture_open());
@@ -212,7 +244,10 @@ fn a_record_deleted_during_its_drag_finishes_the_gesture() {
 fn undo_waits_for_a_drag_and_a_take_and_says_why() {
     let mut opened = Opened::daw(&[]);
     let mut drag = Drag::new("Change cutoff");
-    (opened.session.play(&mut drag, &id(SYNTH), &[("cutoff_hz", 600.0)])).unwrap();
+    opened
+        .session
+        .play(&mut drag, &id(SYNTH), &[("cutoff_hz", 600.0)])
+        .unwrap();
     opened.session.undo();
     assert_eq!(opened.session.notice(), Some("Let go of the drag first."));
     assert_eq!(opened.cutoff(), 600.0);
@@ -273,7 +308,13 @@ fn the_transport_state_is_no_edit_and_the_clock_says_it() {
     let mut opened = Opened::daw(&[]);
     let before = opened.undo_label();
     let looped = opened.session.transport().looped.clone();
-    assert_eq!(looped, Loop { range: Ticks(0)..Ticks(4 * BAR), on: false });
+    assert_eq!(
+        looped,
+        Loop {
+            range: Ticks(0)..Ticks(4 * BAR),
+            on: false
+        }
+    );
     assert!(!opened.session.transport().click);
 
     opened.session.set_loop(Loop {
@@ -299,7 +340,11 @@ fn the_transport_state_is_no_edit_and_the_clock_says_it() {
 fn the_selection_follows_the_project_and_live_notes_go_to_the_nearest_notes() {
     let mut opened = Opened::daw(&[]);
     let project = opened.session.project();
-    let notes_of = |path: &str| project.input_port(&id(path), sound_notes::NOTES_INPUT).unwrap();
+    let notes_of = |path: &str| {
+        project
+            .input_port(&id(path), sound_notes::NOTES_INPUT)
+            .unwrap()
+    };
     let (track, song) = (notes_of(TRACK), notes_of("song"));
     assert_eq!(opened.session.live_notes(), [song]);
 
@@ -320,10 +365,19 @@ fn a_path_names_an_instance_inside_only_when_there_is_one() {
     let opened = Opened::daw(&[]);
     let project = opened.session.project();
     let number_at = |instance: &str, path| super::gesture::number_at(project, &id(instance), path);
-    assert_eq!(number_at("song", "t00/synth.cutoff_hz"), (id(SYNTH), "cutoff_hz"));
-    assert_eq!(number_at(TRACK, "mix.gain_db"), (id("song/t00/mix"), "gain_db"));
+    assert_eq!(
+        number_at("song", "t00/synth.cutoff_hz"),
+        (id(SYNTH), "cutoff_hz")
+    );
+    assert_eq!(
+        number_at(TRACK, "mix.gain_db"),
+        (id("song/t00/mix"), "gain_db")
+    );
     assert_eq!(number_at(SYNTH, "pads.36.pan"), (id(SYNTH), "pads.36.pan"));
-    assert_eq!(number_at(SYNTH, "bands[0].gain_db"), (id(SYNTH), "bands[0].gain_db"));
+    assert_eq!(
+        number_at(SYNTH, "bands[0].gain_db"),
+        (id(SYNTH), "bands[0].gain_db")
+    );
 }
 
 /// A number a lane moves is held: a move of it changes nothing, and a lane that arrives
@@ -332,7 +386,10 @@ fn a_path_names_an_instance_inside_only_when_there_is_one() {
 fn a_lane_holds_its_number_and_ends_a_drag_of_it() {
     let mut opened = Opened::daw(&[]);
     let mut drag = Drag::new("Change cutoff");
-    (opened.session.play(&mut drag, &id(SYNTH), &[("cutoff_hz", 600.0)])).unwrap();
+    opened
+        .session
+        .play(&mut drag, &id(SYNTH), &[("cutoff_hz", 600.0)])
+        .unwrap();
     opened.write_outside(
         "state/song/t00/lane-cutoff.json",
         Some(json!({ "tool": "lane", "state": { "points": [{ "tick": 0, "value": 300 }] } })),
@@ -344,14 +401,18 @@ fn a_lane_holds_its_number_and_ends_a_drag_of_it() {
     assert_eq!(held[&id(TRACK)], ["synth.cutoff_hz"]);
     assert_eq!(held[&id("song")], ["t00/synth.cutoff_hz"]);
 
-    let refused = opened.session.play(&mut drag, &id(TRACK), &[("synth.cutoff_hz", 700.0)]);
+    let refused = opened
+        .session
+        .play(&mut drag, &id(TRACK), &[("synth.cutoff_hz", 700.0)]);
     assert_eq!(refused, Err(Held(vec!["synth.cutoff_hz".to_string()])));
     assert!(!opened.session.gesture_open());
     assert_eq!(opened.cutoff(), 600.0);
     opened.session.undo();
     assert_eq!(opened.cutoff(), DEFAULT_CUTOFF);
     opened.session.finish(drag);
-    let typed = opened.session.set("Change cutoff", &id(SYNTH), &[("cutoff_hz", 900.0)]);
+    let typed = opened
+        .session
+        .set("Change cutoff", &id(SYNTH), &[("cutoff_hz", 900.0)]);
     assert!(typed.is_err());
 }
 
@@ -367,12 +428,18 @@ fn a_drag_of_a_held_number_while_it_plays_writes_into_its_lane() {
     assert_eq!(opened.session.held(&BTreeSet::from([id(TRACK)])).len(), 0);
     let before = opened.undo_label();
     let mut drag = Drag::new("Change cutoff");
-    (opened.session.play(&mut drag, &id(TRACK), &[("synth.cutoff_hz", 2_500.0)])).unwrap();
+    opened
+        .session
+        .play(&mut drag, &id(TRACK), &[("synth.cutoff_hz", 2_500.0)])
+        .unwrap();
     // The hand holds still, then moves on: each poll samples it.
     for _ in 0..10 {
         opened.play(4_800);
     }
-    (opened.session.play(&mut drag, &id(TRACK), &[("synth.cutoff_hz", 3_000.0)])).unwrap();
+    opened
+        .session
+        .play(&mut drag, &id(TRACK), &[("synth.cutoff_hz", 3_000.0)])
+        .unwrap();
     for _ in 0..5 {
         opened.play(4_800);
     }
@@ -382,7 +449,10 @@ fn a_drag_of_a_held_number_while_it_plays_writes_into_its_lane() {
     assert_eq!(written.first(), Some(&(0, 1_000.0)), "{written:?}");
     assert_eq!(written.last(), Some(&(far, 1_000.0)), "{written:?}");
     let values: Vec<f64> = written.iter().map(|(_, value)| *value).collect();
-    assert!(values.contains(&2_500.0) && values.contains(&3_000.0), "{written:?}");
+    assert!(
+        values.contains(&2_500.0) && values.contains(&3_000.0),
+        "{written:?}"
+    );
     assert_eq!(opened.cutoff(), DEFAULT_CUTOFF);
     assert_eq!(opened.undo_label().as_deref(), Some("Write automation"));
     opened.session.undo();
@@ -397,17 +467,25 @@ fn a_typed_value_while_it_plays_lands_in_the_lane_where_it_plays() {
     let mut opened = Opened::automated(&[(0, 1_000.0), (far, 1_000.0)]);
     opened.session.background(|project| project.engine().play());
     opened.play(24_000);
-    let refused = opened.session.set("Change cutoff", &id(SYNTH), &[("cutoff_hz", 2_500.0)]);
+    let refused = opened
+        .session
+        .set("Change cutoff", &id(SYNTH), &[("cutoff_hz", 2_500.0)]);
     assert!(refused.is_err());
 
     opened.session.set_writes_automation(true);
     let playhead = opened.session.status().playhead_tick.0;
-    (opened.session.set("Change cutoff", &id(SYNTH), &[("cutoff_hz", 2_500.0)])).unwrap();
+    opened
+        .session
+        .set("Change cutoff", &id(SYNTH), &[("cutoff_hz", 2_500.0)])
+        .unwrap();
     let typed: Vec<_> = (opened.lane().into_iter())
         .filter(|(_, value)| *value == 2_500.0)
         .collect();
     assert!(!typed.is_empty());
-    assert!(typed.iter().all(|(tick, _)| tick.abs_diff(playhead) <= 120), "{typed:?}");
+    assert!(
+        typed.iter().all(|(tick, _)| tick.abs_diff(playhead) <= 120),
+        "{typed:?}"
+    );
     assert_eq!(opened.cutoff(), DEFAULT_CUTOFF);
     assert_eq!(opened.undo_label().as_deref(), Some("Write automation"));
 }
@@ -422,10 +500,16 @@ fn escape_during_a_drag_that_writes_automation_leaves_the_lane_as_it_was() {
     opened.play(4_800);
     let before = (opened.lane(), opened.record(SYNTH), opened.undo_label());
     let mut drag = Drag::new("Change cutoff");
-    (opened.session.play(&mut drag, &id(SYNTH), &[("cutoff_hz", 2_000.0)])).unwrap();
+    opened
+        .session
+        .play(&mut drag, &id(SYNTH), &[("cutoff_hz", 2_000.0)])
+        .unwrap();
     opened.play(4_800);
     opened.session.cancel(drag);
-    assert_eq!((opened.lane(), opened.record(SYNTH), opened.undo_label()), before);
+    assert_eq!(
+        (opened.lane(), opened.record(SYNTH), opened.undo_label()),
+        before
+    );
 }
 
 /// A session that goes writes the drag it still had open.
@@ -433,7 +517,10 @@ fn escape_during_a_drag_that_writes_automation_leaves_the_lane_as_it_was() {
 fn a_drag_open_as_the_session_goes_is_written() {
     let mut opened = Opened::daw(&[]);
     let mut drag = Drag::new("Change cutoff");
-    (opened.session.play(&mut drag, &id(SYNTH), &[("cutoff_hz", 600.0)])).unwrap();
+    opened
+        .session
+        .play(&mut drag, &id(SYNTH), &[("cutoff_hz", 600.0)])
+        .unwrap();
     let Opened {
         session, _folder, ..
     } = opened;
@@ -464,7 +551,10 @@ fn a_render_runs_in_its_own_process_and_says_how_far_it_is() {
         "echo 'progress: 50'\necho 'note: quiet'\necho 'error: a plugin left out'",
     );
     let file = scripts.path().join("out.wav");
-    (opened.session.render(&good, "Rendering…", file.clone(), &[])).unwrap();
+    opened
+        .session
+        .render(&good, "Rendering…", file.clone(), &[])
+        .unwrap();
     assert_eq!(opened.session.rendering(), Some(("Rendering…", 0.0)));
     let busy = opened.session.render(&good, "Again", file.clone(), &[]);
     assert!(busy.is_err());
@@ -475,7 +565,10 @@ fn a_render_runs_in_its_own_process_and_says_how_far_it_is() {
     assert_eq!(opened.session.rendering(), None);
 
     let bad = program("bad", "echo 'Error: the disk is full' >&2\nexit 1");
-    (opened.session.render(&bad, "Rendering…", file, &[])).unwrap();
+    opened
+        .session
+        .render(&bad, "Rendering…", file, &[])
+        .unwrap();
     let failed = wait_for_render(&mut opened).unwrap_err();
     assert_eq!(failed.to_string(), "the disk is full");
 }

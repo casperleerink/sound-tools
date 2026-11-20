@@ -20,11 +20,11 @@ use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEdit, Pro
 use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
 
-pub use crate::bun::{Clock, Transport, Waker};
 use crate::bun::{
     Answer, Bun, Event, Played, RecordEdit, Request, Runs, Skipped, Telling, TransportOp,
     record_key,
 };
+pub use crate::bun::{Clock, Transport, Waker};
 use crate::project::{
     changes_of, control_update, every_instance, find, played, told_to_bun, watch,
 };

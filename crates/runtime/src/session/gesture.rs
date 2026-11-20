@@ -33,8 +33,15 @@ pub struct Held(pub Vec<String>);
 
 impl std::fmt::Display for Held {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let what = if self.0.len() == 1 { "this number" } else { "these numbers" };
-        write!(f, "A lane plays {what}: turn on Write automation and play to write into it.")
+        let what = if self.0.len() == 1 {
+            "this number"
+        } else {
+            "these numbers"
+        };
+        write!(
+            f,
+            "A lane plays {what}: turn on Write automation and play to write into it."
+        )
     }
 }
 
@@ -46,8 +53,7 @@ impl Session {
         drag: &mut Drag,
         publish: impl FnOnce(&mut Project, &mut ProjectEdit) -> Result<R, ProjectError>,
     ) -> Option<R> {
-        let current = self.gesture.as_ref().map(|(number, _)| *number);
-        if drag.gesture.is_none() || drag.gesture != current {
+        if !self.owns(drag) {
             self.finish_open();
             self.gestures += 1;
             self.gesture = Some((self.gestures, self.project.begin(&drag.label)));
@@ -188,7 +194,11 @@ impl Session {
 
 /// The instance a path of `instance` names a number of, and that number: an instance inside it
 /// when the path starts with one, else `instance` itself (`pads.36.pan` of a kit is its own).
-pub(super) fn number_at<'a>(project: &Project, instance: &InstanceId, path: &'a str) -> (InstanceId, &'a str) {
+pub(super) fn number_at<'a>(
+    project: &Project,
+    instance: &InstanceId,
+    path: &'a str,
+) -> (InstanceId, &'a str) {
     if let Some((inside, number)) = path.split_once('.')
         && let Ok(id) = instance.child(inside)
         && project.tool_of(&id).is_some()
