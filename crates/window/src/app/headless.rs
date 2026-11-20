@@ -15,7 +15,7 @@ use super::{REPORT, Sound, State};
 impl State {
     /// Input was handled. A run without a window answers it at once, so the frame it came in
     /// draws it and the report says it: Rune runs input after `poll`, and the last frame has none after.
-    pub(super) fn handled(&mut self) {
+    pub(crate) fn handled(&mut self) {
         if self.headless() {
             self.settle();
             *REPORT.lock().unwrap_or_else(PoisonError::into_inner) = Some(self.report());
@@ -105,6 +105,11 @@ impl State {
             "time": self.time(),
             "meters": self.lives.levels().into_iter().map(|(name, db)| (name, json!(db))).collect::<serde_json::Map<_, _>>(),
             "view_runs": self.tools.as_ref().map_or(0, Tools::view_runs),
+            "planes": self.planes.views().into_iter().map(|(key, view)| {
+                let mut said = json!(view);
+                said["key"] = json!(key);
+                said
+            }).collect::<Vec<_>>(),
             "problems": problems,
             "notice": self.notice,
         })

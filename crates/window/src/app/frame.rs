@@ -27,6 +27,9 @@ impl State {
         let changed = self.show_named(settle);
         self.trees.keep(self);
         self.lives.keep(&tree::bound(self));
+        if let Some(problems) = self.planes.misplaced(self) {
+            self.project.set_problems_in(tree::MISPLACED, problems);
+        }
         changed
     }
 
@@ -98,7 +101,7 @@ impl State {
     /// New trees came: what drags moved is where the records say now, but a drag that goes on.
     fn trees_came(&self) {
         let held = self.gesture.as_ref().and_then(tree::Gesture::dragging);
-        self.lives.drop_drags(held);
+        self.lives.drop_drags(self, held);
     }
 
     pub(crate) fn settle(&mut self) -> bool {
@@ -112,7 +115,8 @@ pub(crate) fn setup(state: &mut State, waker: rune::Waker) {
 
 /// The start of every frame: Bun, the project, the engine and what moves.
 pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
-    let (changed, next) = frame(state, seconds);
+    let (mut changed, next) = frame(state, seconds);
+    changed |= state.planes.focus(tx.focused());
     if let Some(next) = next {
         tx.wake_after(next);
     }
@@ -127,6 +131,7 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
     let mut changed = false;
     // A press that a drag's release brings comes before the next frame.
     state.dragged = None;
+    state.open_menu();
     if headless {
         changed |= state.settle();
         if let Err(error) = state.first_frame() {

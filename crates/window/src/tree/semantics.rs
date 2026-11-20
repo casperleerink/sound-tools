@@ -1,12 +1,13 @@
 //! What an element is for an agent and a screen reader, and what a press, a key or a step does.
 
-use rune::{El, Key, KeyEvent, Phase};
+use rune::{El, Key, KeyEvent};
 use serde_json::json;
 use sound_core::InstanceId;
 
 use crate::app::State;
 
 use super::build::is_overlay;
+use super::gesture::pointer;
 use super::{BoxNode, Node, Opens, Scope, Within};
 
 /// What the element is for an agent and a screen reader, and what a press does.
@@ -28,27 +29,6 @@ pub(super) fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>
         return e;
     };
     let (instance, element, key) = (scope.instance.clone(), element.clone(), key.to_string());
-    if b.enter {
-        let (instance, element, key) = (instance.clone(), element.clone(), key.clone());
-        e = e.on_drag(
-            move |s: &mut State, d: &mut rune::Drag, tx: &mut rune::Tx| match d.phase {
-                Phase::Down => s.paint(&instance, &element),
-                Phase::Move => {
-                    let [x, y] = d.window_point();
-                    tx.element_at(x, y, |s: &mut State, picked, _: &mut rune::Tx| {
-                        if let Some(picked) = picked {
-                            s.paint_over(picked.path());
-                        }
-                    });
-                }
-                // A press that paints is no press too.
-                Phase::Up => {
-                    s.dragged = Some(key.clone());
-                    s.painted();
-                }
-            },
-        );
-    }
     // What a tip says is for the keys too.
     if b.overlay_of(Opens::Hover).is_some() {
         e = e.hover_group_shared(key.clone()).focusable(true);
@@ -61,10 +41,11 @@ pub(super) fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>
         opens,
         within: scope.within.clone(),
     };
+    e = pointer(scope, e, b, &key, &press);
     if b.press || opens {
         let press = press.clone();
         e = e.focusable(true).on_press(move |s: &mut State| {
-            // The release that ends a drag on it is no press.
+            // The release of a pointer was its press, or the end of its drag.
             if s.dragged.as_deref() == Some(key.as_str()) {
                 return;
             }

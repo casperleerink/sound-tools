@@ -2,8 +2,7 @@
 
 use std::collections::HashSet;
 
-use rune::{Align, El, Phase, ScrollSpec, col, el, memo, row, text};
-use serde_json::json;
+use rune::{Align, El, ScrollSpec, col, el, memo, row, text};
 use sound_core::InstanceId;
 use sound_typescript::live::Num;
 use sound_typescript::next::Drawn;
@@ -12,10 +11,9 @@ use crate::app::State;
 use crate::lives::{Lives, Shown, Shows};
 
 use super::field::typed;
-use super::gesture::Gesture;
 use super::semantics::{delegates_enter, semantics};
 use super::shapes::drawing;
-use super::{BoxNode, Node, Scope, Scroll, Size, TextNode, live_place};
+use super::{BoxNode, Node, Place, Scope, Scroll, Size, TextNode, live_place, plane};
 
 /// The name of every binding the views shown now make, of their memos too, whether Rune builds
 /// them again or not: what [`crate::lives::Lives::keep`] keeps.
@@ -43,6 +41,24 @@ pub(crate) fn enterable(state: &State, id: &InstanceId, node: &Node, keys: &mut 
         Node::Memo { key } => {
             if let Some((_, inner)) = state.memo_of(id, key) {
                 enterable(state, id, &inner, keys);
+            }
+        }
+        Node::Text(_) | Node::Shapes(_) | Node::Field(_) | Node::Icon(_) | Node::Child { .. } => {}
+    }
+}
+
+/// The keys of the boxes of `node` and its memos.
+pub(crate) fn keyed(state: &State, id: &InstanceId, node: &Node, keys: &mut Vec<String>) {
+    match node {
+        Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
+            keys.extend(b.key.clone());
+            for child in &b.children {
+                keyed(state, id, child, keys);
+            }
+        }
+        Node::Memo { key } => {
+            if let Some((_, inner)) = state.memo_of(id, key) {
+                keyed(state, id, &inner, keys);
             }
         }
         Node::Text(_) | Node::Shapes(_) | Node::Field(_) | Node::Icon(_) | Node::Child { .. } => {}
@@ -98,13 +114,7 @@ pub(crate) fn code_failed(state: &State, id: &InstanceId) -> El {
 pub(crate) fn view(state: &State, instance: &InstanceId, prefix: &str, drawn: &Drawn) -> El {
     match drawn {
         Drawn::View { .. } => {
-            let scope = Scope {
-                state,
-                instance,
-                prefix,
-                within: None,
-                in_control: false,
-            };
+            let scope = Scope::new(state, instance, prefix);
             match state.read_root(instance) {
                 Some(Ok(node)) => build(&scope, &node),
                 Some(Err(error)) => {
@@ -135,7 +145,16 @@ pub(super) fn build(scope: &Scope, node: &Node) -> El {
         Node::Col(b) => boxed(scope, col(), b),
         Node::Plain(b) => boxed(scope, el(), b),
         Node::Text(t) => label(scope, t),
-        Node::Shapes(shapes) => drawing(scope, shapes),
+        Node::Shapes(shapes) => {
+            let e = drawing(scope, shapes);
+            match &shapes.place {
+                Some(place) => {
+                    let size = [shapes.w, shapes.h].map(Num::Fixed);
+                    scope.put(e, place, (Some(&size[0]), Some(&size[1])))
+                }
+                None => e,
+            }
+        }
         Node::Field(field) => typed(scope, field),
         Node::Icon(_) => el(),
         Node::Child { path } => match scope.instance.child(path) {
@@ -201,6 +220,10 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
         _ => {}
     }
     // Before `inset`, which pins it to more edges than `at` does.
+    e = match &b.place {
+        Some(place) => scope.put(e, place, b.size()),
+        None => e,
+    };
     e = scope.placed(e, b.at.as_ref(), b.size(), b.opacity.as_ref());
     if let Some([left, top, right, bottom]) = b.inset {
         e = e.pin(left, top, right, bottom);
@@ -244,63 +267,27 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
     if let Some(shadow) = b.shadow.as_deref().and_then(|name| theme.shadow(name)) {
         e = e.shadow(shadow.y, shadow.blur, theme.color(&shadow.color));
     }
-    e = semantics(scope, e, b, key.as_deref());
-    if let Some(key) = &key {
-        let lives = &scope.state.lives;
-        if let (Some(spec), Some(element)) = (b.drag, &b.key) {
-            let moved = lives.dragged(key);
-            let (instance, element, key) = (scope.instance.clone(), element.clone(), key.clone());
-            e = e.on_drag(
-                move |s: &mut State, d: &mut rune::Drag, tx: &mut rune::Tx| {
-                    if d.phase == Phase::Down {
-                        s.gesture = Some(Gesture::of(&key));
-                        return;
-                    }
-                    let Some(gesture) = s.gesture.as_mut().filter(|gesture| gesture.key == key)
-                    else {
-                        return;
-                    };
-                    gesture.follow(d, tx.mods().shift);
-                    let (far, offset) =
-                        (gesture.far, spec.offset(gesture.moved[0], gesture.moved[1]));
-                    match d.phase {
-                        Phase::Down => {}
-                        Phase::Move => {
-                            moved.set(if far { offset } else { [0.0; 2] });
-                            s.lives.held(&key, far);
-                            s.lives.refresh(s);
-                        }
-                        Phase::Up => {
-                            s.lives.held(&key, false);
-                            s.gesture = None;
-                            // A gesture that once went past the slop is a drag, also when it comes
-                            // back: it never presses.
-                            if !far {
-                                return;
-                            }
-                            s.dragged = Some(key.clone());
-                            if d.cancelled() {
-                                moved.set([0.0; 2]);
-                                return;
-                            }
-                            moved.set(offset);
-                            s.pointed(
-                                &instance,
-                                &element,
-                                "drag",
-                                Some(json!({ "dx": offset[0], "dy": offset[1] })),
-                            );
-                        }
-                    }
-                },
-            );
-        }
+    let plane = b.plane.as_ref().zip(key.as_deref());
+    let here = Scope {
+        plane: plane
+            .map(|(_, key)| key.to_string())
+            .or(scope.plane.clone()),
+        placed: b.place.as_ref().map(Place::origin).or(scope.placed.clone()),
+        menu: (b.opens_menu().then(|| key.clone()).flatten()).or(scope.menu.clone()),
+        ..scope.clone()
+    };
+    e = semantics(&here, e, b, key.as_deref());
+    if let Some((spec, key)) = plane {
+        return plane::plane(&here, e, b, key, spec);
     }
     let inside = Scope {
         in_control: scope.in_control || delegates_enter(b),
-        within: scope.within.clone(),
-        ..*scope
+        parent: b.place.as_ref().map(Place::origin).or(scope.parent.clone()),
+        ..here
     };
+    if inside.plane.is_some() {
+        return e.children(plane::children(&inside, &b.children));
+    }
     let shown = (b.children.iter()).filter(|child| !is_overlay(child));
     e.children(shown.map(|child| build(&inside, child)))
 }

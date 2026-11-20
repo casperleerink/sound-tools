@@ -74,6 +74,7 @@ pub(crate) struct State {
     schemas: HashMap<&'static str, Value>,
     pub(crate) lives: Lives,
     pub(crate) trees: tree::Trees,
+    pub(crate) planes: tree::Planes,
     pub(crate) playing: bool,
     pub(crate) playhead: Ticks,
     /// Engine time in seconds, which a control loop's clock counts on.
@@ -97,6 +98,8 @@ pub(crate) struct State {
     /// The overlays open now, each inside the one before, by the key of what opened it. How the
     /// composer works, so never saved.
     pub(crate) open: Vec<String>,
+    /// The menu a right press opened, or will once its press is answered.
+    pub(crate) menu: Option<actions::Menu>,
     /// What `--main` shows in place of the project's main instance.
     main: Option<InstanceId>,
     /// What the text fields say, by key, and the value each was made from.
@@ -191,6 +194,7 @@ impl State {
             schemas,
             lives: Lives::new("1.1"),
             trees: tree::Trees::default(),
+            planes: tree::Planes::default(),
             playing: false,
             playhead: Ticks(0),
             engine_time: 0.0,
@@ -202,6 +206,7 @@ impl State {
             gesture: None,
             dragged: None,
             open: Vec::new(),
+            menu: None,
             cards: HashMap::new(),
             main,
             fields: RefCell::default(),

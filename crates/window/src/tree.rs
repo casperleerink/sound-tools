@@ -19,12 +19,14 @@ mod build;
 mod field;
 mod gesture;
 mod overlay;
+mod plane;
 mod semantics;
 mod shapes;
 
-pub(crate) use build::{bound, code_failed, enterable, view};
+pub(crate) use build::{bound, code_failed, enterable, keyed, view};
 pub(crate) use gesture::Gesture;
 pub(crate) use overlay::overlays;
+pub(crate) use plane::{MISPLACED, Planes};
 pub(crate) use semantics::Press;
 
 /// A node of `sdk/view.ts`. A test reads every field it sends, so the two cannot drift.
@@ -89,6 +91,8 @@ pub(crate) struct BoxNode {
     #[serde(default)]
     pub(crate) actions: Vec<String>,
     pub(crate) drag: Option<DragSpec>,
+    pub(crate) plane: Option<PlaneSpec>,
+    pub(crate) place: Option<Place>,
     w: Option<Size>,
     h: Option<Size>,
     grow: Option<f32>,
@@ -142,7 +146,7 @@ pub(crate) struct Overlay {
 pub(crate) enum Opens {
     Press,
     Hover,
-    /// A right press opens it: not honoured yet, so it stays shut.
+    /// A right press on its parent or anything inside opens it, at the pointer.
     Menu,
 }
 
@@ -198,44 +202,129 @@ impl TextNode {
     }
 }
 
-#[derive(Deserialize, Clone, Copy)]
-#[serde(try_from = "DragAxes")]
+/// `drag` of `sdk/view.ts`: along `x`, `y` or both, in units of the plane around it.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(try_from = "DragWire")]
 pub(crate) struct DragSpec {
-    axis: Axis,
-    min: f32,
-    max: f32,
+    pub(crate) x: Option<Reach>,
+    pub(crate) y: Option<Reach>,
+    /// Grid steps: `from` lands on them. 0 does not snap.
+    pub(crate) snap: [f32; 2],
+    pub(crate) from: Option<[f32; 2]>,
+    /// What `live.drag` follows: its key when left out.
+    pub(crate) id: Option<String>,
+    /// What plays while it is held: read, not acted on yet.
+    pub(crate) plays: Option<HashMap<String, Num>>,
 }
 
-/// `drag` of `sdk/view.ts` as this window honours it yet: along `y`, else `x`, in its bounds.
 #[derive(Deserialize)]
 #[cfg_attr(test, serde(deny_unknown_fields))]
-struct DragAxes {
-    x: Option<Bound>,
-    y: Option<Bound>,
+struct DragWire {
+    x: Option<Reach>,
+    y: Option<Reach>,
+    snap: Option<[f32; 2]>,
+    from: Option<[f32; 2]>,
+    id: Option<String>,
+    plays: Option<HashMap<String, Num>>,
 }
 
-/// `true` (anywhere), or the least and most of the move.
+impl TryFrom<DragWire> for DragSpec {
+    type Error = &'static str;
+
+    fn try_from(wire: DragWire) -> Result<Self, Self::Error> {
+        if wire.x.is_none() && wire.y.is_none() {
+            return Err("a drag moves along x or y");
+        }
+        Ok(Self {
+            x: wire.x,
+            y: wire.y,
+            snap: wire.snap.unwrap_or_default(),
+            from: wire.from,
+            id: wire.id,
+            plays: wire.plays,
+        })
+    }
+}
+
+/// How far a drag may go along an axis: anywhere, or between the least and the most.
+#[derive(Deserialize, Clone, Copy, Debug)]
+#[serde(from = "ReachWire")]
+pub(crate) enum Reach {
+    Free,
+    Within(f32, f32),
+}
+
 #[derive(Deserialize)]
 #[serde(untagged)]
-enum Bound {
+enum ReachWire {
     Within([f32; 2]),
     Free(serde::de::IgnoredAny),
 }
 
-impl TryFrom<DragAxes> for DragSpec {
+impl From<ReachWire> for Reach {
+    fn from(wire: ReachWire) -> Self {
+        match wire {
+            // A view may give the bounds swapped.
+            ReachWire::Within([a, b]) => Self::Within(a.min(b), a.max(b)),
+            ReachWire::Free(_) => Self::Free,
+        }
+    }
+}
+
+/// `plane` of `sdk/view.ts`: units of a box's own, which the window scrolls and zooms.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(test, serde(deny_unknown_fields))]
+pub(crate) struct PlaneSpec {
+    pub(crate) x: Option<AxisSpec>,
+    pub(crate) y: Option<AxisSpec>,
+    /// How far across it zooms, least and most: not at all when left out.
+    pub(crate) zoom: Option<[f32; 2]>,
+}
+
+/// Points per unit, a range shown stretched to the box, or the key of a plane it moves with.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(untagged)]
+pub(crate) enum AxisSpec {
+    Scale(f32),
+    Range([f32; 2]),
+    Shared(String),
+}
+
+/// `place` of `sdk/view.ts`, in units of the plane around it: a mark, centred on its point and
+/// sized in points, or a box.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(try_from = "Vec<Num>")]
+pub(crate) enum Place {
+    Mark([Num; 2]),
+    Box([Num; 4]),
+}
+
+impl TryFrom<Vec<Num>> for Place {
     type Error = &'static str;
 
-    fn try_from(DragAxes { x, y }: DragAxes) -> Result<Self, Self::Error> {
-        let (axis, along) = match (y, x) {
-            (Some(y), _) => (Axis::Y, y),
-            (None, Some(x)) => (Axis::X, x),
-            (None, None) => return Err("a drag moves along x or y"),
-        };
-        let [min, max] = match along {
-            Bound::Within(bounds) => bounds,
-            Bound::Free(_) => [f32::NEG_INFINITY, f32::INFINITY],
-        };
-        Ok(Self { axis, min, max })
+    fn try_from(numbers: Vec<Num>) -> Result<Self, Self::Error> {
+        match <[Num; 4]>::try_from(numbers) {
+            Ok(rect) => Ok(Self::Box(rect)),
+            Err(numbers) => <[Num; 2]>::try_from(numbers)
+                .map(Self::Mark)
+                .map_err(|_| "a place is [x, y] or [x, y, w, h]"),
+        }
+    }
+}
+
+impl Place {
+    /// Its top left, or the point of a mark.
+    pub(crate) fn origin(&self) -> [Num; 2] {
+        match self {
+            Self::Mark([x, y]) | Self::Box([x, y, _, _]) => [x.clone(), y.clone()],
+        }
+    }
+
+    pub(crate) fn numbers(&self) -> &[Num] {
+        match self {
+            Self::Mark(point) => point,
+            Self::Box(rect) => rect,
+        }
     }
 }
 
@@ -245,13 +334,6 @@ pub(crate) enum Scroll {
     X,
     Y,
     Both,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq)]
-#[serde(rename_all = "lowercase")]
-enum Axis {
-    X,
-    Y,
 }
 
 #[derive(Deserialize)]
@@ -279,8 +361,12 @@ pub(crate) struct ShapesNode {
     key: Option<String>,
     at: Option<[Num; 2]>,
     opacity: Option<Num>,
+    /// Points; left out when `place` sizes it.
+    #[serde(default)]
     w: f32,
+    #[serde(default)]
     h: f32,
+    place: Option<Place>,
     units: Option<[f32; 2]>,
     trim: Option<[Num; 2]>,
     #[serde(default)]
@@ -319,6 +405,7 @@ pub(crate) struct Rects {
 }
 
 /// The view of one instance being drawn: where its keys and live names point.
+#[derive(Clone)]
 struct Scope<'a> {
     state: &'a State,
     instance: &'a InstanceId,
@@ -329,6 +416,14 @@ struct Scope<'a> {
     within: Option<Within>,
     /// Inside a control: an opener here is no stop of Tab, as the control's Enter opens it.
     in_control: bool,
+    /// The key in the window of the plane around it.
+    plane: Option<String>,
+    /// The place of its parent, when that is placed in the plane: its children are placed from it.
+    parent: Option<[Num; 2]>,
+    /// The place of the placed element nearest around it, or its own: what a drag snaps.
+    placed: Option<[Num; 2]>,
+    /// The key in the window of what opens the menu around it, or its own.
+    menu: Option<String>,
 }
 
 /// An open overlay: the key of what opened it, and whether a press inside closes it.
@@ -406,7 +501,21 @@ impl State {
     }
 }
 
-impl Scope<'_> {
+impl<'a> Scope<'a> {
+    fn new(state: &'a State, instance: &'a InstanceId, prefix: &'a str) -> Self {
+        Self {
+            state,
+            instance,
+            prefix,
+            within: None,
+            in_control: false,
+            plane: None,
+            parent: None,
+            placed: None,
+            menu: None,
+        }
+    }
+
     fn key(&self, key: &str) -> String {
         format!("{}{key}", self.prefix)
     }

@@ -5,11 +5,21 @@ use std::collections::BTreeSet;
 use anyhow::{Context as _, Result, anyhow};
 use serde_json::{Value, json};
 use sound_core::InstanceId;
+use sound_typescript::next::Tools;
 
 use crate::controls::Target;
 use crate::tree;
 
 use super::{DID_NOTHING, State};
+
+/// A menu a right press opens at the pointer: once the press's answer came, so it shows what
+/// the press chose.
+pub(crate) struct Menu {
+    pub(crate) opener: String,
+    /// Where in the window, or beside what opens it.
+    pub(crate) at: Option<[f32; 2]>,
+    waits: bool,
+}
 
 impl State {
     /// An action on an element of a view: its tool's code runs it.
@@ -122,6 +132,57 @@ impl State {
             }
         }
         self.handled();
+    }
+
+    /// Opens the menu of `opener` at `at` in the window, once the press before it was answered.
+    pub(crate) fn menu_at(&mut self, opener: &str, at: Option<[f32; 2]>) {
+        self.menu = Some(Menu {
+            opener: opener.to_string(),
+            at,
+            waits: true,
+        });
+        self.open_menu();
+    }
+
+    /// Opens the menu a right press asked for, once Bun answered what was pressed.
+    pub(crate) fn open_menu(&mut self) {
+        let answered = self.tools.as_ref().is_none_or(Tools::answered);
+        let Some(menu) = self.menu.as_mut().filter(|menu| menu.waits && answered) else {
+            return;
+        };
+        menu.waits = false;
+        self.open = vec![menu.opener.clone()];
+        self.handled();
+    }
+
+    /// The key in its view of the keyed element under `window` at the end of a drag of
+    /// `press`, the dragged one and what is in it left out: in its plane, or as Rune `picked` it.
+    pub(crate) fn over(
+        &self,
+        press: &tree::Press,
+        plane: Option<&str>,
+        window: [f32; 2],
+        picked: Option<&rune::Picked>,
+    ) -> Option<String> {
+        let prefix = self.prefix_of(&press.instance);
+        let dragged = format!("{prefix}{}", press.element);
+        if let Some(plane) = plane {
+            let over = self
+                .planes
+                .over(plane, self.planes.units(plane, window), &dragged)?;
+            return over.strip_prefix(&prefix).map(str::to_string);
+        }
+        let path = format!("/{}/", picked?.path());
+        let root = self.root(&press.instance)?;
+        let mut keys = Vec::new();
+        tree::keyed(self, &press.instance, &root, &mut keys);
+        let at = |key: &str| path.find(&format!("/{prefix}{key}/"));
+        let inside = at(&press.element).unwrap_or(usize::MAX);
+        (keys.into_iter())
+            .filter(|key| *key != press.element)
+            .filter_map(|key| Some((at(&key).filter(|at| *at < inside)?, key)))
+            .max_by_key(|(at, _)| *at)
+            .map(|(_, key)| key)
     }
 
     /// Closes the overlay the element `key` opened, and those inside it.

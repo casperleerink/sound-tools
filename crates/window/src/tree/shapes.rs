@@ -28,7 +28,7 @@ pub(super) fn drawing(scope: &Scope, d: &ShapesNode) -> El {
             shape = shape.fill(vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h]], colour);
         }
     }
-    if let Some([across, down]) = d.units {
+    if let Some([across, down]) = d.units.or_else(|| scope.place_units(d.place.as_ref())) {
         shape = shape.view_box(across, down);
     }
     let mut trim = None;

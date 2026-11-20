@@ -1727,7 +1727,7 @@ fn a_tree_that_comes_during_a_drag_leaves_the_drag_where_it_is() {
     window.pointer_down(start.0, start.1);
     window.frame(1.0 / 60.0);
     travel(&mut window, start, (0.0, -2.0), 10);
-    let moved = window.state.lives.dragged(key).get();
+    let moved = window.state.lives.hand(key).moved;
     assert!(moved[1] < -10.0, "{moved:?}");
     // Another control's change draws the view again while the drag goes on.
     let runs = window.state.tools.as_ref().unwrap().view_runs();
@@ -1736,10 +1736,10 @@ fn a_tree_that_comes_during_a_drag_leaves_the_drag_where_it_is() {
         json!({ "label": "Item", "action": "press" }),
     );
     assert!(window.state.tools.as_ref().unwrap().view_runs() > runs);
-    assert_eq!(window.state.lives.dragged(key).get(), moved);
+    assert_eq!(window.state.lives.hand(key).moved, moved);
     window.pointer_up(start.0, start.1 - 20.0);
     redraw(&mut window);
-    assert_eq!(window.state.lives.dragged(key).get(), [0.0; 2]);
+    assert_eq!(window.state.lives.hand(key).moved, [0.0; 2]);
 }
 
 /// A lane on the first track of the project in `scratch` that plays `value` into `target`,

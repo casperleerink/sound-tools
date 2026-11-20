@@ -1,7 +1,9 @@
 //! What moves every frame without a view running again: the live values of the views, a drag,
 //! and the time of the title row, each bound to a Rune live value. A view's live value is a
 //! small expression (`sound_typescript::live`) worked out here, from the playhead, the time, the
-//! meters and the fields as they play. Kept while a tree that is shown binds it.
+//! meters and the fields as they play, a drag and a plane. Kept while a tree that is shown binds
+//! it, and read only in a frame where what it reads moved: a binding to a drag or a plane rests
+//! with them.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -10,11 +12,12 @@ use std::rc::Rc;
 use rune::LiveText;
 use sound_core::{InstanceId, Ticks};
 use sound_typescript::live::{
-    DragPart, Ease, Eased, Leaves, Live, Num, Readout, TickReadout, number, text_of,
+    DragPart, Ease, Eased, Leaves, Live, Num, PlanePart, Readout, TickReadout, number, text_of,
 };
 use sound_typescript::next::Keys;
 
 use crate::app::State;
+use crate::tree::Place;
 
 /// What a live value of a view shows: also its name, so the same shown twice binds once, and a
 /// new expression in its place, such as `live.playhead.minus(start)` after a drag, is another.
@@ -31,6 +34,15 @@ pub(crate) enum Shows {
     Opacity(Num),
     /// The part of a shape's lines that draws: [from, to], 0 to 1.
     Trim([Num; 2]),
+    /// Where an element `place` puts in the plane `plane` (its key in the window) is, in points
+    /// from its parent, which is placed at `parent` or is the plane's content. A mark is
+    /// `size` points, centred on its place.
+    Placed {
+        plane: String,
+        place: Place,
+        size: [Option<Num>; 2],
+        parent: Option<[Num; 2]>,
+    },
 }
 
 /// What Rune draws of a [`Shows`] every frame.
@@ -57,11 +69,41 @@ impl Shown {
     }
 }
 
-/// A live value bound to an element, and the instance whose view it is of.
+/// A live value bound to an element, the instance whose view it is of, and what it reads.
 struct Binding {
     instance: InstanceId,
     shows: Shows,
     shown: Shown,
+    reads: Reads,
+}
+
+/// What a binding reads: something that may move in any frame, or only drags, planes, and the
+/// points per unit of planes (a place), by their keys in the window.
+#[derive(Default)]
+struct Reads {
+    always: bool,
+    drags: Vec<String>,
+    planes: Vec<String>,
+    scales: Vec<String>,
+}
+
+/// The drags and planes that moved since their bindings were last read.
+#[derive(Default)]
+struct Moved {
+    drags: HashSet<String>,
+    planes: HashSet<String>,
+    scales: HashSet<String>,
+}
+
+/// A drag of `live.drag(id)`, in the units of the plane around what it moves.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Hand {
+    /// How far it moved: on the grid and within its bounds, as it ends.
+    pub(crate) moved: [f32; 2],
+    /// Where it began.
+    pub(crate) start: [f32; 2],
+    pub(crate) active: bool,
+    pub(crate) alt: bool,
 }
 
 pub(crate) struct Lives {
@@ -79,9 +121,9 @@ pub(crate) struct Lives {
     /// Whether a live text showed wider than it was built for, or a live accessibility value
     /// moved, since the last look.
     wider: Cell<bool>,
-    drags: RefCell<HashMap<String, rune::Live<[f32; 2]>>>,
-    /// The keys of the elements dragged now.
-    held: RefCell<HashSet<String>>,
+    /// The drags by id in the window, kept until a new tree says where the records put it.
+    hands: RefCell<HashMap<String, Hand>>,
+    moved: RefCell<Moved>,
     /// The live accessibility values of the views, by element key: their instance, their value,
     /// and what they said when the view was built.
     spoken: RefCell<HashMap<String, (InstanceId, Num, String)>>,
@@ -103,8 +145,8 @@ impl Lives {
             playhead: Cell::new(0.0),
             moving: Cell::new(false),
             wider: Cell::new(false),
-            drags: RefCell::default(),
-            held: RefCell::default(),
+            hands: RefCell::default(),
+            moved: RefCell::default(),
             spoken: RefCell::default(),
             keys: RefCell::default(),
             time: LiveText::new(time.to_string()),
@@ -129,8 +171,10 @@ impl Lives {
             Shows::Offset(_) => Shown::Offset(rune::Live::new([0.0; 2])),
             Shows::Opacity(_) => Shown::Opacity(rune::Live::new(1.0)),
             Shows::Trim(_) => Shown::Trim(rune::Live::new([0.0, 1.0])),
+            Shows::Placed { .. } => Shown::Rect(rune::Live::new([0.0; 4])),
         };
         let binding = Binding {
+            reads: self.reads(state, instance, &shows),
             instance: instance.clone(),
             shows,
             shown: shown.clone(),
@@ -140,13 +184,67 @@ impl Lives {
         shown
     }
 
-    /// How far the element `key` is dragged.
-    pub(crate) fn dragged(&self, key: &str) -> rune::Live<[f32; 2]> {
-        self.drags
-            .borrow_mut()
-            .entry(key.to_string())
-            .or_insert_with(|| rune::Live::new([0.0; 2]))
-            .clone()
+    /// What `shows` in the view of `instance` reads.
+    fn reads(&self, state: &State, instance: &InstanceId, shows: &Shows) -> Reads {
+        let recorder = Recorder {
+            prefix: state.prefix_of(instance),
+            reads: RefCell::default(),
+        };
+        let nums: Vec<&Num> = match shows {
+            Shows::Text { value, .. } | Shows::Opacity(value) => vec![value],
+            Shows::Rect(rect) => rect.iter().collect(),
+            Shows::Offset(at) | Shows::Trim(at) => at.iter().collect(),
+            Shows::Placed {
+                plane,
+                place,
+                size,
+                parent,
+            } => {
+                recorder.reads.borrow_mut().scales.push(plane.clone());
+                (place.numbers().iter())
+                    .chain(size.iter().flatten())
+                    .chain(parent.iter().flatten())
+                    .collect()
+            }
+        };
+        for num in nums {
+            number(num, &recorder);
+        }
+        recorder.reads.into_inner()
+    }
+
+    /// The drag `id`, its key in the window, as it is now.
+    pub(crate) fn hand(&self, id: &str) -> Hand {
+        self.hands.borrow().get(id).copied().unwrap_or_default()
+    }
+
+    /// The drag `id` moved: what binds to it shows it at once, not a frame later.
+    pub(crate) fn move_hand(&self, state: &State, id: &str, hand: Hand) {
+        self.hands.borrow_mut().insert(id.to_string(), hand);
+        self.moved.borrow_mut().drags.insert(id.to_string());
+        self.refresh(state);
+    }
+
+    /// The planes `keys` moved, and with `scaled` their points per unit changed too: what binds
+    /// to them shows it at once.
+    pub(crate) fn move_planes(&self, state: &State, keys: &[String], scaled: bool) {
+        let mut moved = self.moved.borrow_mut();
+        moved.planes.extend(keys.iter().cloned());
+        if scaled {
+            moved.scales.extend(keys.iter().cloned());
+        }
+        drop(moved);
+        self.refresh(state);
+    }
+
+    /// The number `value` of the view of `instance` is now.
+    pub(crate) fn value(&self, state: &State, instance: &InstanceId, value: &Num) -> f32 {
+        let sources = Sources {
+            lives: self,
+            state,
+            instance,
+        };
+        number(value, &sources) as f32
     }
 
     /// The accessibility value of the element `key` of the view of `instance`, `value` as it is
@@ -190,30 +288,35 @@ impl Lives {
         }
     }
 
-    /// Whether the element `key` is dragged now.
-    pub(crate) fn held(&self, key: &str, held: bool) {
-        let mut keys = self.held.borrow_mut();
-        match held {
-            true => keys.insert(key.to_string()),
-            false => keys.remove(key),
-        };
-    }
-
-    /// Shows what a drag moved at once, not a frame later.
-    pub(crate) fn refresh(&self, state: &State) {
+    /// Shows the bindings that read what moved since they were last read.
+    fn refresh(&self, state: &State) {
+        let moved = self.moved.take();
         for binding in self.bindings.borrow().values() {
-            self.show(state, binding);
-        }
-    }
-
-    /// A new tree came: what a drag moved is where its record says now, but the drag of
-    /// `held`, which goes on.
-    pub(crate) fn drop_drags(&self, held: Option<&str>) {
-        for (key, live) in self.drags.borrow().iter() {
-            if Some(key.as_str()) != held {
-                live.set([0.0; 2]);
+            let reads = &binding.reads;
+            let moved = reads.always
+                || reads.drags.iter().any(|id| moved.drags.contains(id))
+                || reads.planes.iter().any(|key| moved.planes.contains(key))
+                || reads.scales.iter().any(|key| moved.scales.contains(key));
+            if moved {
+                self.show(state, binding);
             }
         }
+    }
+
+    /// A new tree came: what a drag moved is where its record says now, but the drag `held`,
+    /// which goes on.
+    pub(crate) fn drop_drags(&self, state: &State, held: Option<&str>) {
+        let mut hands = self.hands.borrow_mut();
+        let ended: Vec<String> = (hands.keys())
+            .filter(|id| Some(id.as_str()) != held)
+            .cloned()
+            .collect();
+        for id in &ended {
+            hands.remove(id);
+        }
+        drop(hands);
+        self.moved.borrow_mut().drags.extend(ended);
+        self.refresh(state);
     }
 
     /// The views show only the bindings `named` now, see [`Lives::name`]: the others go, also
@@ -235,9 +338,7 @@ impl Lives {
         let position = Some(Readout::Tick(TickReadout::Position));
         self.time
             .set(text_of(playhead.0 as f64, position, Some(project.clock())));
-        for binding in self.bindings.borrow().values() {
-            self.show(state, binding);
-        }
+        self.refresh(state);
         let mut spoken = self.spoken.borrow_mut();
         spoken.retain(|_, (instance, ..)| state.shown.contains(instance));
         for (instance, value, said) in spoken.values() {
@@ -302,6 +403,20 @@ impl Lives {
             }
             (Shows::Trim(trim), Shown::Trim(shown)) => {
                 shown.set(trim.each_ref().map(|end| of(end).clamp(0.0, 1.0)));
+            }
+            (
+                Shows::Placed {
+                    plane,
+                    place,
+                    size,
+                    parent,
+                },
+                Shown::Rect(shown),
+            ) => {
+                let size = size.each_ref().map(|size| size.as_ref().map(of));
+                let parent = parent.as_ref().map(|at| at.each_ref().map(of));
+                let place = place.numbers().iter().map(of).collect::<Vec<_>>();
+                shown.set(state.planes.points(plane, &place, size, parent));
             }
             _ => {}
         }
@@ -411,6 +526,29 @@ impl Lives {
     }
 }
 
+/// What a live value reads, found by working it out once.
+struct Recorder {
+    prefix: String,
+    reads: RefCell<Reads>,
+}
+
+impl Leaves for Recorder {
+    fn leaf(&self, live: &Live) -> f64 {
+        let mut reads = self.reads.borrow_mut();
+        match live {
+            Live::Drag { id, .. } => reads.drags.push(format!("{}{id}", self.prefix)),
+            Live::Plane { key, .. } => reads.planes.push(format!("{}{key}", self.prefix)),
+            _ => reads.always = true,
+        }
+        0.0
+    }
+
+    fn ease(&self, _: &str, _: Ease, value: f64) -> f64 {
+        self.reads.borrow_mut().always = true;
+        value
+    }
+}
+
 impl Leaves for Sources<'_> {
     fn leaf(&self, live: &Live) -> f64 {
         let playhead = self.lives.playhead.get();
@@ -438,17 +576,32 @@ impl Leaves for Sources<'_> {
             }
             Live::Drag { id, part } => {
                 let key = format!("{}{id}", self.state.prefix_of(self.instance));
-                let moved = (self.lives.drags.borrow().get(&key)).map_or([0.0; 2], rune::Live::get);
-                match part {
-                    DragPart::Dx => f64::from(moved[0]),
-                    DragPart::Dy => f64::from(moved[1]),
-                    DragPart::Active => {
-                        f64::from(u8::from(self.lives.held.borrow().contains(&key)))
-                    }
-                    _ => 0.0,
-                }
+                let hand = self.lives.hand(&key);
+                f64::from(match part {
+                    DragPart::Dx => hand.moved[0],
+                    DragPart::Dy => hand.moved[1],
+                    DragPart::StartX => hand.start[0],
+                    DragPart::StartY => hand.start[1],
+                    DragPart::X => hand.start[0] + hand.moved[0],
+                    DragPart::Y => hand.start[1] + hand.moved[1],
+                    DragPart::Active => f32::from(u8::from(hand.active)),
+                    DragPart::Alt => f32::from(u8::from(hand.active && hand.alt)),
+                })
             }
-            // The new window has no spaces or pointer of these yet.
+            Live::Plane { key, part } => {
+                let key = format!("{}{key}", self.state.prefix_of(self.instance));
+                let Some(view) = self.state.planes.view(&key) else {
+                    return 0.0;
+                };
+                f64::from(match part {
+                    PlanePart::Left => view.left,
+                    PlanePart::Top => view.top,
+                    PlanePart::Right => view.right,
+                    PlanePart::Bottom => view.bottom,
+                    PlanePart::Zoom => view.zoom,
+                })
+            }
+            // The new window has no pointer of these yet.
             _ => 0.0,
         }
     }
