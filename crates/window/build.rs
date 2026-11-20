@@ -1,40 +1,13 @@
-//! Embeds the template of a new project: `template/`. On Windows, also puts the app icon into
-//! the program: Explorer, the Start menu and the taskbar show it.
+//! On Windows, puts the app icon into the program: Explorer, the Start menu and the taskbar show
+//! it.
 
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
-/// What the runtime writes into a project, never part of a template.
-const WRITTEN: [&str; 7] = [
-    "sdk.ts",
-    "sdk",
-    "tsconfig.json",
-    "bun.d.ts",
-    "log.txt",
-    ".gitignore",
-    "node_modules",
-];
-
 fn main() -> Result<(), Box<dyn Error>> {
-    let crate_folder = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?);
-    let template = crate_folder.join("template");
-    println!("cargo::rerun-if-changed={}", template.display());
-    let mut files = Vec::new();
-    files_in(&template, &template, &mut files)?;
-    files.sort();
-    let mut code = String::from("&[\n");
-    for (path, file) in files {
-        code.push_str(&format!(
-            "    ({path:?}, include_str!({:?})),\n",
-            file.display().to_string()
-        ));
-    }
-    code.push(']');
-    std::fs::write(
-        PathBuf::from(std::env::var("OUT_DIR")?).join("template.rs"),
-        code,
-    )?;
+    println!("cargo::rerun-if-changed=build.rs");
     if std::env::var("CARGO_CFG_TARGET_OS")? == "windows" {
+        let crate_folder = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?);
         let repository = crate_folder
             .ancestors()
             .nth(2)
@@ -53,32 +26,5 @@ fn embed_icon(icon: &Path) -> Result<(), Box<dyn Error>> {
     let icon = icon.display().to_string().replace('\\', "/");
     std::fs::write(&resource, format!("1 ICON \"{icon}\"\n"))?;
     embed_resource::compile(&resource, embed_resource::NONE).manifest_required()?;
-    Ok(())
-}
-
-fn files_in(
-    root: &Path,
-    folder: &Path,
-    files: &mut Vec<(String, PathBuf)>,
-) -> Result<(), Box<dyn Error>> {
-    for entry in std::fs::read_dir(folder)? {
-        let path = entry?.path();
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default();
-        if WRITTEN.contains(&name) {
-            continue;
-        }
-        if path.is_dir() {
-            files_in(root, &path, files)?;
-        } else {
-            let relative = path
-                .strip_prefix(root)?
-                .to_str()
-                .ok_or("a template file name is not UTF-8")?;
-            files.push((relative.replace('\\', "/"), path.clone()));
-        }
-    }
     Ok(())
 }

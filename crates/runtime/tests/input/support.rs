@@ -12,7 +12,7 @@ use runtime::input::{Devices, Happened, Input, OpenInput, OpenedInput, OtherApps
 use serde_json::Value;
 use sound_core::{CaptureWriter, Engine, InstanceId, LiveWriter, Project};
 use sound_notes::{Pitch, Velocity};
-use sound_typescript::next::{Clock, Drawn, Shown, Tools, Transport};
+use sound_typescript::window::{Clock, Drawn, Shown, Tools, Transport};
 
 /// How long a test waits for what it waits for, Bun and the threads, at most.
 const PATIENCE: Duration = Duration::from_secs(30);

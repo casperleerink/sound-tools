@@ -2,7 +2,7 @@
 // SDK it runs next to.
 
 declare module "node:fs" {
-  export function existsSync(path: string): boolean;
+  export function readFileSync(path: string, encoding: "utf8"): string;
   export function realpathSync(path: string): string;
   export function writeSync(fd: number, data: string): number;
 }
@@ -20,6 +20,13 @@ declare const process: {
 
 interface ErrorConstructor {
   stackTraceLimit: number;
+}
+
+interface BunApi {
+  /** Loads each file `filter` matches as `onLoad` says. */
+  plugin(plugin: {
+    setup(build: { onLoad(options: { filter: RegExp }, load: (file: { path: string }) => { contents: string; loader: "ts" | "tsx" }): void }): void;
+  }): void;
 }
 
 /** Bun reads stdin line by line as `for await (const line of console)`. */

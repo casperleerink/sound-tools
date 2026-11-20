@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use sound_core::{Clock, EngineStatus, EventTap, Frames, InstanceId, Project, Ticks};
 use sound_media::TakeOverview;
 use sound_notes::{NoteEvent, Pedal, RawEvent, RawTake};
-use sound_typescript::next::Take;
+use sound_typescript::window::Take;
 use sound_typescript::{ARMED, HEARD, Heard, RECORDER, RecorderState};
 
 use super::recorder::{

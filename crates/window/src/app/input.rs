@@ -6,7 +6,7 @@ use rune::Tx;
 use runtime::input::{self, Devices, Happened, Input, KeyDown, OtherApps};
 use runtime::update::{Action, Ready, Update};
 use sound_core::{OutputStream, Project, ProjectEvent};
-use sound_typescript::next::Waker;
+use sound_typescript::window::Waker;
 
 use super::State;
 

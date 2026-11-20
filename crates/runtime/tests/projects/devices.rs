@@ -208,19 +208,9 @@ fn the_types_of_the_sdk_refuse_what_an_agent_gets_wrong() {
     // The host checks with the SDK it runs next to.
     write(&extensions, "host.ts", sound_typescript::HOST);
     write(&extensions, "node.d.ts", sound_typescript::HOST_TYPES);
-    // And the tools of the DAW template, as a new project from it holds them.
-    let daw = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../templates/daw/extensions"
-    );
-    for file in std::fs::read_dir(daw).unwrap() {
-        let file = file.unwrap();
-        let text = std::fs::read_to_string(file.path()).unwrap();
-        write(&extensions, file.file_name().to_str().unwrap(), &text);
-    }
-    // And the gallery, which uses every part of the view SDK.
-    let gallery = include_str!("../sdk-gallery/extensions/gallery.tsx");
-    write(&extensions, "gallery.tsx", gallery);
+    // `sdk/view.ts` reads the tokens of the project's theme.
+    let theme = include_str!("../../../../templates/daw/extensions/theme.json");
+    write(&extensions, "theme.json", theme);
     let checked = sound_core::process::background_command(bun)
         .args(["check", "-p", "extensions"])
         .current_dir(project.path())

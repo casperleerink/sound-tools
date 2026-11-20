@@ -20,7 +20,7 @@ use plugin_host::{
 };
 use rune::{KeyEvent, WindowPlacement};
 use sound_core::{InstanceId, Project, State as _};
-use sound_typescript::next::WindowOpener;
+use sound_typescript::window::WindowOpener;
 
 pub(crate) use rune_desktop::RuneDesktop;
 

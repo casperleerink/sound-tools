@@ -163,9 +163,8 @@ fn with_cache(loading: Loading, cache: ScanCache) -> Result<Plugins> {
     })
 }
 
-/// Every bundled extension registers here, with the docs of writing tools for the project in
-/// `folder`.
-pub fn registry(folder: &Path, plugins: Plugins) -> Result<Registry> {
+/// Every bundled extension registers here, with the docs of writing tools.
+pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
     registry.keep_out_of_history(&sound_typescript::WRITTEN_BY_THE_RUNTIME);
     // First, as the map lists its groups in the order of their first doc.
@@ -173,7 +172,7 @@ pub fn registry(folder: &Path, plugins: Plugins) -> Result<Registry> {
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
     // project can be recorded into, so its doc is one every project gets.
     registry.runtime_agent_doc(midi::AGENT_DOC)?;
-    for doc in sound_typescript::agent_docs(folder) {
+    for doc in &sound_typescript::AGENT_DOCS {
         registry.runtime_agent_doc(*doc)?;
     }
     register_extensions(&mut registry, Some(plugins))?;
@@ -303,7 +302,7 @@ pub fn open_with_loaded(
     plugins: Plugins,
     extensions: Option<FirstLoad>,
 ) -> Result<(Project, Option<Extensions>)> {
-    let (registry, extensions) = registry_of(folder, plugins, extensions)?;
+    let (registry, extensions) = registry_of(plugins, extensions)?;
     let mut project = Project::open(folder, registry, control)?;
     if let Some(extensions) = &extensions {
         extensions.report(&mut project);
@@ -313,11 +312,10 @@ pub fn open_with_loaded(
 
 /// The registry, with the tools of the project when it has its own.
 fn registry_of(
-    folder: &Path,
     plugins: Plugins,
     extensions: Option<FirstLoad>,
 ) -> Result<(Registry, Option<Extensions>)> {
-    let mut registry = registry(folder, plugins)?;
+    let mut registry = registry(plugins)?;
     let extensions = extensions.map(|loaded| loaded.register(&mut registry));
     Ok((registry, extensions))
 }
@@ -396,7 +394,7 @@ pub fn open_read_only_at(
     });
     // A runtime that holds the project may be writing its log.
     let extensions = Extensions::load(folder, &built_in()?, false);
-    let (registry, extensions) = registry_of(folder, plugins, extensions)?;
+    let (registry, extensions) = registry_of(plugins, extensions)?;
     let mut project = Project::open_read_only(folder, registry, control)?;
     if let Some(extensions) = &extensions {
         extensions.report(&mut project);

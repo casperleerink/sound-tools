@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use sound_core::InstanceId;
 use sound_typescript::live::{Num, Readout};
-use sound_typescript::next::{Drawn, Tree};
+use sound_typescript::window::{Drawn, Tree};
 
 use crate::app::State;
 use crate::feeds::Unread;

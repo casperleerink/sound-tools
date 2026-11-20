@@ -137,9 +137,9 @@ pub(super) fn empty(state: &State) -> El {
             "Ask the agent for the tools you want, or start from a template.",
         ),
     };
-    // Not Bare, whose project file is all it writes.
+    // Not Bare, which has no record.
     let some_tools = |template: &runtime::Template| {
-        (template.files.iter()).any(|(path, _)| *path != runtime::PROJECT_FILE)
+        (template.files.iter()).any(|(path, _)| path.starts_with("state/"))
     };
     let choices = (state.shell.templates().iter())
         .filter(|choice| !matches!(choice, Choice::Bundled(template) if !some_tools(template)));

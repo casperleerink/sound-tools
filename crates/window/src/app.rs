@@ -14,7 +14,7 @@ use runtime::app::ChosenDevices;
 use runtime::session::Session;
 use serde_json::Value;
 use sound_core::{Engine, InstanceId, OutputDevice, OutputStream, Project, Ticks};
-use sound_typescript::next::{Drawn, Tools};
+use sound_typescript::window::{Drawn, Tools};
 
 use crate::controls::Step;
 use crate::feeds::Feeds;
@@ -53,13 +53,6 @@ pub(crate) use frame::{closing, poll, quitting, setup};
 pub(crate) use keys::MAIN_MODIFIER;
 pub(crate) use keys::{on_focus, on_key, on_modifiers};
 pub(crate) use panel::{PanelTab, Tab};
-
-/// The template of a new project: the DAW with views of `sdk/view.ts`.
-pub(crate) const TEMPLATE: runtime::Template = runtime::Template {
-    name: "DAW (new window)",
-    description: "Tracks of clips, the devices of a track and a mixer.",
-    files: include!(concat!(env!("OUT_DIR"), "/template.rs")),
-};
 
 /// What the composer reads when a control did nothing: why is for the agent, in `--act`.
 const DID_NOTHING: &str = "That did nothing: this tool could not do it.";
@@ -175,6 +168,8 @@ pub(crate) struct State {
     pub(crate) drops: drops::Drops,
     pub(crate) shell: crate::shell::Projects,
     pub(crate) incoming: input::Incoming,
+    /// Files of a newer template that the project changed too: they wait for a merge.
+    pub(crate) template_update: Option<runtime::templates::Update>,
     pub(crate) export: export::Export,
     renders: render::Renders,
     pub(crate) project_menu: menu::Menu,
@@ -207,7 +202,9 @@ impl State {
             _ => (folder, None),
         };
         if !folder.join(runtime::PROJECT_FILE).exists() {
-            runtime::templates::write(&folder, &TEMPLATE)?;
+            let daw =
+                runtime::templates::named("DAW").context("this release has no DAW template")?;
+            runtime::templates::write(&folder, daw)?;
         }
         // The tools wait for Bun while the output device opens, as the GPUI app did.
         let tools = std::thread::spawn({
@@ -260,7 +257,7 @@ impl State {
         let (mut project, extensions) =
             runtime::open_with_loaded(&folder, control, plugins.clone(), tools)?;
         let wake = waker.clone();
-        let wake: sound_typescript::next::Waker = Arc::new(move || {
+        let wake: sound_typescript::window::Waker = Arc::new(move || {
             if let Some(wake) = wake.lock().unwrap_or_else(PoisonError::into_inner).as_ref() {
                 wake();
             }
@@ -298,6 +295,14 @@ impl State {
         if let Some(problem) = theme_problem.or(unread) {
             session.report(problem);
         }
+        // Asked again after the open brought the rest of its code up to date.
+        let template_update = match runtime::templates::update(&folder) {
+            Ok(update) => update,
+            Err(error) => {
+                session.report(format!("{error:#}"));
+                None
+            }
+        };
         let schemas = (runtime::tool_schemas()?.into_iter())
             .map(|schema| (schema.tool, schema.schema))
             .collect();
@@ -364,6 +369,7 @@ impl State {
                 Some(folder),
             ),
             incoming,
+            template_update,
             export: export::Export::new(
                 (!headless)
                     .then(runtime::app::support_folder)

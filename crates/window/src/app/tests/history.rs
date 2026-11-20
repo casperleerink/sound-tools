@@ -489,7 +489,7 @@ fn history_shape() {
         return;
     };
     let folder = std::path::PathBuf::from(folder);
-    runtime::templates::write(&folder, &TEMPLATE).unwrap();
+    runtime::templates::write(&folder, daw()).unwrap();
     // In the folder itself, not a copy.
     let mut state = State::open(Options {
         folder,

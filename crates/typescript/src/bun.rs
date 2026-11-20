@@ -132,7 +132,7 @@ pub(crate) enum Request<'a> {
         tool: &'a str,
         instance: &'a InstanceId,
     },
-    /// The instances whose views the new window shows: each new one sends its tree, and each
+    /// The instances whose views the window shows: each new one sends its tree, and each
     /// again when a record of it or inside it changes.
     Show {
         instances: Vec<&'a InstanceId>,
@@ -312,17 +312,17 @@ pub(crate) enum Event {
         instance: InstanceId,
         label: String,
         changes: Vec<RecordEdit>,
-        /// An action on a view of the new window made it: one step of undo with the others of
+        /// An action on a view made it: one step of undo with the others of
         /// that action, up to its [`Event::Acted`].
         #[serde(default)]
         gesture: bool,
     },
-    /// An action on a view of the new window ran, or why it did not.
+    /// An action on a view ran, or why it did not.
     Acted {
         #[serde(default)]
         error: Option<String>,
     },
-    /// A view of the new window ran: its tree, or none for a tool without one, or why it failed.
+    /// A view ran: its tree, or none for a tool without one, or why it failed.
     Tree {
         instance: InstanceId,
         #[serde(default)]

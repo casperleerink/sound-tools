@@ -38,6 +38,21 @@ pub(super) fn opened(folder: &Path) -> State {
     state
 }
 
+/// [`opened`] in `folder` itself, not a copy, which leaves out hidden folders such as the kept
+/// code of its template.
+pub(super) fn opened_in_place(folder: &Path) -> State {
+    let mut state = State::open(Options {
+        folder: folder.to_path_buf(),
+        headless: true,
+        play: None,
+        main: None,
+        act: Some(Vec::new()),
+    })
+    .unwrap();
+    frame(&mut state, 0.0);
+    state
+}
+
 /// Builds the window's view as Rune does, which binds what moves every frame.
 fn build(state: &State) {
     let main = state.main().unwrap();
@@ -46,9 +61,14 @@ fn build(state: &State) {
     }
 }
 
+/// The DAW template a new project starts from.
+pub(super) fn daw() -> &'static runtime::Template {
+    runtime::templates::named("DAW").unwrap()
+}
+
 pub(super) fn new_project() -> tempfile::TempDir {
     let scratch = tempfile::tempdir().unwrap();
-    runtime::templates::write(&scratch.path().join("song"), &TEMPLATE).unwrap();
+    runtime::templates::write(&scratch.path().join("song"), daw()).unwrap();
     scratch
 }
 
@@ -329,6 +349,21 @@ fn run_bun(state: &State, arguments: &[&str]) {
 fn a_new_project_type_checks_and_its_tests_pass() {
     let scratch = new_project();
     let state = opened(&scratch.path().join("song"));
+    run_bun(&state, &["check", "-p", "."]);
+    run_bun(&state, &["test"]);
+}
+
+/// Bare has the kit an agent builds on, and no song.
+#[test]
+fn a_bare_project_has_the_kit_and_no_problem() {
+    let scratch = tempfile::tempdir().unwrap();
+    let folder = scratch.path().join("bare");
+    runtime::templates::write(&folder, runtime::templates::named("Bare").unwrap()).unwrap();
+    std::fs::write(folder.join("extensions/amp.ts"), AMP).unwrap();
+    let state = opened(&folder);
+    assert_eq!(state.project().problems(), []);
+    assert!(!folder.join("extensions/song.tsx").exists());
+    assert!(!folder.join("extensions/ui/blocks/song").exists());
     run_bun(&state, &["check", "-p", "."]);
     run_bun(&state, &["test"]);
 }

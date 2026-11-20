@@ -45,10 +45,6 @@ pub(crate) trait PanelTab: Any {
         false
     }
     /// Puts `words` into its composer, such as a merge to ask for. Whether it could.
-    #[expect(
-        dead_code,
-        reason = "the notice of a template merge comes with the notices"
-    )]
     fn compose(&mut self, _words: &str) -> bool {
         false
     }

@@ -398,7 +398,7 @@ impl Processor for Timeline {
             }
         }
         self.player.process(context);
-        crate::next::sounds(&self.sounding, context.event_outputs.sent(Self::NOTES));
+        crate::window::sounds(&self.sounding, context.event_outputs.sent(Self::NOTES));
         if let Some(shown) = &self.shown {
             let playing = self.inner.playing.get() != NO_PATTERN;
             shown.playing.set(if playing { 1.0 } else { 0.0 });

@@ -12,7 +12,7 @@ use runtime::session::Loop;
 use sound_core::facts::{self, Facts};
 use sound_core::{InstanceId, ProjectError};
 use sound_typescript::devices::{self, Offer, Takes};
-use sound_typescript::next::{Answer, Shown, Tools, Want};
+use sound_typescript::window::{Answer, Shown, Tools, Want};
 
 use super::State;
 

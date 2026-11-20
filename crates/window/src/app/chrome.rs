@@ -2,7 +2,7 @@
 //! files that are not live and the notice, and what of them `--tree` and `--act` see.
 
 use anyhow::Result;
-use rune::{Cx, El, Tx, col, el, row};
+use rune::{Cx, El, Tx, col, el, row, text};
 use rune_kit::{TooltipAppearance, TooltipStyle};
 use serde_json::Value;
 
@@ -29,7 +29,19 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
                 .child(tree::code_failed(state, main)),
             // A device's card on its own has the page's margin.
             Some(drawn) if (state.tools.as_ref()).is_some_and(|tools| tools.draws_card(main)) => {
-                el().padding(theme.space(4))
+                let old = (state.tools.as_ref().zip(state.project().tool_of(main)))
+                    .is_some_and(|(tools, tool)| tools.old_views(tool));
+                let old = old.then(|| {
+                    text(sound_typescript::window::OLD_VIEWS)
+                        .key("old-views")
+                        .font(theme.text("body"))
+                        .color(theme.color("text-secondary"))
+                        .wrap()
+                });
+                col()
+                    .padding(theme.space(4))
+                    .gap(theme.space(4))
+                    .children(old)
                     .child(tree::view(state, main, "", drawn))
             }
             Some(drawn) => tree::view(state, main, "", drawn),
@@ -115,6 +127,9 @@ pub(crate) enum Act {
     Dismiss,
     /// The button of the update's notice.
     Update,
+    /// "Merge with the agent" of the notice of a newer template, and its dismiss.
+    Merge,
+    DismissTemplate,
     Panel,
     Tab(Tab),
     Problems,
@@ -136,6 +151,8 @@ impl Act {
             Act::Transport(act) => act.run(state, value)?,
             Act::Dismiss => state.session.dismiss_notice(),
             Act::Update => state.take_update(&mut Tx::default()),
+            Act::Merge => state.merge_template(&mut Tx::default()),
+            Act::DismissTemplate => state.template_update = None,
             Act::Panel => state.set_panel_open(!state.panel.open),
             Act::Tab(tab) => state.show_tab(tab),
             Act::Problems => state.toggle_problems(),

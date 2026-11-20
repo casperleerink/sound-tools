@@ -22,7 +22,6 @@ mod feeds;
 mod lane;
 pub mod live;
 mod meter;
-pub mod next;
 pub mod path;
 mod project;
 mod readout;
@@ -34,6 +33,7 @@ pub mod shortcuts;
 mod timeline;
 mod tools;
 pub mod touch;
+pub mod window;
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -56,7 +56,7 @@ pub fn register_feeds(registry: &mut Registry) {
     registry.every_instance_feed(
         "sounding",
         "1 for each of the 128 keys down on its sound now, else 0: `sounding.60` is middle C.",
-        next::sounding,
+        window::sounding,
     );
 }
 
@@ -143,35 +143,29 @@ impl NoteMessage {
     }
 }
 
-/// The modules of the SDK of every project, by their path in `extensions/`. The runtime adds
-/// `sdk/records.ts`.
-const SHARED_MODULES: [(&str, &str); 6] = [
+/// The SDK of every project, by its path in `extensions/`. The runtime adds `sdk/records.ts`,
+/// `sdk/feeds.ts` and `sdk/icons.ts`.
+const SDK: [(&str, &str); 9] = [
+    ("sdk.ts", include_str!("sdk.ts")),
     ("sdk/fields.ts", include_str!("sdk/fields.ts")),
     ("sdk/notes.ts", include_str!("sdk/notes.ts")),
     ("sdk/sound.ts", include_str!("sdk/sound.ts")),
     ("sdk/tools.ts", include_str!("sdk/tools.ts")),
     ("sdk/clock.ts", include_str!("sdk/clock.ts")),
     ("sdk/values.ts", include_str!("sdk/values.ts")),
-];
-/// `sdk.ts` and the modules of views of the old window.
-const SDK: [(&str, &str); 9] = [
-    ("sdk.ts", include_str!("sdk.ts")),
-    ("sdk/live.ts", include_str!("sdk/live.ts")),
-    ("sdk/reactivity.ts", include_str!("sdk/reactivity.ts")),
-    ("sdk/nodes.ts", include_str!("sdk/nodes.ts")),
-    ("sdk/drawing.ts", include_str!("sdk/drawing.ts")),
-    ("sdk/components.ts", include_str!("sdk/components.ts")),
-    ("sdk/page.ts", include_str!("sdk/page.ts")),
-    ("sdk/card.ts", include_str!("sdk/card.ts")),
-    ("sdk/host.ts", include_str!("sdk/host.ts")),
-];
-/// `sdk.ts` and the modules of views of the new window, written only into a project of it, see
-/// [`next::THEME`]: one SDK, so an agent reads no view modules of the old window.
-const VIEW_SDK: [(&str, &str); 4] = [
-    ("sdk.ts", include_str!("sdk-next.ts")),
     ("sdk/view.ts", include_str!("sdk/view.ts")),
     ("sdk/test.d.ts", include_str!("sdk/test.d.ts")),
-    ("sdk/host.ts", include_str!("sdk/next-host.ts")),
+];
+/// What the SDK of a project of the GPUI app had in `sdk/` that this one has not.
+const GONE: [&str; 8] = [
+    "sdk/live.ts",
+    "sdk/reactivity.ts",
+    "sdk/nodes.ts",
+    "sdk/drawing.ts",
+    "sdk/components.ts",
+    "sdk/page.ts",
+    "sdk/card.ts",
+    "sdk/host.ts",
 ];
 pub const HOST: &str = include_str!("host.ts");
 /// What [`HOST`] uses of Node and Bun, for a check of its types.
@@ -199,54 +193,14 @@ const TSCONFIG: &str = r#"{
 }
 "#;
 
-/// How an agent writes a tool of the project: the first doc, then one per area.
-pub const AGENT_DOCS: [AgentDoc; 5] = [
-    AgentDoc {
-        name: "extensions",
-        group: WRITING,
-        when: "No tool does what you need: write a device for a track, or make the whole project one tool",
-        markdown: include_str!("extensions.md"),
-    },
-    AgentDoc {
-        name: "extensions-sound",
-        group: WRITING,
-        when: "A tool's sound needs feedback, files, stereo, a sidechain, voices, outputs or its spectrum",
-        markdown: include_str!("extensions-sound.md"),
-    },
-    AgentDoc {
-        name: "extensions-view",
-        group: WRITING,
-        when: "A tool has its own view, a control loop, keys or MIDI",
-        markdown: include_str!("extensions-view.md"),
-    },
-    AgentDoc {
-        name: "extensions-drawing",
-        group: WRITING,
-        when: "A tool's view draws shapes that move: a piano roll, a meter, a scope, drags",
-        markdown: include_str!("extensions-drawing.md"),
-    },
-    AgentDoc {
-        name: "extensions-children",
-        group: WRITING,
-        when: "A tool plays other tools: devices, plugins, timelines, lanes, recorders",
-        markdown: include_str!("extensions-children.md"),
-    },
-];
-/// How an agent writes a tool of a project of the new window, in place of [`AGENT_DOCS`].
-pub const VIEW_AGENT_DOCS: [AgentDoc; 1] = [AgentDoc {
+/// How an agent writes a tool of the project.
+pub const AGENT_DOCS: [AgentDoc; 1] = [AgentDoc {
     name: "tools",
     group: WRITING,
     when: "No tool does what you need: write a device for a track, change the song page, or make the whole project one tool",
     markdown: include_str!("tools.md"),
 }];
 
-/// The docs of writing tools for the project in `folder`.
-pub fn agent_docs(folder: &Path) -> &'static [AgentDoc] {
-    match next::has_views(folder) {
-        true => &VIEW_AGENT_DOCS,
-        false => &AGENT_DOCS,
-    }
-}
 const WRITING: &str = "Writing tools";
 /// The group of the docs of the built-in children.
 const BLOCKS: &str = "Blocks a parent plays";
@@ -392,6 +346,9 @@ fn checked(loaded: Loaded, skipped: &Skipped, bun: &Arc<Bun>) -> (Vec<Sounds>, V
         if !failed.is_empty() {
             problems.push(info.problem(failed.join("; ")));
         }
+        if info.old_views {
+            problems.push(info.problem(window::OLD_VIEWS));
+        }
         tools.push(sounds);
     }
     (tools, problems)
@@ -488,18 +445,15 @@ fn launch(
     logs: bool,
 ) -> Result<Option<Launched>, String> {
     let mut files = tool_files(extensions);
-    // A project of the new window runs Bun for its generic card too, or says it has none.
-    let views = extensions.join(next::THEME).is_file();
-    if views {
-        write_icon_names(extensions).map_err(|error| error.to_string())?;
-    }
-    if files.is_empty() && !views {
+    write_icon_names(extensions).map_err(|error| error.to_string())?;
+    // Bun runs for the generic card too.
+    let card = extensions.join(window::GENERIC_CARD).is_file();
+    if files.is_empty() && !card {
         return Ok(None);
     }
-    let card = views && extensions.join(next::GENERIC_CARD).is_file();
     if card {
-        files.push(next::GENERIC_CARD.to_string());
-        files.extend(next::card_files(extensions));
+        files.push(window::GENERIC_CARD.to_string());
+        files.extend(window::card_files(extensions));
     }
     let program = bun_program().ok_or_else(|| {
         "Bun is not installed, so the tools of this project do not load: install it from https://bun.sh and open the project again".to_string()
@@ -518,10 +472,11 @@ fn launch(
                 // play, also outside the window.
                 let bun = Arc::new(bun);
                 let (sounds, mut problems) = checked(loaded, &skipped, &bun);
-                if views && !card {
+                // A project with the kit of the templates draws its devices with it.
+                if !card && extensions.join(window::THEME).is_file() {
                     problems.push(folder_problem(format!(
                         "{} is missing, so a device whose tool has no view shows no card: write one that exports `card`, a `Card`",
-                        next::GENERIC_CARD
+                        window::GENERIC_CARD
                     )));
                 }
                 return Ok(Some(Launched {
@@ -595,24 +550,14 @@ pub fn write_sdk(extensions: &Path, built_in: &BuiltIn) -> std::io::Result<()> {
     if !ignore.exists() {
         std::fs::write(ignore, format!("{}\n", bun::LOG_FILE))?;
     }
-    let sdk: &[(&str, &str)] = match extensions.join(next::THEME).is_file() {
-        true => &VIEW_SDK,
-        false => &SDK,
-    };
-    let written: Vec<(&str, &str)> = (files.into_iter())
-        .chain(SHARED_MODULES)
-        .chain(sdk.iter().copied())
-        .collect();
-    // What the SDK of the other window wrote. Other files in `sdk/` are the project's.
-    let stale = (SDK.iter().chain(&VIEW_SDK))
-        .filter(|(name, _)| !written.iter().any(|(each, _)| each == name));
-    for (name, _) in stale {
+    // Other files in `sdk/` are the project's.
+    for name in GONE {
         match std::fs::remove_file(extensions.join(name)) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
     }
-    for (name, text) in written {
+    for (name, text) in files.into_iter().chain(SDK) {
         let path = extensions.join(name);
         if name == "bun.d.ts" && bun_types {
             match std::fs::remove_file(&path) {
@@ -742,28 +687,16 @@ mod tests {
     }
 
     #[test]
-    fn switching_the_window_removes_the_other_sdk_and_keeps_the_projects_own_files() {
+    fn the_sdk_of_the_gpui_app_goes_and_the_projects_own_files_stay() {
         let extensions = tempfile::tempdir().unwrap();
         let folder = extensions.path();
         std::fs::create_dir_all(folder.join("sdk")).unwrap();
         std::fs::write(folder.join("sdk/my-helper.ts"), "export {}").unwrap();
-        let has = |name: &str| folder.join(name).is_file();
+        std::fs::write(folder.join("sdk/live.ts"), "export {}").unwrap();
         write_sdk(folder, &BuiltIn::default()).unwrap();
-        assert!(has("sdk/live.ts") && !has("sdk/view.ts"));
-        std::fs::write(folder.join(next::THEME), "{}").unwrap();
-        write_sdk(folder, &BuiltIn::default()).unwrap();
-        assert!(has("sdk/view.ts"));
-        for (name, _) in SDK
-            .iter()
-            .filter(|(name, _)| !VIEW_SDK.iter().any(|(each, _)| each == name))
-        {
-            assert!(!has(name), "{name} is left from the old window");
-        }
-        assert!(has("sdk/my-helper.ts"));
-        std::fs::remove_file(folder.join(next::THEME)).unwrap();
-        write_sdk(folder, &BuiltIn::default()).unwrap();
-        assert!(has("sdk/live.ts") && !has("sdk/view.ts") && !has("sdk/test.d.ts"));
-        assert!(has("sdk/my-helper.ts"));
+        assert!(folder.join("sdk/view.ts").is_file());
+        assert!(!folder.join("sdk/live.ts").exists());
+        assert!(folder.join("sdk/my-helper.ts").is_file());
     }
 
     #[test]

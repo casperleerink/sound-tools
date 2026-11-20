@@ -157,7 +157,7 @@ fn open_recent_shows_the_recent_projects_beside_it_and_a_pick_opens_one() {
     let scratch = new_project();
     let support = scratch.path().join("support");
     let sketch = scratch.path().join("sketch");
-    runtime::templates::write(&sketch, &TEMPLATE).unwrap();
+    runtime::templates::write(&sketch, daw()).unwrap();
     let sketch = dunce::canonicalize(sketch).unwrap();
     runtime::app::remember_project_in(&support, &sketch).unwrap();
     let mut window = window_of(kept(&scratch));

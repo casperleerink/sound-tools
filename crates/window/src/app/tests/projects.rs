@@ -116,7 +116,7 @@ fn an_empty_project_starts_from_a_template_in_place() {
     let scratch = tempfile::tempdir().unwrap();
     let folder = scratch.path().join("empty");
     runtime::templates::write(&folder, runtime::templates::named("Bare").unwrap()).unwrap();
-    let mut state = opened(&folder);
+    let mut state = opened_in_place(&folder);
     state.shell = Projects::new(None, true, Some(folder));
     let mut window = laid_out(state);
     redraw(&mut window);

@@ -43,11 +43,10 @@ use crate::timeline::{self, Timeline, TimelineUpdate};
 use crate::tools::{Choice, Field, NOTES_TAP, SOUNDING_TAP, ToolInfo, feed_child, feed_processor};
 use crate::{Extensions, FOLDER, Launched, NoteMessage, path};
 
-/// The file of a project's design tokens, in `extensions/`. A project that has one is a project
-/// of the new window: it gets `sdk/view.ts` and its agent docs.
+/// The file of a project's design tokens, in `extensions/`.
 pub const THEME: &str = "theme.json";
 
-/// The file of a project of the new window that draws the card of a device whose tool has no
+/// The file of a project that draws the card of a device whose tool has no
 /// view, from the fields of its record. Bun loads it with the tools.
 pub const GENERIC_CARD: &str = "ui/blocks/generic-card.tsx";
 
@@ -74,10 +73,8 @@ fn is_card(file: &str) -> bool {
     file == GENERIC_CARD || file.starts_with(&format!("{CARDS}/"))
 }
 
-/// Whether the project in `folder` is one of the new window, see [`THEME`].
-pub fn has_views(folder: &Path) -> bool {
-    folder.join(FOLDER).join(THEME).is_file()
-}
+/// What a tool whose file was written for the views of an older Sound Tools says.
+pub const OLD_VIEWS: &str = "This was made for an older Sound Tools, whose views are gone. It plays as before; ask the agent to make its view again.";
 
 /// What a device shows whose card has a mistake.
 const MISTAKE: &str = "This device's card has a mistake, so it shows nothing until it is mended.";
@@ -86,7 +83,7 @@ const MISTAKE: &str = "This device's card has a mistake, so it shows nothing unt
 /// a run without a window. Bun calls code hung after 2 s itself.
 const SETTLE_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// How often the control loops run, as in the old window.
+/// How often the control loops run, as in the GPUI app.
 pub const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
 /// Why an action on a view did nothing while no Bun runs.
@@ -1659,6 +1656,11 @@ impl Tools {
     /// Whether `tool` is a tool of the project that loaded.
     pub fn knows(&self, tool: &str) -> bool {
         find(&self.tools, tool).is_some()
+    }
+
+    /// Whether the file of `tool` was written for the views of an older Sound Tools.
+    pub fn old_views(&self, tool: &str) -> bool {
+        find(&self.tools, tool).is_some_and(|info| info.old_views)
     }
 
     /// Whether the tool `tool` draws a view of its own; without one, the generic card draws it.

@@ -8,7 +8,7 @@ use std::rc::Rc;
 use rune::{Align, El, Phase, ScrollPos, ScrollSpec, col, el, memo, row, text};
 use sound_core::InstanceId;
 use sound_typescript::live::Num;
-use sound_typescript::next::Drawn;
+use sound_typescript::window::Drawn;
 
 use crate::app::State;
 use crate::lives::{Lives, Shown, Shows};
@@ -136,13 +136,19 @@ fn walk(scope: &Scope, node: &Node, bind: &mut impl FnMut(Shows)) {
     live.into_iter().for_each(bind);
 }
 
-/// What a device whose tool's code did not load shows, where it sits.
+/// What a device or the page whose tool's code did not load shows, where it sits.
 pub(crate) fn code_failed(state: &State, id: &InstanceId) -> El {
-    text("This device's code has a mistake, so it shows nothing until it is mended.")
-        .key(format!("{}code-failed", state.prefix_of(id)))
-        .font(state.theme.text("label"))
-        .color(state.theme.color("text-secondary"))
-        .wrap()
+    let what = match Some(id) == state.main() {
+        true => "page",
+        false => "device",
+    };
+    text(format!(
+        "This {what}'s code has a mistake, so it shows nothing until it is mended."
+    ))
+    .key(format!("{}code-failed", state.prefix_of(id)))
+    .font(state.theme.text("label"))
+    .color(state.theme.color("text-secondary"))
+    .wrap()
 }
 
 /// The view `drawn` of `instance`, with its keys after `prefix`.

@@ -702,7 +702,7 @@ impl Leaves for Sources<'_> {
                     PlanePart::Zoom => view.zoom,
                 })
             }
-            // The new window has no pointer of these yet.
+            // The window has no pointer of these yet.
             _ => 0.0,
         }
     }
