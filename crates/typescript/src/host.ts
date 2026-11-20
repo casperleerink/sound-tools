@@ -637,6 +637,10 @@ function forget(id: string) {
   for (const key of memories.keys()) {
     if (key.startsWith(`${id} `)) memories.delete(key);
   }
+  for (const depth of [0, 1, 2]) {
+    seenLists.delete(`${depth} ${id}`);
+    seenChildren.delete(`${depth} ${id}`);
+  }
 }
 
 function hear({ records, gone, edits: heard }: Extract<Request, { type: "records" }>) {
@@ -705,7 +709,7 @@ function draw(instance: string) {
     say({ type: "tree", instance, none: true });
     return;
   }
-  const self = { name: nameOf(instance), state: filledState(spec, record), children: seenChildren(instance), facts: factsOf(instance, record.tool) };
+  const self = { name: nameOf(instance), state: filledState(spec, record), children: childrenSeen(instance), facts: factsOf(instance, record.tool) };
   runs(spec.name, "view");
   try {
     // Its handlers get what `tick` gets.
@@ -721,15 +725,32 @@ const nameOf = (instance: string) => instance.slice(instance.lastIndexOf("/") + 
 let known: { facts: Record<string, Facts>; catalog: unknown[]; keys: Record<string, string | null> } = { facts: {}, catalog: [], keys: {} };
 /** The facts of `id` as the window told them, or its title alone. */
 const factsOf = (id: string, tool: string): Facts => known.facts[id] ?? { title: sdk.host.tools.get(tool)?.title ?? nameOf(id), fields: [] };
-/** `children` of `parent` with their facts, and their children's, as views and actions get them. */
-const seen = (parent: string, children: readonly OwnedChild[], depth = 2): OwnedChild[] =>
-  depth === 0
-    ? [...children]
-    : children.map((child) => {
-        const id = `${parent}/${child.name}`;
-        return { ...child, facts: factsOf(id, child.tool), children: seen(id, child.children, depth - 1) } as OwnedChild;
-      });
-const seenChildren = (instance: string) => seen(instance, childrenOf(instance));
+/**
+ * `children` of `parent` with their facts, and their children's, as views and actions get them.
+ * The same objects as the run before while their records and facts are: a `memo` on them holds.
+ */
+function seen(parent: string, children: readonly OwnedChild[], depth = 2): OwnedChild[] {
+  const list = depth === 0 ? children : children.map((child) => seenChild(`${parent}/${child.name}`, child, depth));
+  const at = `${depth} ${parent}`;
+  const before = seenLists.get(at);
+  if (before && before.length === list.length && before.every((each, index) => each === list[index])) return before;
+  const made = [...list];
+  seenLists.set(at, made);
+  return made;
+}
+function seenChild(id: string, child: OwnedChild, depth: number): OwnedChild {
+  const at = `${depth} ${id}`;
+  const told = known.facts[id];
+  const children = seen(id, child.children, depth - 1);
+  const before = seenChildren.get(at);
+  if (before && before.child === child && before.told === told && before.seen.children === children) return before.seen;
+  const made = { ...child, facts: told ?? factsOf(id, child.tool), children } as OwnedChild;
+  seenChildren.set(at, { child, told, seen: made });
+  return made;
+}
+const seenLists = new Map<string, OwnedChild[]>();
+const seenChildren = new Map<string, { child: OwnedChild; told: Facts | undefined; seen: OwnedChild }>();
+const childrenSeen = (instance: string) => seen(instance, childrenOf(instance));
 /** The key the action `name` of `tool` has now: as the window told, none included, else its first own key. */
 const shortcutOf = (tool: string) => (name: string) => {
   const id = `${tool}.${name}`;
@@ -1457,6 +1478,9 @@ function handle(request: Request): string | undefined {
       );
       carded = new Set(request.cards);
       heldFields = request.held;
+      // Facts that did not change stay the objects they were, so the children made of them do.
+      const moved = new Set(factsMoved);
+      for (const id of Object.keys(sent.facts)) if (!moved.has(id)) sent.facts[id] = known.facts[id]!;
       known = sent;
       show(request.instances);
       changed.forEach(drawNext);
