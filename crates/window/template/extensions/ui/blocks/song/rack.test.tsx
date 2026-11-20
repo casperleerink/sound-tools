@@ -153,3 +153,12 @@ test("an audio track shows its region chosen alone, else asks for one", () => {
   rack(self, "audio-1", (memory) => (memory.selected = ["audio-1/r1", "audio-1/r2"]));
   expect(find("slot-region")).toBeUndefined();
 });
+
+test("the panel's strip names its pan and says the volume and pan at rest, with the input of an audio track over mute and solo", () => {
+  rack(rich());
+  const strip = JSON.stringify(find("strip-t00"));
+  expect(strip).toContain('"text":"Pan"');
+  expect(strip).not.toContain('"reveal":true');
+  rack(song([tapeOf("audio-1", [chainOf([])])]), "audio-1");
+  expect(find("input-audio-1", find("strip-audio-1"))).toMatchObject({ label: "Input of Audio 1", w: 64 });
+});

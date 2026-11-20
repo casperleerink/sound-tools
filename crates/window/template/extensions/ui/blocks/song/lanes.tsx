@@ -44,6 +44,9 @@ export const LaneTimes = ({ page, rows }: LanesProps) => (
   <box>{rows.map((row) => (row.kind === "lane" ? <LaneTime page={page} row={row} /> : <box place={[0, row.top, page.end, row.height]} border="border" borderSides={[0, 0, 1, 0]} />))}</box>
 );
 
+/** How far a lane's head is in, so its words start where its track's name does. */
+const INDENT = 16;
+
 /** A lane's name as its head shows it: a long device cut short, so the number shows. */
 const short = (name: string) => {
   const [device = "", number] = name.split(" · ");
@@ -72,16 +75,19 @@ const LaneHead = ({ page, row }: { page: Page; row: LaneRow }) => {
     const items = laneItems(page, row);
     const cut = short(lane.name);
     return (
-      <col key={`lane-head-${lane.id}`} label={`${lane.name} of ${lane.title}`} place={[0, row.top, HEAD - 1, row.height]} px={2} gap={1} justify="center" align="start" border="border" borderSides={[0, 0, 1, 0]}>
-        <row key={`lane-name-${lane.id}`} label={`Menu of the ${lane.name} lane of ${lane.title}`} role="button" h={20} px={1} gap={1} align="center" radius="sm" hover="fill">
-          <text style="label" color="text-secondary" truncate>{cut}</text>
-          <icon name="chevron-down" size={12} color="text-muted" />
-          {cut !== lane.name && <Tooltip text={lane.name} />}
-          <MenuList id={`lane-menu-${lane.id}`} label={`Menu of the ${lane.name} lane of ${lane.title}`} items={items} />
-        </row>
-        <MoverControls page={page} row={row} />
+      <row key={`lane-head-${lane.id}`} label={`${lane.name} of ${lane.title}`} place={[0, row.top, HEAD - 1, row.height]} px={2} border="border" borderSides={[0, 0, 1, 0]}>
+        <box w={INDENT} />
+        <col grow={1} gap={1} justify="center" align="start">
+          <row key={`lane-name-${lane.id}`} label={`Menu of the ${lane.name} lane of ${lane.title}`} role="button" h={20} px={1} gap={1} align="center" radius="sm" hover="fill">
+            <text style="label" color="text-secondary" truncate>{cut}</text>
+            <icon name="chevron-down" size={12} color="text-muted" />
+            {cut !== lane.name && <Tooltip text={lane.name} />}
+            <MenuList id={`lane-menu-${lane.id}`} label={`Menu of the ${lane.name} lane of ${lane.title}`} items={items} />
+          </row>
+          <MoverControls page={page} row={row} />
+        </col>
         <MenuList open="menu" id={`lane-head-menu-${lane.id}`} label={`Menu of the ${lane.name} lane of ${lane.title}`} items={items} />
-      </col>
+      </row>
     );
   });
 };
@@ -94,8 +100,8 @@ const MoverControls = ({ page, row }: { page: Page; row: LaneRow }) => {
     const { shape, rate } = mover.state;
     return (
       <row gap={1} px={1}>
-        <Select id={`lfo-shape-${id}`} label={`Shape of the LFO of ${name}`} w={84} value={shape} options={SHAPES.map((each) => ({ value: each, text: words(each) }))} onChange={tune("shape")} />
-        <Select id={`lfo-rate-${id}`} label={`Rate of the LFO of ${name}`} w={60} value={rate} options={RATES.map((each) => ({ value: each, text: each }))} onChange={tune("rate")} />
+        <Select id={`lfo-shape-${id}`} label={`Shape of the LFO of ${name}`} w={76} value={shape} options={SHAPES.map((each) => ({ value: each, text: words(each) }))} onChange={tune("shape")} />
+        <Select id={`lfo-rate-${id}`} label={`Rate of the LFO of ${name}`} w={56} value={rate} options={RATES.map((each) => ({ value: each, text: each }))} onChange={tune("rate")} />
       </row>
     );
   }
@@ -124,6 +130,7 @@ const AddLane = ({ page, row }: { page: Page; row: Extract<Row, { kind: "add-lan
     const groups = [...new Set(offered.map((each) => each.group))];
     return (
       <row place={[0, row.top, HEAD - 1, row.height]} px={2} align="center" border="border" borderSides={[0, 0, 1, 0]}>
+        <box w={INDENT - 4} />
         <Button id={`add-lane-${row.track.name}`} label={`Add a lane to ${title}`} text="Add lane" icon="plus" variant="ghost" size="sm">
           <MenuList id={`add-lane-${row.track.name}`} label={`What a new lane of ${title} moves`} w={260} search notes={offered.length === 0 ? ["A lane moves every number already"] : []}
             items={groups.map((group) => ({

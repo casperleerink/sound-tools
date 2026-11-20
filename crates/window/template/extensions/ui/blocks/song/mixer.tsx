@@ -12,7 +12,7 @@ import { SHORTEST_FADER, STRIP, Strip, VALUE_LINE } from "../../strip";
 export type MixerProps = { page: Page };
 
 /** The room over and under the strips, between their parts, a strip's name, a row of sends, and the column of the returns' names left of the sends. */
-const [PAD, GAP, NAME, SEND, NAMES] = [8, 4, 28, 28, 64];
+const [PAD, GAP, NAME, SEND, NAMES] = [8, 4, 28, 28, 88];
 /** What a column holds over its fader: its name; and under it, its value line. */
 const OVER = NAME + GAP;
 /** A strip with the room around it. */
@@ -39,7 +39,7 @@ export const Mixer = ({ page }: MixerProps) => {
   };
   const tall = 2 * PAD + OVER + fader + UNDER + sent.length * (GAP + SEND);
   return (
-    <col key="mixer" label="Mixer" w="full" h="full" fill="surface" scroll="y">
+    <col key="mixer" label="Mixer" w="full" h="full" fill="background" scroll="y">
       <row w="full" h={tall} align="start">
         {sent.length > 0 && (
           <col w={NAMES} px={3} gap={1}>
@@ -74,10 +74,10 @@ const Column = ({ page, each, sent, fader }: { page: Page; each: Each | undefine
   const chosen = page.song.memory.track === name;
   const press = (clicks: number) => (each ? (clicks === 2 ? page.edits.tracks.openPanel(each.name) : choose(page.song, [], each.name)) : clicks === 2 && page.edits.tracks.openMaster());
   return (
-    <col w={COLUMN} px={1} gap={1} radius="lg" fill={chosen ? "selected" : "fill/50"}>
-      <row key={`strip-name-${name}`} label={`Choose ${title} strip`} role="tab" checked={chosen} h={NAME} px={2} gap={2} align="center" radius="md" hover="fill/50" onPress={(p) => press(p.clicks)}>
+    <col w={COLUMN} px={1} gap={1} radius="lg" fill="surface" border="border-strong">
+      <row key={`strip-name-${name}`} label={`Choose ${title} strip`} role="tab" checked={chosen} h={NAME} px={2} gap={2} align="center" radius="md" fill={chosen ? "selected" : undefined} hover={chosen ? undefined : "fill"} onPress={(p) => press(p.clicks)}>
         {each ? <Dot color={muted(each) ? "text-muted" : colourOf(each)} /> : <box w={8} h={8} radius="full" border="text-secondary" />}
-        <text style="label" color={chosen ? "text" : "text-secondary"} truncate>{title}</text>
+        <text style="heading" color={chosen ? "text" : "text-secondary"} truncate>{title}</text>
       </row>
       <Strip page={page} name={name} height={fader} />
       {each && each.tool !== "bus" && sent.map((back) => {

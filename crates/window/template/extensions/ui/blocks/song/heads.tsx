@@ -31,7 +31,7 @@ export const Heads = ({ page }: HeadsProps) => {
         {rows.map((row) => (row.kind === "track" ? <Head page={page} row={row} /> : null))}
         {laneGroups(rows).map((lanes) => <LaneHeads page={page} rows={lanes} />)}
         {tracks.length > 0 && (
-          <row place={[0, height, HEAD - 1, 1]} px={2} align="center" border="border" borderSides={[1, 0, 0, 0]}>
+          <row place={[0, height, HEAD - 1, 1]} px={1} align="center" border="border" borderSides={[1, 0, 0, 0]}>
             <Button id="add-track" label="Add track" text="Add track" icon="plus" variant="ghost" size="sm" onPress={() => addTrack(page)} />
             <Button id="add-track-kind" label="Add a track of a kind" icon="chevron-down" variant="ghost" size="sm" tip="Add an instrument, audio or return track">
               <MenuList id="add-track-kind" label="Add a track of a kind" items={kinds(page)} w={240} />

@@ -10,7 +10,7 @@ import { Knob } from "../../knob";
 import { MenuList, type Group, type Item } from "../../menu";
 import { Segmented } from "../../segmented";
 import { Select } from "../../select";
-import { SHORTEST_FADER, STRIP, Strip } from "../../strip";
+import { SHORTEST_FADER, Strip } from "../../strip";
 import { Toggle } from "../../toggle";
 import { Tooltip } from "../../tooltip";
 import { CARD_HEIGHT, Frame, HEADER } from "../device-card";
@@ -32,6 +32,7 @@ const INPUTS = [{ text: "In 1", channels: [0] }, { text: "In 2", channels: [1] }
  * order, which scroll across, then a track's sends. An instrument's title picks another; an
  * effect turns off, goes, moves by a drag or its title's menu, and is chosen by a press, so the
  * keys move it; Add effect puts one last. An audio track shows its region chosen alone first.
+ * Its close is at the right, as the mixer's and the note editor's.
  */
 export const Rack = ({ page, name }: RackProps) => {
   const each = page.strips.find((strip) => strip.name === name);
@@ -45,6 +46,11 @@ export const Rack = ({ page, name }: RackProps) => {
         </row>
       </box>
       {each && sends.length > 0 && <Sends page={page} each={each} sends={sends} />}
+      <col h="full" px={2} py={2}>
+        <row h={HEADER} align="center">
+          <Button id="close-panel" label="Close the panel" icon="x" variant="ghost" size="sm" tip="Close" onPress={() => (page.song.memory.below = null)} />
+        </row>
+      </col>
     </row>
   );
 };
@@ -168,7 +174,7 @@ const Limiter = ({ page }: { page: Page }) => {
   );
 };
 
-/** The column at the left: the mark, name and close of what the panel is of, its strip, and an audio track's input or a return's Pre fader. */
+/** The column at the left: the mark and name of what the panel is of, its strip, and an audio track's input or a return's Pre fader. */
 const Side = ({ page, name, each }: { page: Page; name: string; each: Channel | undefined }) => {
   const { song, edits } = page;
   const title = each ? titleOf(each) : "Master";
@@ -179,20 +185,16 @@ const Side = ({ page, name, each }: { page: Page; name: string; each: Channel | 
       <row w="full" h={HEADER} gap={2} align="center">
         {each ? <Dot color={colourOf(each)} /> : <box w={8} h={8} radius="full" border="text-secondary" />}
         <text style="heading" color="text" truncate>{title}</text>
-        <row grow={1} justify="end">
-          <Button id="close-panel" label="Close the panel" icon="x" variant="ghost" size="sm" tip="Close" onPress={() => (song.memory.below = null)} />
-        </row>
       </row>
-      <row gap={2} align="start">
-        <Strip page={page} name={name} height={FADER} />
+      <Strip page={page} name={name} height={FADER} full>
         {each?.tool === "tape" && (
-          <Select id={`input-${name}`} label={`Input of ${title}`} options={INPUTS.map(({ text }, at) => ({ value: at, text }))} w={HEAD - STRIP - 32}
+          <Select id={`input-${name}`} label={`Input of ${title}`} options={INPUTS.map(({ text }, at) => ({ value: at, text }))} w={CELL}
             value={Math.max(INPUTS.findIndex((input) => input.channels.join() === channels), 0)} onChange={(at) => edits.tracks.input(name, INPUTS[at]!.channels)} />
         )}
         {each?.tool === "bus" && (
           <Toggle id={`pre-fader-${name}`} label={`Pre fader ${title}`} text="Pre" on={"pre_fader" in each.state && each.state.pre_fader} tip="The sends into this return take the sound before the tracks' faders" onToggle={() => edits.tracks.preFader(name)} />
         )}
-      </row>
+      </Strip>
     </col>
   );
 };
