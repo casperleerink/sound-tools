@@ -50,3 +50,12 @@ test("a fader a lane moves takes no change", () => {
   expect(() => act("Volume Track 1", "set", -6)).toThrow();
   expect(act("Volume Track 2", "set", -6)).toEqual([[["children", 1, "children", 0, "state", "gain_db"], -6]]);
 });
+
+test("audio tracks and returns are rows: a return has no solo, and only an audio track arms", () => {
+  const fader = { name: "mix", tool: "fader", state: { gain_db: 0, pan: 0, mute: false }, children: [] };
+  const audio = { name: "audio-1", tool: "tape", state: { title: "", colour: "teal", automation: [] }, children: [fader] };
+  const back = { name: "ret-a", tool: "bus", state: { title: "", colour: "teal", pre_fader: false }, children: [fader] };
+  render(song, { ...self(false), children: [...self(false).children, audio, back] } as unknown as Song);
+  expect([find("Choose Audio 1"), find("Choose Return A"), find("Arm Audio 1")]).toMatchObject([{ role: "tab" }, { role: "tab" }, { role: "switch" }]);
+  expect([find("Solo Return A"), find("Arm Track 1")]).toEqual([undefined, undefined]);
+});

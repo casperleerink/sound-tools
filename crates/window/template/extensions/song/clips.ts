@@ -50,6 +50,14 @@ export function choose(song: Song, keys: readonly string[], track: string | null
   });
   const span = spans.length === 0 ? undefined : { from: Math.min(...spans.map((each) => each.from)), to: Math.max(...spans.map((each) => each.to)) };
   song.select(first ?? track, { span });
+  // What shows below follows: the panel to the track of the first, an open editor to it.
+  const below = memory.below;
+  if (first === undefined) return;
+  if (below?.kind === "track" && below.name !== rowOfKey(first)) memory.below = { kind: "track", name: rowOfKey(first) };
+  else if (below?.kind === "editor" && !memory.selected.includes(below.clip)) {
+    memory.below = itemAt(song.children, first)?.tool === "timeline" ? { kind: "editor", clip: first } : { kind: "track", name: rowOfKey(first) };
+    memory.notes = [];
+  }
 }
 
 /**
