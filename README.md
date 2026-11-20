@@ -13,7 +13,7 @@ What a new project can start from: Bare, an empty project, or a DAW written in T
 - macOS 13 or later, the main platform. Linux and Windows build from source too, see "Linux" and "Windows" below.
 - To build it: Rust through `rustup`. `rust-toolchain.toml` pins the version and `rustup` installs it on the first build.
 - The first build takes about a minute, plus the download of the dependencies. Later builds take seconds.
-- Every checkout builds into its own `target/`, so a new worktree starts with a full build. One shared folder let worktrees on different commits overwrite each other's files, and tests ran the wrong code. `tooling/clean-builds.sh` deletes the builds of worktrees nobody used for two days. With [sccache](https://github.com/mozilla/sccache) as the `rustc-wrapper` in `~/.cargo/config.toml`, a new worktree reuses the dependencies other worktrees compiled, safely when several build at once. That makes its first build about 30% faster: crates with build scripts build again in each folder.
+- Every checkout builds into its own `target/`: one shared folder let worktrees on different commits overwrite each other's files, and tests ran the wrong code. `tooling/clean-builds.sh` deletes the builds of worktrees nobody used for two days. [sccache](https://github.com/mozilla/sccache) as the `rustc-wrapper` in `~/.cargo/config.toml` makes a new worktree's first build about 30% faster.
 
 ### Linux
 
@@ -30,11 +30,11 @@ CI builds and tests on Ubuntu. Playback, MIDI, recording and plugins go through 
 
 A release has a tarball for x86_64 and one for aarch64, see "Releases". `tooling/bundle-linux.sh` makes it: the program, Bun, a menu entry, the icon and `install.sh`, which puts them in `~/.local`. It needs glibc 2.39 or later (Ubuntu 24.04 or newer) and the runtime libraries the page of the release names, not the `-dev` packages above.
 
-With no folder, `sound-tools` opens the last project, which it keeps in `~/.config/sound-tools/`, or else a folder panel. The panel needs the XDG desktop portal, which GNOME and KDE have. **Install command line tool** links `sound-tools` into `~/.local/bin`.
+With no folder, `sound-tools` opens the last project, which it keeps in `~/.config/sound-tools/`, or else the start screen. Its folder picker needs the XDG desktop portal, which GNOME and KDE have. **Install command line tool** links `sound-tools` into `~/.local/bin`.
 
 Not on Linux:
 
-- Plugin windows. The card of a plugin says why it has no `Open window`. The plugin plays, and its state is saved.
+- Plugin windows: a plugin's card has no **Open window**. The plugin plays, and its state is saved.
 - **Open terminal in project folder** starts `$TERMINAL`, or else `x-terminal-emulator`, so it needs one of the two.
 
 ### Windows
@@ -53,7 +53,7 @@ Windows 10 or later, x86_64. CI builds and tests it on Windows, but nobody has t
 cargo run -p sound-window -- ~/Music/my-piece
 ```
 
-The folder is the project. When it is empty or missing, the app makes a Bare project in it: 120 bpm, 4/4 and nothing else. A folder with other files and no project does not open. There is no save: every finished edit is in the folder.
+The folder is the project. When it is empty or missing, the app makes a new DAW project in it. A folder with other files and no project does not open. There is no save: every finished edit is in the folder.
 
 ### Install the app
 
@@ -83,10 +83,10 @@ To make a release, run `/release` in Claude Code. With no argument it decides fr
 ## Two-minute tour
 
 1. **New project…** in the project menu (cmd-N), then **DAW**.
-2. **+ Track** adds a track. Double-click empty space in its row to add a clip, then the clip to edit its notes below.
+2. **Add track** adds a track. Double-click empty space in its row to add a clip, then the clip to edit its notes below.
 3. Double-click in the note editor to add a note. Drag to move it, drag its end to change its length.
 4. Press space to play. Click the ruler to play from there.
-5. Click a track name for its devices: the synth, the filter and the effects of its chain. **+ Effect** adds one.
+5. Click a track name for its devices: the synth and the effects of its chain. **Add effect** adds one.
 6. Drag a WAV or AIFF file from the Finder onto the timeline for an audio region.
 7. Plug in a MIDI keyboard and play. R or the record button records the chosen track and every armed one.
 8. cmd-z undoes, shift-cmd-z redoes, alt-cmd-z undoes and keeps what it took back as a version. cmd-q quits. There is no save; every edit is written to the folder, and the History tab goes back to any state of it.
@@ -98,7 +98,7 @@ The DAW's own gestures and keys are its code, in `templates/daw/extensions`. The
 The agent sidebar runs Claude Code or Pi in the project folder, with no terminal: the one you installed, else it downloads Claude Code.
 
 1. Run the app on a project and press space.
-2. Open the agent sidebar: the icon right of the traffic lights, cmd-B, or cmd-L to also focus its composer. The first time, **Open Settings** in the sidebar and sign in: Claude Code with your Claude plan, or Pi with any provider it offers. The model picker in the composer switches between them.
+2. Open the agent in the left panel: the icon right of the traffic lights, cmd-B, or cmd-L to also start typing. The first time, **Open Settings** there and sign in: Claude Code with your Claude plan, or Pi with any provider it offers. The model picker switches between them.
 3. Ask in plain language:
    - `Add a bass line in bars 5 to 8 that follows the chords on the piano track`
    - `Add a new track with a simple melody over bars 1 to 4`
@@ -113,27 +113,34 @@ The terminal works too, with any coding agent that can edit files. Click the pro
 
 What the agent uses:
 
-- `AGENTS.md`. The app writes it into the project, with a `CLAUDE.md` that imports it. It is a short map: the folder layout, the bar math of this project, how to check the work, and a list of docs in `agent-docs/` with one line each saying when to open it. The record formats live in those docs, one per extension. Agents read the map by themselves and open only the doc their task needs.
+- `AGENTS.md`, which the app writes into the project with a `CLAUDE.md` that imports it: a short map of the folder, the bar math, how to check the work, and the docs in `agent-docs/`, one line each saying when to open it. Agents open only the doc their task needs.
 - `problems.txt`. The app keeps it current while it runs. It lists every file that did not load, and why. `No problems. Every file is live.` means all of it plays. The agent reads it to check its work.
-- `sound-tools . --inspect`. It prints the tempo, every instance with its record, the connections and the problems. It works next to the running app and loads no plugin. Install `sound-tools` once with **Install command line tool** in the project menu. From a checkout, `cargo run -p sound-window -- . --inspect` is the same.
+- `sound-tools . --inspect`, which prints the tempo, every instance with its record, the connections and the problems, next to the running app. **Install command line tool** in the project menu puts `sound-tools` on the `PATH`.
 
 ## Without the window
 
-```sh
-cargo run -p sound-window -- ~/Music/my-piece --inspect
-cargo run -p sound-window -- ~/Music/my-piece --render /tmp/my-piece.wav
-cargo run -p sound-window -- ~/Music/my-piece --headless
-cargo run -p sound-window -- --plugins
-cargo run -p sound-window -- --version
+`sound-tools --help`; from a checkout, `cargo run -p sound-window --` takes the place of `sound-tools`:
+
+```text
+usage: sound-tools [<project-folder>]                  the window; no folder: the last project, else the start
+       sound-tools <project-folder> --snap <png> | --tree <json> | --script <file> [--act <steps.json>] [--play <seconds>] [--main <instance>] [--size <w>x<h>] [--scene <name>]
+       sound-tools --snap <png> | --tree <json> | --script <file> [--act <steps.json>]      the start
+         without a window, on the offline engine: no sound on the output device
+       sound-tools <project-folder> --headless          plays on the output device, without a window; commands on stdin
+       sound-tools <project-folder> --inspect | --render <file> [<span>] [--rate <hz>] [--depth <bits>] [--loudness streaming|broadcast] [--progress] | --analyze [<span>] | --save-template <name> [--with-content] [--replace]
+       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]
+       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help
+<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]
+<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)
 ```
 
-With the command line tool installed, `sound-tools` takes the place of `cargo run -p sound-window --` in all of these.
-
-- `--inspect` prints a summary and changes nothing. It loads no plugin.
-- `--render` writes a WAV offline at 48 kHz, stereo, 32-bit float. By default it plays to the end of the last clip, then keeps going until reverbs and releases are silent for half a second, at most 10 s more. `--from <ticks> --to <ticks>` renders a range the same way, and with `--no-tail` stops at its end. `--seconds <n>` renders exactly the first n seconds. **Export audio…** and **Export selection…** in the project menu run the same render. A notice in the corner shows how far it is. Export selection covers the time from the first selected clip to the last one, with all tracks playing. In the DAW, **Render to audio track** in a clip's or a track's menu renders that track alone onto a new audio track under it, and mutes the track.
-- `--headless` plays the project live without a window and reads commands from stdin: `play`, `pause`, `stop`, `seek <ticks>`, `undo`, `redo`, `status`, `quit`. It prints every change that arrives from the folder. Only one app can have a project open live. `--inspect` and `--render` work next to it.
-- `--plugins` prints the installed CLAP and VST 3 plugins with their ids and kind (instrument, effect, both or neither). It scans every plugin again, so it also retries one that failed before.
-- `--version` prints the version.
+- `--snap`, `--tree`, `--script` and their options are the agent's checks of the window, see [ENGINEERING.md](ENGINEERING.md).
+- `--inspect` changes nothing and loads no plugin.
+- `--render` writes a `.wav` (by default 48 kHz, 32-bit float) or an `.mp3`. Without a span it plays to the end of the last clip, then on until reverbs and releases are silent for half a second, at most 10 s more; `--no-tail` stops at `--to`. **Export audio…** and **Export selection…** in the project menu run the same render. In the DAW, **Render to audio track** in a clip's or a track's menu renders that track onto a new audio track under it, and mutes the track.
+- `--analyze` measures the same span, or an audio file, and prints what it hears; it writes no file.
+- `--headless` plays the project live and reads commands from stdin: `play`, `pause`, `stop`, `seek <ticks>`, `undo`, `redo`, `status`, `quit`. Only one app can have a project open live; `--inspect` and `--render` work next to it.
+- `--save-template` makes the project a template for new projects on this machine; `--with-content` keeps every record and asset.
+- `--plugins` scans every CLAP and VST 3 plugin again, also one that failed before, and prints their ids and kinds.
 
 A release build is `cargo build --release -p sound-window`. The binary is `target/release/sound-tools`.
 
@@ -150,8 +157,6 @@ cargo deny check
 
 Locally, `cargo verify` runs fmt, clippy and the tests for what a branch changed. CI runs them all on macOS with the realtime sanitizer on, and the tests on Linux and Windows, see [ENGINEERING.md](ENGINEERING.md). The tools come from `cargo install cargo-nextest cargo-shear cargo-deny typos-cli`.
 
-With `--snap <png>`, `--tree <json>`, `--play <seconds>` and `--act <steps.json>`, `cargo run -p sound-window -- <project>` runs without a window, the agent's checks; look at the PNG after a UI change.
-
 ## Docs
 
 - [CONCEPT.md](CONCEPT.md): what the product is for.
@@ -159,7 +164,7 @@ With `--snap <png>`, `--tree <json>`, `--play <seconds>` and `--act <steps.json>
 - [ENGINEERING.md](ENGINEERING.md): how to work in this code: audio thread rules, testing, rules for agents.
 - [DESIGN.md](DESIGN.md): the look and the interaction rules.
 - [crates/core/README.md](crates/core/README.md): how to write an extension.
-- `extensions/*/agent-doc.md`: the docs the app writes into each project for the agent.
+- `extensions/*/agent-doc.md` and `crates/typescript/src/tools.md`: the docs the app writes into each project for the agent.
 
 ## License
 
