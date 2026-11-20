@@ -69,7 +69,13 @@ fn print_to_the_terminal() {
 
 fn main() -> Result<()> {
     #[cfg(windows)]
-    print_to_the_terminal();
+    {
+        print_to_the_terminal();
+        // The icon build.rs puts into the program, also on its windows and taskbar buttons.
+        rune::set_app_icon_resource(1);
+    }
+    // Matches the desktop entry, tooling/linux/sound-tools.desktop, to the window.
+    rune::set_app_id("sound-tools");
     if let Some(served) = cli::plugin_process() {
         return served;
     }

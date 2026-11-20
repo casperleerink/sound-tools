@@ -109,8 +109,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential pkg-config \
-            libasound2-dev libpipewire-0.3-dev libdbus-1-dev libclang-dev libfontconfig-dev libfreetype-dev libwayland-dev libx11-xcb-dev \
-            libxkbcommon-x11-dev libvulkan1 unzip
+            libasound2-dev libpipewire-0.3-dev libdbus-1-dev libclang-dev libxkbcommon-dev unzip
       - name: Install the pinned toolchain
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
@@ -204,7 +203,7 @@ jobs:
           cat > notes.md <<'NOTES'
           ## Install
 
-          **macOS** (Apple silicon, macOS 11 or later): unzip `Sound-Tools-*-macos-arm64.zip` and drag `Sound Tools.app` to Applications.
+          **macOS** (Apple silicon, macOS 13 or later): unzip `Sound-Tools-*-macos-arm64.zip` and drag `Sound Tools.app` to Applications.
 
           **Updates**: the app checks for a new release when it opens and every day while it stays open, downloads it in the background and offers **Restart** to install it.
 

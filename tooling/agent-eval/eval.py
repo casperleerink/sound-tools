@@ -10,12 +10,11 @@ council: Opus and GPT, each on a copy of its own, check each criterion by using 
 through the app, score its UI and UX against DESIGN.md, and keep the screenshots that show it.
 It prints one JSON line per run: the checks, each message's cost and how the builder checked its
 work, and the council's verdicts. `report.py` puts runs side by side by `--label`. Logs go to
-~/.cache/sound-tools-eval/, which a restart keeps. `$SOUND_TOOLS_PROGRAM` and
-`$SOUND_TOOLS_TEMPLATE` (the DAW template's folder) pick another program and template to compare.
+~/.cache/sound-tools-eval/, which a restart keeps. `$SOUND_TOOLS_PROGRAM` picks another program
+to compare.
 
-`examples/` holds tools agents built in these runs, from one prompt each: a gravity harp view,
-a storm drone played from its display, a generative part in D dorian, and a grain cloud of a sample. Copy one into the
-`extensions/` folder of a project to try it.
+`examples/` holds tools agents built in these runs, from one prompt each: a grain cloud of a
+sample and a swaying tone. Copy one into the `extensions/` folder of a project to try it.
 """
 
 import argparse
@@ -63,7 +62,8 @@ def piece(folder: Path) -> None:
     """A new DAW project whose tracks are a pad with four chords and a lead with a melody, both on
     the built-in synth."""
     setup_daw(folder)
-    shutil.rmtree(folder / SONG / "t00")
+    for track_folder in (folder / SONG).glob("t*/"):
+        shutil.rmtree(track_folder)
     chords = [[48, 55, 64], [45, 52, 60], [41, 48, 57], [43, 50, 59]]
     notes = [{"start": i * 3840, "length": 3800, "pitch": p, "velocity": 90}
              for i, chord in enumerate(chords) for p in chord]
@@ -319,7 +319,7 @@ def check_keys_composer(folder: Path) -> dict:
 
 
 # The DAW template: a song of tracks written with the SDK, as "New DAW project" makes it.
-DAW = HERE.parents[1] / "templates" / "daw"
+DAW = HERE.parents[1] / "crates" / "window" / "template"
 SONG = "state/song"
 
 
@@ -655,7 +655,7 @@ def review(folder: Path, scenario: str, member: str) -> dict:
     return {"member": member, "model": model, "verdict": last_json(run.result), "cost": run.summary()}
 
 
-def evaluate(scenario: str, number: int, model: str | None, label: str) -> dict:
+def evaluate(scenario: str, number: int, model: str | None, label: str, council: list) -> dict:
     setup, check, _ = SCENARIOS[scenario]
     folder = LOGS / f"{label}-{scenario}-{number}"
     shutil.rmtree(folder, ignore_errors=True)
@@ -677,7 +677,7 @@ def evaluate(scenario: str, number: int, model: str | None, label: str) -> dict:
               "passed": all(checks.values()), "checks": checks, "messages": messages}
     if scenario in CRITERIA:
         with ThreadPoolExecutor() as pool:
-            result["council"] = list(pool.map(lambda member: review(folder, scenario, member), COUNCIL))
+            result["council"] = list(pool.map(lambda member: review(folder, scenario, member), council))
     return result
 
 
@@ -688,6 +688,8 @@ def main() -> None:
     parser.add_argument("--first", type=int, default=1, help="the number of the first run, so "
                         "evals of one scenario can run side by side")
     parser.add_argument("--model", default="claude-opus-5-5")
+    parser.add_argument("--council", nargs="+", choices=list(COUNCIL), default=list(COUNCIL),
+                        help="the members who check a scenario with criteria")
     parser.add_argument("--label", default="rune", help="what is being compared, such as the "
                         "SDK: results and folders carry it, and report.py puts labels side by side")
     arguments = parser.parse_args()
@@ -695,7 +697,7 @@ def main() -> None:
     scenarios = [one for name in arguments.scenarios for one in (CRITERIA if name == "ui" else [name])]
     for scenario in scenarios:
         for number in range(arguments.first, arguments.first + arguments.runs):
-            result = evaluate(scenario, number, arguments.model, arguments.label)
+            result = evaluate(scenario, number, arguments.model, arguments.label, arguments.council)
             print(json.dumps(result), flush=True)
             with open(LOGS / "results.jsonl", "a") as results:
                 results.write(json.dumps(result) + "\n")
