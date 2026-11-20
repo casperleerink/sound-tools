@@ -20,7 +20,7 @@ fn the_compressor_shows_the_level_it_hears_and_how_far_it_turns_down_while_it_pl
     let (_scratch, mut window) = with_effect("compressor", record);
     play(&mut window.state, 0.0, 1.0);
     let loudest = (0..30)
-        .map(|step| {
+        .filter_map(|step| {
             play(&mut window.state, 1.0 + f64::from(step) / 60.0, 1.0 / 60.0);
             feed(&window.state, "compressor", "level").zip(feed(
                 &window.state,
@@ -28,7 +28,6 @@ fn the_compressor_shows_the_level_it_hears_and_how_far_it_turns_down_while_it_pl
                 "reduction",
             ))
         })
-        .flatten()
         .fold((f64::MIN, 0.0_f64), |(level, reduction), (l, r)| {
             (level.max(l), reduction.max(r))
         });
