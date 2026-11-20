@@ -94,6 +94,7 @@ pub(super) fn typed(scope: &Scope, f: &FieldNode) -> El {
         Some("end") => e = e.align(Align::End),
         _ => {}
     }
+    e = super::reach::tracked(scope, e, &key);
     let searched = (scope.within.as_ref())
         .filter(|within| within.picks)
         .map(|within| within.opener.clone());

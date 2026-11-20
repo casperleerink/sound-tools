@@ -7,6 +7,7 @@ use sound_core::InstanceId;
 use crate::app::State;
 
 use super::build::is_overlay;
+use super::reach::{TO_THE_END, steps, tracked};
 use super::{BoxNode, Node, Opens, Scope, Within};
 
 /// What the element is for an agent and a screen reader, and what a press does.
@@ -27,6 +28,7 @@ pub(super) fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>
     let (Some(element), Some(key)) = (&b.key, key) else {
         return e;
     };
+    e = tracked(scope, e, key);
     let (instance, element, key) = (scope.instance.clone(), element.clone(), key.to_string());
     if b.enter {
         let (instance, element, key) = (instance.clone(), element.clone(), key.clone());
@@ -76,11 +78,17 @@ pub(super) fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>
         }
     }
     let has = |name: &str| b.actions.iter().any(|action| action == name);
-    if has("increment") && has("decrement") {
-        let (instance, element) = (instance.clone(), element.clone());
+    if steps(b) {
+        let (stepped, by) = (instance.clone(), element.clone());
         e = e.on_step(move |s: &mut State, steps: i32, _: &mut rune::Tx| {
             let action = if steps > 0 { "increment" } else { "decrement" };
-            s.pointed(&instance, &element, action, Some(json!(steps.abs())));
+            s.pointed(&stepped, &by, action, Some(json!(steps.abs())));
+        });
+        // Home and End: to its least and most, which its steps stop at.
+        let (instance, element) = (instance.clone(), element.clone());
+        e = e.on_step_limit(move |s: &mut State, end: bool, _: &mut rune::Tx| {
+            let action = if end { "increment" } else { "decrement" };
+            s.pointed(&instance, &element, action, Some(json!(TO_THE_END)));
         });
     }
     let reset = has("reset");

@@ -169,6 +169,7 @@ fn window(arguments: &[String]) -> Result<()> {
             traffic_lights: Some(app::WINDOW_BUTTONS),
             ..rune::Chrome::DEFAULT
         })
+        .tab_visits_controls(true)
         .args(rune_arguments)
         .init(move || state)
         .run();

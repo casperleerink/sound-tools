@@ -253,3 +253,82 @@ fn a_search_line_in_a_list_shows_the_items_it_names_without_running_the_view() {
     assert_eq!(wave(&window.state), "Sine");
     assert!(window.state.open.is_empty());
 }
+
+/// Pads in two rows of three, one group, and a button after it.
+const PADS: &str = r#"import { h, input, tool } from "./sdk";
+export const pads = tool({
+  name: "pads", title: "Pads", when: "Never", doc: "Pads.", state: {}, sound: () => input,
+  view: () => (
+    <row gap={4}>
+      <col key="grid" label="Pads" role="grid" group gap={1}>
+        {[0, 1].map((r) => (
+          <row gap={1}>
+            {[0, 1, 2].map((c) => <box key={`p${r}${c}`} label={`Pad ${r}${c}`} role="gridcell" w={24} h={24} fill="fill" onPress={() => {}} />)}
+          </row>
+        ))}
+      </col>
+      <box key="after" label="After" role="button" w={24} h={24} onPress={() => {}} />
+    </row>
+  ),
+});
+"#;
+
+#[test]
+fn in_a_group_the_arrows_go_where_the_controls_are_and_home_and_end_to_the_ends_of_the_row() {
+    let (_scratch, folder) = with_tools(&[("pads", PADS)]);
+    let mut window = laid_out(opened(&folder));
+    let pad = |name: &str| Some(format!("t00/chain/pads:{name}"));
+    tab_to(&mut window, "t00/chain/pads:p00");
+    for (pressed, lands) in [
+        (rune::Key::Right, "p01"),
+        (rune::Key::Down, "p11"),
+        (rune::Key::Left, "p10"),
+        // Nothing further left: it stays.
+        (rune::Key::Left, "p10"),
+        (rune::Key::Up, "p00"),
+        (rune::Key::End, "p02"),
+        (rune::Key::Home, "p00"),
+    ] {
+        key(&mut window, pressed.clone());
+        assert_eq!(focused(&window), pad(lands), "{pressed:?}");
+    }
+    // The group is one stop of Tab.
+    key(&mut window, rune::Key::Down);
+    key(&mut window, rune::Key::Tab);
+    assert_eq!(focused(&window), pad("after"));
+    window.key(rune::KeyEvent {
+        key: rune::Key::Tab,
+        mods: rune::Mods {
+            shift: true,
+            ..rune::Mods::default()
+        },
+    });
+    redraw(&mut window);
+    assert!(focused(&window).is_some_and(|key| key.starts_with("t00/chain/pads:p")));
+    key(&mut window, rune::Key::Escape);
+    assert_eq!(focused(&window), None);
+}
+
+#[test]
+fn home_and_end_take_a_knob_to_its_least_and_most_and_the_ring_shows_only_for_keys() {
+    let (_scratch, folder) = with_tools(&[("amp", AMP)]);
+    let mut window = laid_out(opened(&folder));
+    let gain = |state: &State| {
+        let id = InstanceId::new("song/t00/chain/amp").unwrap();
+        serde_json::from_str::<Value>(&state.project.state_json(&id).unwrap()).unwrap()["gain"]
+            .clone()
+    };
+    let ring = |window: &rune::Runtime<State>| {
+        let elements = window.elements().into_iter();
+        elements.filter(|element| element.focus_visible).count()
+    };
+    let knob = "t00/chain/amp:gain";
+    click(&mut window, knob);
+    assert_eq!(focused(&window).as_deref(), Some(knob));
+    assert_eq!(ring(&window), 0);
+    key(&mut window, rune::Key::End);
+    assert_eq!(gain(&window.state), 1.0);
+    assert_eq!(ring(&window), 1);
+    key(&mut window, rune::Key::Home);
+    assert_eq!(gain(&window.state), 0.0);
+}

@@ -18,6 +18,7 @@ mod field;
 mod gesture;
 mod icon;
 mod overlay;
+mod reach;
 mod semantics;
 mod shapes;
 
@@ -26,6 +27,7 @@ pub(crate) use field::{Fields, follow_fields};
 pub(crate) use gesture::Gesture;
 pub(crate) use icon::{Icons, report_missing};
 pub(crate) use overlay::overlays;
+pub(crate) use reach::Reach;
 pub(crate) use semantics::Press;
 
 /// A node of `sdk/view.ts`. A test reads every field it sends, so the two cannot drift.

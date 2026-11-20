@@ -243,7 +243,7 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
         e = e.group_opacity(0.0, 1.0);
     }
     if b.group {
-        e = e.focus_group();
+        e = super::reach::group(scope, e, b);
     }
     if let Some(colour) = &b.border {
         e = match b.border_sides {
