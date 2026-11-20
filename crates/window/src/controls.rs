@@ -324,17 +324,16 @@ fn landed(drag: &DragSpec, from: [f32; 2], value: Option<&Value>) -> Value {
     value
 }
 
-/// Shows a part of the plane `key`, as `{ "left", "top", "zoom" }` say.
+/// Shows a range of the plane `key`, as `{ "x": [from, to], "y": [from, to] }` say: as code's
+/// `show` does.
 fn view(state: &mut State, key: &str, value: Option<&Value>) -> Result<()> {
-    let number = |name: &str| {
-        value
-            .and_then(|value| value[name].as_f64())
-            .map(|n| n as f32)
+    let range = |axis: &str| {
+        let range = value.and_then(|value| value.get(axis)).cloned();
+        range.map(serde_json::from_value::<[f32; 2]>).transpose()
     };
-    state
-        .planes
-        .set_view(key, number("left"), number("top"), number("zoom"))
-        .map_err(anyhow::Error::msg)?;
+    let (x, y) = (range("x")?, range("y")?);
+    state.planes.find_plane(key).map_err(anyhow::Error::msg)?;
+    state.planes.show(key, x, y);
     state.lives.move_planes(state, &[key.to_string()], true);
     state.handled();
     Ok(())

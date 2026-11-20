@@ -14,7 +14,6 @@ use crate::shell::Projects;
 
 fn window_of(state: State) -> rune::Runtime<State> {
     let mut window = laid_out(state);
-    window.on_key = Some(on_key);
     redraw(&mut window);
     window
 }

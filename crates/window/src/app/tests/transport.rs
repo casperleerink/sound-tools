@@ -8,7 +8,6 @@ use super::*;
 fn window() -> (tempfile::TempDir, rune::Runtime<State>) {
     let scratch = new_project();
     let mut window = laid_out(opened(&scratch.path().join("song")));
-    window.on_key = Some(on_key);
     redraw(&mut window);
     (scratch, window)
 }

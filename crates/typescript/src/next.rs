@@ -40,7 +40,7 @@ use crate::project::{
 use crate::recorder::{ARM, PROCESSOR as RECORDING, RECORD, RECORDER, Recorder, RecorderUpdate};
 use crate::timeline::{self, Timeline, TimelineUpdate};
 use crate::tools::{Choice, Field, NOTES_TAP, SOUNDING_TAP, ToolInfo, feed_child, feed_processor};
-use crate::{Extensions, FOLDER, Launched, NoteMessage};
+use crate::{Extensions, FOLDER, Launched, NoteMessage, path};
 
 /// The file of a project's design tokens, in `extensions/`. A project that has one is a project
 /// of the new window: it gets `sdk/view.ts` and its agent docs.
@@ -144,6 +144,13 @@ pub enum Want {
     Select {
         instance: Option<InstanceId>,
         span: Option<Range<Ticks>>,
+    },
+    /// Show a range of the plane `key` of the view of `instance`, across and down.
+    Show {
+        instance: InstanceId,
+        key: String,
+        x: Option<[f32; 2]>,
+        y: Option<[f32; 2]>,
     },
     /// Playback repeats over the range, or stops repeating and keeps its range.
     Repeat(Option<Range<Ticks>>),
@@ -1203,6 +1210,20 @@ impl Tools {
                 self.add_offer(project, &instance, (&path, &key), (&label, gesture));
                 false
             }
+            Event::ShowRange {
+                instance,
+                key,
+                x,
+                y,
+            } => {
+                self.wants.push(Want::Show {
+                    instance,
+                    key,
+                    x,
+                    y,
+                });
+                false
+            }
             Event::OpenWindow { instance, path } => {
                 let opened =
                     (self.child_of(project, &instance, &path)).and_then(|child| {
@@ -1590,7 +1611,7 @@ impl Tools {
         edits: Vec<RecordEdit>,
         gesture: bool,
     ) {
-        let edits = self.written(instance, label, edits);
+        let edits = self.written(project, instance, label, edits);
         if edits.is_empty() {
             // All of it went to a lane.
             if let Some(bun) = &self.bun {
@@ -1650,6 +1671,7 @@ impl Tools {
     /// window as one [`Want::Write`]. An edit left with nothing to do goes.
     fn written(
         &mut self,
+        project: &Project,
         instance: &InstanceId,
         label: &str,
         mut edits: Vec<RecordEdit>,
@@ -1670,15 +1692,32 @@ impl Tools {
             let at = child
                 .as_ref()
                 .map_or(String::new(), |child| format!("{child}."));
+            let id = match child {
+                Some(child) => instance.child(child).ok(),
+                None => Some(instance.clone()),
+            };
+            let record: Option<Value> = (id.and_then(|id| project.state_json(&id)))
+                .and_then(|json| serde_json::from_str(&json).ok());
             set.retain(|name, value| {
-                let path = format!("{at}{name}");
-                match value.as_f64().filter(|_| writes.contains(&path)) {
-                    Some(number) => {
-                        values.push((path, number));
-                        false
+                let field = format!("{at}{name}");
+                // A number of the field, or one inside it, such as `bands[0].gain_db`.
+                for path in writes.iter().filter(|path| inside(path, &field)) {
+                    let inner = &path[field.len()..];
+                    let Some(number) = path::at(value, inner).and_then(Value::as_f64) else {
+                        continue;
+                    };
+                    values.push((path.clone(), number));
+                    // The record keeps what it had there.
+                    let kept = record
+                        .as_ref()
+                        .and_then(|record| path::at(record, &path[at.len()..]));
+                    match (inner.is_empty(), kept) {
+                        (true, _) => return false,
+                        (false, Some(kept)) => path::set(value, inner, Some(kept.clone())),
+                        (false, None) => {}
                     }
-                    None => true,
                 }
+                record.as_ref().and_then(|record| record.get(name.as_str())) != Some(value)
             });
             !(set.is_empty() && removed.is_empty())
         });
@@ -1975,4 +2014,11 @@ fn watching(
         return (None, Some(crate::folder_problem(error.to_string())));
     }
     watch(folder, send)
+}
+
+/// Whether the number at `path` is the field `field` or inside it: `chain/eq.bands[0].gain_db`
+/// is inside `chain/eq.bands`.
+fn inside(path: &str, field: &str) -> bool {
+    path.strip_prefix(field)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(['.', '[']))
 }

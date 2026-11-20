@@ -1,5 +1,5 @@
 // A song for the tests of `song/`: its records, memory and clock as the window keeps them, and
-// what its code asked for: each undo step by its label, what it sent, selected and rendered.
+// what its code asked for: each undo step by its label, what it sent, selected, rendered and showed.
 import { memory as fresh, type Memory, type Song } from "./model";
 
 type Records = { state?: Partial<Song["state"]>; children: unknown[] };
@@ -12,6 +12,7 @@ export function fakeSong(records: Records, { tick = 0, piece, answers = {} }: { 
   const sent: [unknown, number][] = [];
   const selected: (string | null)[] = [];
   const offers: [string, string, string][] = [];
+  const shown: [string, { x?: [number, number]; y?: [number, number] }][] = [];
   const clock = {
     tick, playing: false, repeat: null as { from: number; to: number } | null,
     get tempo_map() { return song.tempo_map; },
@@ -43,8 +44,9 @@ export function fakeSong(records: Records, { tick = 0, piece, answers = {} }: { 
     confirm: async () => answers.confirm ?? false,
     render: async () => answers.render ?? null,
     addOffer: (key: string, path: string, label: string) => offers.push([key, path, label]),
+    show: (key: string, range: { x?: [number, number]; y?: [number, number] }) => shown.push([key, range]),
   };
-  return { song: fake as unknown as Song, memory, clock, steps, sent, selected, offers, get piece() { return song; }, get self() { return self; } };
+  return { song: fake as unknown as Song, memory, clock, steps, sent, selected, offers, shown, get piece() { return song; }, get self() { return self; } };
 }
 
 /** A track `name` with a fader and the given children. */

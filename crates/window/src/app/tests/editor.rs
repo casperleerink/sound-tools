@@ -167,7 +167,7 @@ fn two_thousand_notes_of_the_editor_scroll_play_zoom_and_drag_within_their_budge
     // Some bars across, as a composer edits them.
     act(
         &mut window.state,
-        json!({ "key": "roll-t00-bass", "action": "view", "value": { "zoom": 20, "left": 7680, "top": 10 } }),
+        json!({ "key": "roll-t00-bass", "action": "view", "value": { "x": [7680, 33400], "y": [10, 31.75] } }),
     );
     settle(&mut window);
     let ([scroll, play, zoom], _) =

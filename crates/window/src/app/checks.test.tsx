@@ -1,7 +1,7 @@
 // What the test helpers of `sdk/view.ts` do, as the window does it, and what its types refuse.
 import { expect, test } from "bun:test";
 import { board, heard } from "./board";
-import { act, find, h, input, live, number, press, render, text, tool, type Card, type Self } from "./sdk";
+import { act, find, h, input, live, memo, number, press, render, text, tool, type Card, type Self } from "./sdk";
 
 const counter = tool({
   name: "counter", title: "Counter", when: "Never", doc: "Counts.", state: { count: number({ min: 0, max: 100, default: 0 }) }, sound: () => input,
@@ -13,6 +13,24 @@ const counter = tool({
   ),
 });
 const self = { name: "counter", state: { count: 0 }, children: [] } as never;
+
+/** A counter whose buttons a memo keeps from its first run: one reads the records through `ctx`, one through that run's `self`. */
+const kept = tool({
+  name: "kept", title: "Kept", when: "Never", doc: "Counts.", state: { count: number({ min: 0, max: 100, default: 0 }) }, sound: () => input,
+  view: (self, ctx) => memo("buttons", [], () => (
+    <row>
+      <box key="add" label="Add" onPress={() => ctx.update("Add", (draft) => void (draft.state.count = ctx.state.count + 1))} />
+      <box key="old" label="Old" onPress={() => ctx.update("Add", (draft) => void (draft.state.count = self.state.count + 1))} />
+    </row>
+  )),
+});
+
+test("a handler a memo kept reads the newest records through ctx, and fails reading self of its run once they changed", () => {
+  render(kept, { name: "kept", state: { count: 0 }, children: [] });
+  press("add");
+  expect(press("add")).toEqual([[["state", "count"], 2]]);
+  expect(() => press("old")).toThrow("ctx.state");
+});
 
 test("two writes to one field in one change add up", () => {
   render(counter, self);

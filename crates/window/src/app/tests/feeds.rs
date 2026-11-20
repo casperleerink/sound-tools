@@ -185,10 +185,7 @@ export const scope = tool({
         )
     );
     let state = &window.state;
-    state
-        .planes
-        .set_view("curve", Some(600.0), None, None)
-        .unwrap();
+    assert!(state.planes.show("curve", Some([600.0, 900.0]), None));
     state
         .lives
         .move_planes(state, &["curve".to_string()], false);

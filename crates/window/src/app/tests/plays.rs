@@ -4,6 +4,7 @@
 use serde_json::{Value, json};
 use sound_core::InstanceId;
 
+use super::lane as held_lane;
 use super::{act, automated_cutoff, frame, key, laid_out, new_project, opened, redraw};
 use crate::app::State;
 
@@ -224,4 +225,51 @@ fn a_value_typed_on_a_held_knob_while_it_plays_lands_in_its_lane() {
     assert_eq!(played(&window.state), 500.0);
     let label = window.state.project().undo_label();
     assert_eq!(label.as_deref(), Some("Write automation"));
+}
+
+/// The EQ's card of the project: a press sets the gain of its first band.
+const EQ_CARD: &str = r#"import { h, type Card } from "../../../sdk";
+export const card: Card<"eq"> = (_, { update }) => (
+  <box key="louder" label="Louder band" w={20} h={20} onPress={() => update("Turn the band up", (draft) => void ((draft.state as { bands: { gain_db: number }[] }).bands[0]!.gain_db = 3))} />
+);
+"#;
+
+/// A number inside a list of a built-in, the gain of a band of an EQ, as a lane holds it: while
+/// automation is written and the piece plays, the card's update of it goes into the lane, and
+/// the record keeps what it had.
+#[test]
+fn an_update_of_a_band_a_lane_holds_writes_into_the_lane_while_it_plays() {
+    let scratch = new_project();
+    held_lane(&scratch, "chain/eq.bands[0].gain_db", 6.0);
+    let project = scratch.path().join("song");
+    let chain = project.join("state/song/t00/chain");
+    std::fs::write(
+        chain.join("instance.json"),
+        json!({ "tool": "chain", "state": { "order": ["eq"] } }).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        chain.join("eq.json"),
+        json!({ "tool": "eq", "state": {} }).to_string(),
+    )
+    .unwrap();
+    let cards = project.join("extensions/ui/blocks/cards");
+    std::fs::create_dir_all(&cards).unwrap();
+    std::fs::write(cards.join("eq.tsx"), EQ_CARD).unwrap();
+    let mut window = laid_out(opened(&project));
+    writing(&mut window);
+    act(
+        &mut window.state,
+        json!({ "label": "Louder band", "action": "press" }),
+    );
+    wait(&mut window, 0.1);
+    let written = lane(&window.state);
+    assert!(
+        written.iter().any(|(_, value)| *value == 3.0),
+        "{written:?}"
+    );
+    let eq = InstanceId::new("song/t00/chain/eq").unwrap();
+    let record: Value =
+        serde_json::from_str(&window.state.project().state_json(&eq).unwrap()).unwrap();
+    assert_eq!(record["bands"][0]["gain_db"], 0.0);
 }

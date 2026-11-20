@@ -105,3 +105,11 @@ test("the arrows move the chosen points of a lane: in time by the snap, up and d
   f.memory.point = null;
   expect(press(f.song, "up")).toBe("track_above");
 });
+
+test("Z shows the chosen clips on the timeline, else the whole song", () => {
+  const f = fakeSong({ children: [trackOf("t00", [clipOf("c00", BAR, BAR), clipOf("c01", 8 * BAR, 2 * BAR)])] });
+  expect(press(f.song, "z")).toBe("show_song");
+  f.memory.selected = ["t00/c00"];
+  expect(press(f.song, "z")).toBe("show_chosen");
+  expect(f.shown).toEqual([["song", { x: [0, 10 * BAR] }], ["song", { x: [BAR, 2 * BAR] }]]);
+});

@@ -23,7 +23,6 @@ fn window(scene: &str) -> (tempfile::TempDir, rune::Runtime<State>) {
 
 fn keyed(state: State) -> rune::Runtime<State> {
     let mut window = laid_out(state);
-    window.on_key = Some(on_key);
     redraw(&mut window);
     window
 }

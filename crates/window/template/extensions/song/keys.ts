@@ -4,15 +4,19 @@
 import type { Action, ActionKey } from "../sdk";
 import { editsOf } from "./edits";
 import { chosenEffect } from "./effects";
+import { itemsIn, spanOf } from "./clips";
 import { itemAt, rowOfKey, type Song } from "./model";
 import { noteCommand, openClip, type NoteCommand } from "./notes";
-import { stepOf } from "./time";
+import { BAR, stepOf } from "./time";
+import { PLANE } from "./view";
 
 /** How far up or down an arrow moves a chosen point: a hundredth of its lane's travel. */
 const POINT_STEP = 0.01;
 
 /** An action of the song. `run` says `false` when there was nothing for it to do. */
 const on = (keys: readonly ActionKey[], title: string, run: (song: Song) => boolean | void): Action<Song> => ({ title, keys, run });
+/** As the transport's keys: also while the keys are outside the page, such as in the history. */
+const everywhere = (action: Action<Song>): Action<Song> => ({ ...action, everywhere: true });
 const notes = (keys: readonly ActionKey[], title: string, command: NoteCommand) => on(keys, title, (song) => noteCommand(song, command));
 
 /** Escape: closes the editor with no note chosen, else lets go of the chosen notes, effect, mark, point or clips, else closes what shows below. */
@@ -29,12 +33,12 @@ function back(song: Song) {
 }
 
 export const actions: Record<string, Action<Song>> = {
-  record: on(["r"], "Record", (song) => editsOf(song).tracks.record()),
+  record: everywhere(on(["r"], "Record", (song) => editsOf(song).tracks.record())),
   add_tempo: on(["t"], "Add a tempo change at the playhead", (song) => editsOf(song).marks.addTempoAtPlayhead()),
   add_signature: on(["shift-t"], "Add a time signature change at the playhead", (song) => editsOf(song).marks.addSignature(song.clock.tick)),
   add_section: on(["shift-s"], "Add a section at the playhead", (song) => editsOf(song).marks.addSection(song.clock.tick)),
-  next_mark: on(["alt-shift-right"], "Go to the next section, tempo or time signature change", (song) => editsOf(song).marks.step(1)),
-  previous_mark: on(["alt-shift-left"], "Go to the section, tempo or time signature change before", (song) => editsOf(song).marks.step(-1)),
+  next_mark: everywhere(on(["alt-shift-right"], "Go to the next section, tempo or time signature change", (song) => editsOf(song).marks.step(1))),
+  previous_mark: everywhere(on(["alt-shift-left"], "Go to the section, tempo or time signature change before", (song) => editsOf(song).marks.step(-1))),
   repeat: on(["l"], "Repeat the chosen clips, or turn the repeat on and off", (song) => editsOf(song).marks.repeatChosen()),
   back: on(["escape"], "Let go of what is chosen, or close what is open", back),
   mixer: on(["m"], "Show or hide the mixer", (song) => editsOf(song).tracks.toggleMixer()),
@@ -105,6 +109,12 @@ export const actions: Record<string, Action<Song>> = {
     editsOf(song).effects(chosen.track).step(chosen.name, 1);
   }),
 
+  show_chosen: on(["z"], "Show the chosen clips", (song) => {
+    const span = spanOf(song, song.memory.selected);
+    if (!span) return false;
+    song.show(PLANE, { x: [span.from, span.to] });
+  }),
+  show_song: on(["z", "shift-z"], "Show the whole song", (song) => song.show(PLANE, { x: [0, spanOf(song, itemsIn(song))?.to ?? 4 * BAR] })),
   next_clip: on(["alt-right"], "Choose the next clip", (song) => editsOf(song).clips.step(1)),
   previous_clip: on(["alt-left"], "Choose the clip before", (song) => editsOf(song).clips.step(-1)),
   clip_menu: on(["alt-enter"], "Open the menu of the chosen clip", ({ memory }) => {

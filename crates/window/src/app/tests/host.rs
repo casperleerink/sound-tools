@@ -4,7 +4,7 @@ use rune::{FileDialogKind, Key, KeyEvent, Mods};
 
 use super::*;
 use crate::app::frame::poll;
-use crate::app::keys::{on_focus, on_key, on_key_up};
+use crate::app::keys::{on_focus, on_key_up};
 
 /// A new project of the DAW with `files` written into it, its window showing `main`.
 fn page(files: &[(&str, &str)], main: &str) -> (tempfile::TempDir, rune::Runtime<State>) {
@@ -24,9 +24,7 @@ fn page(files: &[(&str, &str)], main: &str) -> (tempfile::TempDir, rune::Runtime
     })
     .unwrap();
     frame(&mut state, 0.0);
-    let mut window = laid_out(state);
-    window.on_key = Some(on_key);
-    (scratch, window)
+    (scratch, laid_out(state))
 }
 
 fn record_of(state: &State, id: &str) -> Value {
@@ -386,9 +384,7 @@ export const asker = tool({
 
 fn asker() -> (tempfile::TempDir, rune::Runtime<State>) {
     let (scratch, folder) = with_tools(&[("asker", ASKER)]);
-    let mut window = laid_out(opened(&folder));
-    window.on_key = Some(on_key);
-    (scratch, window)
+    (scratch, laid_out(opened(&folder)))
 }
 
 #[test]

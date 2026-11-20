@@ -640,6 +640,7 @@ function forget(id: string) {
 }
 
 function hear({ records, gone, edits: heard }: Extract<Request, { type: "records" }>) {
+  recordsChanged += 1;
   for (const { id, tool, state } of records) {
     if (told.get(id)?.tool !== tool) forget(id);
     told.set(id, { tool, state });
@@ -758,12 +759,13 @@ const CARDS = "ui/blocks/cards";
 function drawCard(instance: string, record: Entry) {
   const facts = factsOf(instance, record.tool);
   const defaults = Object.fromEntries(facts.fields.filter((field) => "default" in field).map((field) => [field.name, field.default]));
-  const state = frozen({ ...defaults, ...(record.state as object) });
-  const self = { name: nameOf(instance), state, children: [], facts };
+  const fill = (entry: Entry) => frozen({ ...defaults, ...(entry.state as object) });
+  const self = { name: nameOf(instance), state: fill(record), children: [], facts };
   const key = `${instance} card`;
   if (!memories.has(key)) memories.set(key, {});
   // A card gets what a tool's view gets.
-  const context = { ...performer(instance), state, children: [], memory: memories.get(key), clock: clockFor(instance), time: now, update: updater(instance, defaults), held: heldIn(instance), select: selector(instance), addOffer: offerAdder(instance), openWindow: (path: string) => say({ type: "open_window", instance, path }), catalog: known.catalog, shortcut: () => null, ...askers(instance) };
+  const context = { ...performer(instance), memory: memories.get(key), clock: clockFor(instance), time: now, update: updater(instance, defaults), held: heldIn(instance), select: selector(instance), addOffer: offerAdder(instance), openWindow: (path: string) => say({ type: "open_window", instance, path }), show: shower(instance), shortcut: () => null, ...askers(instance) };
+  Object.defineProperties(context, { ...newest(instance, fill, record), children: { enumerable: true, value: [] } });
   runs(cardFile(instance)!, "card");
   try {
     say({ type: "tree", instance, tree: next!.host.run(instance, toolCards.get(record.tool) ?? genericCard, self, context) });
@@ -1103,12 +1105,17 @@ function updater(instance: string, defaults?: Record<string, unknown>) {
     // Before it counts: a value JSON cannot hold, such as a cycle, throws here.
     const line = JSON.stringify({ type: "edit", instance, label, changes: wired, ...(acting === instance ? { gesture: true } : {}) }) + "\n";
     edits += 1;
+    recordsChanged += 1;
     unheard.push({ number: edits, changes });
     writeSync(1, line);
   };
 }
 
-/** What `tick`, an action, `onKey` and `onNotes` of an instance get: the record as it is now, and its memory. */
+/**
+ * What a view, `tick`, an action, `onKey` and `onNotes` of an instance get: its records as they
+ * are when read, also by a handler a `memo` kept from an earlier run and after an `update`, and
+ * its memory.
+ */
 function contextOf<Extra extends object>(
   instance: string,
   spec: Spec,
@@ -1121,12 +1128,25 @@ function contextOf<Extra extends object>(
     time,
     ...doers(instance, spec),
   };
-  // Made when code reads them: a tick of a parent of a thousand takes that does not costs nothing for them.
-  let children: OwnedChild[] | undefined;
-  return Object.defineProperties(context, {
-    state: { enumerable: true, value: filledState(spec, record) },
-    children: { enumerable: true, get: () => (children ??= seen(instance, childrenOf(instance))) },
-  }) as typeof context & { state: State; children: OwnedChild[] };
+  return Object.defineProperties(context, newest(instance, (entry) => filledState(spec, entry), record)) as typeof context & { state: State; children: OwnedChild[]; catalog: unknown[] };
+}
+
+/** How many times the records code reads changed: the runtime told some, or code sent an edit. */
+let recordsChanged = 0;
+
+/**
+ * `state` and `children` of `instance` as they are when read, made again only after the records
+ * changed: children only when read, so code of a parent of a thousand takes that does not costs
+ * nothing for them. `record` while the instance is gone.
+ */
+function newest(instance: string, fill: (entry: Entry) => unknown, record: Entry): PropertyDescriptorMap {
+  let state: [number, unknown] | undefined;
+  let children: [number, OwnedChild[]] | undefined;
+  return {
+    catalog: { enumerable: true, get: () => known.catalog },
+    state: { enumerable: true, get: () => (state?.[0] === recordsChanged ? state : (state = [recordsChanged, fill(recordOf(instance) ?? record)]))[1] },
+    children: { enumerable: true, get: () => (children?.[0] === recordsChanged ? children : (children = [recordsChanged, seenChildren(instance)]))[1] },
+  };
 }
 
 /** What every piece of code of an instance can do, in a view or in `tick`, an action, `onKey`, `onNotes` and `onTake`. */
@@ -1139,7 +1159,7 @@ function doers(instance: string, spec: Spec) {
     select: selector(instance),
     addOffer: offerAdder(instance),
     openWindow: (path: string) => say({ type: "open_window", instance, path }),
-    catalog: known.catalog,
+    show: shower(instance),
     shortcut: shortcutOf(spec.name),
     now: sdk.now as Context<State>["now"],
     ...askers(instance),
@@ -1152,6 +1172,14 @@ function selector(instance: string) {
   return (path: string | null, { span }: { span?: { from: number; to: number } } = {}) => {
     const range = span && [wholeTick(span.from, "span from"), wholeTick(span.to, "span to")];
     say({ type: "select", instance, path, span: range ?? null });
+  };
+}
+
+/** `show`: the window shows a range of a plane of the view of `instance`. */
+function shower(instance: string) {
+  return (key: string, { x, y }: { x?: [number, number]; y?: [number, number] }) => {
+    const range = (axis: [number, number] | undefined, what: string) => axis && [finite(axis[0], `${what} from`), finite(axis[1], `${what} to`)];
+    say({ type: "show_range", instance, key, x: range(x, "x") ?? null, y: range(y, "y") ?? null });
   };
 }
 
@@ -1313,7 +1341,7 @@ function defaultOf(field: Field): unknown {
 /** The ops of a tool's view at its defaults, after one tick: a check without a window. */
 function checkView(spec: Spec): unknown {
   const memory = freshMemory(spec);
-  const performs = { play() {}, send() {}, update() {}, held: () => false, select() {}, openFile: async () => null, render: async () => null, confirm: async () => false, addOffer() {}, openWindow() {}, catalog: [], shortcut: () => null };
+  const performs = { play() {}, send() {}, update() {}, held: () => false, select() {}, openFile: async () => null, render: async () => null, confirm: async () => false, addOffer() {}, openWindow() {}, show() {}, catalog: [], shortcut: () => null };
   const state = frozen(filledObject(spec.state, {}));
   // What the check plays on the clock goes nowhere.
   const clock = { ...clockFor(""), play() {}, pause() {}, stop() {}, jump() {}, setRepeat() {}, setClick() {}, setComputerKeys() {}, update() {} };
@@ -1457,6 +1485,7 @@ function handle(request: Request): string | undefined {
       );
       carded = new Set(request.cards);
       heldFields = request.held;
+      if (factsMoved.length > 0 || all) recordsChanged += 1;
       known = sent;
       show(request.instances);
       changed.forEach(drawNext);

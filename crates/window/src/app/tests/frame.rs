@@ -46,7 +46,6 @@ fn framed(
     let agent = agent.map(|agent| Box::new(agent) as Box<dyn PanelTab>);
     state.panel = LeftPanel::new(agent, file);
     let mut window = laid_out(state);
-    window.on_key = Some(on_key);
     redraw(&mut window);
     window
 }

@@ -908,6 +908,27 @@ fn a_part_a_memo_kept_keeps_its_live_values() {
     assert_eq!(state.lives.bindings(), bindings);
 }
 
+/// A counter whose button a memo keeps from its first run.
+const KEPT: &str = r#"import { h, input, memo, number, tool } from "./sdk";
+export const kept = tool({
+  name: "kept", title: "Kept", when: "Never", doc: "Counts.", state: { count: number({ min: 0, max: 100, integer: true, default: 0 }) },
+  sound: () => input,
+  view: (_, ctx) => memo("add", [], () => <box key="add" label="Add" onPress={() => ctx.update("Add", (draft) => void (draft.state.count = ctx.state.count + 1))} />),
+});
+"#;
+
+#[test]
+fn a_handler_a_memo_kept_reads_the_newest_records() {
+    let (_scratch, folder) = with_tools(&[("kept", KEPT)]);
+    let mut state = opened(&folder);
+    build(&state);
+    for _ in 0..2 {
+        act(&mut state, json!({ "label": "Add", "action": "press" }));
+    }
+    let count = record(&state, "song/t00/chain/kept.json")["state"]["count"].clone();
+    assert_eq!(count, 2);
+}
+
 /// A beep whose view's buttons play it and the piece, as its control loop could.
 const LAUNCHER: &str = r#"import { h, number, sine, tool } from "./sdk";
 export const launcher = tool({
@@ -954,6 +975,7 @@ fn laid_out(state: State) -> rune::Runtime<State> {
     // As on a Mac with keyboard navigation off, and the app's Tab that reaches every control.
     window.set_full_keyboard_access(false);
     window.set_tab_visits_controls(true);
+    window.on_key = Some(super::on_key);
     window.frame(0.0);
     window
 }
@@ -1398,9 +1420,8 @@ fn tab_to(window: &mut rune::Runtime<State>, key: &str) {
 fn a_row_with_a_menu_in_it_keeps_its_keys_and_tab_reaches_the_menu() {
     let (_scratch, mut window) = kit();
     tab_to(&mut window, "t00/chain/kit:item");
-    key(&mut window, rune::Key::Enter);
-    assert!(window.state.open.is_empty());
     key(&mut window, rune::Key::Text(" ".into()));
+    assert!(window.state.open.is_empty());
     assert_eq!(kit_record(&window.state)["name"], "item");
     key(&mut window, rune::Key::Tab);
     assert_eq!(focused(&window).as_deref(), Some("t00/chain/kit:item-menu"));
@@ -1727,7 +1748,7 @@ fn a_tree_that_comes_during_a_drag_leaves_the_drag_where_it_is() {
 
 /// A lane on the first track of the project in `scratch` that plays `value` into `target`,
 /// such as `synth.cutoff_hz`.
-fn lane(scratch: &tempfile::TempDir, target: &str, value: f64) {
+pub(super) fn lane(scratch: &tempfile::TempDir, target: &str, value: f64) {
     let track = scratch.path().join("song/state/song/t00");
     let automation = json!([{ "lane": "lane-held", "target": target }]);
     let instance = json!({ "tool": "track", "state": { "title": "Track 1", "colour": "blue", "automation": automation } });

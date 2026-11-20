@@ -5,6 +5,7 @@ import { Mixer } from "./ui/blocks/song/mixer";
 import { Rack } from "./ui/blocks/song/rack";
 import { Ruler } from "./ui/blocks/song/ruler";
 import { Timeline } from "./ui/blocks/song/timeline";
+import { publish } from "./song/clips";
 import { actions } from "./song/keys";
 import { EDITOR, fields, itemAt, memory, parts } from "./song/model";
 import { notesTrackOf, trackEdits } from "./song/tracks";
@@ -73,6 +74,7 @@ export const song = tool({
       const first = page.tracks[0];
       if (first && memory.below === null) [memory.below, memory.track] = [{ kind: "track", name: first.name }, first.name];
     }
+    publish(ctx);
     const below = memory.below;
     const clip = below?.kind === "editor" && itemAt(self.children, below.clip)?.tool === "timeline" ? below.clip : null;
     const large = clip !== null && memory.editorLarge;

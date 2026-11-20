@@ -346,7 +346,7 @@ fn what_is_far_is_not_built_but_an_agent_sees_it_and_shows_it() {
     assert_eq!(far.place, Some(vec![96000.0, 0.0, 960.0, 30.0]));
     act(
         &mut window.state,
-        json!({ "key": format!("{PREFIX}song"), "action": "view", "value": { "left": 95000, "zoom": 2 } }),
+        json!({ "key": format!("{PREFIX}song"), "action": "view", "value": { "x": [95000, 97000] } }),
     );
     window.invalidate();
     window.frame(1.0 / 60.0);
@@ -500,4 +500,135 @@ fn a_range_shows_stretched_to_the_box_and_opens_where_it_says_once() {
     window.state.settle();
     redraw(&mut window);
     assert_eq!(window.state.planes.view(key).unwrap().right, 2000.0);
+}
+
+/// A plane that keeps the playhead in view, and buttons whose code shows a range of it.
+const FOLLOWS: &str = r#"import { h, input, live, tool } from "./sdk";
+export const follows = tool({
+  name: "follows", title: "Follows", when: "Never", doc: "Follows.", state: {}, sound: () => input,
+  view: (_, { show }) => (
+    <col w={400}>
+      <box key="song" label="Song" w={400} h={100} plane={{ x: 0.1, y: 1, zoom: [0.25, 8], follow: live.playhead }}>
+        <box key="far" label="Far" place={[96000, 0, 960, 30]} />
+      </box>
+      <box key="fit" label="Fit" w={20} h={20} onPress={() => show("song", { x: [9600, 11520] })} />
+      <box key="all" label="All" w={20} h={20} onPress={() => show("song", { x: [0, 1e9] })} />
+    </col>
+  ),
+});
+"#;
+
+const FOLLOWING: &str = "t00/chain/follows:song";
+
+fn follows() -> (tempfile::TempDir, rune::Runtime<State>) {
+    let (scratch, folder) = with_tools(&[("follows", FOLLOWS)]);
+    (scratch, laid_out(opened(&folder)))
+}
+
+/// Frames of the window, a 60th of a second apart, until `seconds` after it opened.
+fn until(window: &mut rune::Runtime<State>, seconds: f64) {
+    while window.state.last < seconds {
+        let next = window.state.last + 1.0 / 60.0;
+        super::drawn_frame(window, next);
+    }
+}
+
+fn shown(window: &rune::Runtime<State>) -> (f32, f32) {
+    let view = window.state.planes.view(FOLLOWING).unwrap();
+    (view.left, view.right)
+}
+
+fn playhead(window: &rune::Runtime<State>) -> f32 {
+    window.state.playhead.0 as f32
+}
+
+/// The old rule of a DAW's follow: the view pages on as the playhead leaves it; a scroll by
+/// hand leaves the view where it put it until the piece plays again.
+#[test]
+fn a_plane_that_follows_the_playhead_pages_on_until_a_hand_moves_it() {
+    let (_scratch, mut window) = follows();
+    let runs = view_runs(&window);
+    let engine = |window: &mut rune::Runtime<State>, play: bool| {
+        (window.state.session).background(|project| match play {
+            true => project.engine().play(),
+            false => project.engine().pause(),
+        });
+    };
+    engine(&mut window, true);
+    // 400 points at 0.1 a tick show 4000 ticks, 2 seconds at 120 beats a minute.
+    until(&mut window, 2.5);
+    let (left, right) = shown(&window);
+    assert!(
+        left > 3000.0 && (left..right).contains(&playhead(&window)),
+        "{left} {right}"
+    );
+    assert_eq!(view_runs(&window), runs);
+    let [x, y, w, h] = window.presented(FOLLOWING).unwrap().0;
+    wheel(
+        &mut window,
+        [x + w / 2.0, y + h / 2.0],
+        [-2000.0, 0.0],
+        rune::Mods::default(),
+    );
+    let scrolled = shown(&window).0;
+    until(&mut window, 3.5);
+    assert_eq!(shown(&window).0, scrolled);
+    engine(&mut window, false);
+    until(&mut window, 4.0);
+    engine(&mut window, true);
+    until(&mut window, 4.2);
+    let (left, right) = shown(&window);
+    assert!(
+        (left..right).contains(&playhead(&window)),
+        "{left} {right} {}",
+        playhead(&window)
+    );
+}
+
+#[test]
+fn code_shows_a_range_of_a_plane_zoomed_as_far_as_it_zooms() {
+    let (_scratch, mut window) = follows();
+    act(
+        &mut window.state,
+        json!({ "label": "Fit", "action": "press" }),
+    );
+    redraw(&mut window);
+    let view = window.state.planes.view(FOLLOWING).unwrap();
+    assert_eq!((view.left, view.right), (9600.0, 11520.0));
+    act(
+        &mut window.state,
+        json!({ "label": "All", "action": "press" }),
+    );
+    redraw(&mut window);
+    let view = window.state.planes.view(FOLLOWING).unwrap();
+    assert_eq!((view.left, view.zoom), (0.0, 0.25));
+}
+
+/// A ruler in a memo, as the song draws its bars once for many runs.
+const KEPT_PLANE: &str = r#"import { h, input, memo, tool } from "./sdk";
+export const kept = tool({
+  name: "kept", title: "Kept", when: "Never", doc: "Kept.", state: {}, sound: () => input,
+  view: () => memo("ruler", [], () => (
+    <box key="ruler" label="Ruler" w={400} h={20} plane={{ x: 0.1, zoom: [0.25, 8] }}>
+      <box key="bar-2" label="Bar 2" place={[3840, 0, 10, 10]} />
+    </box>
+  )),
+});
+"#;
+
+#[test]
+fn a_plane_a_memo_kept_builds_again_as_it_zooms() {
+    let (_scratch, folder) = with_tools(&[("kept", KEPT_PLANE)]);
+    let mut window = laid_out(opened(&folder));
+    redraw(&mut window);
+    let ruler = "t00/chain/kept:ruler";
+    act(
+        &mut window.state,
+        json!({ "key": ruler, "action": "view", "value": { "x": [0, 2000] } }),
+    );
+    window.invalidate();
+    window.frame(1.0 / 60.0);
+    redraw(&mut window);
+    let at = |key: &str| window.presented(key).unwrap().0[0];
+    assert_eq!(at("t00/chain/kept:bar-2") - at(ruler), 768.0);
 }

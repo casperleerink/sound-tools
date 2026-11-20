@@ -7,8 +7,7 @@ use crate::app::State;
 
 fn song() -> (tempfile::TempDir, rune::Runtime<State>) {
     let scratch = new_project();
-    let mut window = laid_out(opened(&scratch.path().join("song")));
-    window.on_key = Some(crate::app::on_key);
+    let window = laid_out(opened(&scratch.path().join("song")));
     (scratch, window)
 }
 
@@ -56,6 +55,22 @@ fn a_clip_dragged_lands_on_the_snap_as_one_undo_step() {
     assert_eq!(start(&window.state, "t00/bass"), 2400);
     act(&mut window.state, json!({ "action": "undo" }));
     assert_eq!(start(&window.state, "t00/bass"), before);
+}
+
+/// What Export selection exports follows every edit of the chosen: a move, and its undo.
+#[test]
+fn the_span_of_the_chosen_follows_a_move_and_its_undo() {
+    let (_scratch, mut window) = song();
+    let [x, y, ..] = rect(&window, "clip-t00/bass");
+    drag(&mut window, (x + 20.0, y + 20.0), (61.0, 0.0));
+    let span = |window: &rune::Runtime<State>| {
+        let (from, to) = window.state.session.selected_span().unwrap();
+        (from.0, to.0)
+    };
+    assert_eq!(span(&window), (2400, 2400 + 15360));
+    act(&mut window.state, json!({ "action": "undo" }));
+    redraw(&mut window);
+    assert_eq!(span(&window), (0, 15360));
 }
 
 #[test]
@@ -108,10 +123,10 @@ fn files_dropped_on_the_timeline_land_on_their_row_and_tick_as_one_undo_step_eac
         );
         redraw(window);
     };
-    // Rows: t00, t01, audio-1, then audio-1-2, the one dropped on. Bar 3 is tick 7680.
+    // Rows: t00, t01, audio-1, then audio-2, the one dropped on. Bar 3 is tick 7680.
     drop(&mut window, &sound, 7680 + 300, 3.5);
-    assert_eq!(start(&window.state, "audio-1-2/region"), 7680);
-    let region = record(&window.state, "song/audio-1-2/region.json");
+    assert_eq!(start(&window.state, "audio-2/region"), 7680);
+    let region = record(&window.state, "song/audio-2/region.json");
     assert_eq!(region["state"]["asset"], "kick.wav");
     drop(&mut window, &tune, 7680 + 100, 1.5);
     assert_eq!(start(&window.state, "t01/clip"), 7680);
@@ -119,11 +134,33 @@ fn files_dropped_on_the_timeline_land_on_their_row_and_tick_as_one_undo_step_eac
     assert_eq!(clip["state"]["notes"][0]["pitch"], 60);
     act(&mut window.state, json!({ "action": "undo" }));
     assert_eq!(start(&window.state, "t01/clip"), Value::Null);
-    assert_eq!(start(&window.state, "audio-1-2/region"), 7680);
+    assert_eq!(start(&window.state, "audio-2/region"), 7680);
     act(&mut window.state, json!({ "action": "undo" }));
-    assert_eq!(start(&window.state, "audio-1-2/region"), Value::Null);
-    let audio_track = window.state.project().root().join("state/song/audio-1-2");
+    assert_eq!(start(&window.state, "audio-2/region"), Value::Null);
+    let audio_track = window.state.project().root().join("state/song/audio-2");
     assert!(audio_track.exists());
+}
+
+#[test]
+fn a_track_of_another_instrument_is_added_as_one_undo_step() {
+    let (_scratch, mut window) = song();
+    act(
+        &mut window.state,
+        json!({ "key": "add-track-kind", "action": "open" }),
+    );
+    act(
+        &mut window.state,
+        json!({ "label": "Sampler track", "action": "press" }),
+    );
+    redraw(&mut window);
+    let synth = |state: &State| {
+        let file = state.project().root().join("state/song/track/synth.json");
+        file.exists()
+            .then(|| record(state, "song/track/synth.json")["tool"].clone())
+    };
+    assert_eq!(synth(&window.state), Some(json!("sampler")));
+    act(&mut window.state, json!({ "action": "undo" }));
+    assert_eq!(synth(&window.state), None);
 }
 
 #[test]
@@ -142,4 +179,30 @@ fn a_double_click_on_a_head_names_its_track_in_place() {
     assert_eq!(title(&window.state), "Bass");
     act(&mut window.state, json!({ "action": "undo" }));
     assert_eq!(title(&window.state), "Track 2");
+}
+
+#[test]
+fn a_clip_is_named_in_place_from_its_menu() {
+    let (_scratch, mut window) = song();
+    act(
+        &mut window.state,
+        json!({ "key": "clip-t00/bass", "action": "press", "value": { "right": true } }),
+    );
+    act(
+        &mut window.state,
+        json!({ "label": "Rename", "action": "press" }),
+    );
+    redraw(&mut window);
+    assert_eq!(
+        super::focused(&window).as_deref(),
+        Some("clip-name-t00/bass")
+    );
+    for letter in ["R", "o", "o", "t"] {
+        key(&mut window, rune::Key::Text(letter.into()));
+    }
+    key(&mut window, rune::Key::Enter);
+    assert_eq!(
+        record(&window.state, "song/t00/bass.json")["state"]["title"],
+        "Root"
+    );
 }

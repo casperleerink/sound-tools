@@ -133,7 +133,6 @@ fn cmd_n_opens_the_new_project_and_escape_closes_it() {
     let scratch = new_project();
     let state = kept(&scratch);
     let mut window = laid_out(state);
-    window.on_key = Some(on_key);
     window.key(rune::KeyEvent {
         key: rune::Key::Command('n'),
         mods: rune::Mods {

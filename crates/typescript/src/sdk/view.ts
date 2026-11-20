@@ -85,7 +85,13 @@ export type Dropped = { x: number; y: number; audio: string[]; parts: { name: st
 /** One axis of a plane: points per unit (it scrolls over what is placed in it); a range it shows, stretched to the box (where it opens, if it zooms); or the key of a plane it moves with. */
 type Axis = number | [from: number, to: number] | string;
 /** A box with units of its own: `place` puts things in it. The window scrolls it (wheel, Shift-wheel) and zooms it across (pinch, Cmd-wheel, about the pointer) within `zoom`. */
-export type Plane = { x?: Axis; y?: Axis; zoom?: [min: number, max: number] };
+export type Plane = {
+  x?: Axis;
+  y?: Axis;
+  zoom?: [min: number, max: number];
+  /** A place across it keeps in view while it moves, such as `live.playhead`: the plane pages on when it leaves. A scroll or zoom by hand stops that until it shows again, or rests and moves again. */
+  follow?: Num;
+};
 /** In units of the plane around it, at any depth: `[x, y]` a mark, its `w` and `h` points centred on it; `[x, y, w, h]` a box. */
 type Place = [x: Num, y: Num] | [x: Num, y: Num, w: Num, h: Num];
 
@@ -310,6 +316,8 @@ export interface ViewContext<_State, _I extends Inputs, M> {
   catalog: readonly Offer[];
   /** The key the action `name` of its tool has now, such as `"cmd-r"`, or `null` while it has none. */
   shortcut(name: string): string | null;
+  /** Shows a range of the plane `key` of its view, in its units: zoomed across so `x` fills it, as far as it zooms; scrolled down to the middle of `y`. Once the plane shows, if it does not yet. */
+  show(key: string, range: { x?: [from: number, to: number]; y?: [from: number, to: number] }): void;
 }
 
 // JSX through `h`: a file imports `h` from here.
@@ -524,14 +532,23 @@ export function render(drawn: ProjectTool | Draw, given: unknown, { held = [], f
 }
 
 function redraw(at: Tested): Node {
-  run(TESTED, at.draw, at.self, contextOf(at));
+  run(TESTED, at.draw, viewed(at.self), contextOf(at));
   return instances.get(TESTED)!.last;
+}
+
+/** `self` for a run: a handler that reads its records once they changed, such as one a `memo` kept from this run, fails the test. */
+function viewed(self: Drawn<unknown>): Drawn<unknown> {
+  const read = <K extends "state" | "children">(name: K) => {
+    if (tested?.acting && tested.self[name] !== self[name]) throw new Error(`a handler read \`self.${name}\` of an earlier run of the view, which a memo kept or an update changed: read \`ctx.${name}\``);
+    return self[name];
+  };
+  return { ...self, get state() { return read("state"); }, get children() { return read("children"); } };
 }
 
 /** What code gets in a test: its records, `update` and `memory`; what it plays goes nowhere, and what it asks gets `answers`. */
 function contextOf(at: Tested): Context<any> {
-  // A handler a memo kept from an earlier run, or from an earlier `render`, changes what the last
-  // run shows, as in the window.
+  // A handler a memo kept from an earlier run, or from an earlier `render`, reads and changes what
+  // the last run shows, as in the window.
   const update = (_label: string, edit: (draft: never) => void) => {
     const at = tested!;
     const before = at.self;
@@ -547,8 +564,8 @@ function contextOf(at: Tested): Context<any> {
   const nothing = () => {};
   const clock = { playing: false, repeat: null, click: false, computerKeys: false, writeAutomation: false, tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] }, sections: [], tick: 0, bar: 1, beat: 1, bpm: 120, play: nothing, pause: nothing, stop: nothing, jump: nothing, setRepeat: nothing, setClick: nothing, setComputerKeys: nothing, setWriteAutomation: nothing, update: nothing } as unknown as Clock;
   return {
-    state: at.self.state, children: at.self.children, memory: at.memory, update, held: (name: string) => at.held.includes(name), clock, time: 0,
-    send: nothing, play: nothing, select: nothing, addOffer: nothing, openWindow: nothing, catalog: [],
+    get state() { return tested!.self.state; }, get children() { return tested!.self.children; }, memory: at.memory, update, held: (name: string) => at.held.includes(name), clock, time: 0,
+    send: nothing, play: nothing, select: nothing, addOffer: nothing, openWindow: nothing, show: nothing, catalog: [],
     shortcut: (name: string) => at.spec?.actions?.[name]?.keys?.[0] ?? null,
     openFile: async () => at.answers.openFile ?? null, confirm: async () => at.answers.confirm ?? false, render: async () => null, exportNotes: async () => false,
   } as unknown as Context<any>;
