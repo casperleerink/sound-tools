@@ -8,6 +8,8 @@ use sound_core::InstanceId;
 use super::{frame, laid_out, new_project, opened, redraw};
 use crate::app::State;
 
+mod effects;
+
 /// A new song whose first track has the effect `name`, of `record`, shown in its panel.
 fn with_effect(name: &str, record: &str) -> (tempfile::TempDir, rune::Runtime<State>) {
     let scratch = new_project();
