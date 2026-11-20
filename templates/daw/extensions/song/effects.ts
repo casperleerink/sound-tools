@@ -1,7 +1,8 @@
 // The devices of a track's or a return's panel: its instrument, which can be changed, and the
 // effects of its chain, which can be added, turned off, removed, moved and keyed by a sidechain.
 import { freeName } from "../track";
-import { isStrip, nameFrom, type Song } from "./model";
+import { dropLanesOf, lanesInto } from "./lanes";
+import { isRow, isStrip, nameFrom, type Draft, type Song } from "./model";
 
 /** Where on a track a sidechain takes its sound, and what its select says. */
 export const TAPS = [["pre_fx", "Pre FX"], ["post_fx", "Post FX"], ["post_fader", "Post mixer"]] as const;
@@ -32,9 +33,16 @@ export const effectEdits = (song: Song, name: string) => {
       const effects = row?.tool === "track" || row?.tool === "tape" || row?.tool === "bus" ? row.children.find((child) => child.name === "chain") : undefined;
       if (effects?.tool === "chain") change(effects);
     });
-  /** Takes the sidechain off the effect at `path`, in the step `label`: it goes, or another device takes its place. */
-  const unkey = (path: string, label: string) => {
-    if (song.state.sidechains.some((each) => each.effect === path)) update(label, (draft) => (draft.state.sidechains = draft.state.sidechains.filter((each) => each.effect !== path)));
+  /** Takes the sidechain off the device `child` of the track (`synth`, `chain/eq`) and the lanes of its numbers: it goes, or another device takes its place. */
+  const forget = (draft: Draft, child: string) => {
+    draft.state.sidechains = draft.state.sidechains.filter((each) => each.effect !== `${name}/${child}`);
+    const row = draft.children.find((each) => each.name === name);
+    if (row && isRow(row)) dropLanesOf(row, child);
+  };
+  /** Whether the device `child` has a sidechain or lanes that `forget` takes. */
+  const remembered = (child: string) => {
+    const row = song.children.find((each) => each.name === name);
+    return song.state.sidechains.some((each) => each.effect === `${name}/${child}`) || (row !== undefined && isRow(row) && lanesInto(row, child).length > 0);
   };
   const edits = {
     /** Chooses `effect`: enter on its card, its title's menu or adding it; the keys then move it. */
@@ -61,17 +69,21 @@ export const effectEdits = (song: Song, name: string) => {
       editChain("Add an effect", (effects) => (effects.state.order = [...effects.state.order, effect]));
       edits.choose(effect);
     },
-    /** Another device in place of the instrument, `"Change the instrument"`, or of `effect`, `"Change an effect"`: an effect's sidechain goes. */
+    /** Another device in place of the instrument, `"Change the instrument"`, or of `effect`, `"Change an effect"`: the old one's sidechain and lanes go. */
     replace(key: string, effect?: string) {
-      const path = effect === undefined ? `${name}/synth` : `${name}/chain/${effect}`;
+      const child = effect === undefined ? "synth" : `chain/${effect}`;
       const label = effect === undefined ? "Change the instrument" : "Change an effect";
       if (effect !== undefined) edits.choose(effect);
-      unkey(path, label);
-      song.addOffer(key, path, label);
+      if (remembered(child)) update(label, (draft) => forget(draft, child));
+      song.addOffer(key, `${name}/${child}`, label);
     },
+    /** Takes `effect` out of the chain, with its sidechain and the lanes of its numbers. */
     remove(effect: string) {
-      unkey(`${name}/chain/${effect}`, "Remove an effect");
-      editChain("Remove an effect", (effects) => {
+      update("Remove an effect", (draft) => {
+        forget(draft, `chain/${effect}`);
+        const row = draft.children.find((each) => each.name === name);
+        const effects = row && isStrip(row) ? row.children.find((child) => child.name === "chain") : undefined;
+        if (effects?.tool !== "chain") return;
         effects.state.order = effects.state.order.filter((each) => each !== effect);
         effects.state.off = effects.state.off.filter((each) => each !== effect);
         effects.children = effects.children.filter((child) => child.name !== effect);

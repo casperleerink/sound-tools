@@ -7,6 +7,7 @@ import { lfo } from "../lfo";
 import { tape } from "../tape";
 import { freeName, track } from "../track";
 import { choose, copyOf, lengthAt } from "./clips";
+import { dropLanesOf } from "./lanes";
 import { isRow, isStrip, itemAt, PALETTE, rowOfKey, rowsOf, titleOf, type Child, type Draft, type Song } from "./model";
 
 /** A fader for each return of the song, silent, as a new track sends into them. */
@@ -159,7 +160,7 @@ export const trackEdits = (song: Song) => {
     toggleMixer() {
       memory.below = memory.below?.kind === "mixer" ? null : { kind: "mixer" };
     },
-    /** Deletes the track, audio track or return `name`, with the sends into it, its solo, its sidechains and what chose it. */
+    /** Deletes the track, audio track or return `name`, with the sends into it and their lanes, its solo, its sidechains and what chose it. */
     remove(name: string) {
       update("Delete a track", (draft) => {
         draft.state.order = draft.state.order.filter((each) => each !== name);
@@ -169,6 +170,7 @@ export const trackEdits = (song: Song) => {
           if (each.tool !== "track" && each.tool !== "tape") continue;
           const at = each.children.findIndex((child) => child.name === `send-${name}`);
           if (at >= 0) each.children.splice(at, 1);
+          dropLanesOf(each, `send-${name}`);
         }
         const at = draft.children.findIndex((child) => child.name === name);
         if (at >= 0) draft.children.splice(at, 1);
