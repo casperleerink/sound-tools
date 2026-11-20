@@ -253,7 +253,7 @@ impl State {
     /// Whether a field has the keys: none of them is a shortcut then.
     pub(crate) fn typing_now(&self) -> bool {
         let fields = self.fields.borrow();
-        fields.by_key.values().any(|typed| typed.edit.focused)
+        fields.by_key.values().any(|typed| typed.edit.focused) || self.transport.has_keys()
     }
 
     /// Enter (`keep`) or Escape in the field `key`: its code hears what it says, or `null`, and

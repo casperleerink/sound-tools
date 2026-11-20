@@ -1,6 +1,6 @@
 //! The keys of the window, matched in one place: a focused text field first, which no action
-//! hears; then the left panel's; then the tool of the focused card, the pages around it up to the main view, and the
-//! app. Outside the views the main view's tool hears only its actions that run `everywhere` and
+//! hears; then the left panel's; then undo and redo; then the tool of the focused card, the
+//! pages around it up to the main view, and the app. Outside the views the main view's tool hears only its actions that run `everywhere` and
 //! its `globalKeys`. A key does an action, or a tool's `onKey` holds it until it comes up there.
 
 use std::collections::{BTreeMap, HashMap};
@@ -15,6 +15,8 @@ use super::State;
 
 /// The app's own group in the keymap.
 const APP: &str = "app";
+/// The app's actions a tool's key never takes the place of.
+const BEFORE_TOOLS: [&str; 3] = ["undo", "redo", "undo-keeping-version"];
 
 /// The keymap, and the keys a tool's `onKey` holds.
 pub(crate) struct Keys {
@@ -53,7 +55,17 @@ fn app_group() -> Group {
         actions: vec![
             action("undo", "Undo", "cmd-z"),
             action("redo", "Redo", "cmd-shift-z"),
-            action("play", "Play or stop", "space"),
+            action(
+                "undo-keeping-version",
+                "Undo, keeping what it takes back as a version",
+                "cmd-alt-z",
+            ),
+            action("play", "Play or pause", "space"),
+            action(
+                "computer-keys",
+                "Play notes with the computer keys",
+                "cmd-k",
+            ),
         ],
     }
 }
@@ -144,7 +156,7 @@ impl State {
         everywhere: bool,
         repeat: bool,
     ) -> bool {
-        let Some(tool) = self.project.tool_of(instance).map(str::to_string) else {
+        let Some(tool) = self.project().tool_of(instance).map(str::to_string) else {
             return false;
         };
         let Some(tools) = &self.tools else {
@@ -166,20 +178,20 @@ impl State {
 
     /// Runs `actions` of the tool of `instance`, in order until one does it, as one step of undo.
     pub(crate) fn run_actions(&mut self, instance: &InstanceId, actions: &[String]) -> bool {
-        let clock = self.clock();
+        let clock = self.session.clock();
         let Some(tools) = &mut self.tools else {
             return false;
         };
-        let sent = tools.action(&self.project, instance, actions, clock);
+        let sent = tools.action(self.session.project(), instance, actions, clock);
         self.handled();
         sent
     }
 
     /// The key `name` goes down or up to the `onKey` of the tool of `instance`.
     fn key_to(&mut self, instance: &InstanceId, (name, down): (&str, bool), held: Held) {
-        let clock = self.clock();
+        let clock = self.session.clock();
         if let Some(tools) = &mut self.tools {
-            tools.key(&self.project, instance, (name, down), held, clock);
+            tools.key(self.session.project(), instance, (name, down), held, clock);
         }
         self.handled();
     }
@@ -197,22 +209,23 @@ impl State {
         let done = match action {
             "undo" => self.undo(),
             "redo" => self.redo(),
+            "undo-keeping-version" => self.undo_keeping_version(),
             "play" => {
-                self.play_or_stop();
+                self.play_or_pause();
                 Ok(())
             }
+            "computer-keys" => super::transport::Act::Keys.run(self, None),
             _ => Ok(()),
         };
-        if let Err(error) = done {
-            self.notice = Some(error.to_string());
-        }
+        // What refused is the session's notice already.
+        done.ok();
         self.handled();
     }
 
     /// The actions of the tools shown and of the app, with the keys they have now, for `--tree`.
     pub(crate) fn shown_actions(&self) -> Vec<serde_json::Value> {
         let tools: std::collections::BTreeSet<&str> = (self.shown.iter())
-            .filter_map(|id| self.project.tool_of(id))
+            .filter_map(|id| self.project().tool_of(id))
             .chain([APP])
             .collect();
         let groups =
@@ -269,13 +282,21 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
             ..held
         },
     );
+    let app: Option<String> = (state.keys.keymap.bound(APP, &chord).first()).map(|a| a.to_string());
+    if let Some(action) = app
+        .as_deref()
+        .filter(|action| BEFORE_TOOLS.contains(action))
+    {
+        state.app_action(action);
+        return true;
+    }
     let repeat = tx.key_repeat();
     let main = state.main().cloned();
     for (instance, everywhere) in state.chain(tx.focused()) {
         if state.act_on_key(&instance, &chord, everywhere, repeat) {
             return true;
         }
-        let Some(tool) = state.project.tool_of(&instance).map(str::to_string) else {
+        let Some(tool) = state.project().tool_of(&instance).map(str::to_string) else {
             continue;
         };
         let Some(tools) = &state.tools else {
@@ -296,13 +317,10 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
         }
         return true;
     }
-    let bound: Vec<String> = (state.keys.keymap.bound(APP, &chord).into_iter())
-        .map(str::to_string)
-        .collect();
-    let Some(action) = bound.first() else {
+    let Some(action) = app else {
         return false;
     };
-    state.app_action(action);
+    state.app_action(&action);
     true
 }
 

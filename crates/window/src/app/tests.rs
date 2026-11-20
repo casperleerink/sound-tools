@@ -24,7 +24,7 @@ fn shown_texts(state: &State) -> Vec<String> {
 }
 
 /// The DAW of a new project, open as a run without a window opens it.
-fn opened(folder: &Path) -> State {
+pub(super) fn opened(folder: &Path) -> State {
     let mut state = State::open(Options {
         folder: folder.to_path_buf(),
         headless: true,
@@ -45,14 +45,14 @@ fn build(state: &State) {
     }
 }
 
-fn new_project() -> tempfile::TempDir {
+pub(super) fn new_project() -> tempfile::TempDir {
     let scratch = tempfile::tempdir().unwrap();
     runtime::templates::write(&scratch.path().join("song"), &TEMPLATE).unwrap();
     scratch
 }
 
 fn record(state: &State, path: &str) -> Value {
-    let text = std::fs::read_to_string(state.project.root().join("state").join(path)).unwrap();
+    let text = std::fs::read_to_string(state.project().root().join("state").join(path)).unwrap();
     serde_json::from_str(&text).unwrap()
 }
 
@@ -80,7 +80,7 @@ fn playing_moves_the_playhead_and_the_meters_and_runs_no_view() {
     let runs = state.tools.as_ref().unwrap().view_runs();
     assert!(runs > 0);
     build(&state);
-    state.project.engine().play();
+    state.session.background(|project| project.engine().play());
     for step in 1..=60 {
         frame(&mut state, f64::from(step) / 60.0);
     }
@@ -123,7 +123,7 @@ fn an_action_on_mute_writes_the_record_and_undo_takes_it_back() {
 fn a_changed_tool_file_starts_a_new_bun_and_the_view_follows() {
     let scratch = new_project();
     let mut state = opened(&scratch.path().join("song"));
-    let song = state.project.root().join("extensions/song.tsx");
+    let song = state.project().root().join("extensions/song.tsx");
     let code = std::fs::read_to_string(&song).unwrap();
     std::fs::write(
         &song,
@@ -276,7 +276,7 @@ fn run_bun(state: &State, arguments: &[&str]) {
     let bun = sound_typescript::bun_program().expect("Bun is installed, see tooling/fetch-bun.sh");
     let ran = sound_core::process::background_command(&bun)
         .args(arguments)
-        .current_dir(state.project.root().join("extensions"))
+        .current_dir(state.project().root().join("extensions"))
         .output()
         .unwrap();
     let said =
@@ -312,7 +312,7 @@ export const sizes = [
   <box w={grows} />,
 ];
 "#;
-    std::fs::write(state.project.root().join("extensions/sizes.tsx"), sizes).unwrap();
+    std::fs::write(state.project().root().join("extensions/sizes.tsx"), sizes).unwrap();
     run_bun(&state, &["check", "-p", "."]);
 }
 
@@ -331,14 +331,17 @@ fn a_run_without_a_window_opens_a_folder_named_by_dots() {
 fn a_new_main_in_the_project_file_shows_at_once() {
     let scratch = new_project();
     let mut state = opened(&scratch.path().join("song"));
-    let file = state.project.root().join(runtime::PROJECT_FILE);
+    let file = state.project().root().join(runtime::PROJECT_FILE);
     let code = std::fs::read_to_string(&file).unwrap();
     std::fs::write(
         &file,
         code.replace(r#""main": "song""#, r#""main": "song/t00/synth""#),
     )
     .unwrap();
-    state.project.apply_outside_changes(&[file]).unwrap();
+    state
+        .session
+        .background(|project| project.apply_outside_changes(&[file]))
+        .unwrap();
     frame(&mut state, 0.1);
     assert!(
         !labels(&state).contains(&"Mute Track 2".to_string()),
@@ -367,13 +370,13 @@ fn an_action_that_changes_twice_is_one_step_of_undo() {
 fn a_view_that_failed_builds_its_memos_again_once_it_works() {
     let (_scratch, folder) = with_tools(&[("counter", COUNTER)]);
     let mut state = opened(&folder);
-    let problems = state.project.problems().len();
+    let problems = state.project().problems().len();
     act(&mut state, json!({ "label": "Break", "action": "press" }));
     assert!(!labels(&state).contains(&"Twice".to_string()));
-    assert_eq!(state.project.problems().len(), problems + 1);
+    assert_eq!(state.project().problems().len(), problems + 1);
     act(&mut state, json!({ "action": "undo" }));
     control(&controls::collect(&state).controls, "Break");
-    assert_eq!(state.project.problems().len(), problems);
+    assert_eq!(state.project().problems().len(), problems);
 }
 
 #[test]
@@ -400,7 +403,7 @@ fn while_the_code_starts_again_the_view_stays_and_an_action_says_it_did_nothing(
     let mut state = opened(&scratch.path().join("song"));
     let tools = state.tools.as_mut().unwrap();
     tools.code_changed();
-    tools.poll(&mut state.project, &[]);
+    state.session.background(|project| tools.poll(project, &[]));
     let refused = try_act(
         &mut state,
         json!({ "label": "Mute Track 2", "action": "toggle" }),
@@ -439,7 +442,7 @@ fn a_control_loop_steps_while_the_piece_plays() {
     play(&mut state, 0.0, 1.0);
     // A control loop's edits are written once it is quiet: the project holds them at once.
     let id = InstanceId::new("song/t00/chain/sequence").unwrap();
-    let held: Value = serde_json::from_str(&state.project.state_json(&id).unwrap()).unwrap();
+    let held: Value = serde_json::from_str(&state.project().state_json(&id).unwrap()).unwrap();
     assert!(held["at"].as_u64().is_some_and(|at| at > 0), "{held}");
     let lit = controls::collect(&state)
         .controls
@@ -452,7 +455,7 @@ fn a_control_loop_steps_while_the_piece_plays() {
 fn a_changed_theme_shows_once_the_code_starts_again() {
     let scratch = new_project();
     let mut state = opened(&scratch.path().join("song"));
-    let file = state.project.root().join("extensions/theme.json");
+    let file = state.project().root().join("extensions/theme.json");
     let code = std::fs::read_to_string(&file).unwrap();
     let mut theme: Value = serde_json::from_str(&code).unwrap();
     theme["color"]["background"] = json!("#123456");
@@ -470,7 +473,7 @@ fn a_changed_theme_shows_once_the_code_starts_again() {
 /// Plays `seconds` from `from`, a frame each 60th of a second.
 fn play(state: &mut State, from: f64, seconds: f64) {
     build(state);
-    state.project.engine().play();
+    state.session.background(|project| project.engine().play());
     for step in 1..=(seconds * 60.0) as u32 {
         frame(state, from + f64::from(step) / 60.0);
     }
@@ -481,7 +484,7 @@ fn the_meter_of_a_track_taken_away_and_brought_back_moves() {
     let scratch = new_project();
     let mut state = opened(&scratch.path().join("song"));
     play(&mut state, 0.0, 0.5);
-    let root = state.project.root().to_path_buf();
+    let root = state.project().root().to_path_buf();
     let (track, kept) = (root.join("state/song/t01"), scratch.path().join("kept"));
     copy_folder(&track, &kept).unwrap();
     let files = |folder: &Path| -> Vec<std::path::PathBuf> {
@@ -495,10 +498,16 @@ fn the_meter_of_a_track_taken_away_and_brought_back_moves() {
     };
     let paths = files(&kept);
     std::fs::remove_dir_all(&track).unwrap();
-    state.project.apply_outside_changes(&paths).unwrap();
+    state
+        .session
+        .background(|project| project.apply_outside_changes(&paths))
+        .unwrap();
     play(&mut state, 0.5, 0.5);
     copy_folder(&kept, &track).unwrap();
-    state.project.apply_outside_changes(&paths).unwrap();
+    state
+        .session
+        .background(|project| project.apply_outside_changes(&paths))
+        .unwrap();
     // Rune builds the view again once the tree that has the track comes.
     state.settle();
     play(&mut state, 1.0, 1.0);
@@ -540,7 +549,7 @@ const VIEW_CHECKS: &str = include_str!("checks.test.tsx");
 fn the_test_helpers_change_and_draw_as_the_window_does() {
     let scratch = new_project();
     let state = opened(&scratch.path().join("song"));
-    let extensions = state.project.root().join("extensions");
+    let extensions = state.project().root().join("extensions");
     std::fs::write(extensions.join("checks.test.tsx"), VIEW_CHECKS).unwrap();
     run_bun(&state, &["check", "-p", "."]);
     run_bun(&state, &["test", "checks.test.tsx"]);
@@ -635,7 +644,7 @@ fn a_control_loop_slower_than_its_interval_is_told_all_the_time_that_passed() {
     assert!(run_loops(&mut state, 0.5));
     state.settle();
     let id = InstanceId::new("song/t00/chain/slow").unwrap();
-    let held: Value = serde_json::from_str(&state.project.state_json(&id).unwrap()).unwrap();
+    let held: Value = serde_json::from_str(&state.project().state_json(&id).unwrap()).unwrap();
     let total = held["total"].as_f64().unwrap();
     assert!((total - 0.5).abs() < 1e-4, "{total}");
 }
@@ -653,10 +662,11 @@ fn a_view_that_failed_says_so_no_more_once_no_code_runs() {
     let mut state = opened(&folder);
     act(&mut state, json!({ "label": "Break", "action": "press" }));
     let failed = |state: &State| {
-        (state.project.problems().iter()).any(|problem| problem.message.contains("its view failed"))
+        (state.project().problems().iter())
+            .any(|problem| problem.message.contains("its view failed"))
     };
     assert!(failed(&state));
-    for entry in std::fs::read_dir(state.project.root().join("extensions")).unwrap() {
+    for entry in std::fs::read_dir(state.project().root().join("extensions")).unwrap() {
         let path = entry.unwrap().path();
         if path
             .extension()
@@ -669,7 +679,7 @@ fn a_view_that_failed_says_so_no_more_once_no_code_runs() {
     state.tools.as_mut().unwrap().code_changed();
     frame(&mut state, 0.1);
     state.settle();
-    assert!(!failed(&state), "{:?}", state.project.problems());
+    assert!(!failed(&state), "{:?}", state.project().problems());
 }
 
 #[test]
@@ -679,7 +689,7 @@ fn a_press_that_fails_tells_the_composer_in_plain_words() {
     let counter = InstanceId::new("song/t00/chain/counter").unwrap();
     state.pointed(&counter, "fail", "press", None);
     frame(&mut state, 0.1);
-    let notice = state.notice.clone().unwrap_or_default();
+    let notice = state.session.notice().unwrap_or_default().to_string();
     assert!(
         !notice.is_empty() && !notice.contains("it broke"),
         "{notice}"
@@ -696,7 +706,7 @@ fn a_peak_held_three_seconds_shows_in_decibels_then_drops() {
     std::fs::write(&song, code.replace("<Ruler />", loudest)).unwrap();
     let mut state = opened(&folder);
     play(&mut state, 0.0, 1.0);
-    state.project.engine().stop();
+    state.session.background(|project| project.engine().stop());
     let shown = |state: &State| shown_texts(state).concat();
     let held = shown(&state);
     assert!(held.parse::<f64>().is_ok_and(|db| db > -60.0), "{held}");
@@ -776,7 +786,7 @@ fn a_note_a_control_loop_held_on_a_child_or_its_own_voices_ends_with_its_bun() {
             frame(&mut state, f64::from(step) / 60.0);
         }
         assert!(level(&state) > -60.0, "own {own}: {}", level(&state));
-        let file = state.project.root().join("extensions/holder.tsx");
+        let file = state.project().root().join("extensions/holder.tsx");
         std::fs::write(file, holder(false, own)).unwrap();
         state.tools.as_mut().unwrap().code_changed();
         for step in 31..=90 {
@@ -817,14 +827,14 @@ fn the_first_step_of_a_new_control_loop_is_one_interval_long() {
     for step in 1..=300 {
         frame(&mut state, f64::from(step) / 60.0);
     }
-    let file = state.project.root().join("extensions/first.tsx");
+    let file = state.project().root().join("extensions/first.tsx");
     std::fs::write(file, first_step(true)).unwrap();
     state.tools.as_mut().unwrap().code_changed();
     for step in 301..=330 {
         frame(&mut state, f64::from(step) / 60.0);
     }
     let id = InstanceId::new("song/t00/chain/first").unwrap();
-    let held: Value = serde_json::from_str(&state.project.state_json(&id).unwrap()).unwrap();
+    let held: Value = serde_json::from_str(&state.project().state_json(&id).unwrap()).unwrap();
     let first = held["dt"].as_f64().unwrap();
     assert!(first > 0.0 && first < 0.1, "{first}");
 }
@@ -975,7 +985,10 @@ fn a_live_text_with_no_width_is_as_wide_as_the_widest_it_showed() {
     let code = std::fs::read_to_string(&song).unwrap();
     std::fs::write(&song, code.replace("<Ruler />", loudest)).unwrap();
     let mut window = laid_out(opened(&folder));
-    window.state.project.engine().play();
+    window
+        .state
+        .session
+        .background(|project| project.engine().play());
     for step in 1..=60 {
         drawn_frame(&mut window, f64::from(step) / 60.0);
     }
@@ -1103,7 +1116,8 @@ fn a_drag_across_cells_paints_each_it_enters_once_as_one_step() {
     window.frame(1.0 / 60.0);
     let alive = |state: &State| {
         let id = InstanceId::new("song/t00/chain/cells").unwrap();
-        let record: Value = serde_json::from_str(&state.project.state_json(&id).unwrap()).unwrap();
+        let record: Value =
+            serde_json::from_str(&state.project().state_json(&id).unwrap()).unwrap();
         record["alive"].clone()
     };
     assert_eq!(
@@ -1150,7 +1164,7 @@ fn a_key_sounds_while_a_press_or_a_clip_plays_it() {
     }
     assert_eq!(down(&state), "0");
     let mut sounded = false;
-    state.project.engine().play();
+    state.session.background(|project| project.engine().play());
     for step in 1..=120 {
         frame(&mut state, 1.0 + f64::from(step) / 60.0);
         sounded |= down(&state) != "0";
@@ -1215,7 +1229,7 @@ fn kit() -> (tempfile::TempDir, rune::Runtime<State>) {
 
 fn kit_record(state: &State) -> Value {
     let id = InstanceId::new("song/t00/chain/kit").unwrap();
-    serde_json::from_str(&state.project.state_json(&id).unwrap()).unwrap()
+    serde_json::from_str(&state.project().state_json(&id).unwrap()).unwrap()
 }
 
 /// A press and its release at the centre of the element `key`, then a frame that draws it.
@@ -1427,7 +1441,7 @@ fn a_device_without_a_view_has_knobs_that_take_keys_a_double_click_and_a_typed_v
     let gain = || {
         let id = InstanceId::new("song/t00/chain/amp").unwrap();
         move |state: &State| -> Value {
-            serde_json::from_str::<Value>(&state.project.state_json(&id).unwrap()).unwrap()["gain"]
+            serde_json::from_str::<Value>(&state.project().state_json(&id).unwrap()).unwrap()["gain"]
                 .clone()
         }
     };
@@ -1524,7 +1538,7 @@ fn a_card_follows_its_instance_becoming_another_tool_and_its_tool_gaining_a_fiel
     let (_scratch, folder) = with_tools(&[("amp", AMP)]);
     let mut state = opened(&folder);
     assert!(labels(&state).contains(&"Amp Gain".to_string()));
-    let root = state.project.root().to_path_buf();
+    let root = state.project().root().to_path_buf();
     let amp = root.join("extensions/amp.tsx");
     let code = std::fs::read_to_string(&amp).unwrap();
     std::fs::write(
@@ -1545,7 +1559,10 @@ fn a_card_follows_its_instance_becoming_another_tool_and_its_tool_gaining_a_fiel
     );
     let record = root.join("state/song/t00/chain/amp.json");
     std::fs::write(&record, r#"{"tool": "compressor", "state": {}}"#).unwrap();
-    state.project.apply_outside_changes(&[record]).unwrap();
+    state
+        .session
+        .background(|project| project.apply_outside_changes(&[record]))
+        .unwrap();
     frame(&mut state, 0.2);
     state.settle();
     let shown = labels(&state);
@@ -1565,7 +1582,7 @@ fn a_project_without_its_generic_card_says_so_in_plain_words() {
     let folder = scratch.path().join("song");
     std::fs::remove_file(folder.join("extensions/ui/blocks/generic-card.tsx")).unwrap();
     let state = opened(&folder);
-    let problems = state.project.problems();
+    let problems = state.project().problems();
     assert!(
         problems
             .iter()
@@ -1590,7 +1607,7 @@ fn a_generic_card_that_hangs_is_blamed_alone_and_the_tools_go_on() {
         frame(&mut state, f64::from(step) * 0.5);
         state.settle();
     }
-    let problems = state.project.problems();
+    let problems = state.project().problems();
     assert!(
         problems
             .iter()
@@ -1634,7 +1651,7 @@ fn with_card(body: &str) -> (tempfile::TempDir, State) {
 }
 
 fn card_problems(state: &State) -> Vec<String> {
-    let problems = state.project.problems();
+    let problems = state.project().problems();
     (problems.iter())
         .filter(|problem| problem.path.ends_with("generic-card.tsx"))
         .map(|problem| problem.message.clone())
@@ -1653,7 +1670,7 @@ fn a_generic_card_that_hangs_in_a_handler_is_stopped_alone_and_says_so() {
     assert!(
         !card_problems(&state).is_empty(),
         "{:?}",
-        state.project.problems()
+        state.project().problems()
     );
     control(&controls::collect(&state).controls, "Mute Track 2");
     let synth = InstanceId::new("song/t00/synth").unwrap();
@@ -1670,7 +1687,7 @@ fn a_generic_card_that_fails_to_draw_is_a_problem_of_its_file() {
     assert!(
         problems.iter().any(|problem| problem.contains("no room")),
         "{:?}",
-        state.project.problems()
+        state.project().problems()
     );
     let synth = InstanceId::new("song/t00/synth").unwrap();
     assert!(matches!(state.drawn(&synth), Some(Drawn::NoCard(why)) if why.contains("mistake")));
@@ -1727,7 +1744,7 @@ fn lane(scratch: &tempfile::TempDir, target: &str, value: f64) {
 }
 
 /// A new project whose first track's lane plays 8 kHz into its synth's cutoff, saved at 500.
-fn automated_cutoff() -> tempfile::TempDir {
+pub(super) fn automated_cutoff() -> tempfile::TempDir {
     let scratch = new_project();
     lane(&scratch, "synth.cutoff_hz", 8000.0);
     let synth = json!({ "tool": "instrument.synth", "state": { "cutoff_hz": 500 } });
@@ -1841,7 +1858,7 @@ fn a_project_of_only_built_in_devices_shows_their_cards() {
             .any(|label| label.starts_with("Compressor ")),
         "{:?} {:?}",
         labels(&state),
-        state.project.problems()
+        state.project().problems()
     );
 }
 
@@ -2036,7 +2053,10 @@ fn a_held_control_s_accessibility_value_follows_its_lane() {
     let lane = json!({ "tool": "lane", "state": { "points": points } });
     std::fs::write(track.join("lane-held.json"), lane.to_string()).unwrap();
     let mut window = laid_out(opened(&scratch.path().join("song")));
-    window.state.project.engine().play();
+    window
+        .state
+        .session
+        .background(|project| project.engine().play());
     for step in 1..=15 {
         drawn_frame(&mut window, f64::from(step) / 60.0);
     }
@@ -2099,3 +2119,4 @@ fn code_that_opens_the_window_of_a_child_with_none_has_a_problem() {
 
 mod behaviours;
 mod frame;
+mod transport;

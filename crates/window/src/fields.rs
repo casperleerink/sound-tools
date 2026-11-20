@@ -11,7 +11,7 @@ use crate::app::State;
 /// The card of `id`: `{ title, fields }`, as `Facts` of `sdk/view.ts` types it. None for
 /// an instance whose tool has no schema.
 pub(crate) fn card_of(state: &State, id: &InstanceId) -> Option<Value> {
-    let tool = state.project.tool_of(id)?;
+    let tool = state.project().tool_of(id)?;
     let schema = state.schema(tool)?;
     let title = (schema.get("x-title").and_then(Value::as_str)).map_or_else(
         || words(tool.rsplit('.').next().unwrap_or(tool)),

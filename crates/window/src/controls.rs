@@ -107,7 +107,8 @@ impl Found {
             }
             Node::Child { path } => {
                 let child = id.child(path).ok();
-                if let Some(child) = child.filter(|child| state.project.tool_of(child).is_some()) {
+                if let Some(child) = child.filter(|child| state.project().tool_of(child).is_some())
+                {
                     self.instance(state, &child);
                 }
                 return;

@@ -1,12 +1,14 @@
 //! What the window draws around the main view: the title row, the left panel, the list of
 //! files that are not live and the notice, and what of them `--tree` and `--act` see.
 
+use anyhow::Result;
 use rune::{Cx, El, Tx, col, el, row, text};
 use rune_kit::{TooltipAppearance, TooltipStyle};
+use serde_json::Value;
 
 use super::State;
 use super::panel::{self, Tab};
-use super::problems;
+use super::{notices, problems, transport};
 use crate::controls::{Control, Target};
 use crate::tree;
 
@@ -38,13 +40,6 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
             .color(theme.color("text-muted"))
             .padding(theme.space(4)),
     };
-    let notice = (state.notice.iter()).map(|notice| {
-        text(notice.clone())
-            .font(theme.text("label"))
-            .color(theme.color("peach"))
-            .absolute(theme.space(3), 0.0)
-            .pin(None, None, Some(theme.space(3)), Some(theme.space(2)))
-    });
     cx.focus_ring(2.0, 2.0, theme.color("focus"));
     cx.help_look(TooltipStyle::from_kit(&theme.kit, TooltipAppearance::Compact).help_look());
     // The panel comes before the main view, so Tab reaches it first, as it reads.
@@ -67,7 +62,7 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
         .fill(theme.color("background"))
         .child(title_row(state))
         .child(main)
-        .children(notice);
+        .children(notices::view(state));
     let overlays = tree::overlays(state)
         .into_iter()
         .chain(problems::list(state))
@@ -78,32 +73,9 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
 
 fn title_row(state: &State) -> El {
     let theme = &state.theme;
-    let label = if state.playing { "Stop" } else { "Play" };
-    let play = row()
-        .key("play")
-        .role("button")
-        .label(label)
-        .focusable(true)
-        .h(28.0)
-        .px(theme.space(3))
-        .items_center()
-        .radius(theme.radius("md").unwrap_or(6.0))
-        .fill(theme.color(if state.playing { "green" } else { "fill" }))
-        .on_press(|s: &mut State| {
-            s.play_or_stop();
-            s.handled();
-        })
-        .child(
-            text(if state.playing { "■" } else { "▶" })
-                .font(theme.text("label"))
-                .color(theme.color(if state.playing {
-                    "text-inverse"
-                } else {
-                    "text"
-                })),
-        );
     // Only the bare parts move the window: a drag that starts on a control is the control's.
     let drag = || el().h_full().window_drag();
+    // The transport stands in the middle of the room right of the project's name.
     row()
         .w_full()
         .h(TITLE_ROW)
@@ -120,21 +92,15 @@ fn title_row(state: &State) -> El {
         )
         .children(problems::sign(state))
         .child(drag().grow(1.0))
-        .child(
-            text("1.1")
-                .key("time")
-                .font(theme.text("number"))
-                .color(theme.color("text-secondary"))
-                .w(48.0)
-                .live_text(&state.lives.time),
-        )
-        .child(play)
+        .child(transport::view(state))
+        .child(drag().grow(1.0))
 }
 
 /// What runs an action of a control of the chrome.
 #[derive(Clone, Copy)]
 pub(crate) enum Act {
-    Play,
+    Transport(transport::Act),
+    Dismiss,
     Panel,
     Tab(Tab),
     Problems,
@@ -142,10 +108,12 @@ pub(crate) enum Act {
 }
 
 impl Act {
-    /// The action as an agent runs it: with no window, the keys stay where they are.
-    pub(crate) fn run(self, state: &mut State) {
+    /// The action as an agent runs it, with the value it gives: with no window, the keys stay
+    /// where they are.
+    pub(crate) fn run(self, state: &mut State, value: Option<Value>) -> Result<()> {
         match self {
-            Act::Play => state.play_or_stop(),
+            Act::Transport(act) => act.run(state, value)?,
+            Act::Dismiss => state.session.dismiss_notice(),
             Act::Panel => state.set_panel_open(!state.panel.open),
             Act::Tab(tab) => state.show_tab(tab),
             Act::Problems => state.toggle_problems(),
@@ -154,6 +122,7 @@ impl Act {
                 state.ask_to_fix(None::<&mut Tx>);
             }
         }
+        Ok(())
     }
 }
 
@@ -170,21 +139,11 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
         target: Target::Chrome(act),
     };
     let panel = &state.panel;
-    let mut controls = vec![
-        Control {
-            checked: Some(state.playing),
-            ..control(
-                "play",
-                if state.playing { "Stop" } else { "Play" },
-                "button",
-                Act::Play,
-            )
-        },
-        Control {
-            expanded: Some(panel.open),
-            ..control("left-panel-icon", panel::PANEL_LABEL, "button", Act::Panel)
-        },
-    ];
+    let mut controls = transport::controls(state);
+    controls.extend([Control {
+        expanded: Some(panel.open),
+        ..control("left-panel-icon", panel::PANEL_LABEL, "button", Act::Panel)
+    }]);
     if panel.open {
         controls.extend(panel.tabs().map(|tab| Control {
             checked: Some(panel.tab == tab),
@@ -206,5 +165,6 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
             Act::AskToFix,
         ));
     }
+    controls.extend(notices::controls(state));
     controls
 }

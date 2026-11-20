@@ -186,7 +186,7 @@ fn the_list_of_files_not_live_asks_the_agent_to_fix_them() {
     let sign = "problems";
     let controls = chrome_controls(&window.state);
     // Two records do not read, and the song names them: six problems in three files.
-    assert_eq!(window.state.project.problems().len(), 6);
+    assert_eq!(window.state.project().problems().len(), 6);
     assert_eq!(control(&controls, "3 files are not live").key, sign);
 
     click(&mut window, sign);

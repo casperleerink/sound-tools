@@ -159,7 +159,7 @@ impl State {
         if let Some(file) = &self.panel.file
             && let Err(error) = runtime::app::remember_left_panel(file, open)
         {
-            self.notice = Some(format!("{error:#}"));
+            self.session.report(format!("{error:#}"));
         }
     }
 

@@ -73,7 +73,10 @@ fn loads(state: &State) -> u64 {
 pub(super) fn drawn(scope: &Scope, i: &IconNode) -> El {
     let state = scope.state;
     let size = i.size.unwrap_or(16.0);
-    match state.icons.get(state.project.root(), loads(state), &i.name) {
+    match state
+        .icons
+        .get(state.project().root(), loads(state), &i.name)
+    {
         Some(icon) => rune::icon(icon, size)
             .color(state.theme.color(i.color.as_deref().unwrap_or("text")))
             .inert(),
@@ -91,7 +94,7 @@ pub(crate) fn report_missing(state: &mut State) {
             named(&node, memos, &mut names);
         }
     }
-    let (folder, loads) = (state.project.root().to_path_buf(), loads(state));
+    let (folder, loads) = (state.project().root().to_path_buf(), loads(state));
     let mut missing: Vec<Problem> = (names.into_iter())
         .filter(|name| state.icons.get(&folder, loads, name).is_none())
         .map(|name| Problem {
@@ -101,8 +104,8 @@ pub(crate) fn report_missing(state: &mut State) {
         .collect();
     missing.sort_by(|a, b| a.path.cmp(&b.path));
     missing.dedup_by(|a, b| a.path == b.path);
-    if reported(&state.project) != missing {
-        state.project.set_problems_in(FOLDER, missing);
+    if reported(state.project()) != missing {
+        (state.session).background(|project| project.set_problems_in(FOLDER, missing));
     }
 }
 

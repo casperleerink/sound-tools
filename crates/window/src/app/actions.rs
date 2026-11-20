@@ -11,7 +11,7 @@ use sound_typescript::next::Drawn;
 use crate::controls::Target;
 use crate::tree;
 
-use super::{DID_NOTHING, State};
+use super::{DID_NOTHING, Session, State};
 
 impl State {
     /// An action on an element of a view: its tool's code runs it.
@@ -40,7 +40,7 @@ impl State {
         value: Option<Value>,
     ) {
         if self.act_on_view(instance, key, action, value).is_err() {
-            self.notice = Some(DID_NOTHING.to_string());
+            self.session.report(DID_NOTHING);
         }
         self.handled();
     }
@@ -58,7 +58,7 @@ impl State {
         value: Option<Value>,
     ) -> Result<()> {
         match target {
-            Target::Chrome(act) => act.run(self),
+            Target::Chrome(act) => act.run(self, value)?,
             Target::Dialog(says) => self.answer_dialog(*says),
             Target::View(press) => {
                 let value = match action {
@@ -81,7 +81,7 @@ impl State {
         let shown = main.iter().chain(&self.shown);
         let instance = shown
             .into_iter()
-            .find(|id| self.project.tool_of(id) == Some(tool))
+            .find(|id| self.project().tool_of(id) == Some(tool))
             .cloned()
             .with_context(|| format!("no {tool} shows, so nothing runs {name}"))?;
         let ids: Vec<String> = (self.keys.keymap.groups())
@@ -102,7 +102,7 @@ impl State {
     pub(crate) fn paint(&mut self, instance: &InstanceId, key: &str) {
         self.painting = Some((instance.clone(), BTreeSet::from([key.to_string()])));
         if let Some(tools) = &mut self.tools {
-            tools.hold(&mut self.project, true);
+            (self.session).background(|project| tools.hold(project, true));
         }
         self.pointed(instance, key, "enter", None);
     }
@@ -139,7 +139,7 @@ impl State {
     pub(crate) fn painted(&mut self) {
         self.painting = None;
         if let Some(tools) = &mut self.tools {
-            tools.hold(&mut self.project, false);
+            (self.session).background(|project| tools.hold(project, false));
         }
         self.handled();
     }
@@ -172,7 +172,7 @@ impl State {
     /// overlay it was typed in.
     pub(crate) fn press(&mut self, press: &tree::Press, action: &str, value: Option<Value>) {
         if self.try_press(press, action, value).is_err() {
-            self.notice = Some(DID_NOTHING.to_string());
+            self.session.report(DID_NOTHING);
         }
         self.handled();
     }
@@ -199,20 +199,23 @@ impl State {
         self.act_on_view(&press.instance, &press.element, action, value)
     }
 
-    pub(super) fn play_or_stop(&mut self) {
-        match self.playing {
-            true => self.project.engine().stop(),
-            false => self.project.engine().play(),
-        }
-    }
-
     pub(crate) fn undo(&mut self) -> Result<()> {
-        self.project.undo()?;
-        Ok(())
+        self.went(Session::undo)
     }
 
     pub(crate) fn redo(&mut self) -> Result<()> {
-        self.project.redo()?;
-        Ok(())
+        self.went(Session::redo)
+    }
+
+    pub(crate) fn undo_keeping_version(&mut self) -> Result<()> {
+        self.went(Session::undo_keeping_version)
+    }
+
+    /// Goes elsewhere in the history: the session says why it waits.
+    fn went(&mut self, go: fn(&mut Session) -> bool) -> Result<()> {
+        match go(&mut self.session) {
+            true => Ok(()),
+            false => Err(anyhow!("{}", self.session.notice().unwrap_or_default())),
+        }
     }
 }

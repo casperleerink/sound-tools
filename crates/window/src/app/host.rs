@@ -1,75 +1,18 @@
-//! What the code of the tools asks of the window (see `Want`), and the window's part of the clock.
-//! The composer's choices no record holds live in [`Interface`] until the window owns a
-//! `runtime::session::Session`, whose calls of the same names take its place.
+//! What the code of the tools asks of the window (see `Want`).
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::{PoisonError, mpsc};
 
 use plugin_host::{PluginRecord, Plugins};
 use rune::{FileDialogOptions, FileDialogResult, Tx};
-use runtime::session::{Loop, TransportState};
+use runtime::session::Loop;
 use serde_json::Value;
-use sound_core::{InstanceId, Project, ProjectError, Ticks};
+use sound_core::{InstanceId, ProjectError};
 use sound_typescript::devices::{self, Offer, Takes};
-use sound_typescript::next::{Answer, Clock, Shown, Tools, Transport, Want};
+use sound_typescript::next::{Answer, Shown, Tools, Want};
 
 use super::State;
-
-/// The composer's choices for how the piece plays and what they work on: never saved, no undo
-/// step.
-pub(crate) struct Interface {
-    pub(crate) transport: TransportState,
-    selected: Option<InstanceId>,
-    span: Option<Range<Ticks>>,
-}
-
-impl Interface {
-    /// The loop off over bars 1 to 4, as a session opens.
-    pub(crate) fn new(project: &Project) -> Self {
-        let signatures = project.project_file().tempo_map.time_signatures();
-        let bar_five = signatures.bar(5).map_or(Ticks(0), |bar| bar.start);
-        Self {
-            transport: TransportState {
-                looped: Loop {
-                    range: Ticks(0)..bar_five,
-                    on: false,
-                },
-                click: false,
-                keys: false,
-                automation: false,
-            },
-            selected: None,
-            span: None,
-        }
-    }
-
-    pub(crate) fn set_loop(&mut self, project: &mut Project, looped: Loop) {
-        if self.transport.looped != looped {
-            project
-                .engine()
-                .set_loop(looped.on.then(|| looped.range.clone()));
-            self.transport.looped = looped;
-        }
-    }
-
-    pub(crate) fn select(&mut self, instance: Option<InstanceId>, span: Option<Range<Ticks>>) {
-        (self.selected, self.span) = (instance, span);
-    }
-
-    /// The selected instance, while it is in the project.
-    pub(crate) fn selected(&self, project: &Project) -> Option<&InstanceId> {
-        let selected = self.selected.as_ref()?;
-        project.tool_of(selected).map(|_| selected)
-    }
-
-    /// The selected stretch; none when it is empty or nothing is selected.
-    pub(crate) fn selected_span(&self, project: &Project) -> Option<Range<Ticks>> {
-        self.selected(project)?;
-        self.span.clone().filter(|span| span.start < span.end)
-    }
-}
 
 /// A question of code only the composer answers, in the window's own dialog: its yes button
 /// says `confirm`, the other Cancel.
@@ -95,7 +38,7 @@ impl State {
     /// What the window shows of `shown`, with what it knows besides the records: the one place
     /// facts, the catalog and the keys of actions are gathered.
     pub(super) fn gathered(&mut self, instances: BTreeSet<InstanceId>) -> Shown {
-        let children: Vec<InstanceId> = (self.project.instances())
+        let children: Vec<InstanceId> = (self.project().instances())
             .map(|(id, _)| id)
             .filter(|id| {
                 id.parent()
@@ -111,7 +54,7 @@ impl State {
         let tools = self.tools.as_ref();
         let cards = (instances.iter())
             .filter(|id| {
-                let tool = self.project.tool_of(id);
+                let tool = self.project().tool_of(id);
                 tool.is_some_and(|tool| !tools.is_some_and(|tools| tools.has_view(tool)))
             })
             .filter_map(|id| Some((id.clone(), facts.get(id)?.clone())))
@@ -133,7 +76,7 @@ impl State {
     /// title and fields, from the schema of its tool. Made again only when its tool or that
     /// tool's code changed.
     fn facts_of(&mut self, id: &InstanceId) -> Option<Value> {
-        let tool = self.project.tool_of(id)?.to_string();
+        let tool = self.project().tool_of(id)?.to_string();
         let loads = self.tools.as_ref().map_or(0, Tools::loads);
         let fresh = !matches!(self.facts.get(id), Some((made_for, made_at, _)) if *made_for == tool && *made_at == loads);
         if fresh {
@@ -156,33 +99,7 @@ impl State {
             self.plugin_offers = (generation, plugin_offers(&self.plugins));
         }
         offers.extend(self.plugin_offers.1.iter().cloned());
-        devices::in_project(offers, &self.project)
-    }
-
-    /// Where the piece plays and how, as code is told it.
-    pub(crate) fn clock(&self) -> Clock {
-        let tempo_map = &self.project.project_file().tempo_map;
-        let at = tempo_map.time_signatures().bar_beat_of(self.playhead);
-        let TransportState {
-            looped,
-            click,
-            keys,
-            automation,
-        } = &self.interface.transport;
-        Clock {
-            time: self.engine_time,
-            transport: Transport {
-                playing: self.playing,
-                tick: self.playhead.0,
-                bar: at.bar,
-                beat: at.beat,
-                bpm: tempo_map.change_at(self.playhead).bpm.bpm(),
-                repeat: (looped.on).then_some([looped.range.start.0, looped.range.end.0]),
-                click: *click,
-                keys: *keys,
-                automation: *automation,
-            },
-        }
+        devices::in_project(offers, self.session.project())
     }
 
     /// Does what code asked since the last call. Whether what the window shows changed.
@@ -193,22 +110,24 @@ impl State {
         let wants = tools.take_wants();
         let changed = !wants.is_empty();
         for want in wants {
-            let interface = &mut self.interface;
+            let session = &mut self.session;
             match want {
-                Want::Select { instance, span } => interface.select(instance, span),
+                Want::Select { instance, span } => {
+                    session.select(instance, span.map(|span| (span.start, span.end)));
+                }
                 Want::Repeat(range) => {
                     let looped = match range {
                         Some(range) => Loop { range, on: true },
                         None => Loop {
                             on: false,
-                            ..interface.transport.looped.clone()
+                            ..session.transport().looped.clone()
                         },
                     };
-                    interface.set_loop(&mut self.project, looped);
+                    session.set_loop(looped);
                 }
-                Want::Click(on) => interface.transport.click = on,
-                Want::ComputerKeys(on) => interface.transport.keys = on,
-                Want::WriteAutomation(on) => interface.transport.automation = on,
+                Want::Click(on) => session.set_click(on),
+                Want::ComputerKeys(on) => session.set_computer_keys(on),
+                Want::WriteAutomation(on) => session.set_writes_automation(on),
                 Want::Confirm {
                     question,
                     message,
@@ -222,7 +141,7 @@ impl State {
                 }),
                 Want::OpenFile { .. } | Want::ExportNotes { .. } => self.waiting.files.push(want),
                 Want::Render { question, name, .. } => {
-                    self.notice = Some(format!(
+                    self.session.report(format!(
                         "{name} was not rendered: this window does not render parts of the song yet."
                     ));
                     self.answer(question, &Answer::Asset(None));
@@ -265,7 +184,7 @@ impl State {
                     bytes,
                 } => {
                     // Next to the project folder and not in it, as an exported sound.
-                    let root = self.project.root();
+                    let root = self.project().root();
                     let options = FileDialogOptions {
                         title: format!("Export the notes of {name}"),
                         directory: root.parent().map(PathBuf::from),
@@ -281,7 +200,7 @@ impl State {
                             Err(error) => Err(format!("The file picker did not open: {error}")),
                         };
                         let written = written.unwrap_or_else(|error| {
-                            state.notice = Some(error);
+                            state.session.report(error);
                             false
                         });
                         state.answer(question, &Answer::Confirmed(written));
@@ -300,12 +219,13 @@ impl State {
             Ok(Some(path)) => path,
             Ok(None) => return self.answer(question, &Answer::Asset(None)),
             Err(error) => {
-                self.notice = Some(format!("The file picker did not open: {error}"));
+                self.session
+                    .report(format!("The file picker did not open: {error}"));
                 return self.answer(question, &Answer::Asset(None));
             }
         };
         let (send, imported) = mpsc::channel();
-        let assets = self.project.assets().clone();
+        let assets = self.project().assets().clone();
         let waker = self.waker.clone();
         let started = std::thread::Builder::new()
             .name("import".into())
@@ -328,7 +248,7 @@ impl State {
         match started {
             Ok(_) => self.waiting.imports.push((question, imported)),
             Err(error) => {
-                self.notice = Some(error.to_string());
+                self.session.report(error);
                 self.answer(question, &Answer::Asset(None));
             }
         }
@@ -359,7 +279,7 @@ impl State {
             let asset = match result {
                 Ok(asset) => Some(asset),
                 Err(error) => {
-                    self.notice = Some(error);
+                    self.session.report(error);
                     None
                 }
             };

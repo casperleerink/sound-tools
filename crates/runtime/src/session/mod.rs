@@ -198,45 +198,51 @@ impl Session {
         work(&mut self.project)
     }
 
-    pub fn undo(&mut self) {
-        self.go_elsewhere(Project::undo);
+    /// Whether it went: else the notice says why. So do redo, go to and merge.
+    pub fn undo(&mut self) -> bool {
+        self.go_elsewhere(Project::undo)
     }
 
     /// Undo that keeps what it takes back as a version.
-    pub fn undo_keeping_version(&mut self) {
-        self.go_elsewhere(Project::undo_keeping_version);
+    pub fn undo_keeping_version(&mut self) -> bool {
+        self.go_elsewhere(Project::undo_keeping_version)
     }
 
-    pub fn redo(&mut self) {
-        self.go_elsewhere(Project::redo);
+    pub fn redo(&mut self) -> bool {
+        self.go_elsewhere(Project::redo)
     }
 
-    pub fn go_to(&mut self, point: PointId) {
-        self.go_elsewhere(|project| project.go_to(point));
+    pub fn go_to(&mut self, point: PointId) -> bool {
+        self.go_elsewhere(|project| project.go_to(point))
     }
 
     /// Merges the version that begins at `start` into the current point.
-    pub fn merge(&mut self, start: PointId, keep_mine: bool) {
-        self.go_elsewhere(|project| project.merge(start, keep_mine));
+    pub fn merge(&mut self, start: PointId, keep_mine: bool) -> bool {
+        self.go_elsewhere(|project| project.merge(start, keep_mine))
     }
 
     /// Writes other files over the folder, unless a drag is open, whose next move would write
     /// over them, or a take records, which would land in a project that is gone.
-    fn go_elsewhere<R>(&mut self, operation: impl FnOnce(&mut Project) -> Result<R, ProjectError>) {
+    fn go_elsewhere<R>(
+        &mut self,
+        operation: impl FnOnce(&mut Project) -> Result<R, ProjectError>,
+    ) -> bool {
         let waits = match (self.gesture.is_some(), self.recording) {
             (true, _) => "Let go of the drag first.",
             (false, true) => "Stop recording first.",
-            (false, false) => {
-                self.edit(operation);
-                return;
-            }
+            (false, false) => return self.edit(operation).is_some(),
         };
         self.set_notice(Source::Edit, waits.to_string());
+        false
     }
 
     /// Whether a take records now, which undo waits for.
     pub fn set_recording(&mut self, recording: bool) {
         self.recording = recording;
+    }
+
+    pub fn recording(&self) -> bool {
+        self.recording
     }
 
     /// Every file change until [`Self::end_request`] is one point named `label`: an agent's

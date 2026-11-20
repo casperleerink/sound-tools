@@ -31,7 +31,7 @@ fn page(files: &[(&str, &str)], main: &str) -> (tempfile::TempDir, rune::Runtime
 
 fn record_of(state: &State, id: &str) -> Value {
     let id = InstanceId::new(id).unwrap();
-    serde_json::from_str(&state.project.state_json(&id).unwrap()).unwrap()
+    serde_json::from_str(&state.project().state_json(&id).unwrap()).unwrap()
 }
 
 /// What the actions of `id` wrote down.
@@ -43,7 +43,7 @@ fn did(state: &State, id: &str) -> String {
 }
 
 fn problems(state: &State) -> Vec<String> {
-    let problems = state.project.problems();
+    let problems = state.project().problems();
     problems
         .iter()
         .map(|problem| format!("{}: {}", problem.path, problem.message))
@@ -330,9 +330,9 @@ fn an_offer_of_the_catalog_joins_as_one_step_and_one_not_offered_is_a_problem() 
         json!({ "label": "Add EQ of Tone", "action": "press" }),
     );
     let fx = InstanceId::new("rig/fx").unwrap();
-    assert_eq!(window.state.project.tool_of(&fx), Some("eq"));
+    assert_eq!(window.state.project().tool_of(&fx), Some("eq"));
     act(&mut window.state, json!({ "action": "undo" }));
-    assert_eq!(window.state.project.tool_of(&fx), None);
+    assert_eq!(window.state.project().tool_of(&fx), None);
     act(
         &mut window.state,
         json!({ "label": "Add nothing", "action": "press" }),
@@ -473,7 +473,7 @@ fn a_file_code_asks_for_is_the_systems_dialog_and_lands_in_the_assets() {
     assert!(
         window
             .state
-            .project
+            .project()
             .root()
             .join("assets/audio")
             .join(&file)
@@ -529,7 +529,7 @@ fn code_edits_the_tempo_as_one_step_with_its_record_and_hears_the_song_as_it_is(
     );
     let bpm = |state: &State| {
         state
-            .project
+            .project()
             .project_file()
             .tempo_map
             .change_at(Ticks(0))
@@ -601,14 +601,32 @@ fn the_switches_of_the_clock_follow_code_and_code_hears_them_but_never_the_playh
         json!({ "label": "No repeat", "action": "press" }),
     );
     assert_eq!(state.report()["repeat"], Value::Null);
+    // The transport's switches are the clock's: code's show in `--tree`, the composer's reach code.
+    let checked = |state: &State, label: &str| {
+        let controls = state.report()["controls"].clone();
+        let found = (controls.as_array().unwrap().iter())
+            .find(|control| control["label"] == label)
+            .cloned();
+        found.unwrap_or_else(|| panic!("no {label} in {controls}"))["checked"].clone()
+    };
+    assert_eq!(checked(&state, "Computer keys"), json!(true));
+    assert_eq!(checked(&state, "Click"), json!(true));
+    act(&mut state, json!({ "label": "Click", "action": "toggle" }));
+    frame(&mut state, 0.15);
+    state.settle();
+    assert!(
+        labels(&state).contains(&"Click off".to_string()),
+        "{:?}",
+        labels(&state)
+    );
     assert_eq!(
-        state.interface.transport.looped.range,
+        state.session.transport().looped.range,
         Ticks(0)..Ticks(3840)
     );
     assert!(problems(&state).is_empty(), "{:?}", problems(&state));
     // Playing moves the playhead: the views that read the click do not run for it.
     let runs = state.tools.as_ref().unwrap().view_runs();
-    state.project.engine().play();
+    state.session.background(|project| project.engine().play());
     frame(&mut state, 0.2);
     state.settle();
     let started = state.tools.as_ref().unwrap().view_runs();

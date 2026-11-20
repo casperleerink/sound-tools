@@ -34,13 +34,16 @@ impl State {
         let mut buffer = vec![0.0_f32; 512 * channels];
         while frames > 0 {
             let size = frames.min(512);
-            for problem in runtime::render_block(
-                &mut self.project,
-                engine,
-                &self.plugins,
-                &mut buffer[..size * channels],
-            )? {
-                self.notice = Some(problem.to_string());
+            let rendered = self.session.background(|project| {
+                runtime::render_block(
+                    project,
+                    engine,
+                    &self.plugins,
+                    &mut buffer[..size * channels],
+                )
+            })?;
+            for problem in rendered {
+                self.session.report(problem);
             }
             frames -= size;
         }
@@ -58,7 +61,7 @@ impl State {
             self.bind_lanes()?;
         }
         if play.is_some() {
-            self.project.engine().play();
+            self.session.background(|project| project.engine().play());
         }
         Ok(())
     }
@@ -76,14 +79,7 @@ impl State {
             *played = before;
         }
         for _ in 0..2 {
-            self.project.poll()?;
-            let (problems, errors) = runtime::tick(&mut self.project, &self.plugins);
-            if let Some(problem) = problems.first() {
-                self.notice = Some(problem.to_string());
-            }
-            if let Some(error) = errors.first() {
-                self.notice = Some(error.to_string());
-            }
+            self.poll_session();
             self.settle();
         }
         Ok(())
@@ -93,14 +89,14 @@ impl State {
     pub(super) fn report(&self) -> Value {
         let controls = controls::collect(self).controls;
         let problems: Vec<String> = self
-            .project
+            .project()
             .problems()
             .iter()
             .map(|problem| format!("{}: {}", problem.path, problem.message))
             .collect();
-        let selected = self.interface.selected(&self.project);
-        let span = self.interface.selected_span(&self.project);
-        let transport = &self.interface.transport;
+        let selected = self.session.selected();
+        let span = self.session.selected_span();
+        let transport = self.session.transport();
         let asked = self.waiting.asked.front().map(|asked| {
             json!({ "message": asked.message, "detail": asked.detail, "confirm": asked.confirm })
         });
@@ -108,7 +104,7 @@ impl State {
             "controls": controls,
             "actions": self.shown_actions(),
             "dialog": asked,
-            "selected": selected.map(|id| json!({ "instance": id, "span": span.map(|span| [span.start.0, span.end.0]) })),
+            "selected": selected.map(|id| json!({ "instance": id, "span": span.map(|(from, to)| [from.0, to.0]) })),
             "repeat": transport.looped.on.then(|| [transport.looped.range.start.0, transport.looped.range.end.0]),
             "click": transport.click,
             "computer_keys": transport.keys,
@@ -119,14 +115,14 @@ impl State {
             "meters": self.lives.levels().into_iter().map(|(name, db)| (name, json!(db))).collect::<serde_json::Map<_, _>>(),
             "view_runs": self.tools.as_ref().map_or(0, Tools::view_runs),
             "problems": problems,
-            "notice": self.notice,
+            "notice": self.session.notice(),
             "plugin_windows": self.plugin_windows.titles(),
         })
     }
 
     fn time(&self) -> String {
         let at = self
-            .project
+            .project()
             .clock()
             .tempo_map()
             .time_signatures()

@@ -55,7 +55,25 @@ impl State {
 
     /// The numbers a lane moves of each instance of `shown`, for `held` of its view.
     pub(super) fn holds(&self, shown: &BTreeSet<InstanceId>) -> BTreeMap<InstanceId, Vec<String>> {
-        runtime::session::held(&self.project, shown, false)
+        self.session.held(shown)
+    }
+
+    /// Polls the session and gives the code what changed in the project. Whether what the
+    /// window shows changed.
+    pub(super) fn poll_session(&mut self) -> bool {
+        let polled = self.session.poll();
+        if let Some(Err(error)) = polled.rendered {
+            self.session.report(format!("{error:#}"));
+        }
+        let mut changed = polled.redraw || !polled.events.is_empty();
+        if let Some(tools) = &mut self.tools {
+            let drawn = (self.session).background(|project| tools.poll(project, &polled.events));
+            if drawn {
+                self.trees_came();
+            }
+            changed |= drawn;
+        }
+        changed
     }
 
     /// Waits for Bun; a run without a window fails when it does not finish.
@@ -63,7 +81,8 @@ impl State {
         let Some(tools) = &mut self.tools else {
             return false;
         };
-        let mut changed = tools.settle(&mut self.project).unwrap_or_else(|why| {
+        let settled = self.session.background(|project| tools.settle(project));
+        let mut changed = settled.unwrap_or_else(|why| {
             *FAILED.lock().unwrap_or_else(PoisonError::into_inner) = Some(why);
             true
         });
@@ -120,32 +139,14 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
             *FAILED.lock().unwrap_or_else(PoisonError::into_inner) = Some(format!("{error:#}"));
         }
         if let Err(error) = state.play_offline(seconds) {
-            state.notice = Some(error.to_string());
+            state.session.report(error);
         }
     }
-    if let Err(error) = state.project.poll() {
-        state.notice = Some(error.to_string());
-    }
-    let (problems, errors) = runtime::tick(&mut state.project, &state.plugins);
-    if let Some(problem) = problems.first() {
-        state.notice = Some(problem.to_string());
-    }
-    if let Some(error) = errors.first() {
-        state.notice = Some(error.to_string());
-    }
     state.plugin_windows.settle(&state.plugins, seconds);
-    let events = state.project.drain_events();
+    changed |= state.poll_session();
     // The list of the files that are not live goes with the last of them.
     if state.problems_open && state.files_not_live() == 0 {
         state.problems_open = false;
-    }
-    changed |= !events.is_empty();
-    if let Some(tools) = &mut state.tools {
-        let drawn = tools.poll(&mut state.project, &events);
-        if drawn {
-            state.trees_came();
-        }
-        changed |= drawn;
     }
     state.imported();
     changed |= state.serve_wants();
@@ -158,31 +159,34 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
     if changed || moved {
         changed |= state.discover(headless);
     }
-    if let Ok(status) = state.project.engine().poll() {
-        changed |= status.playing != state.playing;
-        (state.playing, state.playhead) = (status.playing, status.playhead_tick);
-        state.engine_time = status.frames as f64 / f64::from(state.project.clock().sample_rate());
-    }
+    let status = state.session.status();
+    (state.playing, state.playhead) = (status.playing, status.playhead_tick);
+    state.engine_time = status.frames as f64 / f64::from(state.project().clock().sample_rate());
     if run_loops(state, seconds) && headless {
         changed |= state.settle();
     }
     if let Some(tools) = &mut state.tools
         && !tools.take_failed_actions().is_empty()
     {
-        state.notice = Some(DID_NOTHING.to_string());
+        state.session.report(DID_NOTHING);
     }
     if let Some(tools) = &mut state.tools {
         if tools.loads() != state.theme_loads {
             state.theme_loads = tools.loads();
-            let (theme, problem) = Theme::of(state.project.root());
-            (state.theme, state.notice) = (theme, problem.or(state.notice.take()));
+            let (theme, problem) = Theme::of(state.project().root());
+            state.theme = theme;
+            if let Some(problem) = problem {
+                state.session.report(problem);
+            }
             changed = true;
         }
     }
     changed |= tree::follow_fields(state);
     let dt = (seconds - state.last).max(0.0);
     state.last = seconds;
-    let moving = state.lives.update(state, dt);
+    let mut moving = state.lives.update(state, dt);
+    let (falling, light) = (state.transport).update(state.session.project(), state.playhead, dt);
+    (moving, changed) = (moving || falling, changed || light);
     changed |= state.lives.take_wider();
     if headless {
         *REPORT.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.report());
@@ -190,7 +194,7 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
     }
     let tools = state.tools.as_ref();
     let mut next = if state.playing || moving { FRAME } else { IDLE };
-    if tools.is_some_and(|tools| tools.loops(&state.project)) {
+    if tools.is_some_and(|tools| tools.loops(state.session.project())) {
         // Overdue only while Bun runs the last step: it wakes the window when done.
         let left = FRAME_INTERVAL.saturating_sub(Duration::from_secs_f64(seconds - state.looped));
         next = next.min(if left.is_zero() { FRAME_INTERVAL } else { left });
@@ -209,11 +213,11 @@ pub(super) fn run_loops(state: &mut State, seconds: f64) -> bool {
     if state.tools.is_none() || dt < FRAME_INTERVAL.as_secs_f64() {
         return false;
     }
-    let clock = state.clock();
+    let clock = state.session.clock();
     let Some(tools) = &mut state.tools else {
         return false;
     };
-    let looped = tools.run_loops(&state.project, clock, dt as f32);
+    let looped = tools.run_loops(state.session.project(), clock, dt as f32);
     if looped != Looped::Busy {
         state.looped = seconds;
     }

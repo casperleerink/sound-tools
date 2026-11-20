@@ -16,7 +16,7 @@ export const icons = tool({
 "#;
 
 fn icon_problems(state: &State) -> Vec<String> {
-    let problems = state.project.problems().into_iter();
+    let problems = state.project().problems().into_iter();
     problems
         .filter(|problem| problem.path.starts_with("extensions/ui/icons/"))
         .map(|problem| format!("{}: {}", problem.path, problem.message))
@@ -33,7 +33,7 @@ fn an_icon_without_a_file_is_a_problem_until_the_file_comes_and_the_code_loads()
             "extensions/ui/icons/sparkle.svg: a view draws the icon \"sparkle\", which has no file here"
         ]
     );
-    let icons = state.project.root().join("extensions/ui/icons");
+    let icons = state.project().root().join("extensions/ui/icons");
     std::fs::copy(icons.join("plus.svg"), icons.join("sparkle.svg")).unwrap();
     state.tools.as_mut().unwrap().code_changed();
     frame(&mut state, 0.1);
@@ -41,7 +41,7 @@ fn an_icon_without_a_file_is_a_problem_until_the_file_comes_and_the_code_loads()
     frame(&mut state, 0.2);
     assert_eq!(icon_problems(&state), Vec::<String>::new());
     let names =
-        std::fs::read_to_string(state.project.root().join("extensions/sdk/icons.ts")).unwrap();
+        std::fs::read_to_string(state.project().root().join("extensions/sdk/icons.ts")).unwrap();
     assert!(names.contains("\"sparkle\""), "{names}");
 }
 
@@ -98,7 +98,7 @@ fn renamer() -> (tempfile::TempDir, rune::Runtime<State>) {
 
 fn renamed(state: &State) -> Value {
     let id = InstanceId::new("song/t00/chain/rename").unwrap();
-    serde_json::from_str(&state.project.state_json(&id).unwrap()).unwrap()
+    serde_json::from_str(&state.project().state_json(&id).unwrap()).unwrap()
 }
 
 fn name(state: &State) -> Value {
@@ -210,7 +210,8 @@ export const waves = tool({
 
 fn wave(state: &State) -> Value {
     let id = InstanceId::new("song/t00/chain/waves").unwrap();
-    serde_json::from_str::<Value>(&state.project.state_json(&id).unwrap()).unwrap()["wave"].clone()
+    serde_json::from_str::<Value>(&state.project().state_json(&id).unwrap()).unwrap()["wave"]
+        .clone()
 }
 
 #[test]
@@ -315,7 +316,7 @@ fn home_and_end_take_a_knob_to_its_least_and_most_and_the_ring_shows_only_for_ke
     let mut window = laid_out(opened(&folder));
     let gain = |state: &State| {
         let id = InstanceId::new("song/t00/chain/amp").unwrap();
-        serde_json::from_str::<Value>(&state.project.state_json(&id).unwrap()).unwrap()["gain"]
+        serde_json::from_str::<Value>(&state.project().state_json(&id).unwrap()).unwrap()["gain"]
             .clone()
     };
     let knob = "t00/chain/amp:gain";
