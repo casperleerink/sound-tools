@@ -52,16 +52,17 @@ def run(program, *arguments, check=True):
         # Told when it ends, before it is reaped: its counts go with it.
         exits = select.kqueue()
         exits.control([select.kevent(process.pid, select.KQ_FILTER_PROC, select.KQ_EV_ADD, select.KQ_NOTE_EXIT)], 0)
-    bun = [0.0]
-    sampler = threading.Thread(target=sample_bun, args=(process, bun), daemon=True)
+    bun, ended = [0.0], threading.Event()
+    sampler = threading.Thread(target=sample_bun, args=(process.pid, ended, bun), daemon=True)
     sampler.start()
     text = process.stdout.read()
     peak = None
     if exits:
         exits.control(None, 1)
         peak = footprint(process.pid)
-    _, status, usage = os.wait4(process.pid, 0)
+    ended.set()
     sampler.join()
+    _, status, usage = os.wait4(process.pid, 0)
     if check and status != 0:
         raise SystemExit(f"sound-tools {' '.join(map(str, arguments))} failed:\n{text}")
     peak = peak or usage.ru_maxrss * MAXRSS_BYTES / 2**20
@@ -78,10 +79,10 @@ def footprint(pid):
     return int.from_bytes(info.raw[LIFETIME_MAX_FOOTPRINT:LIFETIME_MAX_FOOTPRINT + 8], "little") / 2**20
 
 
-def sample_bun(process, peak):
-    """The most the children of `process` held, in MB, looked at 5 times a second until it ends."""
-    while process.poll() is None:
-        listed = subprocess.run(["pgrep", "-P", str(process.pid)], capture_output=True, text=True).stdout
+def sample_bun(pid, ended, peak):
+    """The most the children of `pid` held, in MB, looked at 5 times a second until `ended`."""
+    while not ended.is_set():
+        listed = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True).stdout
         for child in map(int, listed.split()):
             held = footprint(child) if MAC else None
             if held is None:
