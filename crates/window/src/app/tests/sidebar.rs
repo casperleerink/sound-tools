@@ -185,6 +185,40 @@ fn cmd_period_and_the_stop_button_stop_the_agent() {
     assert_eq!(sent(&commands), [Command::Interrupt]);
 }
 
+/// One undo step per message: every file the agent changes from the send to the end of its
+/// turn goes back with one undo, through the window's session.
+#[test]
+fn a_turn_that_changes_two_files_is_one_undo_step() {
+    let (_scratch, mut window) = window("agent-empty");
+    let _commands = connect(&mut window);
+    chord(&mut window, 'l');
+    typed(&mut window, "Add a bass and a lead");
+    key(&mut window, Key::Enter);
+    feed(&mut window, [AgentEvent::TurnStarted]);
+    let root = window.state.project().root().to_path_buf();
+    for (path, after) in [("state/bass.json", 0), ("state/lead.json", 20)] {
+        let path = root.join(path);
+        std::fs::write(&path, "{}").unwrap();
+        let at = Instant::now() + Duration::from_secs(after);
+        (window.state.session)
+            .background(|project| project.apply_outside_changes_at(&[path], at))
+            .unwrap();
+        redraw(&mut window);
+    }
+    feed(
+        &mut window,
+        [AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Completed,
+        }],
+    );
+    assert_eq!(
+        window.state.project().undo_label().as_deref(),
+        Some("Add a bass and a lead")
+    );
+    assert!(window.state.session.undo());
+    assert!(!root.join("state/bass.json").exists() && !root.join("state/lead.json").exists());
+}
+
 #[test]
 fn a_closed_panel_shows_the_agent_at_work_on_its_icon() {
     let (_scratch, mut window) = window("agent-empty");
