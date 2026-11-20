@@ -472,7 +472,8 @@ fn launch(
                 // play, also outside the window.
                 let bun = Arc::new(bun);
                 let (sounds, mut problems) = checked(loaded, &skipped, &bun);
-                if !card {
+                // A project with the kit of the templates draws its devices with it.
+                if !card && extensions.join(window::THEME).is_file() {
                     problems.push(folder_problem(format!(
                         "{} is missing, so a device whose tool has no view shows no card: write one that exports `card`, a `Card`",
                         window::GENERIC_CARD

@@ -847,7 +847,7 @@ export const exporter = tool({
 fn notes_code_exports_are_written_where_the_composer_says() {
     let clip = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/template/state/song/t00/bass.json"
+        "/../../templates/daw/state/song/t00/bass.json"
     ))
     .unwrap();
     let files = [

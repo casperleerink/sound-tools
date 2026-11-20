@@ -352,7 +352,8 @@ fn the_selection_follows_the_project_and_live_notes_go_to_the_nearest_notes() {
             .unwrap()
     };
     let (track, song) = (notes_of(TRACK), notes_of("song"));
-    assert_eq!(live_notes(&opened.session), [song]);
+    // The template's gallery is at the top too.
+    assert_eq!(live_notes(&opened.session), [notes_of("gallery"), song]);
 
     let mix = id("song/t00/mix");
     let span = Some((Ticks(BAR), Ticks(2 * BAR)));
