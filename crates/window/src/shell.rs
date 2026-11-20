@@ -24,7 +24,13 @@ pub(crate) use save_template::SaveTemplate;
 /// let go of this one.
 static STARTS_AGAIN: AtomicBool = AtomicBool::new(false);
 
-/// Whether the app quit to open another project.
+/// Quits, and `main` starts the app again once Rune let go of this window.
+pub(crate) fn start_again(tx: &mut Tx) {
+    STARTS_AGAIN.store(true, Ordering::Relaxed);
+    tx.quit();
+}
+
+/// Whether the app quit to start again.
 pub(crate) fn starts_again() -> bool {
     STARTS_AGAIN.load(Ordering::Relaxed)
 }
@@ -173,8 +179,7 @@ impl Projects {
         if let Some(support) = &self.support {
             runtime::app::remember_project_in(support, folder)?;
         }
-        STARTS_AGAIN.store(true, Ordering::Relaxed);
-        tx.quit();
+        start_again(tx);
         Ok(())
     }
 

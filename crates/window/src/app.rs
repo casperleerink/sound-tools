@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::{Context as _, Result};
 use plugin_host::{Plugins, ScanCache, ScanCommand};
+use runtime::app::ChosenDevices;
 use runtime::session::Session;
 use serde_json::Value;
 use sound_core::{Engine, InstanceId, OutputDevice, OutputStream, Project, Ticks};
@@ -28,6 +29,7 @@ mod frame;
 mod headless;
 mod host;
 mod keys;
+mod menu;
 mod notices;
 mod panel;
 #[cfg_attr(
@@ -37,6 +39,7 @@ mod panel;
 mod plays;
 mod problems;
 mod projects;
+mod settings;
 mod transport;
 
 use headless::copied;
@@ -145,6 +148,8 @@ pub(crate) struct State {
     )]
     pub(crate) plays: Option<plays::Playing>,
     pub(crate) shell: crate::shell::Projects,
+    pub(crate) menu: menu::Menu,
+    pub(crate) settings: settings::Settings,
 }
 
 impl State {
@@ -174,6 +179,7 @@ impl State {
             runtime::templates::write(&folder, &TEMPLATE)?;
         }
         let waker: Arc<Mutex<Option<rune::Waker>>> = Arc::default();
+        let mut playing = String::new();
         let (plugins, sound, control) = match headless {
             true => {
                 let plugins =
@@ -189,7 +195,11 @@ impl State {
                 )
             }
             false => {
-                let device = OutputDevice::default_output()?;
+                let chosen = runtime::app::support_folder()
+                    .map(|support| ChosenDevices::read(&runtime::app::audio_devices_file(&support)))
+                    .unwrap_or_default();
+                let device = OutputDevice::open(chosen.output.as_deref())?;
+                playing = device.name()?;
                 let config = sound_core::EngineConfig::new(device.sample_rate(), device.channels());
                 let (control, engine) = Engine::new(config);
                 (
@@ -274,6 +284,16 @@ impl State {
             problems_open: false,
             transport: transport::Transport::new(output),
             plays: None,
+            menu: menu::Menu::default(),
+            settings: match headless {
+                true => settings::Settings::new(settings::Settings::none(), None, playing),
+                false => settings::Settings::new(
+                    settings::Settings::machine(),
+                    (runtime::app::support_folder().ok())
+                        .map(|support| runtime::app::audio_devices_file(&support)),
+                    playing,
+                ),
+            },
             shell: crate::shell::Projects::new(
                 crate::shell::Projects::machine(),
                 headless,
