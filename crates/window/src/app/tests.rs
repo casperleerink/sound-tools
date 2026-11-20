@@ -878,6 +878,21 @@ fn a_live_field_the_record_leaves_out_shows_its_default() {
     assert_eq!(texts, ["0.75"]);
 }
 
+/// A number a view shows as it plays follows its record when an agent changes it.
+#[test]
+fn a_live_field_follows_its_record_when_it_changes() {
+    let (_scratch, mut state) = gauge();
+    let record = state.project().root().join("state/song/t00/chain/gauge.json");
+    let changed = json!({ "tool": "gauge", "state": { "level": 0.5 } });
+    std::fs::write(&record, changed.to_string()).unwrap();
+    (state.session).background(|project| project.apply_outside_changes(&[record]).unwrap());
+    frame(&mut state, 0.1);
+    let texts: Vec<String> = (state.lives.texts().into_iter())
+        .map(|(_, text)| text)
+        .collect();
+    assert_eq!(texts, ["0.50"]);
+}
+
 #[test]
 fn a_live_place_left_of_its_parent_stays_there() {
     let (_scratch, state) = gauge();
