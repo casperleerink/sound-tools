@@ -84,7 +84,7 @@ const Grid = ({ runs, end }: { runs: Runs; end: number }) => {
     for (let at = tick + beat; at < (starts[index + 1] ?? end); at += beat) beats.push(at, 4, at, 8);
   });
   return (
-    <box>
+    <box key="ruler-numbers">
       <shapes place={[0, FOOT, end, 8]} lines={[{ color: "border-strong", width: 1, points: bars }]} />
       <shapes place={[0, FOOT, end, 8]} lines={[{ color: "border", width: 1, points: beats }]} opacity={fits(10, BEAT)} />
       {starts.slice(0, -1).map((tick, index) => {
