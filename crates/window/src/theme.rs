@@ -9,7 +9,7 @@ use rune_kit::{Kit, PaletteFocus, PaletteSeed, Radius, StateColors, Type};
 use serde::Deserialize;
 
 /// The template's theme, for a project without one of its own.
-const TEMPLATE_THEME: &str = include_str!("../template/extensions/theme.json");
+const TEMPLATE_THEME: &str = include_str!("../../../templates/daw/extensions/theme.json");
 
 #[derive(Deserialize)]
 pub(crate) struct Theme {

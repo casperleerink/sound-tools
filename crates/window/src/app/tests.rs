@@ -46,9 +46,14 @@ fn build(state: &State) {
     }
 }
 
+/// The DAW template a new project starts from.
+pub(super) fn daw() -> &'static runtime::Template {
+    runtime::templates::named("DAW").unwrap()
+}
+
 pub(super) fn new_project() -> tempfile::TempDir {
     let scratch = tempfile::tempdir().unwrap();
-    runtime::templates::write(&scratch.path().join("song"), &TEMPLATE).unwrap();
+    runtime::templates::write(&scratch.path().join("song"), daw()).unwrap();
     scratch
 }
 

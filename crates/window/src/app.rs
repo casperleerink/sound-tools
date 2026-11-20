@@ -54,13 +54,6 @@ pub(crate) use keys::MAIN_MODIFIER;
 pub(crate) use keys::{on_focus, on_key, on_modifiers};
 pub(crate) use panel::{PanelTab, Tab};
 
-/// The template of a new project: the DAW with views of `sdk/view.ts`.
-pub(crate) const TEMPLATE: runtime::Template = runtime::Template {
-    name: "DAW (new window)",
-    description: "Tracks of clips, the devices of a track and a mixer.",
-    files: include!(concat!(env!("OUT_DIR"), "/template.rs")),
-};
-
 /// What the composer reads when a control did nothing: why is for the agent, in `--act`.
 const DID_NOTHING: &str = "That did nothing: this tool could not do it.";
 
@@ -207,7 +200,8 @@ impl State {
             _ => (folder, None),
         };
         if !folder.join(runtime::PROJECT_FILE).exists() {
-            runtime::templates::write(&folder, &TEMPLATE)?;
+            let daw = runtime::templates::named("DAW").context("this release has no DAW template")?;
+            runtime::templates::write(&folder, daw)?;
         }
         // The tools wait for Bun while the output device opens, as the GPUI app did.
         let tools = std::thread::spawn({

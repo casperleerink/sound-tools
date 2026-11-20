@@ -253,13 +253,11 @@ impl Projects {
 /// Where the saved templates are in the support folder, as `runtime::templates::saved_folder`.
 const SAVED: &str = "templates";
 
-/// The templates of the app a new project of this window starts from: the DAW of the window,
-/// and the others of the runtime but its DAW, whose views this window does not draw.
+/// The templates of the app, the DAW first.
 fn app_templates() -> impl Iterator<Item = Choice> {
-    let others = (templates::TEMPLATES.iter()).filter(|template| template.name != "DAW");
-    std::iter::once(&crate::app::TEMPLATE)
-        .chain(others)
-        .map(Choice::Bundled)
+    let mut templates: Vec<_> = templates::TEMPLATES.iter().collect();
+    templates.sort_by_key(|template| template.name != "DAW");
+    templates.into_iter().map(Choice::Bundled)
 }
 
 /// Runs `act` of the open dialog, with `value` for the name field.

@@ -68,7 +68,7 @@ fn tab_to(window: &mut rune::Runtime<Start>, key: &str) {
 
 /// A project of the DAW in `folder`.
 fn project(folder: &Path) -> PathBuf {
-    runtime::templates::write(folder, &crate::app::TEMPLATE).unwrap();
+    runtime::templates::write(folder, runtime::templates::named("DAW").unwrap()).unwrap();
     dunce::canonicalize(folder).unwrap()
 }
 
@@ -154,7 +154,7 @@ fn new_project_lists_the_templates_keys_pick_and_escape_makes_nothing() {
         .filter(|control| control.role == "radio")
         .map(|control| control.label)
         .collect();
-    assert_eq!(labels, ["DAW (new window)", "Bare"]);
+    assert_eq!(labels, ["DAW", "Bare"]);
     assert_eq!(focused(&window).as_deref(), Some("input"));
     tab_to(&mut window, "template-1");
     press(&mut window, Key::Text(" ".into()));

@@ -319,7 +319,7 @@ def check_keys_composer(folder: Path) -> dict:
 
 
 # The DAW template: a song of tracks written with the SDK, as "New DAW project" makes it.
-DAW = HERE.parents[1] / "crates" / "window" / "template"
+DAW = HERE.parents[1] / "templates" / "daw"
 SONG = "state/song"
 
 
