@@ -3,9 +3,9 @@
 //! folder or makes a new project. Closing it quits.
 
 use std::path::{Path, PathBuf};
-use std::sync::PoisonError;
+use std::sync::{Mutex, PoisonError};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rune::{Cx, El, Key, KeyEvent, Tx, col, row, text};
 use rune_kit::ButtonVariant;
 use serde_json::json;
@@ -13,6 +13,7 @@ use sound_core::Project;
 
 use super::dialog::button;
 use super::{Host, Projects};
+use crate::controls::{Step, read_steps};
 use crate::theme::Theme;
 
 const SIZE: (f32, f32) = (760.0, 560.0);
@@ -20,6 +21,10 @@ const MIN_SIZE: (f32, f32) = (560.0, 480.0);
 const WIDTH: f32 = 440.0;
 /// What the start state says when nothing went wrong.
 const WHY: &str = "Pick the folder of a project, or start a new one.";
+const CHOOSE_FOLDER: &str = "Choose folder…";
+const NEW_PROJECT: &str = "New project…";
+/// The step of `--act` that failed, for the run to end with.
+static FAILED: Mutex<Option<String>> = Mutex::new(None);
 
 pub(crate) struct Start {
     theme: Theme,
@@ -28,6 +33,18 @@ pub(crate) struct Start {
     message: Option<String>,
     /// The keys go to the first choice once it shows.
     focused: bool,
+    /// The steps of `--act`, which run once it shows, and the first that failed.
+    steps: Vec<Step>,
+    failed: Option<String>,
+}
+
+/// What a control of the start state does, by key or by `--act`.
+#[derive(Clone, Copy)]
+enum Act {
+    Recent(usize),
+    ChooseFolder,
+    NewProject,
+    Dialog(super::Act),
 }
 
 impl Host for Start {
@@ -56,6 +73,68 @@ impl Start {
             shell: Projects::new(support, headless, None),
             message,
             focused: false,
+            steps: Vec::new(),
+            failed: None,
+        }
+    }
+
+    /// Its controls for `--tree` and `--act`: the open dialog's, else its own.
+    fn controls(&self) -> Vec<(String, String, &'static str, Act)> {
+        if self.shell.dialog.is_some() {
+            let controls = self.shell.controls().into_iter();
+            return controls
+                .map(|control| {
+                    (
+                        control.key,
+                        control.label,
+                        control.role,
+                        Act::Dialog(control.act),
+                    )
+                })
+                .collect();
+        }
+        let recent = self.shell.recent().into_iter().enumerate();
+        let recent = recent.map(|(index, folder)| {
+            let name = folder.file_name().unwrap_or(folder.as_os_str());
+            let label = format!("Open {}", name.to_string_lossy());
+            (
+                format!("recent-{index}"),
+                label,
+                "button",
+                Act::Recent(index),
+            )
+        });
+        let own = [
+            ("choose-folder", CHOOSE_FOLDER, Act::ChooseFolder),
+            ("new-project", NEW_PROJECT, Act::NewProject),
+        ];
+        let own = own.map(|(key, label, act)| (key.to_string(), label.to_string(), "button", act));
+        recent.chain(own).collect()
+    }
+
+    fn press(&mut self, act: Act, value: Option<String>, tx: &mut Tx) {
+        match act {
+            Act::Recent(index) => {
+                if let Some(folder) = self.shell.recent().get(index).cloned() {
+                    self.open(&folder, tx);
+                }
+            }
+            Act::ChooseFolder => Projects::choose_project::<Start>(tx),
+            Act::NewProject => self.shell.new_project(),
+            Act::Dialog(act) => super::run(self, act, value, tx),
+        }
+    }
+
+    /// The steps of `--act`, in order, until one names no control.
+    fn act(&mut self, tx: &mut Tx) {
+        for step in std::mem::take(&mut self.steps) {
+            let found =
+                (self.controls().into_iter()).find(|(key, label, _, _)| step.acts_on(key, label));
+            let Some((_, _, _, act)) = found else {
+                self.failed = Some(format!("there is no {} here", step.named()));
+                return;
+            };
+            self.press(act, step.text(), tx);
         }
     }
 
@@ -81,7 +160,12 @@ pub(crate) fn run(arguments: Vec<String>, message: Option<String>) -> Result<()>
         .position(|argument| argument == "--tree")
         .and_then(|at| arguments.get(at + 1))
         .map(PathBuf::from);
-    let start = Start::new(Projects::machine(), headless, message);
+    let mut arguments = arguments;
+    let mut start = Start::new(Projects::machine(), headless, message);
+    if let Some(at) = arguments.iter().position(|argument| argument == "--act") {
+        let file = arguments.drain(at..at + 2).nth(1);
+        start.steps = read_steps(Path::new(&file.context("--act takes a file of steps")?))?;
+    }
     let spec = rune::AppSpec {
         min_size: Some(MIN_SIZE),
         poll: Some(poll),
@@ -105,6 +189,10 @@ pub(crate) fn run(arguments: Vec<String>, message: Option<String>) -> Result<()>
         .args(arguments)
         .init(move || start)
         .run();
+    // The steps of `--act` ran on a state the app has given back by now.
+    if let Some(failed) = FAILED.lock().unwrap_or_else(PoisonError::into_inner).take() {
+        anyhow::bail!(failed);
+    }
     if super::starts_again() {
         runtime::app::start_again()?;
     }
@@ -119,12 +207,17 @@ pub(super) fn poll(start: &mut Start, _: f64, tx: &mut Tx) -> bool {
         start.focused = true;
         tx.focus_when_shown(start.first(), false);
     }
+    start.act(tx);
+    if let Some(failed) = start.failed.take() {
+        *FAILED.lock().unwrap_or_else(PoisonError::into_inner) = Some(failed);
+        tx.quit();
+    }
     if start.shell.headless {
         let report = json!({
             "message": start.message,
             "opened": start.shell.opened,
-            "controls": start.shell.controls().iter().map(|control| json!({
-                "key": control.key, "label": control.label, "role": control.role,
+            "controls": start.controls().into_iter().map(|(key, label, role, _)| json!({
+                "key": key, "label": label, "role": role,
             })).collect::<Vec<_>>(),
         });
         *crate::app::REPORT
@@ -175,7 +268,7 @@ pub(crate) fn view(start: &Start, cx: &mut Cx<Start>) -> El {
         .child(button(
             theme,
             "choose-folder",
-            "Choose folder…",
+            CHOOSE_FOLDER,
             ButtonVariant::Contrast,
             true,
             |_: &mut Start, tx| Projects::choose_project::<Start>(tx),
@@ -183,7 +276,7 @@ pub(crate) fn view(start: &Start, cx: &mut Cx<Start>) -> El {
         .child(button(
             theme,
             "new-project",
-            "New project…",
+            NEW_PROJECT,
             ButtonVariant::Neutral,
             true,
             |start: &mut Start, _| start.shell.new_project(),

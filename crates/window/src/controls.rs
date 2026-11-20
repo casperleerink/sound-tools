@@ -245,7 +245,17 @@ impl Step {
         }
     }
 
-    fn named(&self) -> &str {
+    /// Whether it acts on the control with this key or label, for a window with no project.
+    pub(crate) fn acts_on(&self, key: &str, label: &str) -> bool {
+        self.key.as_deref() == Some(key) || self.label.as_deref() == Some(label)
+    }
+
+    /// The text it gives, such as a name for a field.
+    pub(crate) fn text(&self) -> Option<String> {
+        self.value.as_ref()?.as_str().map(str::to_string)
+    }
+
+    pub(crate) fn named(&self) -> &str {
         (self.label.as_ref())
             .or(self.key.as_ref())
             .map_or("", String::as_str)
