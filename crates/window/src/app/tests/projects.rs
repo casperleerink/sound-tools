@@ -82,6 +82,12 @@ fn a_new_project_goes_next_to_this_one_and_bare_opens_empty() {
         0,
         "Bare is an empty project"
     );
+    let chrome = chrome_controls(&sketched).into_iter();
+    let labels: Vec<String> = chrome.map(|control| control.label).collect();
+    assert!(
+        !labels.iter().any(|label| label == "Play"),
+        "nothing to play, no transport: {labels:?}"
+    );
 }
 
 #[test]
