@@ -1008,7 +1008,7 @@ impl Planes {
                 ));
             }
             let mut keys = Vec::new();
-            keyed(state, id, &root, &mut keys);
+            super::keyed(state, id, &root, &mut keys);
             keys.sort_unstable();
             let mut twice: Vec<&str> = (keys.windows(2))
                 .filter(|pair| pair[0] == pair[1])
@@ -1065,26 +1065,6 @@ fn outside(state: &State, id: &InstanceId, node: &Node, in_plane: bool, keys: &m
         || matches!(node, Node::Row(b) | Node::Col(b) | Node::Plain(b) if b.plane.is_some());
     for child in children {
         outside(state, id, child, in_plane, keys);
-    }
-}
-
-/// Every key of an element `node` draws, its own view's but no child's.
-fn keyed(state: &State, id: &InstanceId, node: &Node, keys: &mut Vec<String>) {
-    let (key, children) = match node {
-        Node::Row(b) | Node::Col(b) | Node::Plain(b) => (b.key.as_deref(), &b.children[..]),
-        Node::Shapes(d) => (d.key.as_deref(), &[][..]),
-        Node::Field(f) => (Some(f.key.as_str()), &[][..]),
-        Node::Memo { key } => {
-            if let Some((_, inner)) = state.memo_of(id, key) {
-                keyed(state, id, &inner, keys);
-            }
-            return;
-        }
-        _ => return,
-    };
-    keys.extend(key.map(str::to_string));
-    for child in children {
-        keyed(state, id, child, keys);
     }
 }
 
