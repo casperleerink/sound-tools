@@ -39,22 +39,15 @@ pub(crate) struct Control {
 pub(crate) enum Target {
     /// The tool's code, for an element of its view, as a press on it goes.
     View(Press),
-    Play,
+    Chrome(crate::app::Act),
 }
 
 /// Every control the window shows now, and the instances whose views it shows.
 pub(crate) fn collect(state: &State) -> Found {
-    let mut found = Found::default();
-    found.controls.push(Control {
-        key: "play".into(),
-        label: if state.playing { "Stop" } else { "Play" }.into(),
-        role: Some("button".into()),
-        value: None,
-        checked: Some(state.playing),
-        expanded: None,
-        actions: vec!["press".into()],
-        target: Target::Play,
-    });
+    let mut found = Found {
+        controls: crate::app::chrome_controls(state),
+        ..Found::default()
+    };
     if let Some(main) = state.main() {
         found.instance(state, main);
     }

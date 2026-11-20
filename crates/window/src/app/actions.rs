@@ -55,7 +55,7 @@ impl State {
         value: Option<Value>,
     ) -> Result<()> {
         match target {
-            Target::Play => self.play_or_stop(),
+            Target::Chrome(act) => act.run(self),
             Target::View(press) => {
                 let value = match action {
                     "drag" => value.or_else(|| Some(json!({ "dx": 0, "dy": 0 }))),
