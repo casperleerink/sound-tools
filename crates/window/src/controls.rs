@@ -2,15 +2,13 @@
 //! value or state, and the actions it takes), and `--act`, which runs those actions by label or
 //! key through the same road a pointer takes.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::path::Path;
-use std::rc::Rc;
 
 use anyhow::{Context as _, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sound_core::InstanceId;
-use sound_typescript::next::Drawn;
 
 use crate::app::State;
 use crate::tree::{Node, Opens, Press, Within};
@@ -71,13 +69,8 @@ impl Found {
     fn instance(&mut self, state: &State, id: &InstanceId) {
         self.shown.insert(id.clone());
         let prefix = state.prefix_of(id);
-        match state.drawn(id) {
-            Some(Drawn::View { root, memos }) => {
-                if let Ok(root) = Node::deserialize(&**root) {
-                    self.node(state, id, &prefix, memos, &root, None);
-                }
-            }
-            Some(Drawn::Failed(_) | Drawn::None | Drawn::NoCard(_)) | None => {}
+        if let Some(root) = state.root(id) {
+            self.node(state, id, &prefix, &root, None);
         }
     }
 
@@ -86,7 +79,6 @@ impl Found {
         state: &State,
         id: &InstanceId,
         prefix: &str,
-        memos: &HashMap<String, ((u64, u64), Rc<Value>)>,
         node: &Node,
         within: Option<&Within>,
     ) {
@@ -102,10 +94,8 @@ impl Found {
         let b = match node {
             Node::Row(b) | Node::Col(b) | Node::Plain(b) => b,
             Node::Memo { key } => {
-                let inner =
-                    (memos.get(key)).and_then(|(_, inner)| Node::deserialize(&**inner).ok());
-                if let Some(inner) = inner {
-                    self.node(state, id, prefix, memos, &inner, within);
+                if let Some((_, inner)) = state.memo_of(id, key) {
+                    self.node(state, id, prefix, &inner, within);
                 }
                 return;
             }
@@ -172,10 +162,10 @@ impl Found {
                             opener,
                             picks: o.picks(),
                         };
-                        self.node(state, id, prefix, memos, child, Some(&inside));
+                        self.node(state, id, prefix, child, Some(&inside));
                     }
                 }
-                _ => self.node(state, id, prefix, memos, child, within),
+                _ => self.node(state, id, prefix, child, within),
             }
         }
     }

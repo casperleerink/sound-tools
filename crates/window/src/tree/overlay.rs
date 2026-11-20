@@ -1,8 +1,6 @@
 //! Boxes that show over everything: menus a press opens and tips a hover shows.
 
 use rune::{Align, El, Side, el};
-use serde::Deserialize;
-use sound_typescript::next::Drawn;
 
 use crate::app::State;
 
@@ -34,10 +32,7 @@ impl BoxNode {
 pub(crate) fn overlays(state: &State) -> Vec<El> {
     let mut layer = Vec::new();
     for id in &state.shown {
-        let Some(Drawn::View { root, memos }) = state.drawn(id) else {
-            continue;
-        };
-        let Ok(node) = Node::deserialize(&**root) else {
+        let Some(node) = state.root(id) else {
             continue;
         };
         let prefix = state.prefix_of(id);
@@ -45,7 +40,6 @@ pub(crate) fn overlays(state: &State) -> Vec<El> {
             state,
             instance: id,
             prefix: &prefix,
-            memos,
             within: None,
             in_control: false,
         };
@@ -60,9 +54,7 @@ fn overlays_in(scope: &Scope, node: &Node, owner: Option<&str>, layer: &mut Vec<
     let b = match node {
         Node::Row(b) | Node::Col(b) | Node::Plain(b) => b,
         Node::Memo { key } => {
-            let inner =
-                (scope.memos.get(key)).and_then(|(_, inner)| Node::deserialize(&**inner).ok());
-            if let Some(inner) = inner {
+            if let Some(inner) = scope.memo(key) {
                 overlays_in(scope, &inner, owner, layer);
             }
             return;

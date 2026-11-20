@@ -25,6 +25,7 @@ impl State {
     /// what the trees bind now stays bound.
     fn discover(&mut self, settle: bool) -> bool {
         let changed = self.show_named(settle);
+        self.trees.keep(self);
         self.lives.keep(&tree::bound(self));
         changed
     }

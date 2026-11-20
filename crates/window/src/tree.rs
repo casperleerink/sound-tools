@@ -1,6 +1,7 @@
 //! A view's tree as `sdk/view.ts` sends it, drawn with Rune. What moves every frame is bound
 //! here to a live value of [`crate::lives`]; a press or the end of a drag goes to the tool's code.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -9,6 +10,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use sound_core::InstanceId;
 use sound_typescript::live::{Num, Readout};
+use sound_typescript::next::Drawn;
 
 use crate::app::State;
 use crate::lives::Shows;
@@ -163,6 +165,19 @@ enum Along {
     End,
 }
 
+impl Node {
+    /// Its key in the view, if it has one.
+    pub(crate) fn key(&self) -> Option<&str> {
+        match self {
+            Self::Row(b) | Self::Col(b) | Self::Plain(b) => b.key.as_deref(),
+            Self::Text(t) => t.key.as_deref(),
+            Self::Shapes(d) => d.key.as_deref(),
+            Self::Field(f) => Some(&f.key),
+            Self::Icon(_) | Self::Child { .. } | Self::Memo { .. } => None,
+        }
+    }
+}
+
 impl BoxNode {
     /// Its width and height in points, live or not.
     fn size(&self) -> (Option<&Num>, Option<&Num>) {
@@ -310,7 +325,6 @@ struct Scope<'a> {
     /// What its element keys start with in the window: nothing for the main view, else its
     /// path from there and `:`.
     prefix: &'a str,
-    memos: &'a Memos,
     /// The overlay a press opened that this is in, if any.
     within: Option<Within>,
     /// Inside a control: an opener here is no stop of Tab, as the control's Enter opens it.
@@ -324,11 +338,82 @@ pub(crate) struct Within {
     pub(crate) picks: bool,
 }
 
-pub(crate) type Memos = HashMap<String, ((u64, u64), Rc<Value>)>;
+/// The trees of the views as nodes, each read once from the JSON Bun sent: a build, the
+/// controls and the overlays read them many times.
+#[derive(Default)]
+pub(crate) struct Trees(RefCell<HashMap<(InstanceId, Option<String>), Read>>);
+
+/// A tree as Bun sent it, kept so its address is not another's, and what it reads as.
+type Read = (Rc<Value>, Result<Rc<Node>, String>);
+
+impl Trees {
+    /// The node of `value`: the tree of the view of `id`, or its memo `memo`.
+    fn read(
+        &self,
+        id: &InstanceId,
+        memo: Option<&str>,
+        value: &Rc<Value>,
+    ) -> Result<Rc<Node>, String> {
+        let mut trees = self.0.borrow_mut();
+        let entry = trees.entry((id.clone(), memo.map(str::to_string)));
+        let (sent, node) = entry.or_insert_with(|| (value.clone(), Err(String::new())));
+        if !Rc::ptr_eq(sent, value) || node.as_ref().is_err_and(String::is_empty) {
+            *sent = value.clone();
+            *node = Node::deserialize(&**value)
+                .map(Rc::new)
+                .map_err(|error| error.to_string());
+        }
+        node.clone()
+    }
+
+    /// Forgets the trees the views do not show any more.
+    pub(crate) fn keep(&self, state: &State) {
+        self.0.borrow_mut().retain(|(id, memo), (sent, _)| {
+            let Some(Drawn::View { root, memos }) = state.drawn(id) else {
+                return false;
+            };
+            match memo {
+                None => Rc::ptr_eq(root, sent),
+                Some(key) => memos
+                    .get(key)
+                    .is_some_and(|(_, inner)| Rc::ptr_eq(inner, sent)),
+            }
+        });
+    }
+}
+
+impl State {
+    /// The tree of the view of `id`, when it drew one that reads.
+    pub(crate) fn root(&self, id: &InstanceId) -> Option<Rc<Node>> {
+        self.read_root(id)?.ok()
+    }
+
+    /// The tree of the view of `id`, or why it is no view, when it drew one.
+    fn read_root(&self, id: &InstanceId) -> Option<Result<Rc<Node>, String>> {
+        match self.drawn(id)? {
+            Drawn::View { root, .. } => Some(self.trees.read(id, None, root)),
+            _ => None,
+        }
+    }
+
+    /// The memo `key` of the view of `id`, and its version.
+    pub(crate) fn memo_of(&self, id: &InstanceId, key: &str) -> Option<((u64, u64), Rc<Node>)> {
+        let Some(Drawn::View { memos, .. }) = self.drawn(id) else {
+            return None;
+        };
+        let (version, value) = memos.get(key)?;
+        Some((*version, self.trees.read(id, Some(key), value).ok()?))
+    }
+}
 
 impl Scope<'_> {
     fn key(&self, key: &str) -> String {
         format!("{}{key}", self.prefix)
+    }
+
+    /// What the memo `key` of this view holds.
+    fn memo(&self, key: &str) -> Option<Rc<Node>> {
+        self.state.memo_of(self.instance, key).map(|(_, node)| node)
     }
 
     /// Places `e` at `at`, sized `w` × `h`, at `opacity`, binding what is live.

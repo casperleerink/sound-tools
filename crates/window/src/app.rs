@@ -73,6 +73,7 @@ pub(crate) struct State {
     /// The JSON Schema of each built-in tool's record, by tool name.
     schemas: HashMap<&'static str, Value>,
     pub(crate) lives: Lives,
+    pub(crate) trees: tree::Trees,
     pub(crate) playing: bool,
     pub(crate) playhead: Ticks,
     /// Engine time in seconds, which a control loop's clock counts on.
@@ -189,6 +190,7 @@ impl State {
             theme,
             schemas,
             lives: Lives::new("1.1"),
+            trees: tree::Trees::default(),
             playing: false,
             playhead: Ticks(0),
             engine_time: 0.0,

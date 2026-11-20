@@ -3,8 +3,7 @@
 use std::collections::HashSet;
 
 use rune::{Align, El, Phase, ScrollSpec, col, el, memo, row, text};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::json;
 use sound_core::InstanceId;
 use sound_typescript::live::Num;
 use sound_typescript::next::Drawn;
@@ -16,17 +15,15 @@ use super::field::typed;
 use super::gesture::Gesture;
 use super::semantics::{delegates_enter, semantics};
 use super::shapes::drawing;
-use super::{BoxNode, Memos, Node, Scope, Scroll, Size, TextNode, live_place};
+use super::{BoxNode, Node, Scope, Scroll, Size, TextNode, live_place};
 
 /// The name of every binding the views shown now make, of their memos too, whether Rune builds
 /// them again or not: what [`crate::lives::Lives::keep`] keeps.
 pub(crate) fn bound(state: &State) -> HashSet<String> {
     let mut named = HashSet::new();
     for id in &state.shown {
-        if let Some(Drawn::View { root, memos }) = state.drawn(id)
-            && let Ok(node) = Node::deserialize(&**root)
-        {
-            walk(&node, memos, &mut |shows| {
+        if let Some(node) = state.root(id) {
+            walk(state, id, &node, &mut |shows| {
                 named.insert(Lives::name(id, &shows));
             });
         }
@@ -35,20 +32,17 @@ pub(crate) fn bound(state: &State) -> HashSet<String> {
 }
 
 /// The keys of the elements of `node` and its memos that a paint enters, see [`BoxNode::enter`].
-pub(crate) fn enterable(node: &Node, memos: &Memos, keys: &mut Vec<String>) {
+pub(crate) fn enterable(state: &State, id: &InstanceId, node: &Node, keys: &mut Vec<String>) {
     match node {
         Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
             keys.extend(b.key.clone().filter(|_| b.enter));
             for child in &b.children {
-                enterable(child, memos, keys);
+                enterable(state, id, child, keys);
             }
         }
         Node::Memo { key } => {
-            let inner = memos
-                .get(key)
-                .and_then(|(_, inner)| Node::deserialize(&**inner).ok());
-            if let Some(inner) = inner {
-                enterable(&inner, memos, keys);
+            if let Some((_, inner)) = state.memo_of(id, key) {
+                enterable(state, id, &inner, keys);
             }
         }
         Node::Text(_) | Node::Shapes(_) | Node::Field(_) | Node::Icon(_) | Node::Child { .. } => {}
@@ -56,11 +50,11 @@ pub(crate) fn enterable(node: &Node, memos: &Memos, keys: &mut Vec<String>) {
 }
 
 /// Gives `bind` everything `node` binds, and its memos.
-fn walk(node: &Node, memos: &Memos, bind: &mut impl FnMut(Shows)) {
+fn walk(state: &State, id: &InstanceId, node: &Node, bind: &mut impl FnMut(Shows)) {
     let live = match node {
         Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
             for child in &b.children {
-                walk(child, memos, bind);
+                walk(state, id, child, bind);
             }
             live_place(b.at.as_ref(), b.size(), b.opacity.as_ref())
         }
@@ -81,11 +75,8 @@ fn walk(node: &Node, memos: &Memos, bind: &mut impl FnMut(Shows)) {
             live_place(d.at.as_ref(), (None, None), d.opacity.as_ref())
         }
         Node::Memo { key } => {
-            let inner = memos
-                .get(key)
-                .and_then(|(_, inner)| Node::deserialize(&**inner).ok());
-            if let Some(inner) = inner {
-                walk(&inner, memos, bind);
+            if let Some((_, inner)) = state.memo_of(id, key) {
+                walk(state, id, &inner, bind);
             }
             return;
         }
@@ -106,18 +97,20 @@ pub(crate) fn code_failed(state: &State, id: &InstanceId) -> El {
 /// The view `drawn` of `instance`, with its keys after `prefix`.
 pub(crate) fn view(state: &State, instance: &InstanceId, prefix: &str, drawn: &Drawn) -> El {
     match drawn {
-        Drawn::View { root, memos } => {
+        Drawn::View { .. } => {
             let scope = Scope {
                 state,
                 instance,
                 prefix,
-                memos,
                 within: None,
                 in_control: false,
             };
-            match Node::deserialize(&**root) {
-                Ok(node) => build(&scope, &node),
-                Err(error) => failed(state, &format!("its view sent what is no view: {error}")),
+            match state.read_root(instance) {
+                Some(Ok(node)) => build(&scope, &node),
+                Some(Err(error)) => {
+                    failed(state, &format!("its view sent what is no view: {error}"))
+                }
+                None => el(),
             }
         }
         Drawn::Failed(error) => failed(state, error),
@@ -153,17 +146,11 @@ pub(super) fn build(scope: &Scope, node: &Node) -> El {
             },
             Err(error) => failed(scope.state, &error.to_string()),
         },
-        Node::Memo { key } => match scope.memos.get(key) {
+        Node::Memo { key } => match scope.state.memo_of(scope.instance, key) {
             Some((version, node)) => {
-                // Its controls are listed by the build that made it; Rune keeps that build.
-                let node = node.clone();
-                let built = || match Node::deserialize(&*node) {
-                    Ok(node) => build(scope, &node),
-                    Err(error) => failed(scope.state, &error.to_string()),
-                };
                 // Rune keys a memo's root with the memo's key: the root keeps its own.
-                let root = node.get("key").and_then(Value::as_str).unwrap_or(key);
-                memo(scope.key(root), *version, built)
+                let root = node.key().unwrap_or(key);
+                memo(scope.key(root), version, || build(scope, &node))
             }
             None => el(),
         },

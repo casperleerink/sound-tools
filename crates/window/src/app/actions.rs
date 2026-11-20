@@ -3,10 +3,8 @@
 use std::collections::BTreeSet;
 
 use anyhow::{Context as _, Result, anyhow};
-use serde::Deserialize as _;
 use serde_json::{Value, json};
 use sound_core::InstanceId;
-use sound_typescript::next::Drawn;
 
 use crate::controls::Target;
 use crate::tree;
@@ -83,14 +81,11 @@ impl State {
         let Some((instance, entered)) = &self.painting else {
             return;
         };
-        let Some(Drawn::View { root, memos }) = self.drawn(instance) else {
-            return;
-        };
-        let Ok(root) = tree::Node::deserialize(&**root) else {
+        let Some(root) = self.root(instance) else {
             return;
         };
         let mut keys = Vec::new();
-        tree::enterable(&root, memos, &mut keys);
+        tree::enterable(self, instance, &root, &mut keys);
         let (prefix, path) = (self.prefix_of(instance), format!("/{path}/"));
         let found = (keys.into_iter())
             .filter(|key| !entered.contains(key))
