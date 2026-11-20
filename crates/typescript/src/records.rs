@@ -10,7 +10,10 @@ use sound_core::{FieldDoc, RecordSchema, ToolSchema, type_doc};
 use crate::built_in_schemas;
 
 /// `sdk/records.ts` for the tools of `schemas` and the built-in children.
-pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
+pub(crate) fn sdk_records(
+    schemas: &[ToolSchema],
+    commands: &[(&'static str, Vec<&'static str>)],
+) -> String {
     let built_in = built_in_schemas();
     let mut tools: Vec<&ToolSchema> = schemas.iter().chain(&built_in).collect();
     tools.sort_by_key(|schema| schema.tool);
@@ -36,6 +39,13 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
         );
         let input = names(inputs.collect());
         let out = names(schema.outputs.iter().map(|output| quoted(output)).collect());
+        let bang = (commands.iter()).find(|(tool, _)| *tool == schema.tool);
+        let bang = names(
+            bang.into_iter()
+                .flat_map(|(_, bangs)| bangs)
+                .map(|bang| quoted(bang))
+                .collect(),
+        );
         let defaults = names(
             defaults_of(schema)
                 .keys()
@@ -43,7 +53,7 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
                 .collect(),
         );
         text.push_str(&format!(
-            "  {}: {{ state: {}; number: {number}; input: {input}; bang: never; out: {out}; defaults: {defaults} }};\n",
+            "  {}: {{ state: {}; number: {number}; input: {input}; bang: {bang}; out: {out}; defaults: {defaults} }};\n",
             property_name(schema.tool),
             type_name(schema.tool, "State"),
         ));

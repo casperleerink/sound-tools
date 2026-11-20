@@ -2196,6 +2196,67 @@ fn code_that_opens_the_window_of_a_child_with_none_has_a_problem() {
     assert_eq!(state.report()["plugin_windows"], json!([]));
 }
 
+/// A card opens the window of its own device with the path `""`: a plugin's card does. A tool of
+/// the project has none, which is the problem, not the path.
+#[test]
+fn code_that_opens_its_own_window_names_itself() {
+    const SELF: &str = r#"import { h, input, tool } from "./sdk";
+export const own = tool({ name: "own", title: "Own", when: "Never", doc: "Opens its own window.", state: {}, sound: () => input,
+  view: (_, { openWindow }) => <box key="open" label="Open own window" onPress={() => openWindow("")} /> });
+"#;
+    let (_scratch, folder) = with_tools(&[("own", SELF)]);
+    let mut state = opened(&folder);
+    act(
+        &mut state,
+        json!({ "label": "Open own window", "action": "press" }),
+    );
+    frame(&mut state, 0.1);
+    let problems = state.report()["problems"].to_string();
+    assert!(
+        problems.contains(r#"its openWindow(\"\") was refused: it has no window of its own"#),
+        "{problems}"
+    );
+}
+
+/// A run without a window plays a copy of the project, and writes the SDK into the project
+/// itself, as `--inspect` does, so its code type-checks after a `--tree`.
+#[test]
+fn a_run_without_a_window_writes_the_sdk_into_the_project() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    let sdk = folder.join("extensions/sdk/view.ts");
+    assert!(!sdk.exists());
+    let _state = opened(&folder);
+    assert!(sdk.is_file());
+}
+
+/// An element dragged and let go of on itself, outside a plane, is over nothing: not over the
+/// box around it, nor itself.
+#[test]
+fn an_element_let_go_of_on_itself_is_over_nothing() {
+    const DRAGS: &str = r#"import { h, input, text, tool } from "./sdk";
+export const drags = tool({ name: "drags", title: "Drags", when: "Never", doc: "A box to drag.", state: { over: text({ default: "" }) }, sound: () => input,
+  view: (self, { update }) => (
+    <row key="around" label="Around" w={200} h={60} fill="fill">
+      <box key="moved" label="Moved" w={100} h={40} fill="fill" drag={{ x: true }} onDragEnd={({ over }) => update("Over", (draft) => void (draft.state.over = over ?? "nothing"))} />
+    </row>
+  ) });
+"#;
+    let (_scratch, folder) = with_tools(&[("drags", DRAGS)]);
+    let mut window = laid_out(opened(&folder));
+    let (x, y) = window.find("t00/chain/drags:moved").unwrap();
+    window.pointer_down(x - 30.0, y);
+    window.frame(1.0 / 60.0);
+    let end = travel(&mut window, (x - 30.0, y), (6.0, 0.0), 10);
+    window.pointer_up(end.0, end.1);
+    redraw(&mut window);
+    redraw(&mut window);
+    let id = InstanceId::new("song/t00/chain/drags").unwrap();
+    let record: Value =
+        serde_json::from_str(&window.state.project().state_json(&id).unwrap()).unwrap();
+    assert_eq!(record["over"], "nothing");
+}
+
 mod audio;
 mod behaviours;
 mod budget;

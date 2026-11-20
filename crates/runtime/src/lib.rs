@@ -234,6 +234,7 @@ pub fn built_in() -> Result<sound_typescript::BuiltIn> {
         schemas: registry.tool_schemas(),
         feeds: sound_core::feeds::names(&registry),
         facts: sound_core::facts::describe(&registry),
+        commands: registry.commands(),
     })
 }
 
@@ -282,6 +283,16 @@ pub fn load_tools(folder: &Path, make_tools_folder: bool) -> Result<Option<First
         eprintln!("error: {error:#}");
     }
     Ok(Extensions::load(folder, &built_in()?, true))
+}
+
+/// Writes the SDK into `extensions/` of the project `folder`, when it has one, as an open does: for
+/// a run that opens a copy of the project.
+pub fn write_sdk(folder: &Path) -> Result<()> {
+    let extensions = folder.join(sound_typescript::FOLDER);
+    if folder.join(PROJECT_FILE).is_file() && extensions.is_dir() {
+        sound_typescript::write_sdk(&extensions, &built_in()?)?;
+    }
+    Ok(())
 }
 
 /// [`open_with_extensions`] with the tools of the project loaded already, see

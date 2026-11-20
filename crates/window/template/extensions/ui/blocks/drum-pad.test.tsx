@@ -56,7 +56,7 @@ test("drum pad: a sound picked from the list plays in place of the pad's file", 
 test("drum pad: a file dropped on a pad makes it play the file, as one step, and chooses it", () => {
   open();
   const ops = act("Drum pad pad 4", "drop", { audio: ["clap.wav"] });
-  expect(ops).toEqual([[["state", "pads", "39"], { sample: "clap.wav", pitch_semitones: 0, decay_ms: 10000 }]]);
+  expect(ops).toEqual([[["state", "pads", "39"], { sample: "clap.wav", pitch_semitones: 0 }]]);
   expect(find("Drum pad sound")).toMatchObject({ value: "clap.wav" });
   expect(act("Drum pad pad 5", "drop", { audio: [] })).toEqual([]);
 });

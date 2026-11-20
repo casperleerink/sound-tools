@@ -44,9 +44,10 @@ export const card: Card<"drum-pad", { expanded: boolean; pad: number }> = (self,
       for (const [name, value] of Object.entries(changed)) if (value === null) delete changed[name];
       all[key] = changed;
     });
-  /** A file brought into the project plays on pad `index` from its start to its end, at its own pitch. */
+  /** A file brought into the project plays on pad `index` at its own pitch, fading over half again its length, which the pad reads. */
   const load = (index: number, file: string) => {
-    setPad("Load sample", index, { sample: file, sound: null, pitch_semitones: 0, decay_ms: 10000 });
+    setPad("Load sample", index, { sample: file, sound: null, pitch_semitones: 0 });
+    ctx.send("fit_decay", FIRST_NOTE + index);
     choose(index);
   };
   const chooseFile = async (index: number) => {

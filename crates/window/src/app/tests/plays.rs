@@ -288,9 +288,6 @@ fn a_device_deleted_while_its_knob_drags_ends_the_drag() {
         .join("state/song/t00/synth.json");
     std::fs::remove_file(&record).unwrap();
     (window.state.session).background(|project| project.apply_outside_changes(&[record]).unwrap());
-    // As a frame of a window polls: a run without one waits for Bun first, which takes the
-    // events of the project before the session sees them.
-    window.state.poll_session();
     wait(&mut window, 1.0 / 60.0);
     assert_eq!(window.state.project().tool_of(&synth()), None);
     let_go(&mut window, at);

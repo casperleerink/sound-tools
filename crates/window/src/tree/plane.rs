@@ -1028,24 +1028,47 @@ impl Planes {
         }
     }
 
-    /// What a view places outside a plane, as problems of the project.
+    /// What a view places outside a plane, and the keys it uses twice, as problems of the
+    /// project.
     pub(crate) fn misplaced(&self, state: &State) -> Option<Vec<Problem>> {
         let mut problems = Vec::new();
         for id in &state.shown {
             let Some(root) = state.root(id) else {
                 continue;
             };
+            let mut said = Vec::new();
             let mut keys = Vec::new();
             outside(state, id, &root, false, &mut keys);
             if !keys.is_empty() {
+                said.push(format!(
+                    "{} {} placed outside a plane: put {} in a box with `plane`",
+                    keys.join(", "),
+                    if keys.len() == 1 { "is" } else { "are" },
+                    if keys.len() == 1 { "it" } else { "them" },
+                ));
+            }
+            let mut keys = Vec::new();
+            super::keyed(state, id, &root, &mut keys);
+            keys.sort_unstable();
+            let mut twice: Vec<&str> = (keys.windows(2))
+                .filter(|pair| pair[0] == pair[1])
+                .map(|pair| pair[0].as_str())
+                .collect();
+            twice.dedup();
+            if !twice.is_empty() {
+                let tools = state.tools.as_ref();
+                let file = tools.and_then(|tools| tools.problem_of(state.project(), id, ""));
+                let file = file.map_or_else(|| "its view".to_string(), |problem| problem.path);
+                let twice: Vec<String> = twice.iter().map(|key| format!("{key:?}")).collect();
+                said.push(format!(
+                    "{file} uses the key {} twice: give each element a key of its own",
+                    twice.join(", ")
+                ));
+            }
+            if !said.is_empty() {
                 problems.push(Problem {
                     path: format!("{MISPLACED}{id}"),
-                    message: format!(
-                        "{} {} placed outside a plane: put {} in a box with `plane`",
-                        keys.join(", "),
-                        if keys.len() == 1 { "is" } else { "are" },
-                        if keys.len() == 1 { "it" } else { "them" },
-                    ),
+                    message: said.join("; "),
                 });
             }
         }

@@ -216,6 +216,7 @@ fn facts_show_nested_fields_and_what_the_tool_adds_and_compare_cheaply() {
     };
     assert_eq!(named("depth")["kind"], "number");
     assert_eq!(named("depth")["unit"], "percent");
+    assert_eq!(named("depth")["lane"], true);
     assert_eq!(named("automated")["kind"], "switch");
     assert_eq!(named("steps")["kind"], "list");
     assert_eq!(named("steps")["item"]["fields"][0]["name"], "on");

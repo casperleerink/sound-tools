@@ -70,8 +70,20 @@ fn an_effect_dragged_by_its_header_onto_another_goes_before_it_as_one_step() {
     window.pointer_down(from.0, from.1);
     window.frame(1.0 / 60.0);
     let end = travel(&mut window, from, ((to.0 - from.0) / 10.0, 0.0), 10);
+    redraw(&mut window);
+    // Where it lands shows as the pointer's hover would.
+    let fill = |window: &rune::Runtime<State>, key: &str| {
+        let element = window
+            .elements()
+            .into_iter()
+            .find(|element| element.key.as_deref() == Some(key));
+        element.map(|element| element.fill)
+    };
+    let hover = window.state.theme.color("fill");
+    assert_eq!(fill(&window, "slot-comp-header"), Some(hover));
     window.pointer_up(end.0, end.1);
     redraw(&mut window);
+    assert_ne!(fill(&window, "slot-comp-header"), Some(hover));
     assert_eq!(order(&window.state), serde_json::json!(["dly", "comp"]));
     let label = window.state.project().undo_label();
     assert_eq!(label.as_deref(), Some("Move an effect"));
@@ -114,7 +126,6 @@ fn power_off_on_an_effect_that_mutes_lets_the_track_sound() {
 /// The rack keeps its focused Add effect in view as effects come before it, and a wheel that
 /// scrolls it away leaves it there.
 #[test]
-#[ignore = "missing: the focus leaves Add effect for the synth's card when an effect joins (tpl-fix, rack.tsx; or win-sweep)"]
 fn the_rack_keeps_the_focused_add_effect_in_view_as_effects_are_added_and_a_wheel_leaves_it() {
     let (_scratch, mut window) = with_effects(&[]);
     window.update(|_, tx| tx.focus("add-effect", false));
@@ -139,6 +150,8 @@ fn the_rack_keeps_the_focused_add_effect_in_view_as_effects_are_added_and_a_whee
             .background(|project| project.apply_outside_changes(&changed).unwrap());
         for _ in 0..20 {
             redraw(&mut window);
+            // As the app's poll does after each frame.
+            window.update(crate::app::frame::keep_focus_in_view);
         }
         assert_eq!(
             super::focused(&window).as_deref(),

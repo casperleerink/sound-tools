@@ -80,17 +80,12 @@ impl State {
         }
     }
 
-    /// The facts of `shown` and of their children and grandchildren, which views and actions
+    /// The facts of `shown` and of what they hold at any depth, which views and actions
     /// read: what no record holds, such as the fields of a record or the length of a file.
     pub(super) fn facts_now(&self, shown: &BTreeSet<InstanceId>) -> BTreeMap<InstanceId, Facts> {
         let project = self.project();
         let reached = |id: &InstanceId| {
-            let parent = id.parent();
-            let grandparent = parent.as_ref().and_then(InstanceId::parent);
-            [Some(id.clone()), parent, grandparent]
-                .iter()
-                .flatten()
-                .any(|above| shown.contains(above))
+            shown.contains(id) || id.ancestors().any(|above| shown.contains(&above))
         };
         (project.instances().map(|(id, _)| id))
             .filter(|id| reached(id))

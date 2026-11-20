@@ -136,7 +136,9 @@ impl Opened {
     pub(crate) fn settle(&mut self) {
         self.render(64);
         self.poll();
-        self.tools.settle(&mut self.project).unwrap();
+        self.tools
+            .settle(&mut self.project, &mut Vec::new())
+            .unwrap();
         self.poll();
     }
 

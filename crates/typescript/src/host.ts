@@ -67,8 +67,8 @@ type Request =
   | { type: "answer"; question: number; answer: unknown }
   /**
    * The instances whose views the new window shows: each sends its tree now, and again when its
-   * records change. `cards` names those a card draws; `facts` are those of each and of its
-   * children and grandchildren, `catalog` what `addOffer` puts, `keys` each action's key by `tool.action`.
+   * records change. `cards` names those a card draws; `facts` are those of each and of what
+   * it holds at any depth, `catalog` what `addOffer` puts, `keys` each action's key by `tool.action`.
    */
   | { type: "show"; instances: string[]; cards: string[]; held: Record<string, string[]>; facts?: Record<string, Facts>; catalog?: unknown[]; keys?: Record<string, string | null> }
   /** An action on an element of a shown view, by its key: `press` and `drag` with a pointer, `drop` with files, `commit` with text or `null`, or one it names with a number. */
@@ -725,17 +725,14 @@ const nameOf = (instance: string) => instance.slice(instance.lastIndexOf("/") + 
 let known: { facts: Record<string, Facts>; catalog: unknown[]; keys: Record<string, string | null> } = { facts: {}, catalog: [], keys: {} };
 /** The facts of `id` as the window told them, or its title alone. */
 const factsOf = (id: string, tool: string): Facts => known.facts[id] ?? kept(`${id} facts`, [tool], () => ({ title: sdk.host.tools.get(tool)?.title ?? nameOf(id), fields: [] }));
-/** `children` of `parent` with their facts, and their children's, as views and actions get them. */
-function seen(parent: string, children: readonly OwnedChild[], depth = 2): OwnedChild[] {
-  const list =
-    depth === 0
-      ? [...children]
-      : children.map((child) => {
-          const id = `${parent}/${child.name}`;
-          const [facts, below] = [factsOf(id, child.tool), seen(id, child.children, depth - 1)];
-          return kept(`${id} seen ${depth}`, [child, facts, below], () => ({ ...child, facts, children: below }) as OwnedChild);
-        });
-  return kept(`${parent} seen list ${depth}`, list, () => list);
+/** `children` of `parent` with their facts, and their children's at any depth, as views and actions get them. */
+function seen(parent: string, children: readonly OwnedChild[]): OwnedChild[] {
+  const list = children.map((child) => {
+    const id = `${parent}/${child.name}`;
+    const [facts, below] = [factsOf(id, child.tool), seen(id, child.children)];
+    return kept(`${id} seen`, [child, facts, below], () => ({ ...child, facts, children: below }) as OwnedChild);
+  });
+  return kept(`${parent} seen list`, list, () => list);
 }
 
 /**
@@ -1496,7 +1493,7 @@ function handle(request: Request): string | undefined {
       break;
     case "show": {
       const sent = { facts: request.facts ?? {}, catalog: request.catalog ?? [], keys: request.keys ?? {} };
-      // A view whose card, held numbers or facts changed, its own, a child's or a grandchild's, draws again; every one when the catalog or the keys did.
+      // A view whose card, held numbers or facts changed, its own or those of what it holds, draws again; every one when the catalog or the keys did.
       const all = JSON.stringify([sent.catalog, sent.keys]) !== JSON.stringify([known.catalog, known.keys]);
       const same = (before: unknown, after: unknown) => JSON.stringify(before) === JSON.stringify(after);
       const factsMoved = Object.keys({ ...known.facts, ...sent.facts }).filter((id) => !same(known.facts[id], sent.facts[id]));

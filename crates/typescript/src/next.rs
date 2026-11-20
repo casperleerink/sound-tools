@@ -816,8 +816,13 @@ impl Tools {
 
     /// Waits until Bun did all it was told and the window heard it, and polls, until nothing
     /// is left: what a run without a window does before each frame. Whether what it shows
-    /// changed, or that Bun did not finish.
-    pub fn settle(&mut self, project: &mut Project) -> Result<bool, String> {
+    /// changed, or that Bun did not finish. The events of the project it took go into
+    /// `heard`, for whoever else hears them.
+    pub fn settle(
+        &mut self,
+        project: &mut Project,
+        heard: &mut Vec<ProjectEvent>,
+    ) -> Result<bool, String> {
         let started = Instant::now();
         let mut changed = false;
         loop {
@@ -841,6 +846,7 @@ impl Tools {
             }
             let events = project.drain_events();
             let polled = self.poll(project, &events);
+            heard.extend(events);
             changed |= polled;
             let idle = self.bun.as_ref().is_none_or(|bun| bun.is_idle());
             if !polled && !starting && idle && self.starting.is_none() {
@@ -1084,6 +1090,22 @@ impl Tools {
                 at,
             } => {
                 let played = self.played_on(project, &instance, child.as_deref());
+                let command = played
+                    .as_ref()
+                    .ok()
+                    .filter(|id| self.info_of(project, id).is_none());
+                if let Some(id) = command.cloned() {
+                    match project.command(&id, &name, value) {
+                        Ok(true) => return false,
+                        Ok(false) => {}
+                        Err(error) => {
+                            let message = format!("its send({name:?}) was refused: {error}");
+                            self.tool_problem(project, &instance, &message);
+                            return false;
+                        }
+                    }
+                }
+                let value = value.map(|value| value as f32);
                 let performed = match &played {
                     Ok(id) if project.tool_of(id) == Some(RECORDER) => {
                         Some(record_on(project, id, &name, value, at))
@@ -1275,13 +1297,15 @@ impl Tools {
                 false
             }
             Event::OpenWindow { instance, path } => {
-                let opened =
-                    (self.child_of(project, &instance, &path)).and_then(|child| {
-                        match &self.open_window {
-                            Some(open) => open(project, &child),
-                            None => Err("this window opens no other".to_string()),
-                        }
-                    });
+                // A card opens its own device's window with the path "".
+                let child = match path.is_empty() {
+                    true => Ok(instance.clone()),
+                    false => self.child_of(project, &instance, &path),
+                };
+                let opened = child.and_then(|child| match &self.open_window {
+                    Some(open) => open(project, &child),
+                    None => Err("this window opens no other".to_string()),
+                });
                 if let Err(why) = opened {
                     let message = format!("its openWindow({path:?}) was refused: {why}");
                     self.tool_problem(project, &instance, &message);
@@ -1301,13 +1325,11 @@ impl Tools {
         name: &str,
         tick: Ticks,
     ) -> f64 {
-        let (id, name) = match child {
-            Some(path) => match instance.child(path) {
-                Ok(id) => (id, name),
-                Err(_) => return 0.0,
-            },
-            None => crate::path::number_at(project, instance, name),
+        let path = match child {
+            Some(child) => format!("{child}.{name}"),
+            None => name.to_string(),
         };
+        let (id, name) = crate::path::number_at(project, instance, &path);
         let at = crate::feeds::Moment::at(tick);
         if let Some((value, _)) = crate::feeds::lane_value(project, &id, name, at) {
             return f64::from(value);
@@ -1367,13 +1389,25 @@ impl Tools {
         child: Option<&str>,
         performed: Performed,
     ) -> Result<(), String> {
-        (self.performed_on).insert((instance.clone(), child.map(str::to_string)));
         let error = |error: sound_core::ProjectError| error.to_string();
         let Some(child) = child else {
-            let info = (self.info_of(project, instance)).ok_or("has no voices to play")?;
-            let update = SignalsUpdate::Note(performed);
-            return (project.send::<Signals>(instance, info.processor(), update)).map_err(error);
+            if let Some(info) = self.info_of(project, instance) {
+                self.performed_on.insert((instance.clone(), None));
+                let update = SignalsUpdate::Note(performed);
+                return (project.send::<Signals>(instance, info.processor(), update))
+                    .map_err(error);
+            }
+            // A built-in device, played by its card: through the feed of the nearest tool of
+            // the project that owns it, as that tool would play its child.
+            let owner = (instance.ancestors())
+                .find(|owner| self.info_of(project, owner).is_some())
+                .ok_or("has no voices to play")?;
+            let path = (instance.as_str().strip_prefix(&format!("{owner}/")))
+                .ok_or("has no voices to play")?
+                .to_string();
+            return self.play_note(project, &owner, Some(&path), performed);
         };
+        (self.performed_on).insert((instance.clone(), Some(child.to_string())));
         let played = self.played_on(project, instance, Some(child))?;
         if project.input_port(&played, NOTES_INPUT).is_none() {
             return Err("has no `notes` input".to_string());
@@ -1645,7 +1679,7 @@ impl Tools {
 
     /// A problem of the code of `instance`: its tool's, if it is one of the project's, or the
     /// card's that draws it.
-    fn problem_of(
+    pub fn problem_of(
         &self,
         project: &Project,
         instance: &InstanceId,

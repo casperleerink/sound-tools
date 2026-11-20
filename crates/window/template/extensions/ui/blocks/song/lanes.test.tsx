@@ -25,7 +25,9 @@ const Lanes = (self: Drawn<unknown>, ctx: Song) => {
 };
 
 const BAR = 3840;
-const synth = { name: "synth", tool: "instrument.synth", state: { cutoff_hz: 2000 }, children: [] };
+/** The synth's two numbers these tests move, as its facts say them. */
+const lane = (name: string, min: number, max: number, scale: "linear" | "log", value: number) => ({ kind: "number", name, label: name, min, max, scale, integer: false, lane: true, unit: null, default: value });
+const synth = { name: "synth", tool: "instrument.synth", state: { cutoff_hz: 2000 }, children: [], facts: { title: "Synth", fields: [lane("cutoff_hz", 20, 20000, "log", 2000), lane("resonance", 0, 1, "linear", 0.2)] } };
 const volume = laneOf("lane-vol", [{ tick: 0, value: -12 }, { tick: BAR, value: 0, curve: 0.5 }, { tick: 2 * BAR, value: -6 }, { tick: 3 * BAR, value: -6 }], "fader");
 const cutoff = laneOf("lane-cut", [{ tick: 0, value: 400 }, { tick: 2 * BAR, value: 6000 }], "log");
 const lfo = { name: "lfo-cut", tool: "lfo", state: { shape: "sine", rate: "1/2", low: 500, high: 4000, scale: "log" }, children: [] };
@@ -110,7 +112,7 @@ test("a pick from the menu of a new lane starts it where its number is, the numb
   // What a lane moves already is not offered.
   expect(find("add-lane-t00-synth.cutoff_hz")).toBeUndefined();
   act("add-lane-t00-synth.resonance", "press");
-  expect(pointsOf("t00", "lane-synth-resonance")).toEqual([{ tick: 0, value: 0.20000000298023224 }]);
+  expect(pointsOf("t00", "lane-synth-resonance")).toEqual([{ tick: 0, value: 0.2 }]);
 });
 
 test("a double click on a lane adds a point on the snap where it was, chosen", () => {

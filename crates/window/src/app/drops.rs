@@ -1,10 +1,13 @@
 //! Files dropped on an element of a view: brought into the project off the main thread, then
 //! given to its `onDrop` all at once, in the order they came.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
+use rune::{Color, Live};
 use runtime::input::{Brought, Importing};
 use serde_json::json;
 use sound_core::InstanceId;
@@ -13,9 +16,20 @@ use super::State;
 
 #[derive(Default)]
 pub(crate) struct Drops {
-    /// The key in the window of the element files are over now.
+    /// The key in the window of the element files or a dragged element are over now.
     over: Option<String>,
+    /// The look of each element with a `hover` look, by its key in the window: live, so a memo
+    /// Rune does not build again shows it too.
+    looks: RefCell<HashMap<String, Look>>,
     waiting: Vec<Dropping>,
+}
+
+/// The fill of an element: at rest, and while something is over it.
+#[derive(Clone)]
+struct Look {
+    live: Live<Color>,
+    rest: Color,
+    over: Color,
 }
 
 struct Dropping {
@@ -32,10 +46,39 @@ impl Drops {
 
     pub(crate) fn hover(&mut self, key: &str, on: bool) {
         if on {
-            self.over = Some(key.to_string());
+            self.set_over(Some(key.to_string()));
         } else if self.over(key) {
-            self.over = None;
+            self.set_over(None);
         }
+    }
+
+    /// What files or a dragged element are over now, by its key in the window: its `hover`
+    /// look shows, as the pointer's does.
+    pub(crate) fn set_over(&mut self, over: Option<String>) {
+        if over == self.over {
+            return;
+        }
+        let looks = self.looks.borrow();
+        if let Some(look) = self.over.as_ref().and_then(|key| looks.get(key)) {
+            look.live.set(look.rest);
+        }
+        if let Some(look) = over.as_ref().and_then(|key| looks.get(key)) {
+            look.live.set(look.over);
+        }
+        drop(looks);
+        self.over = over;
+    }
+
+    /// The fill of the element `key`: `rest`, or `over` while something is over it.
+    pub(crate) fn look(&self, key: &str, rest: Color, over: Color) -> Live<Color> {
+        let live = Live::new(if self.over(key) { over } else { rest });
+        let look = Look {
+            live: live.clone(),
+            rest,
+            over,
+        };
+        self.looks.borrow_mut().insert(key.to_string(), look);
+        live
     }
 }
 

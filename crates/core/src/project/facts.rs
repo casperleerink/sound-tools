@@ -43,6 +43,8 @@ pub enum FieldKind {
         scale: FieldScale,
         /// It holds whole numbers.
         integer: bool,
+        /// An automation lane can move it.
+        lane: bool,
         unit: Option<String>,
         default: f64,
     },
@@ -187,13 +189,21 @@ pub fn of(
     let registry = &project.registry;
     let shown = registry.shown(record.tool);
     let card = match schema {
-        Some(schema) => Arc::new(card(record.tool, schema)),
+        // A lane moves every number of a tool of the project but a whole one.
+        Some(schema) => Arc::new(with_lanes(card(record.tool, schema), &|_, integer| {
+            !integer
+        })),
         None => {
             let registered = registry.definition(record.tool)?.schema.as_ref();
             let make = || {
                 Arc::new(registered.map_or_else(
                     || card(record.tool, &Value::Null),
-                    |registered| card(record.tool, &registered.schema),
+                    |registered| {
+                        let lanes = |path: &str, _| {
+                            (registered.numbers.iter()).any(|(number, _)| fits(path, &number.field))
+                        };
+                        with_lanes(card(record.tool, &registered.schema), &lanes)
+                    },
                 ))
             };
             match shown {
@@ -234,6 +244,48 @@ pub fn card(tool: &str, schema: &Value) -> Card {
     Card {
         title,
         fields: fields(&reader, reader.resolved(schema), 0),
+    }
+}
+
+/// `card` with `lane` set on each number that `moves`, by its path with `*` for an item of a
+/// list or a map, and whether it is whole.
+fn with_lanes(mut card: Card, moves: &dyn Fn(&str, bool) -> bool) -> Card {
+    mark_lanes(&mut card.fields, "", moves);
+    card
+}
+
+fn mark_lanes(fields: &mut [FieldInfo], prefix: &str, moves: &dyn Fn(&str, bool) -> bool) {
+    for field in fields {
+        let path = match field.name.is_empty() {
+            true => format!("{prefix}*"),
+            false => format!("{prefix}{}", field.name),
+        };
+        match &mut field.kind {
+            FieldKind::Number { integer, lane, .. } => *lane = moves(&path, *integer),
+            FieldKind::Group { fields } => mark_lanes(fields, &format!("{path}."), moves),
+            FieldKind::List { item, .. } | FieldKind::Map { item } => {
+                mark_lanes(
+                    std::slice::from_mut(item.as_mut()),
+                    &format!("{path}."),
+                    moves,
+                );
+            }
+            FieldKind::Switch { .. } | FieldKind::Choice { .. } => {}
+        }
+    }
+}
+
+/// Whether `pattern`, a path with `*` for any one name, names `path`, such as `bands.*.gain_db`
+/// and `bands.2.gain_db` or `bands[2].gain_db`.
+fn fits(pattern: &str, path: &str) -> bool {
+    let path = path.replace('[', ".").replace(']', "");
+    let (mut patterns, mut names) = (pattern.split('.'), path.split('.'));
+    loop {
+        match (patterns.next(), names.next()) {
+            (None, None) => return true,
+            (Some(want), Some(name)) if want == "*" || want == name => {}
+            _ => return false,
+        }
     }
 }
 
@@ -305,6 +357,8 @@ fn field(
                 max,
                 scale,
                 integer: kind == "integer",
+                // Set by `with_lanes`, which knows the tool.
+                lane: false,
                 unit,
                 default: default.as_ref().and_then(Value::as_f64).unwrap_or(min),
             }

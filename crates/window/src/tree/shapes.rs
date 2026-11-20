@@ -442,19 +442,35 @@ impl Raster {
             y(values[index] + (next - values[index]) * part)
         };
         let half = width / 2.0;
+        // Where the line crosses each column: from its left edge to its right.
+        let mut spans = Vec::with_capacity(self.w);
         let mut left = y(first);
         for column in 0..self.w {
             let right = at(column as f32 + 1.0);
-            if let Some(fill) = fill {
-                self.column(column, (left + right) / 2.0, self.h as f32, fill);
-            }
-            self.column(
-                column,
-                left.min(right) - half,
-                left.max(right) + half,
-                colour,
-            );
+            spans.push((left.min(right), left.max(right), (left + right) / 2.0));
             left = right;
+        }
+        // As a round brush draws it: a column takes the line of each column within half its
+        // width, less the further away, so a steep line is as thick as a flat one.
+        let reach = half.ceil() as usize;
+        for column in 0..self.w {
+            if let Some(fill) = fill {
+                self.column(column, spans[column].2, self.h as f32, fill);
+            }
+            let near = column.saturating_sub(reach)..(column + reach + 1).min(self.w);
+            let (top, bottom) = (spans[near.clone()].iter().zip(near))
+                .map(|(&(top, bottom, _), other)| {
+                    let apart = other.abs_diff(column) as f32;
+                    let thick = (half * half - apart * apart).max(0.0).sqrt();
+                    (top - thick, bottom + thick)
+                })
+                .fold(
+                    (f32::MAX, f32::MIN),
+                    |(top, bottom), (each_top, each_bottom)| {
+                        (top.min(each_top), bottom.max(each_bottom))
+                    },
+                );
+            self.column(column, top, bottom, colour);
         }
     }
 
@@ -555,5 +571,26 @@ mod tests {
         );
         assert_eq!(alpha(&rgba, w, [15, 15]), 0, "right of the rect");
         assert_eq!(alpha(&rgba, w, [5, 5]), 0, "above the rect, under the line");
+    }
+
+    /// The synth's attack: a line that rises a long way in a few columns is as thick across as
+    /// a flat one is from top to bottom.
+    #[test]
+    fn a_steep_list_line_is_as_thick_as_a_flat_one() {
+        let lit = |rgba: &[u8], pixels: &mut dyn Iterator<Item = usize>| {
+            pixels.filter(|index| rgba[index * 4 + 3] > 128).count()
+        };
+        let (w, h) = (40, 200);
+        let mut flat = Raster::new(w, h);
+        flat.line(&[100.0, 100.0], |value| value, 4.0, [255.0; 4], None);
+        let down = lit(&flat.rgba, &mut (0..h).map(|row| row * w + 20));
+        let mut steep = Raster::new(w, h);
+        // From the bottom to the top in 4 columns, then flat.
+        let values: Vec<f32> = (0..=40)
+            .map(|x| (200.0 - 50.0 * x as f32).max(0.0))
+            .collect();
+        steep.line(&values, |value| value, 4.0, [255.0; 4], None);
+        let across = lit(&steep.rgba, &mut (0..w).map(|column| 100 * w + column));
+        assert!(across + 1 >= down, "{across} across, {down} down");
     }
 }

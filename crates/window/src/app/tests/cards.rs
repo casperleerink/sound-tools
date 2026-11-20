@@ -101,3 +101,25 @@ fn an_eq_handle_plays_its_bands_frequency_and_gain_while_it_drags() {
     let label = window.state.project().undo_label();
     assert_eq!(label.as_deref(), Some("Change frequency and gain"));
 }
+
+/// While the synth's attack handle drags, the decay and release handles after it move along
+/// with the hand, not only once it lets go.
+#[test]
+fn the_synths_later_handles_follow_a_dragged_attack_before_the_release() {
+    let scratch = new_project();
+    let mut window = laid_out(opened(&scratch.path().join("song")));
+    wait(&mut window, 1.0 / 60.0);
+    let x = |window: &rune::Runtime<State>, key: &str| {
+        (window.presented(&format!("t00/synth:{key}")))
+            .unwrap_or_else(|| panic!("no {key}"))
+            .0[0]
+    };
+    let (decay, release) = (x(&window, "decay"), x(&window, "release"));
+    let at = grab_and_move(&mut window, "t00/synth:attack", (40.0, 0.0), 8);
+    for _ in 0..3 {
+        window.frame(1.0 / 60.0);
+    }
+    let moved = (x(&window, "decay") - decay, x(&window, "release") - release);
+    assert!(moved.0 > 20.0 && moved.1 > 20.0, "{moved:?}");
+    let_go(&mut window, at);
+}

@@ -124,7 +124,11 @@ export const card: Card<"sampler", { expanded: boolean }> = (self, ctx) => {
       {button}
     </col>
   );
-  const shownInside = words ? says(words) : plays ? drawing : (
+  // Only the composer starts a download; a failed one says why and offers it again.
+  const asks = instrument?.state === "missing" ? "Download" : instrument?.state === "failed" ? "Try again" : undefined;
+  const size = facts.library.find((offer) => offer.id === state.library)?.size;
+  const download = asks && <Button id="download" label={`${field.title} download`} text={`${asks} · ${size} on disk`} size="sm" onPress={() => ctx.send("download", 1)} />;
+  const shownInside = words ? says(words, download) : plays ? drawing : (
     <box w={w} h={tall}>
       <Waveform wave={live.feed("wave")} seconds={[0, 1]} file={file} w={w} h={tall} empty="Drop an audio file here" />
       <row at={[0, tall / 2 + 12]} w={w} justify="center">{chooser}</row>
@@ -137,12 +141,16 @@ export const card: Card<"sampler", { expanded: boolean }> = (self, ctx) => {
   );
 
   // The instrument: the file or SFZ of the record, a file from the computer, and the library by category.
-  const pick = (id: string) =>
+  // Picking it from a list that shows its size is asking for it.
+  const pick = (id: string) => {
     update("Load instrument", (draft) => {
       const into = draft.state as Record<string, unknown>;
       for (const gone of ["sample", "sfz"]) delete into[gone];
       into.library = id;
     });
+    ctx.send("download", 1);
+  };
+
   const own: Item[] = [
     ...(state.sample ? [{ text: state.sample, checked: !state.library && !state.sfz, onPress: () => {} }] : []),
     ...(state.sfz ? [{ text: facts.sfz ?? state.sfz, checked: !state.library, onPress: () => {} }] : []),

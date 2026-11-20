@@ -140,6 +140,7 @@ pub(super) fn pointer(scope: &Scope, mut e: El, b: &BoxNode, key: &str, press: &
     let from = scope.placed.clone();
     let (press, key) = (press.clone(), key.to_string());
     let id = (drag.as_ref()).map(|drag| scope.key(drag.id.as_deref().unwrap_or(&press.element)));
+    let moves_element = (drag.as_ref()).is_some_and(|drag| drag.plays.is_none());
     e.on_drag(
         move |s: &mut State, d: &mut rune::Drag, tx: &mut rune::Tx| {
             let mods = tx.mods();
@@ -184,6 +185,14 @@ pub(super) fn pointer(scope: &Scope, mut e: El, b: &BoxNode, key: &str, press: &
                         return;
                     };
                     gesture.follow(d, mods.shift);
+                    // An element dragged to another, not a control the sound follows.
+                    if gesture.far && moves_element {
+                        let (press, plane) = (press.clone(), plane.clone());
+                        let [x, y] = d.window_point();
+                        tx.element_at(x, y, move |s: &mut State, picked, _: &mut rune::Tx| {
+                            s.drag_over(&press, plane.as_deref(), [x, y], picked.as_ref());
+                        });
+                    }
                     if let (true, Some(drag)) = (gesture.far, &gesture.drag) {
                         let hand = gesture.hand(drag, mods, true);
                         let (id, spec) = (drag.id.clone(), drag.spec.clone());
@@ -204,6 +213,7 @@ pub(super) fn pointer(scope: &Scope, mut e: El, b: &BoxNode, key: &str, press: &
                     else {
                         return;
                     };
+                    s.drops.set_over(None);
                     // Rune presses it after this: the release is this press, or the end of a drag.
                     s.dragged = Some(key.clone());
                     let Some(drag) = gesture.drag.as_ref().filter(|_| gesture.far) else {

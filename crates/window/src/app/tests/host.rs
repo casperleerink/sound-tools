@@ -1148,7 +1148,6 @@ export const twins = tool({
 
 /// A key used twice in a view is a problem that names the key and says the fix.
 #[test]
-#[ignore = "missing: the window does not report a key used twice (win-sweep, crates/window/src/tree)"]
 fn a_key_used_twice_in_a_view_is_a_problem_that_says_the_fix() {
     let files = [
         ("extensions/twins.tsx", TWINS),
@@ -1179,6 +1178,42 @@ export const lists = tool({{
 }});
 "#
     )
+}
+
+/// The thumb of a list's scroll bar drags: the list scrolls as far as the thumb goes, in its
+/// whole length to the bar's.
+#[test]
+fn a_scroll_bars_thumb_drags_the_list() {
+    let code = lists("List");
+    let files = [
+        ("extensions/lists.tsx", code.as_str()),
+        (
+            "state/lists.json",
+            r#"{"tool": "lists", "state": {"names": ["a"]}}"#,
+        ),
+    ];
+    let (_scratch, mut window) = page(&files, "lists");
+    let top = |window: &rune::Runtime<State>| window.presented("a-0").unwrap().0[1];
+    // Shown once it scrolls a little.
+    let [x, y, w, _] = window.presented("a").unwrap().0;
+    window.wheel(x + 50.0, y + 50.0, -1.0);
+    for _ in 0..30 {
+        window.frame(1.0 / 60.0);
+    }
+    let before = top(&window);
+    window.pointer_down(x + w - 4.0, y + 6.0);
+    window.frame(1.0 / 60.0);
+    for step in 1..=10 {
+        window.pointer_move(x + w - 4.0, y + 6.0 + 4.0 * step as f32);
+        window.frame(1.0 / 60.0);
+    }
+    window.pointer_up(x + w - 4.0, y + 46.0);
+    for _ in 0..10 {
+        window.frame(1.0 / 60.0);
+    }
+    // 40 points of a bar 100 long down a list 600 long.
+    let moved = before - top(&window);
+    assert!((moved - 240.0).abs() < 12.0, "scrolled {moved}");
 }
 
 /// A list keeps its scroll by its key: when the code is saved again, and when a list is put in
@@ -1329,7 +1364,6 @@ fn the_step_the_playhead_is_in_shows_it_plays_only_while_the_piece_plays() {
 
 /// A text cut to fit shows whole while the pointer is on it; one that fits shows nothing more.
 #[test]
-#[ignore = "missing: a cut text shows nothing more on hover (win-sweep, crates/window/src/tree)"]
 fn a_cut_text_shows_whole_on_hover_and_a_text_that_fits_does_not() {
     const CUT: &str = r#"import { h, tool } from "./sdk";
 export const cut = tool({
@@ -1342,23 +1376,23 @@ export const cut = tool({
         ("state/cut.json", r#"{"tool": "cut", "state": {}}"#),
     ];
     let (_scratch, mut window) = page(&files, "cut");
-    let shown = |window: &rune::Runtime<State>, text: &str| {
-        (window.elements().iter())
-            .filter(|element| element.text.as_deref() == Some(text))
-            .count()
-    };
+    let tip =
+        |window: &rune::Runtime<State>| window.help_tooltip().map(|(text, _)| text.to_string());
     let (x, y) = window.find("long").unwrap();
     window.pointer_move(x, y);
     for _ in 0..60 {
         redraw(&mut window);
     }
-    assert_eq!(shown(&window, "A name far too long for forty points"), 2);
+    assert_eq!(
+        tip(&window).as_deref(),
+        Some("A name far too long for forty points")
+    );
     let (x, y) = window.find("short").unwrap();
     window.pointer_move(x, y);
     for _ in 0..60 {
         redraw(&mut window);
     }
-    assert_eq!(shown(&window, "Short"), 1);
+    assert_eq!(tip(&window), None);
 }
 
 /// A newer template changes code the project changed too: the window says so, and the

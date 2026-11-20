@@ -221,16 +221,32 @@ impl State {
                 .flatten();
         }
         let path = format!("/{}/", picked?.path());
+        let at = |key: &str| path.find(&format!("/{prefix}{key}/"));
+        // Over itself, or what is in it, is over nothing else.
+        if at(&press.element).is_some() {
+            return None;
+        }
         let root = self.root(&press.instance)?;
         let mut keys = Vec::new();
         tree::keyed(self, &press.instance, &root, &mut keys);
-        let at = |key: &str| path.find(&format!("/{prefix}{key}/"));
-        let inside = at(&press.element).unwrap_or(usize::MAX);
         (keys.into_iter())
-            .filter(|key| *key != press.element)
-            .filter_map(|key| Some((at(&key).filter(|at| *at < inside)?, key)))
+            .filter_map(|key| Some((at(&key)?, key)))
             .max_by_key(|(at, _)| *at)
             .map(|(_, key)| key)
+    }
+
+    /// What a drag of `press` is over now, as [`Self::over`] says it: its `hover` look shows.
+    pub(crate) fn drag_over(
+        &mut self,
+        press: &tree::Press,
+        plane: Option<&str>,
+        window: [f32; 2],
+        picked: Option<&rune::Picked>,
+    ) {
+        let prefix = self.prefix_of(&press.instance);
+        let over = self.over(press, plane, window, picked);
+        self.drops
+            .set_over(over.map(|key| format!("{prefix}{key}")));
     }
 
     /// Closes the overlay the element `key` opened, and those inside it.

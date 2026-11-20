@@ -41,8 +41,8 @@ pub use history::{
 };
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
 pub use registry::{
-    AgentDoc, AgentDocText, JsonTool, JsonToolDoc, Registry, RegistryError, ToolRegistration,
-    ToolSchema, parse_state,
+    AgentDoc, AgentDocText, CommandContext, JsonTool, JsonToolDoc, Registry, RegistryError,
+    ToolRegistration, ToolSchema, parse_state,
 };
 pub use runs::{RUN_LONGEST, RUN_QUIET};
 pub use storage::StorageError;
@@ -419,6 +419,36 @@ impl Project {
     /// The tool name of an instance.
     pub fn tool_of(&self, id: &InstanceId) -> Option<&'static str> {
         self.instances.get(id).map(|record| record.tool)
+    }
+
+    /// Plays the input `name` of the tool of `id` with `value`, see
+    /// [`ToolRegistration::command`]: what it changes is a run of its label. Whether its tool
+    /// has one.
+    pub fn command(
+        &mut self,
+        id: &InstanceId,
+        name: &str,
+        value: Option<f64>,
+    ) -> Result<bool, ProjectError> {
+        let Some(record) = self.instances.get(id) else {
+            return Ok(false);
+        };
+        let shown = self.registry.shown(record.tool);
+        let Some(command) = (shown.into_iter().flat_map(|shown| &shown.commands))
+            .find(|command| command.name == name)
+        else {
+            return Ok(false);
+        };
+        let context = registry::CommandContext {
+            instance: id,
+            assets: &self.assets,
+        };
+        if let Some((label, record)) = (command.run)(record.state.as_any(), &context, value) {
+            let mut changes = Changes::new();
+            changes.changes.push(Change::Set(id.clone(), record));
+            self.publish_run(id, &label, changes)?;
+        }
+        Ok(true)
     }
 
     /// The names of the children each record of `tool` must have, see

@@ -572,14 +572,16 @@ pub struct BuiltIn {
     pub schemas: Vec<ToolSchema>,
     pub feeds: Vec<sound_core::feeds::FeedName>,
     pub facts: Vec<(&'static str, serde_json::Value)>,
+    /// The bang inputs of each tool that has some.
+    pub commands: Vec<(&'static str, Vec<&'static str>)>,
 }
 
 /// Writes what the runtime owns in `extensions/`, only where the text changed: the SDK with
 /// the records, feeds and facts of the built-in tools.
-fn write_sdk(extensions: &Path, built_in: &BuiltIn) -> std::io::Result<()> {
+pub fn write_sdk(extensions: &Path, built_in: &BuiltIn) -> std::io::Result<()> {
     // Bun's own types, once installed, declare `Bun` as well.
     let bun_types = extensions.join("node_modules/bun-types").is_dir();
-    let records = records::sdk_records(&built_in.schemas);
+    let records = records::sdk_records(&built_in.schemas, &built_in.commands);
     let feeds = records::sdk_feeds(&built_in.feeds, &built_in.facts, &built_in.schemas);
     std::fs::create_dir_all(extensions.join("sdk"))?;
     let files = [

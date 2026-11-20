@@ -93,7 +93,9 @@ The doc itself says only what no field says: what the tool is for, starting poin
 A tool registers feeds (`.feed(name, doc, read)`): numbers or lists a view draws as the sound
 plays, such as a response curve or a gain reduction, worked out from the record as it plays by
 the code that makes the sound, never a second copy in TypeScript. What rarely changes, such as a
-missing file, is facts (`.facts(read)`). Rejected: views reading peaks and watches by name.
+missing file, is facts (`.facts(read)`). What a card asks of its device, such as a download, is a
+command (`.command(name, run)`), which code plays with `send(name)`. Rejected: views reading
+peaks and watches by name; a card calling into its device's Rust by any other way.
 
 ## Copy an example
 
