@@ -14,7 +14,7 @@ use sound_typescript::live::Num;
 use crate::app::State;
 use crate::lives::Shows;
 
-use super::build::{build, holds_plane, is_overlay};
+use super::build::{build, drawn_now, holds_plane, is_overlay};
 use super::{AxisSpec, BoxNode, Node, Place, PlaneSpec, Scope};
 
 /// The cameras of the planes, kept by key across the views' runs, and what is built in them.
@@ -1134,7 +1134,11 @@ fn gather(scope: &Scope, node: &Node, into: &mut Gathered) {
         into.placed.push(build(scope, node));
         return;
     }
-    let version = (version_of(scope, node), into.per.map(f32::to_bits));
+    let version = (
+        version_of(scope, node),
+        into.per.map(f32::to_bits),
+        drawn_now(scope, node),
+    );
     into.placed.push(memo(key, version, || build(scope, node)));
 }
 

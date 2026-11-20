@@ -43,6 +43,8 @@ pub(crate) enum Shows {
         parent: Option<[Num; 2]>,
     },
     Lists(Listed),
+    /// The live numbers of a drawing's lines and rects: while one moves, the view builds again.
+    Drawn(Vec<Num>),
 }
 
 /// What Rune draws of a [`Shows`] every frame.
@@ -56,6 +58,8 @@ pub(crate) enum Shown {
     Trim(rune::Live<[f32; 2]>),
     /// What it drew last, and in a plane where the part that shows is.
     Pixels(rune::Pixels, Rc<RefCell<Drew>>, Option<rune::Live<[f32; 4]>>),
+    /// What the numbers of a drawing were when it was built.
+    Drawn(Rc<RefCell<Vec<f32>>>),
 }
 
 /// What a drawing of list feeds drew last: its lists, and in a plane where it was then.
@@ -76,6 +80,7 @@ impl Shown {
             Self::Trim(trim) => e.live_trim(trim),
             Self::Pixels(pixels, _, None) => e.pixels(pixels),
             Self::Pixels(pixels, _, Some(rect)) => e.live_rect(rect).pixels(pixels),
+            Self::Drawn(_) => e,
         }
     }
 }
@@ -147,6 +152,9 @@ pub(crate) struct Lives {
     /// The points per unit of each plane, as its bindings last showed them: few, so looked up
     /// along, which a frame of thousands of places does faster than by hash.
     scales: RefCell<Vec<(String, [f32; 2])>>,
+    /// How many times a drawing with live numbers was built, for a test that it follows them.
+    #[cfg(test)]
+    pub(crate) drawings: Cell<u64>,
     /// The live accessibility values of the views, by element key: their instance, their value,
     /// and what they said when the view was built.
     spoken: RefCell<HashMap<String, (InstanceId, Num, String)>>,
@@ -166,6 +174,8 @@ impl Lives {
             hands: RefCell::default(),
             moved: RefCell::default(),
             scales: RefCell::default(),
+            #[cfg(test)]
+            drawings: Cell::new(0),
             spoken: RefCell::default(),
         }
     }
@@ -194,6 +204,7 @@ impl Lives {
                 Rc::default(),
                 (listed.plane()).map(|_| rune::Live::new([0.0; 4])),
             ),
+            Shows::Drawn(_) => Shown::Drawn(Rc::default()),
         };
         let binding = Binding {
             reads: self.reads(state, instance, &shows),
@@ -215,6 +226,7 @@ impl Lives {
         };
         let nums: Vec<&Num> = match shows {
             Shows::Text { value, .. } | Shows::Opacity(value) => vec![value],
+            Shows::Drawn(numbers) => numbers.iter().collect(),
             Shows::Rect(rect) => rect.iter().collect(),
             Shows::Offset(at) | Shows::Trim(at) => at.iter().collect(),
             Shows::Placed {
@@ -477,6 +489,15 @@ impl Lives {
                     .map_or_else(|| state.planes.per(plane), |(_, per)| *per);
                 shown.set(Planes::points(per, place, units.size, units.parent));
             }
+            (Shows::Drawn(numbers), Shown::Drawn(built)) => {
+                let now: Vec<f32> = numbers.iter().map(of).collect();
+                let mut built = built.borrow_mut();
+                if *built != now {
+                    // Rune's shapes do not move: the drawing is built again.
+                    self.wider.set(self.wider.get() || !built.is_empty());
+                    *built = now;
+                }
+            }
             (Shows::Lists(listed), Shown::Pixels(pixels, last, rect)) => {
                 let drawn = (pixels, rect.as_ref());
                 (state.feeds).draw(state, &binding.instance, listed, drawn, last);
@@ -529,6 +550,17 @@ impl Lives {
                     let lists = last.borrow().lists.clone();
                     Some((lists, rect.as_ref().map(rune::Live::get)))
                 }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The numbers each drawing with live numbers was last built with.
+    pub(crate) fn drawn(&self) -> Vec<Vec<f32>> {
+        let bindings = self.bindings.borrow();
+        (bindings.values())
+            .filter_map(|binding| match &binding.shown {
+                Shown::Drawn(built) => Some(built.borrow().clone()),
                 _ => None,
             })
             .collect()

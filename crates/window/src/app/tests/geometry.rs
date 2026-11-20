@@ -693,3 +693,46 @@ fn a_plane_placed_in_the_plane_whose_time_it_shares_starts_where_it_is_placed_an
     assert_eq!(middle(at(&window, "point")), [100.0, 12.5]);
 }
 
+
+/// A line in a memo through a point that drags.
+const LINE: &str = r#"import { h, input, live, memo, tool } from "./sdk";
+export const line = tool({
+  name: "line", title: "Line", when: "Never", doc: "A line through a point that drags.", state: {}, sound: () => input,
+  view: () => {
+    const d = live.drag("point");
+    return (
+      <col w={400}>
+        <box key="song" label="Song" w={400} h={200} plane={{ x: 1, y: 1 }}>
+          {memo("line", [], () => <shapes place={[0, 0, 400, 200]} lines={[{ color: "text", width: 1, points: [0, 100, d.dx.plus(200), d.dy.plus(100), d.dx.plus(200), d.dy.plus(100), 400, 100] }]} />)}
+          {memo("still", [], () => <shapes place={[0, 0, 400, 200]} lines={[{ color: "text", width: 1, points: [0, 150, 400, 150] }]} />)}
+          <box key="point" label="Point" place={[d.dx.plus(200), d.dy.plus(100)]} w={8} h={8} drag={{ x: true, y: true }} />
+        </box>
+      </col>
+    );
+  },
+});
+"#;
+
+#[test]
+fn a_line_through_a_point_that_drags_is_drawn_again_as_it_moves_and_bun_runs_no_view() {
+    let (_scratch, folder) = with_tools(&[("line", LINE)]);
+    let mut window = laid_out(opened(&folder));
+    redraw(&mut window);
+    let runs = view_runs(&window);
+    let drawn = window.state.lives.drawings.get();
+    let (x, y) = window.find("t00/chain/line:point").unwrap();
+    let next = |window: &mut rune::Runtime<State>| {
+        let seconds = window.state.last + 1.0 / 60.0;
+        super::drawn_frame(window, seconds);
+    };
+    window.pointer_down(x, y);
+    next(&mut window);
+    for step in 1..=4 {
+        window.pointer_move(x + step as f32 * 5.0, y + step as f32 * 5.0);
+        next(&mut window);
+    }
+    // Built again for each move.
+    let again = window.state.lives.drawings.get() - drawn;
+    assert!((3..=5).contains(&again), "{again}");
+    assert_eq!(view_runs(&window), runs);
+}

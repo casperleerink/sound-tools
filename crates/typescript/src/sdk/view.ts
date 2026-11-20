@@ -214,10 +214,10 @@ export type TextProps = TextLook &
     | { live: Num; unit: Unit | "position" | "time"; digits?: never; children?: never }
     | { live: Num; digits?: number; unit?: never; children?: never }
   );
-/** Line segments, `points` four numbers each (x1 y1 x2 y2), or a list feed: its numbers are heights, evenly from the left edge to the right, drawn as they change. Segments end to end draw as one line; `fill` closes it and fills it, or under an open line the area below. */
-export type Lines = { color: Color; width: number; points: number[] | FeedList; fill?: Color };
-/** Filled rectangles, `rects` four numbers each (x y w h), or a list feed. */
-export type Rects = { color: Color; rects: number[] | FeedList };
+/** Line segments, `points` four numbers each (x1 y1 x2 y2), or a list feed: its numbers are heights, evenly from the left edge to the right, drawn as they change. Segments end to end draw as one line; `fill` closes it and fills it, or under an open line the area below. A live number among them, such as a dragged point's, draws it again as it moves. */
+export type Lines = { color: Color; width: number; points: Num[] | FeedList; fill?: Color };
+/** Filled rectangles, `rects` four numbers each (x y w h), some of them live, or a list feed. */
+export type Rects = { color: Color; rects: Num[] | FeedList };
 type Span = number | [from: number, to: number];
 /**
  * Its points are in `units` [across, down] when given, stretched to `w` × `h`: each a length from

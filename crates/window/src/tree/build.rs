@@ -1,6 +1,7 @@
 //! A view's nodes as Rune elements.
 
 use std::collections::HashSet;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 use rune::{Align, El, ScrollPos, ScrollSpec, col, el, memo, row, text};
 use sound_core::InstanceId;
@@ -107,6 +108,10 @@ fn walk(scope: &Scope, node: &Node, bind: &mut impl FnMut(Shows)) {
             if let Some(listed) = super::shapes::listed(d, scope.plane.as_deref()) {
                 bind(Shows::Lists(listed));
             }
+            let moving = super::shapes::moving(d);
+            if !moving.is_empty() {
+                bind(Shows::Drawn(moving));
+            }
             let placed = (d.place.as_ref())
                 .and_then(|place| scope.placed_shows(place, (Some(&d.w), Some(&d.h))));
             let size = d.place.is_none().then_some((Some(&d.w), Some(&d.h)));
@@ -196,11 +201,39 @@ pub(super) fn build(scope: &Scope, node: &Node) -> El {
             Some((version, node)) => {
                 // Rune keys a memo's root with the memo's key: the root keeps its own.
                 let root = node.key().unwrap_or(key);
+                let version = (version, drawn_now(scope, &node));
                 memo(scope.key(root), version, || build(scope, &node))
             }
             None => el(),
         },
     }
+}
+
+/// The live numbers of the drawings of `node` and its memos as they are now: what a memo that
+/// holds them builds again for as they move.
+pub(super) fn drawn_now(scope: &Scope, node: &Node) -> u64 {
+    fn walk(scope: &Scope, node: &Node, into: &mut DefaultHasher) {
+        match node {
+            Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
+                b.children.iter().for_each(|child| walk(scope, child, into));
+            }
+            Node::Shapes(d) => {
+                for num in super::shapes::moving(d) {
+                    let state = scope.state;
+                    state.lives.value(state, scope.instance, &num).to_bits().hash(into);
+                }
+            }
+            Node::Memo { key } => {
+                if let Some(inner) = scope.memo(key) {
+                    walk(scope, &inner, into);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut hasher = DefaultHasher::new();
+    walk(scope, node, &mut hasher);
+    hasher.finish()
 }
 
 pub(super) fn holds_plane(scope: &Scope, node: &Node) -> bool {

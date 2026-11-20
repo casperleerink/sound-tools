@@ -126,6 +126,24 @@ fn a_point_dragged_lands_on_the_snap_as_one_step_and_the_sound_plays_from_there(
     assert_eq!(window.state.project().undo_label(), label);
 }
 
+/// While a point drags, the line through it follows, with no view in Bun.
+#[test]
+fn the_line_follows_a_point_as_it_drags() {
+    let scratch = cutoff_lane();
+    let mut window = opened_lane(&scratch);
+    let before = window.state.lives.drawn();
+    assert!(!before.is_empty());
+    let runs = window.state.tools.as_ref().unwrap().view_runs();
+    let (x, y) = window.find("point-t00-lane-cut-7680").unwrap();
+    window.pointer_down(x, y);
+    redraw(&mut window);
+    window.pointer_move(x - 40.0, y - 10.0);
+    redraw(&mut window);
+    let during = window.state.lives.drawn();
+    assert_ne!(during, before, "the line did not move");
+    assert_eq!(window.state.tools.as_ref().unwrap().view_runs(), runs);
+}
+
 /// The handle in the middle of the line, dragged up, bends it, one step "Bend a line"; a double
 /// click on it straightens it again.
 #[test]
