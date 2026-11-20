@@ -25,7 +25,7 @@ const [SEND, SEND_NAME, SEND_AMOUNT, SENDS] = [32, 64, 52, 5];
 /** The tools that take a sidechain: the rack offers what keys them. */
 const KEYED = new Set(["compressor", "gate", "vocoder"]);
 /** The channels of the input an audio track records, each alone and then the pair. */
-const INPUTS = [{ text: "In 1", channels: [0] }, { text: "In 2", channels: [1] }, { text: "In 1 + 2", channels: [0, 1] }];
+const INPUTS = [{ text: "In 1", channels: [0] }, { text: "In 2", channels: [1] }, { text: "Both", channels: [0, 1] }];
 
 /**
  * The panel of a track, a return or the master: its strip at the left, then its devices in their
@@ -39,7 +39,7 @@ export const Rack = ({ page, name }: RackProps) => {
   return (
     <row w="full" h="full" fill="background">
       <Side page={page} name={name} each={each} />
-      <box key="rack" grow={1} h="full" scroll="both">
+      <box key="rack" grow={1} h="full" scroll="x">
         <row px={3} py={2} gap={2} align="start">
           {name === "master" ? <Limiter page={page} /> : each && <Devices page={page} each={each} />}
         </row>
@@ -117,8 +117,8 @@ const Devices = ({ page, each }: { page: Page; each: Channel }) => {
       );
     })}
     {empty && (
-      <col h={CARD_HEIGHT} px={4} justify="center">
-        <text style="heading" color="text-secondary">No devices yet</text>
+      <col h={HEADER} px={2} justify="center">
+        <text style="heading" color="text-muted">No devices yet</text>
       </col>
     )}
     <col h={HEADER} justify="center">
@@ -180,7 +180,7 @@ const Side = ({ page, name, each }: { page: Page; name: string; each: Channel | 
   const rec = each?.tool === "tape" ? each.children.find((child) => child.name === "rec") : undefined;
   const channels = rec?.tool === "recorder" ? rec.state.channels.join() : "";
   return (
-    <col key={`side-${name}`} w={HEAD} h="full" px={3} py={2} gap={1} border="border" borderSides={[0, 1, 0, 0]}>
+    <col key={`side-${name}`} w={HEAD} h="full" px={2} py={2} gap={1} border="border" borderSides={[0, 1, 0, 0]}>
       <row w="full" h={HEADER} gap={2} align="center">
         {each ? <Dot color={colourOf(each)} /> : <box w={8} h={8} radius="full" border="text-secondary" />}
         <text style="heading" color="text" truncate>{title}</text>
@@ -191,7 +191,7 @@ const Side = ({ page, name, each }: { page: Page; name: string; each: Channel | 
       <row gap={2} align="start">
         <Strip page={page} name={name} height={FADER} />
         {each?.tool === "tape" && (
-          <Select id={`input-${name}`} label={`Input of ${title}`} options={INPUTS.map(({ text }, at) => ({ value: at, text }))} w={HEAD - STRIP - 32}
+          <Select id={`input-${name}`} label={`Input of ${title}`} options={INPUTS.map(({ text }, at) => ({ value: at, text }))} w={HEAD - STRIP - 24}
             value={Math.max(INPUTS.findIndex((input) => input.channels.join() === channels), 0)} onChange={(at) => edits.tracks.input(name, INPUTS[at]!.channels)} />
         )}
         {each?.tool === "bus" && (

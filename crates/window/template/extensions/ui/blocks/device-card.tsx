@@ -115,7 +115,7 @@ export type FrameProps = {
  * own code draws none of this, so every device looks alike in a rack.
  */
 export const Frame = ({ id, title, menu, on = true, onPower, onRemove, end, chosen = false, onChoose, drag, onDragEnd, children }: FrameProps) => (
-  <col key={id} label={`Device ${title}`} role="group" radius="lg" fill="surface" border={chosen ? "text-muted" : "border-strong"} hoverGroup
+  <col key={id} label={`Device ${title}`} role="group" h={CARD_HEIGHT} radius="lg" fill="surface" border={chosen ? "text-muted" : "border-strong"} hoverGroup
     {...(drag ? { opacity: live.drag(id).active.times(-0.5).plus(1) } : {})}>
     <row key={`${id}-header`} label={`Choose ${title}`} role="toolbar" group h={HEADER} px={1} gap={1} align="center"
       {...(drag ? { drag: { ...drag, id }, onDragEnd } : {})} {...(onChoose ? { onPress: onChoose } : {})}>
@@ -133,7 +133,8 @@ export const Frame = ({ id, title, menu, on = true, onPower, onRemove, end, chos
         {onRemove && <Quiet shown={false}><HeaderIcon id={`${id}-remove`} label={`Remove ${title}`} icon="x" color="text-secondary" tip="Remove" onPress={onRemove} /></Quiet>}
       </row>
     </row>
-    <box opacity={on ? 1 : 0.4}>{children}</box>
+    {/* A card taller than the rest, such as a project's own view, scrolls inside its frame. */}
+    <box h={BODY} scroll="y" opacity={on ? 1 : 0.4}>{children}</box>
   </col>
 );
 

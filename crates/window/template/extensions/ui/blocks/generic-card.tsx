@@ -59,7 +59,9 @@ export const card: Card = ({ state, facts }, { update, memory, held }) => {
       }
       case "switch": {
         const on = at(path) === undefined ? field.default : at(path) === true;
-        return [{ span: 1, rank: RANK.switch, node: <Cell><Toggle id={id} label={named} text={field.label} on={on} w={theme.size.cell - 8} onToggle={() => set(path, label, !on)} /></Cell> }];
+        // A switch says its name: a long one takes two columns.
+        const span = field.label.length > LETTERS / 2 ? 2 : 1;
+        return [{ span, rank: RANK.switch, node: <Cell span={span}><Toggle id={id} label={named} text={field.label} on={on} w={span * theme.size.cell - 8} onToggle={() => set(path, label, !on)} /></Cell> }];
       }
       case "choice": {
         const value = (at(path) as string | number | undefined) ?? field.default;

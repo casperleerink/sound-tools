@@ -41,10 +41,10 @@ const Row = ({ id, pick }: { id: string; pick: Pick }) => {
       {pick.icon !== undefined && <icon name={pick.icon} color={off ? "text-muted" : "text-secondary"} />}
       <col grow={1}>
         <text style="label" color={off ? "text-muted" : "text"} truncate>{pick.text}</text>
-        {detail && <text style="label" color="text-muted" truncate>{detail}</text>}
+        {detail ? <text style="label" color="text-muted" truncate>{detail}</text> : null}
       </col>
       {pick.checked && <icon name="check" size={14} color="text" />}
-      {pick.keys && <Kbd keys={pick.keys} />}
+      {pick.keys ? <Kbd keys={pick.keys} /> : null}
     </row>
   );
 };
