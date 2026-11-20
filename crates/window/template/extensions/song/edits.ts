@@ -20,4 +20,3 @@ export const editsOf = (song: Song) => ({
   /** The devices of the track or return `name`. */
   effects: (name: string) => effectEdits(song, name),
 });
-export type Edits = ReturnType<typeof editsOf>;

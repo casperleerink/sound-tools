@@ -150,8 +150,6 @@ export const muted = (each: Child) => mixOf(each)?.state.mute === true;
 /** The lanes of a track or an audio track whose child moves its number. */
 export const lanesOf = (each: Child) =>
   isRow(each) ? each.state.automation.filter(({ lane }) => each.children.some((child) => child.name === lane && isMover(child.tool))) : [];
-export const clipsOf = (each: Child) => (each.tool === "track" ? each.children.flatMap((child) => (child.tool === "timeline" ? [child] : [])) : []);
-export const regionsOf = (each: Child) => (each.tool === "tape" ? each.children.flatMap((child) => (child.tool === "region" ? [child] : [])) : []);
 /** The sends of a track or an audio track, `send-<return>`. */
 export const sendsOf = (each: Child) => (isRow(each) ? each.children.filter((child) => child.name.startsWith("send-")).map((child) => child.name) : []);
 

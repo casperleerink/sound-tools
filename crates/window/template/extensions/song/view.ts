@@ -1,7 +1,7 @@
 // What every block of the song's page lays out by: its sizes, and the rows of the plane "song",
 // in order. Across, the plane is in ticks of the song; down, in rows of a track: a track and
 // each of its lanes are one, the row that adds a lane is less.
-import type { Drawn, ValuesOf } from "../sdk";
+import type { Drawn, Offer, ValuesOf } from "../sdk";
 import { editsOf } from "./edits";
 import type { bus } from "../bus";
 import type { tape } from "../tape";
@@ -9,7 +9,7 @@ import type { track } from "../track";
 import { control, type Bound } from "../ui/field";
 import { VOLUME } from "../ui/value";
 import { trackBelow } from "./clips";
-import { isRow, isStrip, lanesOf, ordered, rowOfKey, type fields, type Memory, type parts, type Song } from "./model";
+import { isRow, isStrip, lanesOf, ordered, rowOfKey, words, type fields, type Memory, type parts, type Song } from "./model";
 import { BAR } from "./time";
 
 /** The plane the ruler, the timeline and the lanes share across, and the heads down. */
@@ -130,6 +130,12 @@ export function pageOf(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song:
 }
 /** What every block of the song's page gets. */
 export type Page = ReturnType<typeof laidOut>;
+
+/** What a device is called, as the window offers it: a plugin by the name it was offered under (`format:id`), else its tool in words. */
+export function deviceName(catalog: readonly Offer[], { tool, state }: { tool: unknown; state: unknown }): string {
+  const [key, plugin] = [String(tool), (state as { plugin_id?: unknown } | undefined)?.plugin_id];
+  return catalog.find((offer) => offer.key === key || (typeof plugin === "string" && offer.key.endsWith(`:${plugin}`)))?.name ?? words(key.slice(key.lastIndexOf(".") + 1));
+}
 
 /** The fader `fader` of `name`, a track, a return or the master: its mix, or a send `send-<return>`. */
 function faderOf({ self }: Page, name: string, fader = "mix") {

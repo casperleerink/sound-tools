@@ -95,7 +95,7 @@ export const card: Card = ({ state, facts }, { update, memory, held }) => {
   const [cells, more] = [byRank(shown), byRank(hidden)];
   for (const block of blocks) {
     // A card of lists alone shows the first of them as far as it fits.
-    const split = cells.length === 0 ? block.findIndex((placed, i) => block.slice(0, i + 1).reduce((sum, each) => sum + each.span, 0) > FEW) : 0;
+    const split = cells.length === 0 ? block.findIndex((_, i) => block.slice(0, i + 1).reduce((sum, each) => sum + each.span, 0) > FEW) : 0;
     const cut = split < 0 ? block.length : split;
     cells.push(...block.slice(0, cut));
     more.push(...block.slice(cut));

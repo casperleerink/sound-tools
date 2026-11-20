@@ -1,7 +1,7 @@
 import { h, type Offer, type Pointer } from "../../../sdk";
 import { chainOf, chosenEffect, TAPS } from "../../../song/effects";
-import { colourOf, isRow, itemAt, rowOfKey, sendsOf, titleOf, words } from "../../../song/model";
-import { HEAD, sendOf, type Page, type Strip as Channel } from "../../../song/view";
+import { colourOf, isRow, itemAt, rowOfKey, sendsOf, titleOf } from "../../../song/model";
+import { deviceName, HEAD, sendOf, type Page, type Strip as Channel } from "../../../song/view";
 import theme from "../../../theme.json";
 import { Button } from "../../button";
 import { Dot } from "../../dot";
@@ -55,12 +55,6 @@ export const Rack = ({ page, name }: RackProps) => {
   );
 };
 
-/** What the device of `tool` is called, as the window offers it; a plugin by the name it was offered under. */
-const nameOf = (catalog: readonly Offer[], tool: string, state: unknown) => {
-  const plugin = (state as { plugin_id?: unknown } | undefined)?.plugin_id;
-  return catalog.find((offer) => offer.key === tool || offer.key === plugin)?.name ?? words(tool.slice(tool.lastIndexOf(".") + 1));
-};
-
 /** The devices the window offers that take `takes`, group by group, a pick each. */
 const offered = (catalog: readonly Offer[], takes: Offer["takes"], here: string | null, pick: (key: string) => void): Group[] => {
   const groups = new Map<string, Offer[]>();
@@ -97,7 +91,7 @@ const Devices = ({ page, each }: { page: Page; each: Channel }) => {
     <row gap={2} align="start">
       {each.tool === "tape" && [clip !== null ? <RegionCard page={page} region={clip} /> : <NoClip />, <box w={1} h={CARD_HEIGHT} fill="border" />]}
       {synth && (
-        <Frame id="slot-instrument" title={nameOf(song.catalog, String(synth.tool), synth.state)}
+        <Frame id="slot-instrument" title={deviceName(song.catalog, synth)}
           menu={{ label: `Instrument of ${titleOf(each)}`, items: offered(song.catalog, "notes", String(synth.tool), (key) => effects.replace(key)) }}>
           <child path={`${name}/synth`} />
         </Frame>
@@ -105,7 +99,7 @@ const Devices = ({ page, each }: { page: Page; each: Channel }) => {
       {order.map((effect, at) => {
         const device = chain?.children.find((child) => child.name === effect);
         const tool = String(device?.tool ?? "");
-        const title = nameOf(song.catalog, tool, device?.state);
+        const title = deviceName(song.catalog, { tool, state: device?.state });
         const moves: Item[] = order.length < 2 ? [] : [
           { key: "earlier", text: "Move earlier", icon: "arrow-left", keys: keysOf(song.shortcut("effect_earlier")), disabled: at === 0 ? "" : null, onPress: () => (effects.choose(effect), effects.step(effect, -1)) },
           { key: "later", text: "Move later", icon: "arrow-right", keys: keysOf(song.shortcut("effect_later")), disabled: at === order.length - 1 ? "" : null, onPress: () => (effects.choose(effect), effects.step(effect, 1)) },
@@ -126,7 +120,7 @@ const Devices = ({ page, each }: { page: Page; each: Channel }) => {
         </col>
       )}
       <col h={HEADER} justify="center">
-        <Button id="add-effect" label="Add effect" text="Add effect" icon="plus" variant="ghost">
+        <Button id="add-effect" label="Add effect" text="Add effect" icon="plus" variant="ghost" size="sm">
           <MenuList id="add-effect" label="Add effect" items={offered(song.catalog, "audio", null, (key) => effects.add(key))} w={280} search />
         </Button>
       </col>
@@ -176,14 +170,14 @@ const Limiter = ({ page }: { page: Page }) => {
 
 /** The column at the left: the mark and name of what the panel is of, its strip, and an audio track's input or a return's Pre fader. */
 const Side = ({ page, name, each }: { page: Page; name: string; each: Channel | undefined }) => {
-  const { song, edits } = page;
+  const { edits } = page;
   const title = each ? titleOf(each) : "Master";
   const rec = each?.tool === "tape" ? each.children.find((child) => child.name === "rec") : undefined;
   const channels = rec?.tool === "recorder" ? rec.state.channels.join() : "";
   return (
     <col key={`side-${name}`} w={HEAD} h="full" px={3} py={2} gap={1} border="border" borderSides={[0, 1, 0, 0]}>
       <row w="full" h={HEADER} gap={2} align="center">
-        {each ? <Dot color={colourOf(each)} /> : <box w={8} h={8} radius="full" border="text-secondary" />}
+        <Dot color={each && colourOf(each)} />
         <text style="heading" color="text" truncate>{title}</text>
       </row>
       <Strip page={page} name={name} height={FADER} full>

@@ -250,7 +250,7 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
     <box>
       {chosen && <box place={[start, top + INSET / ROW, length, (ROW - 2 * INSET) / ROW]} radius="md" fill="fill" border="border-strong" opacity={moved.alt.times(moved.active).times(dim)} />}
       {chosen && under > 0 && <box place={[x, moved.dy.plus(top + 1), width, under]} fill="selected" />}
-      <box key={`clip-${key}`} label={called} role="button" checked={chosen} place={[x, y, width, (ROW - 2 * INSET) / ROW]} radius="md" fill="fill" border={chosen ? "text" : "border-strong"} opacity={dim} clip
+      <box key={`clip-${key}`} label={called} role="button" checked={chosen} place={[x, y, width, (ROW - 2 * INSET) / ROW]} radius="md" fill="fill" hover="fill" border={chosen ? "text" : "border-strong"} opacity={dim} clip
         drag={drag}
         onPress={(p) => page.edits.clips.press(key, p)}
         onDragEnd={(p) => {

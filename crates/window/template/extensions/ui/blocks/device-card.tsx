@@ -2,6 +2,7 @@ import { h, live, type Child, type Color, type Drag, type IconName, type Node, t
 import theme from "../../theme.json";
 import { height } from "../control";
 import { MenuList, type Group, type Item } from "../menu";
+import { Quiet } from "../quiet";
 import { Tooltip } from "../tooltip";
 
 const [ROW, PAD, ICON] = [theme.size.row, theme.space[4], theme.size.sm];
@@ -140,9 +141,6 @@ export const Frame = ({ id, title, menu, on = true, onPower, onRemove, end, chos
     <box h={BODY} scroll="y" opacity={on ? 1 : 0.4}>{children}</box>
   </col>
 );
-
-/** Shown while `shown`, else only while the pointer or the keys are on the card. */
-const Quiet = ({ shown, children }: { shown: boolean; children?: Child }) => (shown ? <box>{children}</box> : <box reveal>{children}</box>);
 
 /** An icon of a header: 24 points to hit, a fill on hover. `checked` makes it a switch. */
 export const HeaderIcon = ({ id, label, icon, color, checked, tip, onPress }: { id: string; label: string; icon: IconName; color: Color; checked?: boolean; tip: string; onPress: () => void }) => (

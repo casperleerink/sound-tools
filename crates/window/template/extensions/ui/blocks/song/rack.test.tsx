@@ -169,3 +169,9 @@ test("an audio clip's card draws its wave from the clip's own sound", () => {
   const card = JSON.stringify(find("slot-region"));
   expect(card).toContain('{"op":"feed","name":"wave","path":"audio-1/r1"}');
 });
+
+test("a plugin's card is titled by the name it was offered under", () => {
+  const plugin = { name: "far", tool: "plugin", state: { format: "vst3", plugin_id: "far" }, children: [] };
+  rack(song([trackOf("t00", [{ ...chainOf([]), state: { order: ["far"], off: [] }, children: [plugin] }])]));
+  expect(find("slot-far")).toMatchObject({ label: "Device Far" });
+});

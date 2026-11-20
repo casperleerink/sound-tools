@@ -1,12 +1,13 @@
-import { h, live, memo, type Child, type Offer } from "../../../sdk";
-import { colourOf, lanesOf, muted, PALETTE, titleOf, words } from "../../../song/model";
+import { h, live, memo, type Offer, type Pointer } from "../../../sdk";
+import { colourOf, lanesOf, muted, PALETTE, titleOf } from "../../../song/model";
 import { cannotRender } from "../../../song/tracks";
-import { chosenTrack, HEAD, laneGroups, LOW_ROW, PLANE, RETURNS, ROW, type Page, type Row, type Strip, type Track } from "../../../song/view";
+import { chosenTrack, deviceName, HEAD, laneGroups, LOW_ROW, PLANE, RETURNS, ROW, type Page, type Row, type Strip, type Track } from "../../../song/view";
 import { freeName } from "../../../track";
 import { Button } from "../../button";
 import { Dot } from "../../dot";
 import { keysOf } from "../../kbd";
 import { MenuList, type Item } from "../../menu";
+import { Quiet } from "../../quiet";
 import { Meter } from "../../meter";
 import { TextField } from "../../text-field";
 import { Toggle } from "../../toggle";
@@ -82,15 +83,18 @@ function kindOf(each: Strip, catalog: readonly Offer[]): string {
   if (each.tool === "tape") return "Audio";
   if (each.tool === "bus") return "Return";
   const synth = each.children.find((child) => child.name === "synth");
-  if (!synth) return "";
-  const tool = String(synth.tool);
-  const plugin = (synth.state as { plugin_id?: string }).plugin_id;
-  const offer = catalog.find((one) => one.key === tool || (plugin !== undefined && one.key.includes(plugin)));
-  return offer?.name ?? words(tool.replace(/^instrument\./, ""));
+  return synth ? deviceName(catalog, synth) : "";
 }
 
 /** The keyed element under the pointer at the end of a drag, as the track it is in. */
 const trackUnder = (page: Page, over: string | undefined) => page.tracks.find((each) => over === `track-${each.name}` || over?.endsWith(`-${each.name}`))?.name;
+
+/** A press on the head of a track or a return shows its panel, a double press names it; a right press is its menu's. */
+const pressHead = (page: Page, name: string) => (p: Pointer) => {
+  if (p.right) return;
+  if (p.clicks === 2) page.song.memory.renaming = name;
+  else page.edits.tracks.openPanel(name);
+};
 
 /** The menu of a track's or a return's name: rename, its lanes, render it, delete it. */
 function trackMenu(page: Page, each: Strip): Item[] {
@@ -147,10 +151,10 @@ const Head = ({ page, row }: { page: Page; row: Row }) => {
   const key = `track-${each.name}`;
   return memo(`head-${each.name}`, [title, kind, chosen, isMuted, soloed, armed, colour, row.top, lanes, shown, renaming, order, ...keys, each.children], () => (
     <row key={key} label={`Choose ${title}`} role="tab" checked={chosen} hoverGroup place={[0, live.drag(key).dy.plus(row.top), HEAD - 1, 1]} opacity={live.drag(key).active.times(-0.4).plus(1)}
-      px={2} gap={2} align="center" fill={chosen ? "selected" : undefined} hover={chosen ? undefined : "fill"} border="border" borderSides={[0, 0, 1, 0]}
+      px={2} gap={2} align="center" fill={chosen ? "selected" : undefined} hover="fill" border="border" borderSides={[0, 0, 1, 0]}
       drag={{ y: true }} onDragEnd={(p) => { const before = trackUnder(page, p.over); if (before) page.edits.tracks.moveBefore(each.name, before); }}
-      onPress={(p) => { if (p.right) return; if (p.clicks === 2) memory.renaming = each.name; else page.edits.tracks.openPanel(each.name); }}>
-      <row key={`colour-${each.name}`} label={`Colour of ${title}`} role="button" w={12} h={ROW - 16} align="center">
+      onPress={pressHead(page, each.name)}>
+      <row key={`colour-${each.name}`} label={`Colour of ${title}`} role="button" w={12} h={ROW - 16} align="center" justify="center" radius="sm" hover="fill">
         <box w={4} h={ROW - 16} radius="full" fill={colour} opacity={isMuted ? DIM : 1} />
         <MenuList id={`colour-${each.name}`} label={`Colour of ${title}`} items={colours(page, each)} w={180} />
       </row>
@@ -178,8 +182,8 @@ const Low = ({ page, each }: { page: Page; each: Strip }) => {
   const isMuted = muted(each);
   const chosen = chosenTrack(page.song.memory) === each.name;
   return (
-    <row key={`track-${each.name}`} label={`Choose ${title}`} role="tab" checked={chosen} w="full" h={LOW_ROW} px={3} gap={2} align="center" fill={chosen ? "selected" : undefined} hover={chosen ? undefined : "fill"}
-      onPress={(p) => { if (p.right) return; if (p.clicks === 2) page.song.memory.renaming = each.name; else page.edits.tracks.openPanel(each.name); }}>
+    <row key={`track-${each.name}`} label={`Choose ${title}`} role="tab" checked={chosen} w="full" h={LOW_ROW} px={3} gap={2} align="center" fill={chosen ? "selected" : undefined} hover="fill"
+      onPress={pressHead(page, each.name)}>
       <box opacity={isMuted ? DIM : 1}><Dot color={colourOf(each)} /></box>
       <row grow={1}><Name page={page} each={each} title={title} /></row>
       <Toggle id={`mute-${each.name}`} label={`Mute ${title}`} text="M" on={isMuted} color="warning" tip="Mute" onToggle={() => page.edits.tracks.mute(each.name)} />
@@ -193,14 +197,11 @@ const MasterRow = ({ page }: { page: Page }) => {
   const { memory } = page.song;
   const [chosen, mixer] = [memory.below?.kind === "master", memory.below?.kind === "mixer"];
   return (
-    <row key="master" label="Master" role="tab" checked={chosen} w="full" h={LOW_ROW} px={3} gap={2} align="center" fill={chosen ? "selected" : undefined} hover={chosen ? undefined : "fill"} border="border" borderSides={[1, 0, 0, 0]}
+    <row key="master" label="Master" role="tab" checked={chosen} w="full" h={LOW_ROW} px={3} gap={2} align="center" fill={chosen ? "selected" : undefined} hover="fill" border="border" borderSides={[1, 0, 0, 0]}
       onPress={() => page.edits.tracks.openMaster()}>
-      <box w={8} h={8} radius="full" border="text-secondary" />
+      <Dot />
       <row grow={1}><text style="heading" color="text">Master</text></row>
       <Toggle id="mixer-toggle" label={mixer ? "Hide the mixer" : "Show the mixer"} icon="sliders-horizontal" on={mixer} tip={mixer ? "Hide the mixer" : "Show the mixer"} keys={keysOf(page.song.shortcut("mixer"))} onToggle={() => page.edits.tracks.toggleMixer()} />
     </row>
   );
 };
-
-/** A toggle of a head shows while on, or while its track is chosen or pointed at. */
-const Quiet = ({ shown, children }: { shown: boolean; children?: Child }) => (shown ? <box>{children}</box> : <box reveal>{children}</box>);
