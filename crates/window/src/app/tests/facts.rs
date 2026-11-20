@@ -112,7 +112,7 @@ export const peek = tool({
   view: (self) => {
     const region = self.children[0]?.children[0];
     const file = region?.tool === "region" ? region.facts.file.state : "none";
-    return <text key="file">{file}</text>;
+    return <box key="file" label={file} onPress={() => {}} />;
   },
 });
 "#;
@@ -139,9 +139,8 @@ fn a_view_runs_again_when_a_fact_of_a_grandchild_changes_and_not_while_none_does
     }
     let mut state = opened(&folder);
     let file = |state: &State| match state.drawn(&InstanceId::new("song/t00/chain/peek").unwrap()) {
-        Some(Drawn::View { root, .. }) => root.to_string(),
         Some(Drawn::Failed(why)) => why.clone(),
-        other => format!("{}", other.is_some()),
+        _ => super::labels(state).join(" "),
     };
     assert!(file(&state).contains("missing"), "{}", file(&state));
     let runs = state.tools.as_ref().unwrap().view_runs();

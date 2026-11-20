@@ -159,10 +159,23 @@ pub(crate) struct Lives {
     /// How many times a drawing with live numbers was built, for a test that it follows them.
     #[cfg(test)]
     pub(crate) drawings: Cell<u64>,
-    /// The live accessibility values of the views, by element key: their instance, their value,
-    /// and what they said when the view was built.
-    spoken: RefCell<HashMap<String, (InstanceId, Num, String)>>,
+    /// The live accessibility values of the views, by element key.
+    spoken: RefCell<HashMap<String, Spoken>>,
+    /// When the values of meters were last looked at, in seconds of `elapsed`.
+    metered: Cell<f64>,
 }
+
+/// A live accessibility value of a view: its instance, its value, and what it said when the view
+/// was built. A meter's moves every frame its sound plays, and building the window again that
+/// often for it cost more than the frame: it is looked at [`METERED`] times a second.
+struct Spoken {
+    instance: InstanceId,
+    value: Num,
+    said: String,
+    meter: bool,
+}
+
+const METERED: f64 = 4.0;
 
 impl Lives {
     pub(crate) fn new() -> Self {
@@ -181,6 +194,7 @@ impl Lives {
             #[cfg(test)]
             drawings: Cell::new(0),
             spoken: RefCell::default(),
+            metered: Cell::new(0.0),
         }
     }
 
@@ -316,14 +330,20 @@ impl Lives {
         instance: &InstanceId,
         key: &str,
         value: &serde_json::Value,
+        meter: bool,
     ) -> String {
         let said = self.said(state, instance, value);
         let text = said
             .as_str()
             .map_or_else(|| said.to_string(), str::to_string);
-        if let Ok(num @ Num::Live(_)) = serde_json::from_value::<Num>(value.clone()) {
-            let entry = (instance.clone(), num, text.clone());
-            self.spoken.borrow_mut().insert(key.to_string(), entry);
+        if let Ok(value @ Num::Live(_)) = serde_json::from_value::<Num>(value.clone()) {
+            let spoken = Spoken {
+                instance: instance.clone(),
+                value,
+                said: text.clone(),
+                meter,
+            };
+            self.spoken.borrow_mut().insert(key.to_string(), spoken);
         }
         text
     }
@@ -399,15 +419,19 @@ impl Lives {
         self.moving.set(false);
         self.refresh(state, true);
         let mut spoken = self.spoken.borrow_mut();
-        spoken.retain(|_, (instance, ..)| state.shown.contains(instance));
-        for (instance, value, said) in spoken.values() {
+        spoken.retain(|_, spoken| state.shown.contains(&spoken.instance));
+        let metered = self.elapsed.get() - self.metered.get() >= 1.0 / METERED;
+        if metered {
+            self.metered.set(self.elapsed.get());
+        }
+        for spoken in spoken.values().filter(|spoken| metered || !spoken.meter) {
             let sources = Sources {
                 lives: self,
                 state,
-                instance,
+                instance: &spoken.instance,
             };
-            let now = serde_json::json!(number(value, &sources)).to_string();
-            if now != *said {
+            let now = serde_json::json!(number(&spoken.value, &sources)).to_string();
+            if now != spoken.said {
                 self.wider.set(true);
             }
         }
@@ -586,7 +610,7 @@ impl Lives {
         self.spoken
             .borrow()
             .get(key)
-            .map(|(_, _, said)| said.clone())
+            .map(|spoken| spoken.said.clone())
     }
 
     /// What each live text shows now, after what it shows written out.

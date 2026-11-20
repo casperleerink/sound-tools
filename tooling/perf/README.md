@@ -19,11 +19,14 @@ python3 tooling/perf/window.py            # compares with window.json, the last 
 python3 tooling/perf/window.py --save     # and keeps this run as window.json
 ```
 
-Each scenario (idle, play, scroll, zoom, drag a clip, open the note editor) is a Rune `--script`
-of 3 s on the DAW template and on a song of 64 tracks and 500 clips; the table has Rune's frame
-times and the process's CPU and memory, and `--play 10` the app's own playback. Frame times are wall
-time: on a busy machine they double, so compare runs of a similar load average. Rejected:
-`--native --trace`, which opens a window.
+Each scenario (idle, play, scroll, zoom, drag a clip, the note editor, the mixer playing, a
+fader's drag) is a Rune `--script` of 3 s on the DAW template and on a song of 64 tracks and 500
+clips, and a project of 64 lanes of 200 points gets idle, scroll, zoom and an opened lane. The table
+has Rune's frame times, the first frame, the process's CPU and memory, and memory with Bun; `--play
+60` is the app's own playback. Last, the big song plays, scrolls and zooms for 10 s and for 120 s:
+memory that grew between them is a leak. Frame times are wall time: on a busy machine they double,
+so compare runs of a similar load average. Headless, every frame builds the whole window, which a
+window at rest does not. Rejected: `--native --trace`, which opens a window.
 
 `--projects a,b` picks projects (`projects.names()`); `--runs` and `--seconds` change the
 counts. Builds, projects and logs go to `/tmp/st-perf` (`PERF_DIR` moves it). Remove it and run

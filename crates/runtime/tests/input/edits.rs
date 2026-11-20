@@ -34,7 +34,10 @@ fn problems(opened: &Opened) -> Vec<Problem> {
 /// The labels of the view of `instance`, as Bun drew it last.
 fn labels(opened: &Opened, instance: &str) -> String {
     match opened.tools.drawn(&id(instance)) {
-        Some(sound_typescript::next::Drawn::View { root, .. }) => root.to_string(),
+        Some(sound_typescript::next::Drawn::View { root, .. }) => root
+            .downcast_ref::<serde_json::Value>()
+            .unwrap()
+            .to_string(),
         other => panic!("no view of {instance}: {}", other.is_some()),
     }
 }

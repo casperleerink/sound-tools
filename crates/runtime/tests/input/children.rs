@@ -228,7 +228,10 @@ fn a_parent_learns_whether_notes_play_a_tool() {
     );
     opened.show("asks");
     let drawn = match opened.tools.drawn(&crate::support::id("asks")) {
-        Some(sound_typescript::next::Drawn::View { root, .. }) => root.to_string(),
+        Some(sound_typescript::next::Drawn::View { root, .. }) => root
+            .downcast_ref::<serde_json::Value>()
+            .unwrap()
+            .to_string(),
         _ => panic!("no view"),
     };
     for answer in [

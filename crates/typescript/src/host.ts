@@ -1512,7 +1512,8 @@ function handle(request: Request): string | undefined {
       heldFields = request.held;
       if (factsMoved.length > 0) recordsChanged += 1;
       // Facts that did not move stay the objects they were, so the children made of them do.
-      for (const id of Object.keys(sent.facts)) if (!factsMoved.includes(id)) sent.facts[id] = known.facts[id]!;
+      const moved = new Set(factsMoved);
+      for (const id of Object.keys(sent.facts)) if (!moved.has(id)) sent.facts[id] = known.facts[id]!;
       known = sent;
       show(request.instances);
       changed.forEach(drawNext);

@@ -503,20 +503,47 @@ impl Project {
     /// `Ok(false)` says there is no such instance, which is what a record that went away while
     /// something waited for it looks like.
     pub fn rebind(&mut self, id: &InstanceId) -> Result<bool, ProjectError> {
-        let Some(record) = self.instances.get(id).cloned() else {
-            return Ok(false);
-        };
+        self.rebind_group(std::slice::from_ref(id))
+    }
+
+    /// [`Self::rebind`] of each of `ids`, in one engine edit while none fails: one compile for
+    /// the many instances whose behaviours Bun answers as a project opens, not one each. Where
+    /// one fails, each runs alone, so only the one that fails stays as it was. The errors.
+    pub fn rebind_all(&mut self, ids: &[InstanceId]) -> Vec<ProjectError> {
+        match ids {
+            [] => Vec::new(),
+            [id] => self.rebind(id).err().into_iter().collect(),
+            _ => match self.rebind_group(ids) {
+                Ok(_) => Vec::new(),
+                Err(_) => ids.iter().filter_map(|id| self.rebind(id).err()).collect(),
+            },
+        }
+    }
+
+    /// Runs the behaviours of `ids` again as one group: whether any is there.
+    fn rebind_group(&mut self, ids: &[InstanceId]) -> Result<bool, ProjectError> {
         // Not the one state application: that one drops a change whose record is the one that
         // is already there, which is exactly this. The behaviour is run directly instead, as
         // it would be for a record that really changed, owners included.
+        let changes: Vec<RecordChange> = (ids.iter())
+            .filter_map(|id| {
+                let record = self.instances.get(id)?.clone();
+                Some(RecordChange {
+                    id: id.clone(),
+                    before: Some(record.clone()),
+                    after: Some(record),
+                })
+            })
+            .collect();
+        if changes.is_empty() {
+            return Ok(false);
+        }
         let instance_problems_before = self.instance_problems();
         let connection_problems_before = self.bindings.connection_problems().to_vec();
-        self.bind(&[RecordChange {
-            id: id.clone(),
-            before: Some(record.clone()),
-            after: Some(record),
-        }])?;
-        self.push_event(ProjectEvent::Changed(id.clone()));
+        self.bind(&changes)?;
+        for change in changes {
+            self.push_event(ProjectEvent::Changed(change.id));
+        }
         // Both sets, as the one state application does: a behaviour that now declares the port
         // a saved connection names takes that connection's problem away too.
         if instance_problems_before != self.instance_problems()
