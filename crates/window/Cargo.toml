@@ -42,3 +42,6 @@ windows-sys = { workspace = true, features = [
 
 [build-dependencies]
 embed-resource.workspace = true
+
+[dev-dependencies]
+hound.workspace = true

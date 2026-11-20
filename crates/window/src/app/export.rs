@@ -313,7 +313,7 @@ impl State {
     }
 }
 
-const REVEAL: &str = if cfg!(target_os = "macos") {
+pub(super) const REVEAL: &str = if cfg!(target_os = "macos") {
     "Show in Finder"
 } else {
     "Show in folder"
