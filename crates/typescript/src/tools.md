@@ -53,15 +53,15 @@ export const quieter = tool({
 Use the top layer that fits; each uses only those under it.
 
 1. Theme, `extensions/theme.json`: props name its tokens (`fill="surface"`, `gap={2}`, `"sound/25"` at 25%). `sound` (green) is sound that moves; what is chosen takes `selected`.
-2. Primitives, each prop in `sdk/view.ts`: `box`, `row`, `col`, `text`, `shapes`, `field`, `icon` (`ui/icons/<name>.svg`), `child`, `live`; `hoverGroup` and `reveal` (the quiet rule), `overlay`, `group` (one Tab stop).
-3. Components, `extensions/ui/`: Button, Toggle, Select, Menu, Popover, Tooltip, Knob, Slider, Fader, Meter, Pad, TextField, Cell and more; `value.ts` steps, clamps and reads typed values.
-4. Blocks, `extensions/ui/blocks/`: DeviceCard, cards, Panel, StepGrid, Keyboard, PaintGrid and more.
+2. Primitives, each prop in `sdk/view.ts`: `box`, `row`, `col`, `text`, `shapes`, `field` (searches a menu), `icon` (`ui/icons/<name>.svg`), `child`, `live`; `hoverGroup` and `reveal` (the quiet rule), `overlay`, `group` (one Tab stop).
+3. Components, `extensions/ui/`: Button, Toggle, Select, Menu, Popover, Tooltip, Knob, Slider, Fader, Meter, Pad, TextField, Cell; `value.ts` steps, clamps and reads typed values.
+4. Blocks, `extensions/ui/blocks/`: DeviceCard, cards, Panel, StepGrid, Keyboard, PaintGrid.
 
 Change them, add yours; `--main gallery --snap g.png --size 1470x1500` shows them.
 
 - A device is a `DeviceCard`: a display, then cells, two to a column, growing wider.
 - A card's controls are `sm`. Use the app's transport: add no Play button.
-- Every control takes the keys: `actions` (`increment`, `decrement`, `set`, `reset`); many go in a `group`.
+- Every control takes keys (`actions`); many go in a `group`.
 
 ## Planes: time, pitch, your own units
 
@@ -79,6 +79,6 @@ A live value is an expression the window works out every frame, without the view
 ## Changes and actions
 
 - `update(label, (draft) => …)` changes records. All the changes of one press, drag or paint are one step of undo. An update of a number a lane plays (`held`) is refused.
-- An element a pointer or an agent uses has a unique `key`, a `label` ("Mute Track 2") and its state (`checked`, `value`). Handlers: `onPress(p)` and `onDragEnd(p)` hear a `Pointer` (`x`, `y`, `dx`, `dy`, `clicks`, `right`, `shift`, `alt`, `cmd`, `over`: the key under it at the end), `onDrop(d)` hears files (`d.audio`, `d.parts`), `onEnter` paints, a `field`'s `onCommit(text)` (`null` on Escape), `actions`.
+- An element a pointer or an agent uses has a unique `key`, a `label` ("Mute Track 2") and its state (`checked`, `value`). Handlers: `onPress(p)` and `onDragEnd(p)` hear a `Pointer` (`x`, `y`, `dx`, `dy`, `clicks`, `right`, `shift`, `alt`, `cmd`, `over`: the key under it at the end), `onDrop(d)` hears files (`d.audio`, `d.parts`), `onEnter` paints, a `field`'s `onCommit(text)` (`null` on Escape; `focus`: rename in place), `actions`.
 - `drag={{ x: [-start, 9999], snap: [240, 1] }}` moves a clip along time on sixteenths; `live.drag(key)` follows it and `onDragEnd` keeps it with `update`. `plays: { gain_db: live.drag("gain").dy.negate().plus(gain) }` sounds a value while the drag is held.
 - `<col overlay={{ open: "menu" }} role="menu">` in a box opens at a right press on it: its items are boxes with `onPress`.

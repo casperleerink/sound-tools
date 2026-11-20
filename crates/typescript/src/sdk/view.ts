@@ -108,7 +108,7 @@ export type Role =
   | "menu" | "menuitem" | "listbox" | "option" | "grid" | "gridcell" | "toolbar" | "dialog" | "tooltip";
 /**
  * Named actions an agent runs, and some keys: `toggle`, `set` (a number), `increment` and
- * `decrement` (the arrow keys, by a number of steps: 1, or 10 with Page Up and Down), `reset`
+ * `decrement` (the arrow keys, by a number of steps: 1, 10 with Page Up and Down, to its end with Home and End), `reset`
  * (a double click, Backspace).
  */
 export type Actions = { [name: string]: (value: number) => void };
@@ -175,7 +175,7 @@ export type BoxProps = Interactive & Size & {
   hoverGroup?: true;
   /** Shown only while the `hoverGroup` around it is pointed at or has the keys. */
   reveal?: true;
-  /** One stop of Tab: the arrow keys move between the controls inside, such as segments or pads. */
+  /** One stop of Tab: the arrow keys go to the nearest control inside in their direction, Home and End to the ends of its row, Escape out. */
   group?: true;
   /**
    * Shown over everything beside its parent, which needs a `key` and is what opens it: a menu, a
@@ -227,7 +227,7 @@ export type FieldProps = {
   /** What it says while nobody types. */
   value: string;
   onCommit: (text: string | null) => void;
-  /** Takes the keys when it appears, its text chosen. */
+  /** Takes the keys when it appears after a press, its text chosen: a rename in place. */
   focus?: true;
   style?: TextStyle;
   color?: Color;
