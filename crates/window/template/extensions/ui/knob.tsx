@@ -1,5 +1,6 @@
 import { h, live, type Drag, type Live, type Pointer, type Unit } from "../sdk";
 import theme from "../theme.json";
+import { played } from "./field";
 import { TypeIn } from "./type-in";
 import { Tooltip } from "./tooltip";
 import { fitted, liveShownAt, liveTravelled, liveValueAt, stepped, travelled, valueAt, type Range } from "./value";
@@ -55,11 +56,13 @@ export const Knob = ({ id, path, label, text, value, initial, unit, bipolar = fa
   const set = (next: number) => onChange(fitted(next, range));
   // A drag from the value line turns the knob too.
   const turned = live.drag(id).dy.plus(live.drag(`${id}-value`).dy).over(-TRAVEL).plus(at);
-  const dragged = held ? liveTravelled(held, range) : turned;
+  // A number of a record shows what plays: its own drag, a handle on it, a lane. A fader's -inf plays as -100 dB, so it shows its drag.
+  const playing = path !== undefined && range.scale !== "fader" ? live.field(played(path)) : undefined;
+  const dragged = held ? liveTravelled(held, range) : playing ? liveTravelled(playing, range) : turned;
   const drag: Drag = { y: [-(1 - at) * TRAVEL, at * TRAVEL], ...(path === undefined ? {} : { plays: { [path]: liveValueAt(turned, range) } }) };
   const dragEnd = ({ dy }: Pointer) => onChange(valueAt(at - dy / TRAVEL, range));
   const actions = { set, increment: (by: number) => onChange(stepped(value, by, range)), decrement: (by: number) => onChange(stepped(value, -by, range)), ...(initial === undefined ? {} : { reset: () => set(initial) }) };
-  const readout = held ?? liveShownAt(dragged, range);
+  const readout = held ?? playing ?? liveShownAt(dragged, range);
   const number = unit === undefined ? <text style="number" color="text" live={readout} /> : <text style="number" color="text" live={readout} unit={unit} />;
   if (small) {
     const line = (

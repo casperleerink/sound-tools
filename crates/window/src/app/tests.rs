@@ -13,12 +13,15 @@ use crate::controls;
 
 mod host;
 
-/// What the live texts of the views show, but the values of the controls a drag turns, such
-/// as the template's faders and knobs, and the loudest a strip played, which a click lets go of.
+/// What the live texts of the views show, but the values of the controls, which show what a
+/// drag or the record plays, such as the template's faders and knobs, and the loudest a strip
+/// played, which a click lets go of.
 fn shown_texts(state: &State) -> Vec<String> {
     let texts = state.lives.texts().into_iter();
     texts
-        .filter(|(shows, _)| !shows.contains("Drag") && !shows.contains("Max"))
+        .filter(|(shows, _)| {
+            !shows.contains("Drag") && !shows.contains("Value") && !shows.contains("Max")
+        })
         .map(|(_, text)| text)
         .collect()
 }
@@ -869,7 +872,10 @@ fn gauge() -> (tempfile::TempDir, State) {
 #[test]
 fn a_live_field_the_record_leaves_out_shows_its_default() {
     let (_scratch, state) = gauge();
-    assert_eq!(shown_texts(&state), ["0.75"]);
+    let texts: Vec<String> = (state.lives.texts().into_iter())
+        .map(|(_, text)| text)
+        .collect();
+    assert_eq!(texts, ["0.75"]);
 }
 
 #[test]
