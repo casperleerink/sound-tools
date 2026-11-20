@@ -8,7 +8,7 @@ import { cards, type ToolFacts, type ToolFeeds } from "./feeds";
 import type { Fields, Inputs, Note, Unit, ValuesOf } from "./fields";
 import type { IconName } from "./icons";
 import { defaultStates, type Tools } from "./records";
-import { registry, type ChildTools, type Context, type FilledStateOfTool, type OwnedChild, type ProjectTool, type ToolSpec } from "./tools";
+import { registry, type ChildTools, type Context, type FilledStateOfTool, type InputsOfTool, type OwnedChild, type ProjectTool, type ToolSpec } from "./tools";
 import { Live, type LiveNode, type Num } from "./values";
 
 // Design tokens: every name comes from theme.json, so a misspelled one is a type error.
@@ -268,10 +268,10 @@ export type Child = Node | string | number | null | undefined | false | Child[];
  * A field of a record as a card shows it, by its `name` in the record or the object around it:
  * a number with its range, a switch, a choice of options, an object of fields (`group`), a list
  * of `item`s, or an object of `item`s by key (`map`). `scale` spreads a number over a knob's
- * travel: `log` in octaves, as a frequency; `fader` as a volume.
+ * travel: `log` in octaves, as a frequency; `fader` as a volume. `lane`: a lane can move it.
  */
 export type FieldInfo = { name: string; label: string } & (
-  | { kind: "number"; min: number; max: number; scale: "linear" | "log" | "fader"; integer: boolean; unit: Unit | null; default: number }
+  | { kind: "number"; min: number; max: number; scale: "linear" | "log" | "fader"; integer: boolean; lane: boolean; unit: Unit | null; default: number }
   | { kind: "switch"; default: boolean }
   | { kind: "choice"; options: { value: string | number; text: string }[]; default: string | number }
   | { kind: "group"; fields: FieldInfo[] }
@@ -302,7 +302,7 @@ type CardState<T> = T extends keyof Tools ? FilledStateOfTool<T> : Record<string
  */
 export type Card<T extends keyof Tools | undefined = undefined, M extends object = Record<string, unknown>> = (
   self: Drawn<CardState<T>, {}, T>,
-  ctx: Context<CardState<T>, Inputs, Partial<M>, {}>,
+  ctx: Context<CardState<T>, T extends keyof Tools ? InputsOfTool<T> : Inputs, Partial<M>, {}>,
 ) => Node;
 
 /** A device the window offers to put in a child, with what it takes: notes it plays, or sound it changes. */

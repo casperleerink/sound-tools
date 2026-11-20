@@ -426,6 +426,11 @@ export type SendTo<I extends Inputs, K extends ChildTools = ChildTools> =
 /** An input of an instance deeper down, by its path such as `"voice/rec"`: its name is not checked. */
 type Deeper = { child: `${string}/${string}` } & (Keyed<"number"> | Keyed<"bang"> | Keyed<"notes", "notes">);
 
+/** A command of a built-in tool, which its card plays with `send`: with a number when it acts on one, such as a pad. */
+type Command = BangInput & { command: true };
+/** What the card of the built-in tool `T` plays with `send`: its number inputs and its commands. */
+export type InputsOfTool<T extends keyof Tools> = { [N in Tools[T]["input"]]: NumberField } & { [N in Tools[T]["bang"]]: Command };
+
 /** What `send` takes after the input: a number for a number, a note event for notes, nothing for a bang. */
 type SendArgs<P, I extends Inputs> = P extends "notes" | { notes: string }
   ? [event: NoteEvent, options?: At]
@@ -434,9 +439,11 @@ type SendArgs<P, I extends Inputs> = P extends "notes" | { notes: string }
     : P extends { number: string }
       ? [value: number, options?: At]
       : P extends keyof I
-        ? I[P] extends BangInput
-          ? [options?: At]
-          : [value: number, options?: At]
+        ? I[P] extends Command
+          ? [value?: number]
+          : I[P] extends BangInput
+            ? [options?: At]
+            : [value: number, options?: At]
         : never;
 
 /**

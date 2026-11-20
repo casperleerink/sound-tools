@@ -95,13 +95,11 @@ export type Movable = { target: string; text: string; group: string; value: numb
 type Device = { name: string; tool: unknown; state: unknown; children: readonly Device[]; facts?: Facts & Partial<Pick<Facts<"plugin">, "parameters">> };
 /** A number of a device a lane can move, by its path in the record, and how far it goes. */
 type Known = { number: string; min?: number; max?: number; scale: Scale; default?: number };
-/** `lane`: whether a lane can move a number, which the device says in its facts. */
-type Laned = { lane?: boolean };
 
 /** The numbers of `device` a lane can move, as its facts say: its fields' and a plugin's parameters. */
 function numbersOf(device: Device): Known[] {
   const facts = device.facts;
-  const parameters = (facts?.parameters ?? []).filter((parameter) => (parameter as Laned).lane === true)
+  const parameters = (facts?.parameters ?? []).filter((parameter) => parameter.lane)
     .map((parameter): Known => ({ number: `parameters.${parameter.id}.value`, min: parameter.min, max: parameter.max, scale: "linear", default: parameter.default }));
   return [...fieldNumbers(facts?.fields ?? [], device.state, ""), ...parameters];
 }
@@ -113,7 +111,7 @@ function fieldNumbers(fields: readonly FieldInfo[], state: unknown, prefix: stri
 function itemNumbers(field: FieldInfo, value: unknown, path: string): Known[] {
   switch (field.kind) {
     case "number":
-      return (field as Laned).lane === true ? [{ number: path, min: field.min, max: field.max, scale: field.scale, default: field.default }] : [];
+      return field.lane ? [{ number: path, min: field.min, max: field.max, scale: field.scale, default: field.default }] : [];
     case "group":
       return fieldNumbers(field.fields, value, `${path}.`);
     case "list":

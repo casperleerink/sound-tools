@@ -127,6 +127,15 @@ test("a card gets its facts, and a number a lane plays takes no change", () => {
 export const eq: Card<"eq"> = (self) => <text>{self.state.output_gain_db}</text>;
 // @ts-expect-error: an eq has no cutoff
 export const notEq: Card<"eq"> = (self) => <text>{self.state.cutoff_hz}</text>;
+// A card sends the commands its device declares, a number only to one that acts on it.
+export const plugin: Card<"plugin"> = (_, { send }) => (
+  <box key="k" label="K" onPress={() => {
+    send("close_window");
+    send("pin", 3);
+    // @ts-expect-error: a plugin has no such command
+    send("close_windows");
+  }} />
+);
 export const wrong = [
   // @ts-expect-error: a place is numbers or live values
   <box place={["left", 0]} />,

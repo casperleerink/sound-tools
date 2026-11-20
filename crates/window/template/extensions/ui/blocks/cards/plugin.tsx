@@ -53,7 +53,7 @@ export const card: Card<"plugin"> = (self, ctx) => {
   const name = facts.name ?? state.plugin_id;
   if (facts.status === "missing") return <DeviceCard id="card" title={title} display={says("This plugin is not on this computer. Install it, or pick another.")} />;
   if (facts.status === "stopped") {
-    const again = <Button id="plugin-start-again" label={`${title} start again`} text="Start again" size="sm" onPress={() => ctx.send("start_again", 1)} />;
+    const again = <Button id="plugin-start-again" label={`${title} start again`} text="Start again" size="sm" onPress={() => ctx.send("start_again")} />;
     return <DeviceCard id="card" title={title} display={<col gap={1}>{says(`${name} stopped working.`)}{again}</col>} />;
   }
   if (facts.status === "not_loaded") return <DeviceCard id="card" title={title} display={says("This plugin did not load, so there is nothing to open.")} />;
@@ -73,7 +73,7 @@ export const card: Card<"plugin"> = (self, ctx) => {
 
   const window = facts.window === "none"
     ? <col>{lines("This plugin has no window of its own.", OWN * LETTERS_A_CELL).map((line) => <text style="label" color="text-secondary">{line}</text>)}</col>
-    : <Button id="plugin-window" label={`${title} ${facts.window === "open" ? "close window" : "open window"}`} text={facts.window === "open" ? "Close window" : "Open window"} size="sm" onPress={() => (facts.window === "open" ? ctx.send("close_window", 1) : ctx.openWindow(""))} />;
+    : <Button id="plugin-window" label={`${title} ${facts.window === "open" ? "close window" : "open window"}`} text={facts.window === "open" ? "Close window" : "Open window"} size="sm" onPress={() => (facts.window === "open" ? ctx.send("close_window") : ctx.openWindow(""))} />;
   const listed = [
     ...facts.parameters.map((parameter) => {
       const has = pinned.includes(parameter.id);

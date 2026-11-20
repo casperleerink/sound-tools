@@ -127,7 +127,7 @@ export const card: Card<"sampler", { expanded: boolean }> = (self, ctx) => {
   // Only the composer starts a download; a failed one says why and offers it again.
   const asks = instrument?.state === "missing" ? "Download" : instrument?.state === "failed" ? "Try again" : undefined;
   const size = facts.library.find((offer) => offer.id === state.library)?.size;
-  const download = asks && <Button id="download" label={`${field.title} download`} text={`${asks} · ${size} on disk`} size="sm" onPress={() => ctx.send("download", 1)} />;
+  const download = asks && <Button id="download" label={`${field.title} download`} text={`${asks} · ${size} on disk`} size="sm" onPress={() => ctx.send("download")} />;
   const shownInside = words ? says(words, download) : plays ? drawing : (
     <box w={w} h={tall}>
       <Waveform wave={live.feed("wave")} seconds={[0, 1]} file={file} w={w} h={tall} empty="Drop an audio file here" />
@@ -148,7 +148,7 @@ export const card: Card<"sampler", { expanded: boolean }> = (self, ctx) => {
       for (const gone of ["sample", "sfz"]) delete into[gone];
       into.library = id;
     });
-    ctx.send("download", 1);
+    ctx.send("download");
   };
 
   const own: Item[] = [

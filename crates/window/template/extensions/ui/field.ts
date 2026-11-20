@@ -62,7 +62,7 @@ const inSentence = (text: string) => (/^.[a-z]/.test(text) ? text.charAt(0).toLo
 const infosOf = (fields: Fields): FieldInfo[] =>
   Object.entries(fields).flatMap(([name, field]): FieldInfo[] => {
     const label = field.label ?? words(name);
-    if (field.kind === "number") return [{ name, label, kind: "number", min: field.min, max: field.max, scale: field.unit === "hz" && field.min > 0 ? "log" : "linear", integer: field.integer ?? false, unit: field.unit ?? null, default: field.default ?? field.min }];
+    if (field.kind === "number") return [{ name, label, kind: "number", min: field.min, max: field.max, scale: field.unit === "hz" && field.min > 0 ? "log" : "linear", integer: field.integer ?? false, lane: !field.integer, unit: field.unit ?? null, default: field.default ?? field.min }];
     if (field.kind === "boolean") return [{ name, label, kind: "switch", default: field.default ?? false }];
     if (field.kind === "choice") return [{ name, label, kind: "choice", options: field.options.map((value) => ({ value, text: String(value) })), default: field.default }];
     return [];
