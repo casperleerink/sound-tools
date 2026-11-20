@@ -6,6 +6,7 @@
 #![allow(clippy::unwrap_used)]
 
 mod code;
+mod edits;
 mod import;
 mod keys;
 mod launch;

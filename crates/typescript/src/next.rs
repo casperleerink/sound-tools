@@ -386,6 +386,11 @@ impl Tools {
         self.view_runs
     }
 
+    /// How many records the running Bun was told.
+    pub fn records_told(&self) -> u64 {
+        self.bun.as_ref().map_or(0, |bun| bun.records_told())
+    }
+
     /// What is wrong with `extensions/`.
     pub fn problems(&self) -> impl Iterator<Item = &Problem> {
         (self.problems.iter())
