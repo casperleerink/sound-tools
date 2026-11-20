@@ -345,11 +345,16 @@ pub fn listen_only(project: &mut Project, path: &str) -> Result<()> {
     Ok(())
 }
 
-/// The `notes` of `selected` or of the nearest parent of it that has them; with nothing
-/// selected, those of every instance at the top that has them, as a parent gives its notes to
-/// each of its children that plays them.
+/// The `notes` of `selected` or of the nearest parent of it that has them, as a parent gives its
+/// notes to each of its children that plays them. With nothing selected, those of the instance
+/// the page shows, or where it has none, of every instance at the top that has them.
 pub fn notes_inputs(project: &Project, selected: Option<&InstanceId>) -> Vec<InputEndpoint> {
     let Some(selected) = selected else {
+        let main = (project.project_file().main.as_ref())
+            .and_then(|main| project.input_port(main, NOTES_INPUT));
+        if let Some(main) = main {
+            return vec![main];
+        }
         let top = project
             .instances()
             .filter(|(id, _)| !id.as_str().contains('/'));

@@ -341,7 +341,7 @@ fn live_notes(session: &Session) -> Vec<sound_core::InputEndpoint> {
 }
 
 /// The selection is worked out from the project as it is now; live notes go to the nearest
-/// instance that takes notes, or with nothing selected, to every one at the top.
+/// instance that takes notes, or with nothing selected, to the one the page shows.
 #[test]
 fn the_selection_follows_the_project_and_live_notes_go_to_the_nearest_notes() {
     let mut opened = Opened::daw(&[]);
@@ -352,8 +352,8 @@ fn the_selection_follows_the_project_and_live_notes_go_to_the_nearest_notes() {
             .unwrap()
     };
     let (track, song) = (notes_of(TRACK), notes_of("song"));
-    // The template's gallery is at the top too.
-    assert_eq!(live_notes(&opened.session), [notes_of("gallery"), song]);
+    // The page's song, not the gallery the template has at the top too.
+    assert_eq!(live_notes(&opened.session), [song]);
 
     let mix = id("song/t00/mix");
     let span = Some((Ticks(BAR), Ticks(2 * BAR)));
