@@ -255,3 +255,66 @@ fn the_song_of_the_template_with_64_tracks_and_500_clips_runs_no_view_as_it_scro
     assert!(play < SCROLL_AND_PLAY, "a play frame took {play:?}");
     assert!(zoom < ZOOM, "a zoom frame took {zoom:?}");
 }
+
+/// The mixer of the big song: a frame while it plays, its 64 strips' meters moving, and each
+/// frame of a fader's drag, which plays the volume as it goes, stay within the budget of a play
+/// frame, and Bun runs no view for either.
+#[test]
+fn the_mixer_of_64_tracks_plays_and_drags_a_fader_within_its_budget_and_runs_no_view() {
+    let scratch = big_song();
+    let mut state = opened(&scratch.path().join("song"));
+    super::act(&mut state, serde_json::json!({ "action": "song.mixer" }));
+    let mut window = laid_out(state);
+    for _ in 0..3 {
+        redraw(&mut window);
+    }
+    let runs = view_runs(&window);
+    (window.state.session).background(|project| project.engine().play());
+    let mut seconds = window.state.last;
+    let play = measured(|| {
+        seconds += 1.0 / 60.0;
+        frame(&mut window.state, seconds);
+        timed(|| {
+            window.state.lives.update(&window.state, 1.0 / 60.0);
+            window.frame(1.0 / 60.0);
+        })
+    });
+    assert!(window.state.playing);
+    let (x, y) = window.find("fader-t00").unwrap();
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    let mut step = 0.0;
+    let drag = measured(|| {
+        step += 1.0;
+        seconds += 1.0 / 60.0;
+        frame(&mut window.state, seconds);
+        timed(|| {
+            window.pointer_move(x, y - step);
+            window.frame(1.0 / 60.0);
+        })
+    });
+    assert!(window.state.lives.hand("fader-t00").active);
+    assert_eq!(view_runs(&window), runs, "Bun ran a view");
+    eprintln!("mixer of 64 tracks: play {play:?}, drag {drag:?} a frame");
+    // Unoptimized, Rune's frame of the many meters of the strips takes about 4.5 times as long.
+    let budget = SCROLL_AND_PLAY * if cfg!(debug_assertions) { 2 } else { 1 };
+    assert!(play < budget, "a play frame took {play:?}");
+    assert!(drag < budget, "a frame of the drag took {drag:?}");
+}
+
+/// A run of the song's view that changes no record, such as one that shows the mixer, builds
+/// no memo of the clips or the heads again: Bun sends only what changed.
+#[test]
+fn showing_the_mixer_sends_no_clips_or_heads_again() {
+    let scratch = new_project();
+    let mut state = opened(&scratch.path().join("song"));
+    let song = sound_core::InstanceId::new("song").unwrap();
+    let versions = |state: &State| {
+        ["time-t00", "head-t00"].map(|memo| state.memo_of(&song, memo).map(|(version, _)| version))
+    };
+    let before = versions(&state);
+    assert!(before.iter().all(Option::is_some), "{before:?}");
+    super::act(&mut state, serde_json::json!({ "action": "song.mixer" }));
+    assert!(state.memo_of(&song, "mixer-t00").is_some());
+    assert_eq!(versions(&state), before);
+}
