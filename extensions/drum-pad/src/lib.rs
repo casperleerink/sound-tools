@@ -571,6 +571,8 @@ struct Facts {
     sounds: Vec<SoundFacts>,
 }
 
+/// A record leaves out the pads and fields that are the kit's, and the kit's differ by pad, so
+/// these say what each pad plays and what a reset gives it.
 #[derive(Serialize, JsonSchema)]
 struct PadFacts {
     note: u8,
@@ -578,6 +580,23 @@ struct PadFacts {
     name: String,
     /// The file it plays; null for a sound of the kit.
     file: Option<sound_media::FileFacts>,
+    /// The sound of the kit it plays, as a record writes it; null for a file.
+    sound: Option<&'static str>,
+    volume_db: f32,
+    pitch_semitones: f32,
+    decay_ms: f32,
+    pan: f32,
+    choke: bool,
+    /// Its numbers in the kit.
+    kit: KitFacts,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct KitFacts {
+    volume_db: f32,
+    pitch_semitones: f32,
+    decay_ms: f32,
+    pan: f32,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -590,13 +609,31 @@ struct SoundFacts {
 impl Facts {
     fn of(state: &DrumPadState, assets: &sound_core::Assets) -> Self {
         let pads = (state.pads.iter().enumerate())
-            .map(|(pad, settings)| PadFacts {
-                note: note_of(pad),
-                name: settings.name(pad),
-                file: match &settings.source {
-                    Source::Sample(asset) => Some(sound_media::FileFacts::of(assets, asset)),
-                    Source::Sound(_) => None,
-                },
+            .map(|(pad, settings)| {
+                let (file, sound) = match &settings.source {
+                    Source::Sample(asset) => {
+                        (Some(sound_media::FileFacts::of(assets, asset)), None)
+                    }
+                    Source::Sound(sound) => (None, Some(sound.key())),
+                };
+                let kit = &KIT[pad];
+                PadFacts {
+                    note: note_of(pad),
+                    name: settings.name(pad),
+                    file,
+                    sound,
+                    volume_db: settings.volume_db,
+                    pitch_semitones: settings.pitch_semitones,
+                    decay_ms: settings.decay_ms,
+                    pan: settings.pan,
+                    choke: settings.choke,
+                    kit: KitFacts {
+                        volume_db: kit.volume_db,
+                        pitch_semitones: kit.pitch_semitones,
+                        decay_ms: kit.decay_ms,
+                        pan: kit.pan,
+                    },
+                }
             })
             .collect();
         let sounds = (Sound::ALL.into_iter())
@@ -654,6 +691,26 @@ mod tests {
 
     fn parse(json: &str) -> Result<DrumPadState, String> {
         serde_json::from_str(json).map_err(|error| error.to_string())
+    }
+
+    /// A pad the record leaves out, or a field of one, is the kit's for that pad, not for the
+    /// first: the card shows and resets each pad by these.
+    #[test]
+    fn the_facts_of_a_pad_are_what_it_plays_with_the_kit_of_that_pad() {
+        let state = parse(r#"{"pads": {"37": {"volume_db": -6}}}"#).unwrap();
+        let assets = sound_core::Assets::new(&std::env::temp_dir());
+        let facts = serde_json::to_value(Facts::of(&state, &assets)).unwrap();
+        let rim = &facts["pads"][1];
+        assert_eq!(rim["name"], "Rim");
+        assert_eq!(rim["sound"], "rim");
+        assert_eq!(rim["volume_db"], -6.0);
+        assert_eq!(rim["decay_ms"], 70.0);
+        assert_eq!(rim["kit"]["volume_db"], 0.0);
+        let open_hat = &facts["pads"][10];
+        assert_eq!(
+            (&open_hat["decay_ms"], &open_hat["choke"]),
+            (&650.0.into(), &true.into())
+        );
     }
 
     #[test]
