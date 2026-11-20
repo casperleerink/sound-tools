@@ -671,3 +671,13 @@ fn the_access_menu_shows_what_each_mode_means_in_full() {
         );
     }
 }
+
+#[test]
+fn allow_is_lavender() {
+    let (_scratch, window) = window("agent-approval");
+    let allow = (window.elements().into_iter())
+        .find(|element| element.key.as_deref() == Some("agent-approval-0"))
+        .unwrap();
+    assert_eq!(allow.label.as_deref(), Some("Allow"));
+    assert_eq!(allow.fill, window.state.theme.color("focus"));
+}
