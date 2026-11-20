@@ -120,7 +120,7 @@ export const Frame = ({ id, title, menu, on = true, onPower, onRemove, end, chos
   <col key={id} label={`Device ${title}`} role="group" h={CARD_HEIGHT} radius="lg" fill="surface" border={chosen ? "text-muted" : "border-strong"} hoverGroup
     {...(drag ? { opacity: live.drag(id).active.times(-0.5).plus(1) } : {})}>
     <row key={`${id}-header`} label={`Choose ${title}`} role="toolbar" group h={HEADER} px={1} gap={1} align="center"
-      {...(drag ? { drag: { ...drag, id }, onDragEnd } : {})} {...(onChoose ? { onPress: onChoose } : {})}>
+      {...(drag ? { drag: { ...drag, id }, onDragEnd, radius: "md", hover: "fill" } : {})} {...(onChoose ? { onPress: onChoose } : {})}>
       {menu ? (
         <row key={`${id}-title`} label={menu.label} role="button" h={height("sm")} px={2} gap={1} align="center" radius="md" hover="fill">
           <text style="heading" color={on ? "text" : "text-muted"} truncate>{title}</text>

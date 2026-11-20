@@ -1,6 +1,6 @@
 //! Files dropped from the system on an element that has `onDrop`.
 
-use rune::{Color, El, Live};
+use rune::{Color, El};
 
 use crate::app::State;
 
@@ -10,26 +10,14 @@ use super::{BoxNode, Scope};
 
 /// `e` taking the files dropped on it, in the units of the plane around it, as a press. Any
 /// file: what it holds, not its name, says whether it is a sound or notes. Its `hover` look
-/// shows while files are over it.
+/// shows while files are over it, see [`over`].
 pub(super) fn target(scope: &Scope, mut e: El, b: &BoxNode, press: &Press) -> El {
     if !b.drop {
         return e;
     }
-    let theme = &scope.state.theme;
     let key = scope.key(&press.element);
-    if let Some(over) = b.hover.as_deref().map(|colour| theme.color(colour)) {
-        let rest = b
-            .fill
-            .as_deref()
-            .map_or(Color::TRANSPARENT, |c| theme.color(c));
-        // Live, so a memo Rune does not build again shows it too.
-        let look = Live::new(match scope.state.drops.over(&key) {
-            true => over,
-            false => rest,
-        });
-        e = e.live_fill(&look);
+    if b.hover.is_some() {
         e = e.on_drop_hover(move |s: &mut State, on: bool, _: &mut rune::Tx| {
-            look.set(if on { over } else { rest });
             s.drops.hover(&key, on);
         });
     }
@@ -47,4 +35,19 @@ pub(super) fn target(scope: &Scope, mut e: El, b: &BoxNode, press: &Press) -> El
             s.drop_files(&press.instance, &press.element, files.to_vec(), at);
         },
     )
+}
+
+/// `e` showing its `hover` look also while files or a dragged element are over it, which no
+/// pointer hover shows.
+pub(super) fn over(scope: &Scope, e: El, b: &BoxNode) -> El {
+    let (Some(over), Some(key)) = (b.hover.as_deref(), b.key.as_deref()) else {
+        return e;
+    };
+    let theme = &scope.state.theme;
+    let rest = (b.fill.as_deref()).map_or(Color::TRANSPARENT, |c| theme.color(c));
+    let look = scope
+        .state
+        .drops
+        .look(&scope.key(key), rest, theme.color(over));
+    e.live_fill(&look)
 }

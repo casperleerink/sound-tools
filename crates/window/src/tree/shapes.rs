@@ -575,20 +575,20 @@ mod tests {
     /// a flat one is from top to bottom.
     #[test]
     fn a_steep_list_line_is_as_thick_as_a_flat_one() {
-        let lit = |rgba: &[u8], w: usize, pixels: &mut dyn Iterator<Item = usize>| {
+        let lit = |rgba: &[u8], pixels: &mut dyn Iterator<Item = usize>| {
             pixels.filter(|index| rgba[index * 4 + 3] > 128).count()
         };
         let (w, h) = (40, 200);
         let mut flat = Raster::new(w, h);
         flat.line(&[100.0, 100.0], |value| value, 4.0, [255.0; 4], None);
-        let down = lit(&flat.rgba, w, &mut (0..h).map(|row| row * w + 20));
+        let down = lit(&flat.rgba, &mut (0..h).map(|row| row * w + 20));
         let mut steep = Raster::new(w, h);
         // From the bottom to the top in 4 columns, then flat.
         let values: Vec<f32> = (0..=40)
             .map(|x| (200.0 - 50.0 * x as f32).max(0.0))
             .collect();
         steep.line(&values, |value| value, 4.0, [255.0; 4], None);
-        let across = lit(&steep.rgba, w, &mut (0..w).map(|column| 100 * w + column));
+        let across = lit(&steep.rgba, &mut (0..w).map(|column| 100 * w + column));
         assert!(across + 1 >= down, "{across} across, {down} down");
     }
 }

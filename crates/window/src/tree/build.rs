@@ -336,7 +336,7 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
         e = e.fill(theme.color(colour));
     }
     if let Some(colour) = &b.hover {
-        e = e.hover(theme.color(colour));
+        e = super::drop::over(scope, e.hover(theme.color(colour)), b);
     }
     if b.hover_group {
         e = e.hover_group();
