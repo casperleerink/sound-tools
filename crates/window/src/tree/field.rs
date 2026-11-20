@@ -111,14 +111,13 @@ pub(super) fn typed(scope: &Scope, f: &FieldNode) -> El {
         match (&pressed.key, &searched) {
             (Key::Escape, _) => s.done_typing(&key, false, tx),
             (Key::Down | Key::Up, Some(opener)) => {
-                let fields = s.fields.get_mut();
-                let items = fields.found_items.get(opener).into_iter().flatten();
-                let mut keys = items.map(|(key, _)| key);
+                let found = s.fields.get_mut().found_items.get(opener);
+                let items = found.map_or(&[][..], Vec::as_slice);
                 let to = match pressed.key == Key::Down {
-                    true => keys.next(),
-                    false => keys.last(),
+                    true => items.first(),
+                    false => items.last(),
                 };
-                if let Some(to) = to {
+                if let Some((to, _)) = to {
                     tx.focus(to, true);
                 }
             }
