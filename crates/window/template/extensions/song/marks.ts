@@ -2,7 +2,8 @@
 // song repeats. Marks are in `project.json`, so each change is one undo step of the clock; the
 // repeat is not saved and is no undo step. The ruler's plane: x in ticks of the song.
 import type { Pointer, Section, TempoMap } from "../sdk";
-import type { Mark, Song } from "./model";
+import { lengthAt } from "./clips";
+import { itemAt, type Mark, type Song } from "./model";
 import { barNear, barStarts, BEAT, nearestOf, tickOfBar, type Runs } from "./time";
 
 /** What the marks are read from: the clock, or a test's copy of `project.json`. */
@@ -47,6 +48,16 @@ export function withoutSignature(runs: Runs, bar: number): TempoMap["time_signat
   if (!before || !run) return runs.map((each) => ({ ...each }));
   return [...runs.slice(0, index - 1), { ...before, bars: before.bars + run.bars }, ...runs.slice(index + 1)].map((each) => ({ ...each }));
 }
+
+/** The time signatures with the change at bar `from` moved to bar `to`, the bars between going to the run before. */
+export function withSignatureMoved(runs: Runs, from: number, to: number): TempoMap["time_signatures"] {
+  const signature = runs[changeBars(runs).indexOf(from)]?.signature ?? "4/4";
+  const moved = withSignature(withoutSignature(runs, from), to);
+  return moved.map((run, index) => (changeBars(moved)[index] === to ? { ...run, signature } : run));
+}
+
+/** The slowest and the fastest tempo, as the transport takes them. */
+export const [SLOWEST, FASTEST] = [10, 1000];
 
 /** The tempo that plays at `tick`. */
 const bpmAt = (changes: readonly { tick: number; bpm: number }[], tick: number) => [...changes].reverse().find((change) => change.tick <= tick)?.bpm ?? 120;
@@ -153,6 +164,54 @@ export const markEdits = (song: Song) => {
       if (!next) return false;
       choose(next);
       clock.jump(next.tick);
+      return true;
+    },
+    /**
+     * A drag of a mark by `dx`: a section or a time signature change to the bar line nearest
+     * where it lands, a tempo change to that tick, at `bpm` when given. None onto another of its
+     * kind, and none moves the first tempo or time signature: one undo step, the mark kept chosen.
+     */
+    moveMark(mark: Mark, dx: number, bpm?: number): boolean {
+      const { bar, tick: line } = barNear(runs(), Math.max(mark.tick + dx, 0));
+      let moved: Mark | null = null;
+      if (mark.kind === "section" && bar !== mark.bar && !clock.sections.some((each) => each.bar === bar)) {
+        clock.update("Move a section", (piece) => {
+          piece.sections = piece.sections.map((each) => (each.bar === mark.bar ? { ...each, bar } : each)).sort((a, b) => a.bar - b.bar);
+        });
+        moved = { kind: "section", bar, tick: line };
+      } else if (mark.kind === "signature" && bar > 1 && bar !== mark.bar && !changeBars(runs()).includes(bar)) {
+        clock.update("Move a time signature change", (piece) => (piece.tempo_map.time_signatures = withSignatureMoved(piece.tempo_map.time_signatures, mark.bar, bar)));
+        moved = { kind: "signature", bar, tick: line };
+      } else if (mark.kind === "tempo") {
+        const to = mark.tick === 0 ? 0 : Math.max(Math.round(mark.tick + dx), 1);
+        const changes = clock.tempo_map.tempo_changes;
+        const was = changes.find((change) => change.tick === mark.tick);
+        const speed = Math.min(Math.max(bpm ?? was?.bpm ?? 120, SLOWEST), FASTEST);
+        if (!was || (to !== mark.tick && changes.some((change) => change.tick === to)) || (to === mark.tick && speed === was.bpm)) return false;
+        clock.update(to === mark.tick ? "Change the tempo" : "Move a tempo change", (piece) => {
+          const rest = piece.tempo_map.tempo_changes.filter((change) => change.tick !== mark.tick);
+          piece.tempo_map.tempo_changes = [...rest, { tick: to, bpm: speed }].sort((a, b) => a.tick - b.tick);
+        });
+        moved = { kind: "tempo", bar: barNear(runs(), to).bar, tick: to };
+      }
+      if (!moved) return false;
+      if (memory.mark?.kind === mark.kind && memory.mark.tick === mark.tick) memory.mark = moved;
+      return true;
+    },
+    /** Repeats what the chosen clips and regions span, on beats, and turns the repeat on; with none chosen, turns it on or off. */
+    repeatChosen(): boolean {
+      const spans = memory.selected.flatMap((key) => {
+        const start = itemAt(song.children, key)?.state.start;
+        return start === undefined ? [] : [{ from: start, to: start + lengthAt(song, key) }];
+      });
+      if (spans.length === 0) {
+        if (!clock.repeat && !memory.repeatRange) return false;
+        edits.toggleRepeat();
+        return true;
+      }
+      const from = Math.floor(Math.min(...spans.map((each) => each.from)) / BEAT) * BEAT;
+      const to = Math.ceil(Math.max(...spans.map((each) => each.to)) / BEAT) * BEAT;
+      clock.setRepeat({ from, to: Math.max(to, from + BEAT) });
       return true;
     },
     /** A drag across the ruler from `x`: it repeats that range, on beats. */

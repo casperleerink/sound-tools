@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { editsOf } from "./edits";
-import { fakeSong } from "./fake";
+import { clipOf, fakeSong, trackOf } from "./fake";
 import { marksOf, withoutSignature, withSignature } from "./marks";
 import { BAR, BEAT } from "./time";
 
@@ -76,5 +76,34 @@ test("a drag on the ruler repeats a range on beats, which is no undo step; the b
   expect(f.clock.repeat).toEqual({ from: BEAT, to: 3 * BEAT });
   marks.moveRepeat("end", { dx: -5 * BEAT });
   expect(f.clock.repeat).toEqual({ from: BEAT, to: 2 * BEAT });
+  expect(f.steps).toEqual([]);
+});
+
+test("a mark dragged lands on the nearest bar line, or a tempo change on its tick, as one step that keeps it chosen; never onto another", () => {
+  const f = fakeSong({ children: [] }, { piece: { sections: [{ bar: 2, name: "A" }, { bar: 5, name: "B" }], tempo_map: { time_signatures: [{ signature: "4/4", bars: 4 }, { signature: "3/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }, { tick: BAR, bpm: 140 }] } } });
+  const { marks } = editsOf(f.song);
+  marks.pressMark({ kind: "section", bar: 2, tick: BAR }, { clicks: 1 });
+  expect(marks.moveMark({ kind: "section", bar: 2, tick: BAR }, BAR + 300)).toBe(true);
+  expect(f.piece.sections).toEqual([{ bar: 3, name: "A" }, { bar: 5, name: "B" }]);
+  expect(f.memory.mark).toEqual({ kind: "section", bar: 3, tick: 2 * BAR });
+  expect(marks.moveMark({ kind: "section", bar: 3, tick: 2 * BAR }, 2 * BAR)).toBe(false);
+  marks.moveMark({ kind: "signature", bar: 5, tick: 4 * BAR }, -2 * BAR);
+  expect(f.piece.tempo_map.time_signatures).toEqual([{ signature: "4/4", bars: 2 }, { signature: "3/4", bars: 3 }]);
+  marks.moveMark({ kind: "tempo", bar: 2, tick: BAR }, BEAT, 150);
+  expect(marks.moveMark({ kind: "tempo", bar: 1, tick: 0 }, BAR, 90)).toBe(true);
+  expect(f.piece.tempo_map.tempo_changes).toEqual([{ tick: 0, bpm: 90 }, { tick: BAR + BEAT, bpm: 150 }]);
+  expect(f.steps).toEqual(["Move a section", "Move a time signature change", "Move a tempo change", "Change the tempo"]);
+});
+
+test("L repeats what the chosen clips span, on beats; with none chosen it turns the repeat off and on", () => {
+  const f = fakeSong({ children: [trackOf("t00", [clipOf("c00", BEAT + 100, BAR)])] });
+  const { marks } = editsOf(f.song);
+  expect(marks.repeatChosen()).toBe(false);
+  f.memory.selected = ["t00/c00"];
+  marks.repeatChosen();
+  expect(f.clock.repeat).toEqual({ from: BEAT, to: BAR + 2 * BEAT });
+  f.memory.selected = [];
+  marks.repeatChosen();
+  expect([f.clock.repeat, f.memory.repeatRange]).toEqual([null, { from: BEAT, to: BAR + 2 * BEAT }]);
   expect(f.steps).toEqual([]);
 });
