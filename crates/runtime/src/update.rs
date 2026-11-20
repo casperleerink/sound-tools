@@ -31,7 +31,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -42,6 +42,7 @@ use sound_core::process::background_command;
 use sound_core::process::curl;
 
 use crate::app::{self, TOOL_NAME};
+use crate::input::Waker;
 
 /// The JSON of the latest release. GitHub leaves drafts and prereleases out of it.
 const LATEST_RELEASE: &str =
@@ -573,26 +574,81 @@ pub fn start_pending_update() -> bool {
     }
 }
 
-/// Checks for an update on a thread of its own, now and every day while the app is open, and
-/// calls `ready` once there is one, or at once when [`start_pending_update`] could not install
-/// one at this start. Quiet when a check fails: the next one tries again.
-pub fn check_in_background(support: &Path, ready: impl Fn(Ready) + Send + 'static) {
-    if let Some(failed) = FAILED.get() {
-        ready(failed.clone());
+/// The update check of the open app: [`Update::start`] once, then [`Update::poll`] when its
+/// waker says.
+pub struct Update(Arc<Mutex<Option<Ready>>>);
+
+impl Update {
+    /// Checks for an update on a thread of its own, now and every day while the app is open,
+    /// and wakes the owner once there is one, or at once when [`start_pending_update`] could
+    /// not install one at this start. Quiet when a check fails: the next one tries again.
+    pub fn start(support: &Path, waker: Waker) -> Self {
+        Self::of(Updater::of_this_app(support), waker)
     }
-    let Some(updater) = Updater::of_this_app(support) else {
-        return;
-    };
-    std::thread::spawn(move || {
-        loop {
-            match smol::block_on(updater.check()) {
-                Ok(Some(found)) => return ready(found),
-                Ok(None) => {}
-                Err(error) => eprintln!("update: {error:#}"),
-            }
-            std::thread::sleep(CHECK_EVERY);
+
+    fn of(updater: Option<Updater>, waker: Waker) -> Self {
+        let found = Arc::new(Mutex::new(FAILED.get().cloned()));
+        if found
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+        {
+            waker();
         }
-    });
+        let Some(updater) = updater else {
+            return Self(found);
+        };
+        let ready = found.clone();
+        let started = std::thread::Builder::new()
+            .name("update".into())
+            .spawn(move || {
+                loop {
+                    match smol::block_on(updater.check()) {
+                        Ok(Some(newer)) => {
+                            *ready.lock().unwrap_or_else(PoisonError::into_inner) = Some(newer);
+                            return waker();
+                        }
+                        Ok(None) => {}
+                        Err(error) => eprintln!("update: {error:#}"),
+                    }
+                    std::thread::sleep(CHECK_EVERY);
+                }
+            });
+        if let Err(error) = started {
+            eprintln!("update: no thread to check on: {error}");
+        }
+        Self(found)
+    }
+
+    /// The newer release to tell the composer about, once there is one.
+    pub fn poll(&self) -> Option<Ready> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl Ready {
+    /// What the notice of it says.
+    pub fn message(&self) -> String {
+        let version = self.version;
+        match &self.action {
+            Action::Restart | Action::Download { .. } => format!("Sound Tools {version} is ready"),
+            Action::Failed { reason, .. } => {
+                format!("Sound Tools {version} did not install: {reason}")
+            }
+        }
+    }
+
+    /// The button of its notice: Restart starts the app again, which installs it; Download
+    /// opens the release page, where this app's folder cannot take it or it did not install.
+    pub fn button(&self) -> &'static str {
+        match self.action {
+            Action::Restart => "Restart",
+            Action::Download { .. } | Action::Failed { .. } => "Download",
+        }
+    }
 }
 
 #[cfg(test)]

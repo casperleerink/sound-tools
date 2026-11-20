@@ -17,7 +17,8 @@
 //! - [`Shifter`] moves the pitch of one voice and keeps its length, for pitch correction.
 //! - [`Periods`] are what a region with warp points needs to play longer or shorter than its
 //!   file at its pitch.
-//! - [`Overview`] is what a waveform of it draws, made from the file and never saved.
+//! - [`Overview`] is what a waveform of it draws, made from the file and never saved;
+//!   [`Waves`] makes and keeps them away from the thread that draws.
 //! - [`TakeFile`] is a recording on its way in: a WAV file that grows while it records.
 //! - [`analysis`] measures a sound: its loudness, peaks, spectrum and pitch.
 
@@ -32,6 +33,7 @@ mod stream;
 mod stretch;
 mod take;
 mod varispeed;
+mod waves;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -59,6 +61,7 @@ pub use stream::{HEAD_SECONDS, ReadAhead};
 pub use stretch::Periods;
 pub use take::{TakeFile, TakeOverview};
 pub use varispeed::{MAX_STEP, Varispeed, varispeed};
+pub use waves::{Wake, Waves};
 
 /// The folder of audio files, under `assets/`.
 pub const AUDIO_FOLDER: &str = "audio";
