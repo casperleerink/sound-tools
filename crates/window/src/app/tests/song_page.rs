@@ -37,9 +37,15 @@ fn shift_f10_opens_the_menu_of_a_clip_a_head_a_note_and_a_device() {
 
     assert!(has(&menu_of(&mut window, "clip-t00/bass"), "Export notes…"));
     assert!(has(&menu_of(&mut window, "track-t01"), "Show automation"));
-    assert!(has(&menu_of(&mut window, "slot-instrument-header"), "Sampler"));
+    assert!(has(
+        &menu_of(&mut window, "slot-instrument-header"),
+        "Sampler"
+    ));
 
-    act(&mut window.state, json!({ "key": "clip-t00/bass", "action": "press", "value": { "clicks": 2 } }));
+    act(
+        &mut window.state,
+        json!({ "key": "clip-t00/bass", "action": "press", "value": { "clicks": 2 } }),
+    );
     redraw(&mut window);
     assert!(has(&menu_of(&mut window, "note-0"), "Humanize"));
 }
@@ -55,14 +61,26 @@ fn inside(inner: [f32; 4], outer: [f32; 4]) -> bool {
 #[test]
 fn every_toggle_of_a_chosen_audio_track_lies_inside_its_head() {
     let (_scratch, mut window) = song();
-    act(&mut window.state, json!({ "key": "add-track-kind", "action": "open" }));
-    act(&mut window.state, json!({ "key": "add-track-kind-Audio track", "action": "press" }));
-    act(&mut window.state, json!({ "key": "track-audio-1", "action": "press" }));
+    act(
+        &mut window.state,
+        json!({ "key": "add-track-kind", "action": "open" }),
+    );
+    act(
+        &mut window.state,
+        json!({ "key": "add-track-kind-Audio track", "action": "press" }),
+    );
+    act(
+        &mut window.state,
+        json!({ "key": "track-audio-1", "action": "press" }),
+    );
     redraw(&mut window);
     let head = window.presented("track-audio-1").expect("the head").0;
     for toggle in ["lanes", "arm", "mute", "solo"] {
         let key = format!("{toggle}-audio-1");
         let rect = window.presented(&key).expect("the toggle").0;
-        assert!(inside(rect, head), "{key} {rect:?} out of the head {head:?}");
+        assert!(
+            inside(rect, head),
+            "{key} {rect:?} out of the head {head:?}"
+        );
     }
 }
