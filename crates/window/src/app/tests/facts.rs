@@ -115,9 +115,7 @@ fn a_view_runs_again_when_a_fact_of_a_grandchild_changes_and_not_while_none_does
         std::fs::write(chain.join(name), record.to_string()).unwrap();
     }
     let mut state = opened(&folder);
-    let file = |state: &State| match state
-        .drawn(&InstanceId::new(&format!("song/t00/chain/peek")).unwrap())
-    {
+    let file = |state: &State| match state.drawn(&InstanceId::new("song/t00/chain/peek").unwrap()) {
         Some(Drawn::View { root, .. }) => root.to_string(),
         Some(Drawn::Failed(why)) => why.clone(),
         other => format!("{}", other.is_some()),
