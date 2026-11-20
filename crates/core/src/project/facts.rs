@@ -359,7 +359,8 @@ fn nullable<'a>(reader: &RecordSchema<'a>, schema: &'a Value) -> &'a Value {
     }
 }
 
-/// The unit of a number of a built-in tool, read from its name: `cutoff_hz` is in Hz.
+/// The unit of a number of a built-in tool, read from its name: `cutoff_hz` is in Hz, a pan,
+/// or a share of 0 to 1 as a percent. As `sdk/fields.ts` names it.
 pub fn unit_of_name(field: &str, min: f64, max: f64) -> Option<&'static str> {
     const UNITS: [(&str, &str); 5] = [
         ("_hz", "hz"),

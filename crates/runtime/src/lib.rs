@@ -222,6 +222,23 @@ pub fn tool_schemas() -> Result<Vec<ToolSchema>> {
     Ok(registry.tool_schemas())
 }
 
+/// What the views of the built-in tools read, for their types in the code of a project: every
+/// feed, and the JSON Schema of the facts of each tool that adds some (`*`: of every instance).
+pub fn feeds_and_facts(
+    plugins: Plugins,
+) -> Result<(
+    Vec<sound_core::feeds::FeedName>,
+    Vec<(&'static str, serde_json::Value)>,
+)> {
+    let mut registry = Registry::new();
+    register_extensions(&mut registry, Some(plugins))?;
+    sound_typescript::register_feeds(&mut registry);
+    Ok((
+        sound_core::feeds::names(&registry),
+        sound_core::facts::describe(&registry),
+    ))
+}
+
 /// Opens the project with its lock. The app passes [`playing_plugins`]; a test passes a host
 /// that looks in a folder of its own.
 ///

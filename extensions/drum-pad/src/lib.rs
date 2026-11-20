@@ -21,11 +21,11 @@ use serde::de::Error as _;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sound_core::{
-    AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, InstanceId, OutputEndpoint, Project,
-    ProjectError, Registry, RegistryError, Scale, State, ranges,
+    AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
+    RegistryError, Scale, State, ranges,
 };
 use sound_media::AudioAsset;
-use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Pitch, Velocity};
+use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Pitch};
 
 use processor::{DrumPad, DrumUpdate};
 pub use processor::{FADE_SECONDS, RAMP_SECONDS, VOICES, pad_gains};
@@ -35,17 +35,6 @@ pub use sounds::{
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "drum-pad";
-
-/// Plays pad `pad`, 0 to 15, of the Drum pad `id` now, as a click on it does. Not an edit:
-/// nothing is saved.
-pub fn hit(
-    project: &mut Project,
-    id: &InstanceId,
-    pad: usize,
-    velocity: Velocity,
-) -> Result<(), ProjectError> {
-    project.send::<DrumPad>(id, PROCESSOR, DrumUpdate::hit(pad, velocity))
-}
 
 /// How many pads there are: a 4 by 4 grid.
 pub const PADS: usize = 16;
@@ -620,13 +609,10 @@ impl Facts {
     }
 }
 
-/// The name of the peaks of pad `pad`, which say how loud it sounds for the card.
+/// The name of the peaks of pad `pad`, which say how loud it sounds.
 fn peaks_name(pad: usize) -> String {
     format!("pad-{}", note_of(pad))
 }
-
-/// The name of the processor, for [`sound_core::Project::send`]: a click on a pad plays it.
-pub const PROCESSOR: &str = "drums";
 
 /// Runs for every valid state, from every source. It makes no sound and reads no file: the
 /// sound each pad needs is taken from those made before, or asked of the thread that makes them,
@@ -652,7 +638,7 @@ fn apply(state: &DrumPadState, context: &mut BehaviourContext<'_>) -> Result<(),
     for problem in problems {
         context.problem(problem);
     }
-    let drums = context.processor(PROCESSOR, || DrumPad::new(peaks))?;
+    let drums = context.processor("drums", || DrumPad::new(peaks))?;
     context.update(drums, DrumUpdate::kit(pads, state))?;
     context.input(NOTES_INPUT, InputEndpoint::new(drums, DrumPad::NOTES));
     context.automation(drums, DrumPad::AUTOMATION);

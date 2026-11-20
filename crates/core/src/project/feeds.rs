@@ -451,16 +451,28 @@ pub fn read(
     (feed.read)(played.as_deref().unwrap_or(state), &context)
 }
 
-/// Every feed a tool has, with its kind and its doc, for the types of the code of a project.
-/// The tool `*` is every instance.
-pub fn names(
-    registry: &super::Registry,
-) -> Vec<(&'static str, &'static str, FeedKind, &'static str)> {
+/// A feed as the types of the code of a project name it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct FeedName {
+    /// `*` for a feed of every instance.
+    pub tool: &'static str,
+    pub name: &'static str,
+    pub kind: FeedKind,
+    /// One line that says its units.
+    pub doc: &'static str,
+}
+
+/// Every feed of every tool.
+pub fn names(registry: &super::Registry) -> Vec<FeedName> {
     let every = (registry.every_instance.iter()).map(|feed| ("*", feed));
     let tools = (registry.shown.iter())
         .flat_map(|(tool, shown)| shown.feeds.iter().map(|feed| (*tool, feed)));
-    every
-        .chain(tools)
-        .map(|(tool, feed)| (tool, feed.name, feed.kind, feed.doc))
+    (every.chain(tools))
+        .map(|(tool, feed)| FeedName {
+            tool,
+            name: feed.name,
+            kind: feed.kind,
+            doc: feed.doc,
+        })
         .collect()
 }
