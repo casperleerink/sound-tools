@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/agent", "crates/core", "crates/dsp", "crates/export", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/window", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/pitch-correction", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
+members = ["crates/agent", "crates/core", "crates/dsp", "crates/export", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/window", "extensions/analyzer", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/pitch-correction", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/vocoder", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/verify", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -15,9 +15,6 @@ publish = false
 # system's Open and Save.
 rune = { git = "https://github.com/anomalyco/rune", rev = "7a92d24d63d9be8480e3e475489d2a4d0ed48c8d", default-features = false, features = ["accessibility", "dbus", "metal-backend", "native-file-dialog", "svg", "tooling"] }
 rune-kit = { git = "https://github.com/anomalyco/rune", rev = "7a92d24d63d9be8480e3e475489d2a4d0ed48c8d", features = ["markdown"] }
-# Only sound-agent, plugin-host and sound-ui, which draw with it: it goes when they are free.
-# `version` picks gpui from a test crate of the same name in Zed's repo.
-gpui = { git = "https://github.com/zed-industries/zed", version = "0.2", rev = "c4273271092b0287f7d181f616bd5171e0a2f70c" }
 analyzer = { path = "extensions/analyzer" }
 compressor = { path = "extensions/compressor" }
 delay = { path = "extensions/delay" }
@@ -46,7 +43,6 @@ sound-media = { path = "crates/media" }
 sound-notes = { path = "crates/notes" }
 sound-signals = { path = "crates/signals" }
 sound-typescript = { path = "crates/typescript" }
-sound-ui = { path = "crates/ui" }
 tone = { path = "extensions/tone" }
 utility = { path = "extensions/utility" }
 vocoder = { path = "extensions/vocoder" }
@@ -55,11 +51,10 @@ anyhow = "1"
 # Real-time priority for the audio thread of a plugin in a process of its own: what cpal uses
 # for its own thread, at the version it pulls in. MPL-2.0.
 audio_thread_priority = { version = "0.35.1", default-features = false }
-# The pictures sent to the agent of the sidebar. The version usvg uses for gpui. MIT OR Apache-2.0.
+# The pictures sent to the agent of the sidebar. The version usvg uses. MIT OR Apache-2.0.
 base64 = "0.22"
 cargo_metadata = "0.23"
-# The time at the top of each session of the app's log. The version and features gpui uses.
-# MIT OR Apache-2.0.
+# The time at the top of each session of the app's log. MIT OR Apache-2.0.
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 # FLAC samples of instrument libraries, decoded whole on the control side. Apache-2.0.
 claxon = "0.4.3"
@@ -78,12 +73,11 @@ embed-resource = "3.0.11"
 # read. The same as std elsewhere.
 dunce = "1.0.5"
 # The objects of the project history, a git repository written by hand: zlib streams named by
-# their SHA-1. The versions gpui uses. MIT OR Apache-2.0, BSD-3-Clause.
+# their SHA-1. The versions png and uuid use. MIT OR Apache-2.0, BSD-3-Clause.
 flate2 = "1.1"
 sha1_smol = "1.0.1"
 hound = "3.5"
 memmap2 = "0.9.11"
-image = { version = "0.25", default-features = false, features = ["png"] }
 # Snapshots of what the agent driver makes of recorded runs.
 insta = "1.48"
 # Ends the agent's process group, so its own children stop with it.
@@ -105,13 +99,13 @@ proptest = "1"
 pulldown-cmark = { version = "0.13.5", default-features = false }
 # The spectra of the Wavetable synth's tables, worked out on the control side. MIT.
 realfft = "3.5"
-# The `NSView` of a GPUI window, which a plugin embeds its own view in. Same version as gpui.
+# The native view of a window, which a plugin embeds its own view in. Same version as winit.
 raw-window-handle = "0.6"
 rtrb = "0.4"
 # Does nothing unless the build sets RTSAN_ENABLE=1.
 rtsan-standalone = "0.3"
 # The schema of each tool's record, from its Rust type, which the SDK of the tools of a project
-# is typed from. The version gpui uses.
+# is typed from.
 schemars = "1.2.2"
 serde = { version = "1", features = ["derive"] }
 # `preserve_order` keeps key order stable, so agent diffs of project files stay small.
@@ -123,13 +117,11 @@ rusty_mp3 = "=1.0.5"
 serde_path_to_error = "0.1"
 # Checks the agent CLI the app downloads against its pinned checksum. MIT OR Apache-2.0.
 sha2 = { version = "0.11", default-features = false }
-# The async runtime under gpui's executors. The agent's child process and its pipes.
+# The agent's child process and its pipes, Bun's, and the update check.
 smol = "2"
 tempfile = "3"
 thiserror = "2"
 triple_buffer = "9"
-# Grapheme boundaries, so the caret steps over an emoji as one character. The version gpui uses.
-unicode-segmentation = "1.13"
 # Claude session ids, which the app picks.
 uuid = { version = "1", features = ["v4", "v5"] }
 # Windows: the job object that ends the agent with every program it started, and hidden
@@ -190,10 +182,6 @@ rune-taffy = { opt-level = 3 }
 parley = { opt-level = 3 }
 swash = { opt-level = 3 }
 skrifa = { opt-level = 3 }
-# The shapes of waveforms and curves are tessellated on every paint of them.
-lyon_tessellation = { opt-level = 3 }
-lyon_path = { opt-level = 3 }
-lyon_geom = { opt-level = 3 }
 # Decodes FLAC samples of SFZ instruments when they load.
 claxon = { opt-level = 3 }
 analyzer = { opt-level = 3 }

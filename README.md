@@ -13,7 +13,7 @@ What a new project can start from: Bare, an empty project, or a DAW written in T
 - macOS 11 or later, the main platform. Linux and Windows build from source too, see "Linux" and "Windows" below.
 - To build it: Rust through `rustup`. `rust-toolchain.toml` pins the version and `rustup` installs it on the first build.
 - The first build takes about a minute, plus the download of the dependencies. Later builds take seconds.
-- Every checkout builds into its own `target/`, so a new worktree starts with a full build. One shared folder let worktrees on different commits overwrite each other's files, and tests ran the wrong code. `tooling/clean-builds.sh` deletes the builds of worktrees nobody used for two days. With [sccache](https://github.com/mozilla/sccache) as the `rustc-wrapper` in `~/.cargo/config.toml`, a new worktree reuses the dependencies other worktrees compiled, safely when several build at once. That makes its first build about 30% faster: crates with build scripts, gpui among them, build again in each folder.
+- Every checkout builds into its own `target/`, so a new worktree starts with a full build. One shared folder let worktrees on different commits overwrite each other's files, and tests ran the wrong code. `tooling/clean-builds.sh` deletes the builds of worktrees nobody used for two days. With [sccache](https://github.com/mozilla/sccache) as the `rustc-wrapper` in `~/.cargo/config.toml`, a new worktree reuses the dependencies other worktrees compiled, safely when several build at once. That makes its first build about 30% faster: crates with build scripts build again in each folder.
 
 ### Linux
 
@@ -43,7 +43,7 @@ Not on Linux:
 Windows 10 or later, x86_64. CI builds and tests it on Windows, but nobody has tried it on a real Windows computer yet. To build it you need Rust through `rustup` and the Visual Studio Build Tools with the "Desktop development with C++" workload.
 
 - The app keeps the last project, agents, updates and the sample library in `%LOCALAPPDATA%\Sound Tools`, and the plugin cache in its `Cache` folder.
-- Plugins are looked for in `%COMMONPROGRAMFILES%\CLAP` and `%LOCALAPPDATA%\Programs\Common\CLAP`, and the same two folders with `VST3`. Plugin windows open, but typing into a plugin's own text fields likely does not work yet: gpui keeps the keys.
+- Plugins are looked for in `%COMMONPROGRAMFILES%\CLAP` and `%LOCALAPPDATA%\Programs\Common\CLAP`, and the same two folders with `VST3`. Nobody has tried typing into a plugin's own text fields yet.
 - There is no **Install command line tool**: the setup program puts the `sound-tools` command on your `PATH`. Run from a terminal, the command line forms print after the prompt comes back, because the program is a window program. Pipe it (`| more`) to wait for it.
 - **Open terminal in project folder** opens Windows Terminal, or else a Command Prompt.
 - The Claude Code agent uses PowerShell for its commands, and Bash too when Git for Windows is installed.

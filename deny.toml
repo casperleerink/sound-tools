@@ -8,14 +8,13 @@ targets = [
 ]
 
 [advisories]
-# Unmaintained crates that gpui pulls in. Re-check when the gpui pin moves.
 ignore = [
-  { id = "RUSTSEC-2024-0436", reason = "paste, through gpui" },
-  { id = "RUSTSEC-2026-0192", reason = "ttf-parser, through gpui" },
-  { id = "RUSTSEC-2026-0206", reason = "rustybuzz, through gpui" },
-  { id = "RUSTSEC-2026-0370", reason = "zvariant, through gpui on Linux" },
-  { id = "RUSTSEC-2026-0371", reason = "zbus_names, through gpui on Linux" },
-  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive, through gpui on Linux" },
+  # Unmaintained, no known flaw. Only the local time at the top of each session of the app's log.
+  { id = "RUSTSEC-2026-0543", reason = "chrono, for the log's local time" },
+  # Unmaintained, through Rune's accessibility on Linux. Re-check when the Rune pin moves.
+  { id = "RUSTSEC-2026-0370", reason = "zvariant, through Rune on Linux" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names, through Rune on Linux" },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive, through Rune on Linux" },
 ]
 
 [licenses]
@@ -48,6 +47,6 @@ multiple-versions = "allow"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# gpui, and Rune with the forks it pins.
+# Rune with the forks it pins.
 [sources.allow-org]
-github = ["zed-industries", "anomalyco"]
+github = ["anomalyco"]

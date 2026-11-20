@@ -23,7 +23,7 @@ Rules are traps to avoid, not general advice. Add a rule only when it is non-obv
 - Check a crate's current version and changelog before using it from memory: agents write for older APIs.
 - A record field read with `deserialize_with` needs `#[schemars(with = ...)]` naming the type it really reads, or its `sdk.ts` type is wrong.
 - Every dependency is declared once in `[workspace.dependencies]`. Every crate uses the workspace lints.
-- Before writing DSP math, a knob or a file picker in an extension, look in `sound_dsp` and `sound_ui`: extensions kept copying them. A helper a second crate needs moves there, not into a copy.
+- Before writing DSP math in an extension, look in `sound_dsp`: extensions kept copying it. A helper a second crate needs moves there, not into a copy.
 - Extensions depend on the SDK and on small shared contract crates, never on each other. `tooling/workspace-rules` fails the tests if one does. This keeps the build wide and parallel.
 - Warnings fail CI only (`.cargo/ci-config.toml`), never a local build: a warning in agent-written code must not break a composer's build.
 - Never vary `rustflags` or environment variables between builds. Any change rebuilds everything. CI's `RTSAN_ENABLE=1` is the one exception.
@@ -92,12 +92,12 @@ CI runs the commands of [README.md](README.md), "Checks", side by side, with the
 
 To try Linux from a Mac: an `ubuntu:24.04` Docker container with the README packages, `CARGO_TARGET_DIR` on a volume, run as a normal user (root can write into the read-only folders some tests make). For the window add `xvfb` and `mesa-vulkan-drivers` and a null sound card. Set `CARGO_BUILD_JOBS=4` on Docker Desktop's default memory.
 
-To check Windows from a Mac: `cargo install cargo-xwin`, `brew install llvm`, `rustup target add x86_64-pc-windows-msvc`, then `cargo xwin clippy --target x86_64-pc-windows-msvc --workspace --all-targets` with `/opt/homebrew/opt/llvm/bin` on the `PATH`. It catches compile errors in minutes; only the Windows CI job on main runs the tests. If gpui's build script says llvm-rc cannot find `resources/windows/gpui.manifest.xml`, copy gpui's `resources/windows` folder into the `out/resources/` folder of that build.
+To check Windows from a Mac: `cargo install cargo-xwin`, `brew install llvm`, `rustup target add x86_64-pc-windows-msvc`, then `cargo xwin clippy --target x86_64-pc-windows-msvc --workspace --all-targets` with `/opt/homebrew/opt/llvm/bin` on the `PATH`. It catches compile errors in minutes; only the Windows CI job on main runs the tests.
 
 ## Reference repos
 
 Clone them next to this repo and read them before designing something they already solved.
 
-- [Zed](https://github.com/zed-industries/zed): how a large Rust app is built. Its `Cargo.toml` profiles and lints, `.rules`, `clippy.toml`, `tooling/xtask/src/workspace.rs` (dependency rules), `crates/gpui_util` (`log_err` and friends).
+- [Zed](https://github.com/zed-industries/zed): how a large Rust app is built. Its `Cargo.toml` profiles and lints, `.rules`, `clippy.toml`, `tooling/xtask/src/workspace.rs` (dependency rules).
 - [Pure Data](https://github.com/pure-data/pure-data): the classic audio graph. `src/d_ugen.c` (graph sort, buffers), `src/m_sched.c` (scheduler, clocks), `src/g_canvas.c` (rebuilding the graph), `src/d_delay.c` (feedback delay). Also what not to copy: globals, silently dropped cycles, sort-dependent delays.
 - [Elementary](https://github.com/elemaudio/elementary): compiled schedules swapped into a realtime runtime. `runtime/elem/Runtime.h` (schedule swap, garbage collection), `runtime/elem/GraphRenderSequence.h`, `runtime/elem/builtins/Feedback.h`. Also what not to copy: dropping a schedule when its queue is full, freeing on the audio thread, crossfading the whole output on every edit.

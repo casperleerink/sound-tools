@@ -1,6 +1,6 @@
 //! The Sound Tools core: audio engine, musical clock, transport, project storage and editing.
 //!
-//! Independent of GPUI, and of musical conventions such as tracks, clips and notes.
+//! Independent of the window, and of musical conventions such as tracks, clips and notes.
 //! Those belong to extensions.
 
 mod apps;

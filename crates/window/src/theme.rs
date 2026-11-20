@@ -121,3 +121,74 @@ impl Theme {
         self.shadow.get(name)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// WCAG 2 relative luminance of an opaque colour. Rune's colours are linear already.
+    fn luminance(color: Color) -> f32 {
+        0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b
+    }
+
+    /// `over` painted on the opaque `under`. The window blends in sRGB, as CSS does.
+    fn blend(under: Color, over: Color) -> Color {
+        let encode = |v: f32| match v <= 0.003_130_8 {
+            true => v * 12.92,
+            false => 1.055 * v.powf(1. / 2.4) - 0.055,
+        };
+        let decode = |v: f32| match v <= 0.040_45 {
+            true => v / 12.92,
+            false => ((v + 0.055) / 1.055).powf(2.4),
+        };
+        let mix = |a: f32, b: f32| decode(encode(a) * (1. - over.a) + encode(b) * over.a);
+        Color {
+            r: mix(under.r, over.r),
+            g: mix(under.g, over.g),
+            b: mix(under.b, over.b),
+            a: 1.,
+        }
+    }
+
+    fn contrast(text: Color, background: Color) -> f32 {
+        let (text, background) = (luminance(text), luminance(background));
+        (text.max(background) + 0.05) / (text.min(background) + 0.05)
+    }
+
+    /// 4.5 : 1 is the WCAG AA minimum for text under 18 pt, and every label here is 12 or 14 pt.
+    #[test]
+    fn text_roles_have_at_least_the_contrast_of_wcag_aa_on_their_surface() {
+        let theme: Theme = serde_json::from_str(TEMPLATE_THEME).unwrap();
+        let c = |name| theme.color(name);
+        let (window, card) = (c("background"), c("surface"));
+        let cases = [
+            ("a label on a card", c("text-secondary"), card),
+            ("a value on a card", c("text"), card),
+            ("muted text on the window", c("text-muted"), window),
+            // A toggle that is off, or a segment that is not picked.
+            (
+                "a label on a fill on a card",
+                c("text-secondary"),
+                blend(card, c("fill")),
+            ),
+            (
+                "a label on a fill on the window",
+                c("text-secondary"),
+                blend(window, c("fill")),
+            ),
+            (
+                "a value on a strong fill on a card",
+                c("text"),
+                blend(card, c("fill-strong")),
+            ),
+            ("a primary button", c("text-inverse"), c("text")),
+        ];
+        for (what, text, background) in cases {
+            let ratio = contrast(text, background);
+            assert!(ratio >= 4.5, "{what}: {ratio:.2} : 1");
+        }
+        // An icon needs 3 : 1 (WCAG 1.4.11).
+        let muted_on_card = contrast(c("text-muted"), card);
+        assert!(muted_on_card >= 3., "{muted_on_card:.2} : 1");
+    }
+}

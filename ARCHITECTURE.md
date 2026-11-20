@@ -23,7 +23,7 @@ The technical decisions, why we made them, and what we rejected. How something w
 - One process, the runtime (`crates/runtime`), opens one project folder: as a window, headless, or read-only to inspect, render or analyze.
 - Agents only edit files in the project folder, and the runtime applies them live. There is no edit API for agents.
 - Every extension is compiled into the one binary. `project.json` enables extensions by name.
-- Rust for the core and extensions, and for the window (Rune, not GPUI: it checks a window for an agent built in, and was as fast on the DAW template). Audio and saved data never depend on the toolkit.
+- Rust for the core and extensions, and for the window (Rune: it checks a window for an agent built in, and was as fast on the DAW template as the toolkit it replaced). Audio and saved data never depend on the toolkit.
 - The project, the views and every plugin handle share the main thread, which plugins require. Rejected: a separate control thread; it would split the project from its plugins, and every view would need a synced copy.
 - macOS is the main platform. No plugin windows on Linux: plugins there need an X11 parent and a host run loop.
 - System programs come from the system, never the `PATH` (`sound_core::process`).

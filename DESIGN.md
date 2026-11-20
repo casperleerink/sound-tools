@@ -47,7 +47,7 @@ A meter is the one place colour fills an area, because level is a signal. Otherw
 
 What is chosen has one look: a row takes the selected fill; on a canvas a box gets a bright outline and a small mark turns bright.
 
-Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/ui/src/theme.rs` checks the text roles.
+Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/window/src/theme.rs` checks the text roles of `theme.json`.
 
 ### Type and sizes
 
