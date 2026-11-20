@@ -344,7 +344,7 @@ fn working_line(theme: &Theme, index: usize, working: sound_agent::Working) -> E
 }
 
 /// A gentle breath, for what waits.
-fn pulse() -> Cycle {
+pub(crate) fn pulse() -> Cycle {
     Cycle {
         period: 1.6,
         phase: 0.0,
@@ -503,14 +503,17 @@ fn approval(theme: &Theme, words: &[sound_agent::Span], command: Option<&str>) -
             .radius(kit.radius.md)
             .fill(theme.color("well"))
     });
+    // Allow is the kit's Submit in lavender.
+    let mut allow = kit.clone();
+    (allow.c.bg_icon_button_contrast, allow.c.submit_fg) = (lavender, theme.color("background"));
     let answers = APPROVAL_ANSWERS
         .iter()
         .enumerate()
         .map(|(place, (answer, label))| {
-            let variant = match place {
-                0 => ButtonVariant::Submit,
-                1 => ButtonVariant::Neutral,
-                _ => ButtonVariant::Ghost,
+            let (variant, kit) = match place {
+                0 => (ButtonVariant::Submit, &allow),
+                1 => (ButtonVariant::Neutral, kit),
+                _ => (ButtonVariant::Ghost, kit),
             };
             let act = Act::Answer(*answer);
             Button::new(*label)

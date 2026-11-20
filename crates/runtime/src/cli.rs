@@ -727,7 +727,16 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
-pub const USAGE: &str = "usage: sound-tools <project-folder> [--snap <png> | --tree <json> | --script <file>] [--play <seconds>] [--act <steps.json>] [--main <instance>] [--size <w>x<h>]\n       sound-tools <project-folder> --headless | --inspect | --render <file> [<span>] [--rate <hz>] [--depth <bits>] [--loudness streaming|broadcast] [--progress] | --analyze [<span>] | --save-template <name> [--with-content] [--replace]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
+pub const USAGE: &str = "usage: sound-tools [<project-folder>]                  the window; no folder: the last project, else the start
+       sound-tools <project-folder> --snap <png> | --tree <json> | --script <file> [--act <steps.json>] [--play <seconds>] [--main <instance>] [--size <w>x<h>] [--scene <name>]
+       sound-tools --snap <png> | --tree <json> | --script <file> [--act <steps.json>]      the start
+         without a window, on the offline engine: no sound on the output device
+       sound-tools <project-folder> --headless          plays on the output device, without a window; commands on stdin
+       sound-tools <project-folder> --inspect | --render <file> [<span>] [--rate <hz>] [--depth <bits>] [--loudness streaming|broadcast] [--progress] | --analyze [<span>] | --save-template <name> [--with-content] [--replace]
+       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]
+       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help
+<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]
+<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
 
 /// A plugin in a process of its own, which runs before anything of the app: no log, no update.
 /// `None` for every other process.

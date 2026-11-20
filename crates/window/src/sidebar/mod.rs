@@ -9,6 +9,8 @@ mod scenes;
 pub(crate) mod settings;
 mod thread;
 
+pub(crate) use thread::pulse;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 

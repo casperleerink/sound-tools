@@ -187,7 +187,7 @@ impl NewProject {
             .gap(theme.space(2))
             .items_center()
             .child(
-                text(format!("In {}", self.place.display()))
+                text(format!("In {}", super::short_path(&self.place)))
                     .key("project-place-words")
                     .font(theme.text("label"))
                     .color(theme.color("text-secondary"))

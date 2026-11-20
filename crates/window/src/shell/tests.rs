@@ -119,6 +119,11 @@ fn a_folder_of_other_files_is_refused_in_plain_words() {
     std::fs::write(papers.join("tax.pdf"), "").unwrap();
     let mut window = window(&scratch.path().join("support"));
     chord(&mut window, 'o');
+    let (kind, options) = window.file_dialog().unwrap();
+    assert_eq!(
+        (kind, options.title.as_str()),
+        (rune::FileDialogKind::Folder, "Open a project")
+    );
     window.resolve_file_dialog(Some(papers.clone())).unwrap();
     window.frame(0.1);
     assert_eq!(opened(&window), None);
@@ -200,4 +205,12 @@ fn a_new_project_takes_a_free_name_and_opens_where_it_was_made() {
     assert_eq!(opened(&window), Some(made.as_path()));
     assert!(made.join(runtime::PROJECT_FILE).is_file());
     assert!(matches!(window.state.shell().dialog, None::<Dialog>));
+}
+
+#[test]
+fn the_new_project_names_its_place_as_open_recent_does() {
+    let scratch = tempfile::tempdir().unwrap();
+    let mut window = window(&scratch.path().join("support"));
+    chord(&mut window, 'n');
+    assert_eq!(said(&window, "project-place-words"), "In ~");
 }

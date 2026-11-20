@@ -1,9 +1,10 @@
-//! The keys of the window, matched in one place: a focused text field first, which no action
-//! hears; then the left panel's; then undo and redo; then the tool of the focused card, the
-//! pages around it up to the main view, the app, and last the computer keys, which play the
-//! plain keys no one else took. Outside the views the main view's tool hears only its actions
-//! that run `everywhere` and its `globalKeys`. A key does an action, or a tool's `onKey` or the
-//! computer keys hold it until it comes up.
+//! The keys of the window, matched in one place: a dialog first, which keeps them; a focused
+//! text field, which passes on only the app's actions that never type; then the left panel's;
+//! then undo and redo; then the tool of the focused card, the pages around it up to the main
+//! view, the app, and last the computer keys, which play the plain keys no one else took.
+//! Outside the views the main view's tool hears only its actions that run `everywhere` and its
+//! `globalKeys`. A key does an action, or a tool's `onKey` or the computer keys hold it until
+//! it comes up.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -359,19 +360,16 @@ impl State {
 }
 
 pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
-    // What a field passes on is typing, never a shortcut. A field of the left panel, such as
-    // the composer, still has the panel's keys, which Rune gives no element around a field.
-    if state.typing_now() {
-        let in_panel = (state.panel.agent.as_ref()).is_some_and(|agent| agent.typing());
-        let done = in_panel && panel_key(state, key, true, tx);
-        if done {
-            state.handled();
-        }
-        return done;
-    }
-    // A dialog keeps every key until it closes: its own buttons take theirs.
+    // A dialog keeps every key until it closes, but Quit, which works in any window as the
+    // GPUI app's did: its own buttons and fields take theirs.
     if !state.waiting.asked.is_empty() || state.shell.dialog.is_some() {
+        if app_action(state, key).as_deref() == Some("quit") {
+            tx.quit();
+        }
         return true;
+    }
+    if state.typing_now() {
+        return typing_key(state, key, tx);
     }
     let Some(name) = name_of(&key.key) else {
         return false;
@@ -459,6 +457,59 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
     true
 }
 
+/// A key a text field passed on. Typing and the field's editing keys are its own; of the rest
+/// only the app's actions run that never type: held with the main modifier or ctrl, and not
+/// undo or redo, which are the field's. A tool's keys and the computer keys never run.
+fn typing_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
+    let in_panel = (state.panel.agent.as_ref()).is_some_and(|agent| agent.typing());
+    if matches!(key.key, Key::Escape) {
+        return in_panel && panel_key(state, key, true, tx);
+    }
+    if !chord_of(key).is_some_and(|chord| never_types(&chord)) {
+        return false;
+    }
+    let page = state.settings.page.is_some();
+    if !page && panel_key(state, key, in_panel, tx) {
+        state.handled();
+        return true;
+    }
+    let Some(action) = app_action(state, key).filter(|action| !BEFORE_TOOLS.contains(&&**action))
+    else {
+        return false;
+    };
+    state.app_key(&action, tx);
+    true
+}
+
+/// Whether `chord` never types and is no editing key of a text field, so an app's action on it
+/// works while a field has the keys.
+fn never_types(chord: &str) -> bool {
+    const EDITING: [&str; 6] = ["cmd-a", "cmd-c", "cmd-v", "cmd-x", "cmd-z", "cmd-shift-z"];
+    const MOVES: [&str; 11] = [
+        "left",
+        "right",
+        "up",
+        "down",
+        "home",
+        "end",
+        "backspace",
+        "delete",
+        "enter",
+        "escape",
+        "tab",
+    ];
+    let main = chord.starts_with("cmd-") || chord.starts_with("ctrl-");
+    let key = chord.rsplit('-').next().unwrap_or(chord);
+    main && !EDITING.contains(&chord) && !MOVES.contains(&key)
+}
+
+/// The app's action `key` does now.
+fn app_action(state: &State, key: &KeyEvent) -> Option<String> {
+    let chord = chord_of(key)?;
+    let bound = state.keys.keymap.bound(APP, &chord);
+    bound.first().map(|action| action.to_string())
+}
+
 /// The keys of the left panel, from inside it or from the window: Go to the agent, Stop the
 /// agent, Open or close the left panel, and Escape inside it. Whether `key` was one.
 pub(super) fn panel_key(state: &mut State, key: &KeyEvent, inside: bool, tx: &mut Tx) -> bool {
@@ -517,5 +568,26 @@ pub(crate) fn on_focus(state: &mut State, focused: bool, tx: &mut Tx) {
 pub(crate) fn on_modifiers(state: &mut State, mods: Mods, _: &mut Tx) {
     if mods.logo || (cfg!(target_os = "macos") && mods.cmd) {
         state.let_go_of_keys();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_key_that_types_or_edits_never_does_an_apps_action_in_a_field() {
+        assert!(super::never_types("cmd-n"));
+        assert!(super::never_types("ctrl-n"));
+        assert!(super::never_types("cmd-shift-n"));
+        for chord in [
+            "n",
+            "alt-shift-n",
+            "f5",
+            "cmd-z",
+            "cmd-shift-z",
+            "cmd-a",
+            "cmd-left",
+        ] {
+            assert!(!super::never_types(chord), "{chord}");
+        }
     }
 }

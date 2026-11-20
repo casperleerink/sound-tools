@@ -62,6 +62,10 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
     let base = col()
         .w_full()
         .h_full()
+        .on_layout_tx(|s: &mut State, [_, _, width, height], tx| {
+            s.panel.window = (width, height);
+            tx.live_only();
+        })
         .fill(theme.color("background"))
         .children(screen)
         .children(notices::view(state));
@@ -95,7 +99,11 @@ fn title_row(state: &State, menu: El) -> El {
         .child(menu)
         .children(problems::sign(state))
         .child(drag().grow(1.0))
-        .child(transport::view(state))
+        .children(
+            state
+                .has_something_to_play()
+                .then(|| transport::view(state)),
+        )
         .child(drag().grow(1.0))
 }
 
@@ -167,7 +175,9 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
     }
     let panel = &state.panel;
     let mut controls = super::menu::controls(state);
-    controls.extend(transport::controls(state));
+    if state.has_something_to_play() {
+        controls.extend(transport::controls(state));
+    }
     controls.extend([Control {
         expanded: Some(panel.open),
         ..control("left-panel-icon", panel::PANEL_LABEL, "button", Act::Panel)
@@ -199,4 +209,11 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
     controls.extend(crate::sidebar::controls(state));
     controls.extend(super::export::controls(state));
     controls
+}
+
+impl State {
+    /// An empty project has no transport, as the GPUI app's had none: nothing in it plays.
+    fn has_something_to_play(&self) -> bool {
+        self.project().instances().next().is_some()
+    }
 }

@@ -273,7 +273,7 @@ pub fn open_with_extensions(
 ///
 /// The first step of every open that may write: nothing is written into a folder that is not a
 /// project.
-pub(crate) fn load_tools(folder: &Path, make_tools_folder: bool) -> Result<Option<FirstLoad>> {
+pub fn load_tools(folder: &Path, make_tools_folder: bool) -> Result<Option<FirstLoad>> {
     app::check_project_folder(folder)?;
     if make_tools_folder {
         std::fs::create_dir_all(folder.join(sound_typescript::FOLDER))?;
@@ -286,7 +286,7 @@ pub(crate) fn load_tools(folder: &Path, make_tools_folder: bool) -> Result<Optio
 
 /// [`open_with_extensions`] with the tools of the project loaded already, see
 /// [`Extensions::load`].
-pub(crate) fn open_with_loaded(
+pub fn open_with_loaded(
     folder: &Path,
     control: EngineControl,
     plugins: Plugins,

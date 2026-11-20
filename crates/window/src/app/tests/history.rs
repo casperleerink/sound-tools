@@ -538,3 +538,38 @@ fn history_shape() {
     edit(&mut state, "Change the cutoff", "cutoff_hz", 350.0);
     name(&mut state, "Darker room");
 }
+
+#[test]
+fn a_project_whose_history_does_not_open_says_it_keeps_none() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    let kept = folder.join(sound_core::HISTORY_FOLDER);
+    if kept.exists() {
+        std::fs::remove_dir_all(&kept).unwrap();
+    }
+    std::fs::create_dir_all(kept.parent().unwrap()).unwrap();
+    std::fs::write(&kept, "").unwrap();
+    // In place: a run without a window would open a copy, whose history is new.
+    let mut state = State::open(Options {
+        folder,
+        headless: true,
+        play: None,
+        main: None,
+        act: Some(Vec::new()),
+    })
+    .unwrap();
+    state.panel = LeftPanel::new(None, None);
+    state.set_panel_open(true);
+    let mut window = laid_out(state);
+    redraw(&mut window);
+    assert!(window.state.project().history().is_none());
+    let texts: Vec<String> = (window.elements().into_iter())
+        .filter_map(|element| element.text)
+        .collect();
+    assert!(
+        texts
+            .iter()
+            .any(|text| text == "This project keeps no history."),
+        "{texts:?}"
+    );
+}

@@ -24,6 +24,19 @@ pub(crate) use save_template::SaveTemplate;
 /// again after Rune let go of this one.
 static STARTS_AGAIN: AtomicBool = AtomicBool::new(false);
 
+/// A folder as the composer reads it: the home folder is `~`.
+pub(crate) fn short_path(folder: &Path) -> String {
+    let home = std::env::home_dir();
+    let inside = home
+        .as_deref()
+        .and_then(|home| folder.strip_prefix(home).ok());
+    match inside {
+        Some(inside) if inside.as_os_str().is_empty() => "~".to_string(),
+        Some(inside) => Path::new("~").join(inside).display().to_string(),
+        None => folder.display().to_string(),
+    }
+}
+
 /// Whether the app quit to start again.
 pub(crate) fn starts_again() -> bool {
     STARTS_AGAIN.load(Ordering::Relaxed)

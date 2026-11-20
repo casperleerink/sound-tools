@@ -93,6 +93,10 @@ pub(crate) struct LeftPanel {
     file: Option<PathBuf>,
     /// What had the keys before the panel took them, None for the window.
     back: Option<String>,
+    /// The window's size, as the last layout found it.
+    pub(super) window: (f32, f32),
+    /// The size the window grows to as the panel opens, for the next frame to ask for.
+    pub(super) widen: Option<(f32, f32)>,
 }
 
 impl LeftPanel {
@@ -111,6 +115,8 @@ impl LeftPanel {
             open,
             file,
             back: None,
+            window: (0.0, 0.0),
+            widen: None,
         }
     }
 
@@ -137,8 +143,15 @@ impl LeftPanel {
 }
 
 impl State {
-    /// Opens or closes the panel, and remembers it for the machine.
+    /// Opens or closes the panel, and remembers it for the machine. Opening widens a window
+    /// too narrow for the panel and the main view, as the GPUI app did; closing leaves its size.
     pub(crate) fn set_panel_open(&mut self, open: bool) {
+        let wanted = super::MIN_SIZE.0 + WIDTH;
+        let (width, height) = self.panel.window;
+        // Before the first layout there is no window to widen yet.
+        if open && !self.panel.open && width > 0.0 && width < wanted {
+            self.panel.widen = Some((wanted, height));
+        }
         self.panel.open = open;
         if let Some(file) = &self.panel.file
             && let Err(error) = runtime::app::remember_left_panel(file, open)
@@ -209,7 +222,7 @@ impl State {
     }
 }
 
-/// The icon that opens and closes the panel. While the agent works, a lavender dot says so.
+/// The icon that opens and closes the panel. While the agent works, a lavender dot breathes.
 pub(super) fn icon_button(state: &State) -> El {
     let kit = &state.theme.kit;
     let button = IconButton::new(&PANEL_LEFT)
@@ -227,6 +240,7 @@ pub(super) fn icon_button(state: &State) -> El {
     let busy = (state.panel.busy() && !state.panel.open).then(|| {
         dot(state.theme.color("focus"))
             .key("left-panel-busy")
+            .cycle(crate::sidebar::pulse())
             .absolute(20.0, 4.0)
     });
     el().child(button).children(busy)

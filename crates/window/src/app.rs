@@ -202,41 +202,56 @@ impl State {
         if !folder.join(runtime::PROJECT_FILE).exists() {
             runtime::templates::write(&folder, &TEMPLATE)?;
         }
+        // The tools wait for Bun while the output device opens, as the GPUI app did.
+        let tools = std::thread::spawn({
+            let folder = folder.clone();
+            move || runtime::load_tools(&folder, false)
+        });
         let waker: Arc<Mutex<Option<rune::Waker>>> = Arc::default();
         let mut playing = String::new();
         let mut chosen_input = None;
-        let (plugins, sound, control) = match headless {
+        let opened = match headless {
             true => {
                 let plugins =
                     Plugins::listing(Vec::new(), ScanCommand::this_program()?, ScanCache::none());
                 let (control, engine) = Engine::new(runtime::OFFLINE);
-                (
+                let engine = Box::new(engine);
+                anyhow::Ok((
                     plugins,
                     Sound::Offline {
-                        engine: Box::new(engine),
+                        engine,
                         played: 0.0,
                     },
                     control,
-                )
+                ))
             }
             false => {
                 let chosen = runtime::app::support_folder()
                     .map(|support| ChosenDevices::read(&runtime::app::audio_devices_file(&support)))
                     .unwrap_or_default();
-                let device = OutputDevice::open(chosen.output.as_deref())?;
-                playing = device.name()?;
                 chosen_input = chosen.input;
-                let config = sound_core::EngineConfig::new(device.sample_rate(), device.channels());
-                let (control, engine) = Engine::new(config);
-                (
-                    runtime::playing_plugins(true)?,
-                    Sound::Device(device.start(engine)?),
-                    control,
-                )
+                (|| {
+                    let device = OutputDevice::open(chosen.output.as_deref())?;
+                    playing = device.name()?;
+                    println!("device: {playing}, {} Hz", device.sample_rate());
+                    let config =
+                        sound_core::EngineConfig::new(device.sample_rate(), device.channels());
+                    let (control, engine) = Engine::new(config);
+                    anyhow::Ok((
+                        runtime::playing_plugins(true)?,
+                        Sound::Device(device.start(engine)?),
+                        control,
+                    ))
+                })()
             }
         };
+        // What is wrong with the folder is what to say, before the device.
+        let tools = tools
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))?;
+        let (plugins, sound, control) = opened?;
         let (mut project, extensions) =
-            runtime::open_with_extensions(&folder, control, plugins.clone())?;
+            runtime::open_with_loaded(&folder, control, plugins.clone(), tools)?;
         let wake = waker.clone();
         let wake: sound_typescript::next::Waker = Arc::new(move || {
             if let Some(wake) = wake.lock().unwrap_or_else(PoisonError::into_inner).as_ref() {

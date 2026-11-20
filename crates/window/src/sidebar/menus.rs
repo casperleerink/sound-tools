@@ -23,6 +23,8 @@ const NEW_BUTTON: &str = "agent-new";
 const NEW_MENU_BUTTON: &str = "agent-new-menu-trigger";
 const SEARCH: &str = "agent-model-search";
 const PICKER_WIDTH: f32 = 340.0;
+/// What a row of the access menu takes beside its description: padding, icon and check.
+const ACCESS_ROW_ROOM: f32 = 72.0;
 const PICKER_HEIGHT: f32 = 420.0;
 
 /// A pill of the composer: an icon, its words, and a chevron.
@@ -140,6 +142,12 @@ pub(crate) fn overlays(state: &State) -> Vec<El> {
     match sidebar.menu {
         Some(Menu::Model) => layer.push(picker(state, sidebar)),
         Some(Menu::Access) => {
+            // What each mode means is the point of this menu: room for its words in full.
+            let widest = (sidebar.chat.access_choices().into_iter())
+                .map(|choice| {
+                    rune::text::measure(choice.mode.description(), &[], kit.ty.small, None).0
+                })
+                .fold(0.0, f32::max);
             let items = sidebar.chat.access_choices().map(|choice| {
                 let act = Act::Access(choice.mode);
                 MenuItem::new(choice.mode.label())
@@ -152,7 +160,7 @@ pub(crate) fn overlays(state: &State) -> Vec<El> {
                 .into_iter()
                 .fold(rune_kit::Menu::new("agent-access"), rune_kit::Menu::item);
             menu.placement(Placement::TopStart)
-                .min_width(300.0)
+                .min_width(widest + ACCESS_ROW_ROOM)
                 .open(true)
                 .on_close(close)
                 .build(kit, &mut layer);

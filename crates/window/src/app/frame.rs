@@ -136,6 +136,9 @@ pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
     let (mut changed, next) = frame(state, seconds);
     changed |= state.planes.focus(tx.focused());
     state.open_file_dialogs(tx);
+    if let Some(size) = state.panel.widen.take() {
+        tx.resize_window(size);
+    }
     crate::sidebar::open_pages(state, tx);
     if let Some(next) = next {
         tx.wake_after(next);
