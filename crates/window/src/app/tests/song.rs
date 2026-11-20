@@ -64,7 +64,11 @@ fn a_drag_over_empty_space_chooses_the_clips_it_covers_and_delete_removes_them()
     let [x, y, w, _] = rect(&window, "clip-t00/bass");
     let [_, below, _, tall] = rect(&window, "clip-t01/chords");
     // From right of the first track's clip, left and down over both.
-    drag(&mut window, (x + w + 30.0, y + 4.0), (40.0 - w, below + tall / 2.0 - y));
+    drag(
+        &mut window,
+        (x + w + 30.0, y + 4.0),
+        (40.0 - w, below + tall / 2.0 - y),
+    );
     key(&mut window, rune::Key::Backspace);
     assert_eq!(start(&window.state, "t00/bass"), Value::Null);
     assert_eq!(start(&window.state, "t01/chords"), Value::Null);
@@ -90,4 +94,3 @@ fn a_double_click_on_a_head_names_its_track_in_place() {
     act(&mut window.state, json!({ "action": "undo" }));
     assert_eq!(title(&window.state), "Track 2");
 }
-

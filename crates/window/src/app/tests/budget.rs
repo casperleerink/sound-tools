@@ -124,7 +124,12 @@ fn budgets(tool: &str, code: &str, plane: &str, dragged: &str) -> [Duration; 3] 
 }
 
 /// Scrolls, plays, zooms and drags the plane `plane` of the view `window` shows; what each frame took.
-fn budgets_of(mut window: rune::Runtime<State>, tool: &str, plane: &str, dragged: &str) -> [Duration; 3] {
+fn budgets_of(
+    mut window: rune::Runtime<State>,
+    tool: &str,
+    plane: &str,
+    dragged: &str,
+) -> [Duration; 3] {
     let runs = view_runs(&window);
     let [x, y, w, h] = window.presented(plane).unwrap().0;
     let at = [x + w / 2.0, y + h / 2.0];
@@ -237,7 +242,8 @@ fn walk(folder: &std::path::Path) -> Vec<std::path::PathBuf> {
 }
 
 #[test]
-fn the_song_of_the_template_with_64_tracks_and_500_clips_runs_no_view_as_it_scrolls_plays_and_zooms() {
+fn the_song_of_the_template_with_64_tracks_and_500_clips_runs_no_view_as_it_scrolls_plays_and_zooms()
+ {
     let scratch = big_song();
     let mut window = laid_out(opened(&scratch.path().join("song")));
     for _ in 0..3 {
