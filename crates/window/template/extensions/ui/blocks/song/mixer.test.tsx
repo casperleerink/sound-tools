@@ -50,10 +50,12 @@ test("M shows the mixer under the tracks in place of a panel, and its close hide
   expect(find("mixer")).toBeUndefined();
 });
 
-test("a strip per track in their order in the part that scrolls; the returns and the master after it, in view", () => {
+test("a strip per track in their order in the part that scrolls; the returns and the master pinned after it, in view", () => {
   mixer(songOf([track("t01", "Bass"), track("t00", "Drums"), back("ret-a", "Reverb")], ["t01", "t00"]));
   const scrolled = find("mixer-tracks");
-  expect(JSON.stringify(scrolled)).toContain('[{"t":"memo","key":"mixer-t01"},{"t":"memo","key":"mixer-t00"}]');
+  // Placed in the plane in their order, a strip's width apart.
+  const placed = (scrolled as { children: { place: number[]; children: { key: string }[] }[] }).children.map((each) => [each.children[0]!.key, each.place[0]]);
+  expect(placed).toEqual([["mixer-t01", 4], ["mixer-t00", 108]]);
   expect([find("strip-name-t00", scrolled), find("strip-name-ret-a", scrolled), find("strip-name-master", scrolled)]).toMatchObject([{}, undefined, undefined]);
   expect([find("strip-name-ret-a"), find("strip-name-master")]).toMatchObject([{ label: "Choose Reverb strip" }, { label: "Choose Master strip" }]);
   expect(find("mixer")).toMatchObject({ h: "full", scroll: "y" });

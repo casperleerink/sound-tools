@@ -14,11 +14,13 @@ export type MixerProps = { page: Page };
 const [PAD, GAP, NAME, SEND, NAMES] = [8, 4, 28, 28, 64];
 /** What a column holds over its fader: its name; and under it, its value line. */
 const OVER = NAME + GAP;
+/** A strip with the room around it. */
+const COLUMN = STRIP + 4;
 const UNDER = VALUE_LINE;
 
 /**
- * A strip per track, then behind a line the returns' and the master's, which stay in view while
- * the tracks' scroll under them. A strip is its name, its channel, and under it a dial per return
+ * A strip per track, which scroll, then pinned at the right behind a line the returns' and the
+ * master's. A strip is its name, its channel, and under it a dial per return
  * a track sends to, lined up across the strips beside the returns' names. A click on a name
  * chooses its track, a double click shows its panel.
  */
@@ -35,19 +37,19 @@ export const Mixer = ({ page }: MixerProps) => {
     return memo(`mixer-${name}`, deps, () => <Column page={page} each={each} sent={sent} fader={fader} />);
   };
   const key = page.song.shortcut("mixer");
+  const tall = 2 * PAD + OVER + fader + UNDER + sent.length * (GAP + SEND);
   return (
     <col key="mixer" label="Mixer" w="full" h="full" fill="surface" scroll="y">
-      <row w="full" h={2 * PAD + OVER + fader + UNDER + sent.length * (GAP + SEND)} align="start">
+      <row w="full" h={tall} align="start">
         {sent.length > 0 && (
           <col w={NAMES} px={3} gap={1}>
             <box h={PAD + OVER + fader + UNDER} />
             {sent.map((back) => <row h={SEND} align="center"><text style="label" color="text-secondary" truncate>{titleOf(back)}</text></row>)}
           </col>
         )}
-        <box key="mixer-tracks" label="Track strips" scroll="x" h="full">
-          <row px={1} py={2} gap={1}>
-            {page.tracks.map((each) => column(each))}
-          </row>
+        {/* A plane, which builds only the strips in view: a mixer of many tracks scrolls as one of few. */}
+        <box key="mixer-tracks" label="Track strips" plane={{}} grow={1} h="full">
+          {page.tracks.map((each, at) => <box place={[4 + at * (COLUMN + GAP), PAD, COLUMN, tall - 2 * PAD]}>{column(each)}</box>)}
         </box>
         {page.returns.length > 0 && (
           <row h="full" px={1} py={2} gap={1} border="border-strong" borderSides={[0, 0, 0, 1]}>
@@ -57,7 +59,7 @@ export const Mixer = ({ page }: MixerProps) => {
         <row h="full" px={1} py={2} gap={1} border="border-strong" borderSides={[0, 0, 0, 1]}>
           {column(undefined)}
         </row>
-        <row grow={1} justify="end" pad={2}>
+        <row pad={2}>
           <Button id="close-mixer" label="Hide the mixer" icon="x" variant="ghost" size="sm" tip={key ? `Hide the mixer (${key.toUpperCase()})` : "Hide the mixer"} onPress={() => page.edits.tracks.toggleMixer()} />
         </row>
       </row>
@@ -72,7 +74,7 @@ const Column = ({ page, each, sent, fader }: { page: Page; each: Each | undefine
   const chosen = page.song.memory.track === name;
   const press = (clicks: number) => (each ? (clicks === 2 ? page.edits.tracks.openPanel(each.name) : choose(page.song, [], each.name)) : clicks === 2 && page.edits.tracks.openMaster());
   return (
-    <col w={STRIP + 4} px={1} gap={1} radius="lg" fill={chosen ? "selected" : "fill/50"}>
+    <col w={COLUMN} px={1} gap={1} radius="lg" fill={chosen ? "selected" : "fill/50"}>
       <row key={`strip-name-${name}`} label={`Choose ${title} strip`} role="tab" checked={chosen} h={NAME} px={2} gap={2} align="center" radius="md" hover="fill/50" onPress={(p) => press(p.clicks)}>
         {each ? <Dot color={muted(each) ? "text-muted" : colourOf(each)} /> : <box w={8} h={8} radius="full" border="text-secondary" />}
         <text style="label" color={chosen ? "text" : "text-secondary"} truncate>{title}</text>
