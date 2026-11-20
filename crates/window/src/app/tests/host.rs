@@ -1277,3 +1277,79 @@ fn a_menu_checks_only_what_its_code_says_whatever_was_picked_before() {
         redraw(&mut window);
     }
 }
+
+/// The opacity of the marker of the step `key` that plays: the inert box inside it.
+fn ring(window: &rune::Runtime<State>, key: &str) -> f32 {
+    let elements = window.elements();
+    let step = (elements.iter())
+        .find(|element| element.key.as_deref() == Some(key))
+        .unwrap();
+    let path = format!("{}/", step.path);
+    let marker = (elements.iter()).find(|element| element.inert && element.path.starts_with(&path));
+    marker.unwrap().opacity
+}
+
+/// The step the playhead is in shows that it plays, and only while the piece plays.
+#[test]
+fn the_step_the_playhead_is_in_shows_it_plays_only_while_the_piece_plays() {
+    let files = [
+        ("extensions/kit.tsx", KIT),
+        ("state/kit.json", r#"{"tool": "kit", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "kit");
+    assert_eq!(
+        (ring(&window, "grid-0-0"), ring(&window, "grid-0-1")),
+        (0.0, 0.0)
+    );
+    // Into the second step: a step is a sixteenth, 240 ticks, an eighth of a second at 120 bpm.
+    (window.state.session).background(|project| {
+        project.engine().seek(sound_core::Ticks(300));
+        project.engine().play();
+    });
+    for _ in 0..3 {
+        polled(&mut window);
+    }
+    assert_eq!(
+        (ring(&window, "grid-0-0"), ring(&window, "grid-0-1")),
+        (0.0, 1.0)
+    );
+    (window.state.session).background(|project| project.engine().stop());
+    for _ in 0..3 {
+        polled(&mut window);
+    }
+    assert_eq!(ring(&window, "grid-0-1"), 0.0);
+}
+
+/// A text cut to fit shows whole while the pointer is on it; one that fits shows nothing more.
+#[test]
+#[ignore = "missing: a cut text shows nothing more on hover (win-sweep, crates/window/src/tree)"]
+fn a_cut_text_shows_whole_on_hover_and_a_text_that_fits_does_not() {
+    const CUT: &str = r#"import { h, tool } from "./sdk";
+export const cut = tool({
+  name: "cut", title: "Cut", when: "Never", doc: "A text too long for its box.", state: {},
+  view: () => <col><text key="long" w={40} truncate>A name far too long for forty points</text><text key="short" w={200} truncate>Short</text></col>,
+});
+"#;
+    let files = [
+        ("extensions/cut.tsx", CUT),
+        ("state/cut.json", r#"{"tool": "cut", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "cut");
+    let shown = |window: &rune::Runtime<State>, text: &str| {
+        (window.elements().iter())
+            .filter(|element| element.text.as_deref() == Some(text))
+            .count()
+    };
+    let (x, y) = window.find("long").unwrap();
+    window.pointer_move(x, y);
+    for _ in 0..60 {
+        redraw(&mut window);
+    }
+    assert_eq!(shown(&window, "A name far too long for forty points"), 2);
+    let (x, y) = window.find("short").unwrap();
+    window.pointer_move(x, y);
+    for _ in 0..60 {
+        redraw(&mut window);
+    }
+    assert_eq!(shown(&window, "Short"), 1);
+}
