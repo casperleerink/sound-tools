@@ -28,7 +28,11 @@
     "sky": "#74d3ea",
     "teal": "#5fd4c4",
     "mauve": "#b894ff",
-    "pink": "#f28fd0"
+    "pink": "#f28fd0",
+    "sapphire": "#5cc0e8",
+    "maroon": "#f08a96",
+    "rosewater": "#f5d9d2",
+    "flamingo": "#f0bcbc"
   },
   "text": {
     "display": { "size": 24, "lineHeight": 32, "tracking": 0, "weight": 400 },

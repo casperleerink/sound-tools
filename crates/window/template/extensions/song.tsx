@@ -1,28 +1,27 @@
-import { boolean, choice, h, list, live, memo, text, tool, type Color, type Connection, type Declaration, type Drawn, type Lines, type Node, type ValuesOf } from "./sdk";
-import { bus } from "./bus";
-import { tape } from "./tape";
-import { track } from "./track";
+import { h, live, memo, tool, type Color, type Connection, type Declaration, type Drawn, type Lines, type Node, type ValuesOf } from "./sdk";
 import { Fader, MAX_DB, MIN_DB } from "./ui/fader";
 import { control, type Bound } from "./ui/field";
 import { Dot } from "./ui/dot";
 import { Meter } from "./ui/meter";
 import { Section } from "./ui/blocks/panel";
 import { Toggle } from "./ui/toggle";
+import { lengthAt, lengthOf } from "./song/clips";
+import { editsOf } from "./song/edits";
+import { actions } from "./song/keys";
+import { colourOf, fields, isStrip, memory, mixOf, muted, ordered, parts, titleOf } from "./song/model";
+import { notesTrackOf, trackEdits } from "./song/tracks";
+import type { bus } from "./bus";
+import type { tape } from "./tape";
+import type { track } from "./track";
+import { BAR, BEAT } from "./song/time";
 
-// A song: tracks of clips in time, the devices of the chosen track, and a mixer.
-export const parts = { master: "fader", limit: "limiter", quiet: "lane", "audio-*": tape, "ret-*": bus, "*": track } as const;
-const fields = {
-  order: list(text(), { max: 128 }),
-  solo: list(text(), { max: 64 }),
-  sidechains: list({ effect: text(), from: text(), tap: choice({ options: ["pre_fx", "post_fx", "post_fader"], default: "post_fader" }) }, { max: 64 }),
-  limit_off: boolean({ default: false }),
-};
-
+// A song: tracks of clips in time, the devices of the chosen track, and a mixer. What it does is
+// in `song/`; this view draws it.
 export const song = tool({
   name: "song",
   title: "Song",
   when: "You change the song page: its tracks, clips, panel or mixer",
-  doc: "Tracks of clips in time, the devices of the chosen track under them, and a mixer. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays at `tap`.",
+  doc: "Tracks of clips in time, the devices of the chosen track under them, and a mixer. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. Each return `ret-*` plays what the sends `send-<return>` of the tracks bring into the master too. A track's arm opens its recorder `rec`; R records every armed track and the keyboard's notes on the chosen track. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays at `tap`. Its keys are its `actions`, in `song/keys.ts`; what they and the view change, in `song/edits.ts`.",
   state: fields,
   children: parts,
   behaviour: ({ state, children }): Declaration<typeof parts> => {
@@ -35,15 +34,15 @@ export const song = tool({
         ? [{ from: { child: "master" }, to: { port: "audio" } } as const]
         : [{ from: { child: "master" }, to: { child: "limit" } } as const, { from: { child: "limit" }, to: { port: "audio" } } as const]),
     ];
-    // What the song hears, such as the keyboard, plays its first track.
-    const first = ordered(children.filter((child) => child.tool === "track"), state.order)[0];
-    if (first) connections.push({ from: { notes: "notes" }, to: { child: first.name, notes: "notes" } });
-    // A solo mutes every other track's fader, gliding; a return always plays.
+    // What the song hears, the keyboard while nothing is chosen, plays its first track.
+    const first = notesTrackOf(children, state.order, null);
+    if (first) connections.push({ from: { notes: "notes" }, to: { child: first, notes: "notes" } });
+    // A solo mutes every other track's fader, gliding, so a lane that moves its volume plays on under it; a return always plays.
     const soloedOut = (name: string) => soloed.length > 0 && !soloed.includes(name);
     for (const each of tracks) {
       if (soloedOut(each.name)) connections.push({ from: { child: "quiet", number: "value" }, to: { child: `${each.name}/mix` as const, number: "mute" } });
     }
-    // A send of a track plays into its return, after the track's fader or before it.
+    // A send of a track plays into its return: after the track's fader, or before it for a return that says so. A muted or soloed-out track sends nothing either way.
     for (const each of tracks) {
       const mix = each.children.find((child) => child.name === "mix");
       const silent = soloedOut(each.name) || (mix?.tool === "fader" && mix.state.mute === true);
@@ -56,6 +55,7 @@ export const song = tool({
         if (back.state.pre_fader && silent) connections.push({ from: { child: "quiet", number: "value" }, to: { child: send, number: "mute" } });
       }
     }
+    // A sidechain keys an effect with a track: what plays into its effects, what comes out of them, or what comes out of its fader.
     for (const { effect, from, tap } of state.sidechains) {
       const source = tracks.find((each) => each.name === from);
       if (!source) continue;
@@ -66,38 +66,37 @@ export const song = tool({
     }
     return { connections };
   },
-  memory: (): Memory => ({ chosen: null, armed: [] }),
-  view: (self, { memory, update, held }) => {
-    const tracks = ordered(self.children.filter((child): child is Track => child.tool === "track"), self.state.order);
-    const chosen = tracks.find((each) => each.name === memory.chosen) ?? tracks[0];
-    /** Changes the fader of `name`, a track or the master. */
-    const mixing = (name: string, label: string, edit: (mix: { gain_db: number | "-inf"; mute: boolean }) => void) =>
-      update(label, (draft) => {
-        const owner = draft.children.find((child) => child.name === name);
-        const mix = name === "master" ? owner : owner?.children.find((child) => child.name === "mix");
-        if (mix?.tool === "fader") edit(mix.state);
-      });
+  memory,
+  actions,
+  tick: (song) => trackEdits(song).stopped(),
+  view: (self, ctx) => {
+    // `update` stays named here: the window's tests put a button into this view that calls it.
+    const { memory, update } = ctx;
+    const edits = editsOf(ctx);
+    const strips = ordered(self.children.filter(isStrip), self.state.order);
+    const rows = strips.filter((each) => each.tool !== "bus");
+    const returns = strips.filter((each) => each.tool === "bus");
+    const shown = memory.below?.kind === "track" ? memory.below.name : (memory.track ?? rows[0]?.name);
+    const chosen = strips.find((each) => each.name === shown) ?? rows[0];
+    /** The volume of `name`'s fader: a track, a return or the master. */
+    const volume = (name: string, title: string, gain: number | "-inf" | undefined) =>
+      control(ctx.held, `${name === "master" ? "master" : `${name}/mix`}.gain_db`, GAIN, dbOf(gain), (db) => edits.tracks.volume(name, db));
     return (
       <col w="full" h="full" fill="background">
         <Ruler />
         <box grow={1} w="full" clip>
           <col w="full" h="full" scroll="y">
-            {tracks.map((each, index) => (
+            {strips.map((each) => (
               <TrackRow
                 each={each}
-                index={index}
                 chosen={each === chosen}
                 armed={memory.armed.includes(each.name)}
                 soloed={self.state.solo.includes(each.name)}
-                onChoose={() => (memory.chosen = each.name)}
-                onMute={() => mixing(each.name, `Mute ${titleOf(each, index)}`, (mix) => (mix.mute = !mix.mute))}
-                onSolo={() =>
-                  update(`Solo ${titleOf(each, index)}`, (draft) => {
-                    const solo = draft.state.solo;
-                    draft.state.solo = solo.includes(each.name) ? solo.filter((name) => name !== each.name) : [...solo, each.name];
-                  })
-                }
-                onArm={() => (memory.armed = memory.armed.includes(each.name) ? memory.armed.filter((name) => name !== each.name) : [...memory.armed, each.name])}
+                tempo={ctx.clock.tempo_map.tempo_changes}
+                onChoose={() => edits.tracks.openPanel(each.name)}
+                onMute={() => edits.tracks.mute(each.name)}
+                onSolo={() => edits.tracks.solo(each.name)}
+                onArm={() => edits.tracks.arm(each.name)}
               />
             ))}
           </col>
@@ -105,48 +104,32 @@ export const song = tool({
             <box key="playhead" inset={[0, 0, null, 0]} w={1} fill="text" at={[live.playhead.times(ZOOM).plus(LEAD), 0]} />
           </box>
         </box>
-        {chosen && <Panel each={chosen} title={titleOf(chosen, tracks.indexOf(chosen))} />}
+        {chosen && <Panel each={chosen} title={titleOf(chosen)} />}
         <row w="full" h={MIXER} px={3} gap={1} fill="surface" border="border-strong" borderSides={[1, 0, 0, 0]} scroll="x">
-          {tracks.map((each, index) => (
-            <Strip id={each.name} name={each.name} title={titleOf(each, index)} fader={control(held, `${each.name}/mix.gain_db`, GAIN, dbOf(mixOf(each)?.gain_db), (db) => mixing(each.name, `Volume ${titleOf(each, index)}`, (mix) => (mix.gain_db = db)))} />
-          ))}
+          {[...rows, ...returns].map((each) => {
+            const title = titleOf(each);
+            return <Strip id={each.name} name={each.name} title={title} fader={volume(each.name, title, mixOf(each)?.state.gain_db)} />;
+          })}
           <box grow={1} />
-          <Strip id="master" name="master" title="Master" fader={control(held, "master.gain_db", GAIN, dbOf(self.children.find((child) => child.name === "master" && child.tool === "fader")?.state.gain_db), (db) => mixing("master", "Volume Master", (mix) => (mix.gain_db = db)))} />
+          <Strip id="master" name="master" title="Master" fader={volume("master", "Master", self.children.find((child) => child.name === "master" && child.tool === "fader")?.state.gain_db)} />
         </row>
       </col>
     );
   },
 });
 
-/** `children` in the order `order` names them, then the others by name. */
-function ordered<T extends { name: string }>(children: readonly T[], order: readonly string[]): T[] {
-  const rank = (name: string) => (order.includes(name) ? order.indexOf(name) : order.length);
-  return [...children].sort((a, b) => rank(a.name) - rank(b.name) || (a.name < b.name ? -1 : 1));
-}
+type Seen = Drawn<ValuesOf<typeof fields>, typeof parts>["children"][number];
+/** A track, an audio track or a return, as the view gets it. */
+type Strip = Extract<Seen, { tool: typeof track | typeof tape | typeof bus }>;
 
-type Song = Drawn<ValuesOf<typeof fields>, typeof parts>;
-type Child = Song["children"][number];
-type Track = Extract<Child, { tool: typeof track }>;
-type Memory = { chosen: string | null; armed: string[] };
-
-const [BAR, BEAT] = [3840, 960];
 /** Points per tick, and the bars the timeline shows. `PANEL` is the most the devices take before they scroll. */
 const [ZOOM, BARS] = [0.03, 32];
 const [HEAD, ROW, RULER, LEAD, PANEL, MIXER, FADER] = [208, 56, 24, 8, 320, 208, 120];
 const [LOW, HIGH] = [36, 96];
 /** The gain of a fader, as its control reads it. */
 const GAIN = { min: MIN_DB, max: MAX_DB, unit: "db" } as const;
-const COLOURS = ["blue", "green", "yellow", "peach", "red", "lavender", "sky", "teal", "mauve", "pink"];
-
-const colourOf = (each: Track): Color => (COLOURS.includes(each.state.colour) ? (each.state.colour as Color) : "blue");
-const titleOf = (each: Track, index: number) => each.state.title || `Track ${index + 1}`;
 /** A fader's gain, which may be `"-inf"`, as a number of dB. */
 const dbOf = (gain: number | "-inf" | undefined) => (gain === "-inf" ? MIN_DB : (gain ?? 0));
-const mixOf = (each: Track) => {
-  const mix = each.children.find((child) => child.name === "mix");
-  return mix?.tool === "fader" ? mix.state : undefined;
-};
-
 
 const Ruler = () =>
   memo("ruler", [], () => {
@@ -168,28 +151,37 @@ const Ruler = () =>
     );
   });
 
-const TrackRow = ({ each, index, chosen, armed, soloed, onChoose, onMute, onSolo, onArm }: { each: Track; index: number; chosen: boolean; armed: boolean; soloed: boolean; onChoose: () => void; onMute: () => void; onSolo: () => void; onArm: () => void }) => {
-  const title = titleOf(each, index);
-  const muted = mixOf(each)?.mute ?? false;
-  const header = memo(`head-${each.name}`, [title, chosen, muted, soloed, armed, each.state.colour], () => (
+type TrackRowProps = { each: Strip; chosen: boolean; armed: boolean; soloed: boolean; tempo: readonly { tick: number; bpm: number }[]; onChoose: () => void; onMute: () => void; onSolo: () => void; onArm: () => void };
+
+/** A row of a track, an audio track or a return: its head, and its clips or regions in time. A return has no solo, and only an audio track arms. */
+const TrackRow = ({ each, chosen, armed, soloed, tempo, onChoose, onMute, onSolo, onArm }: TrackRowProps) => {
+  const title = titleOf(each);
+  const isMuted = muted(each);
+  const colour = colourOf(each);
+  const header = memo(`head-${each.name}`, [title, chosen, isMuted, soloed, armed, colour], () => (
     <row key={`track-${each.name}`} label={`Choose ${title}`} role="tab" checked={chosen} hoverGroup w={HEAD} h={ROW} px={3} gap={2} align="center" fill={chosen ? "selected" : "surface"} hover={chosen ? undefined : "fill/50"} border="border-strong" borderSides={[0, 1, 0, 0]} onPress={onChoose}>
-      <Dot color={colourOf(each)} />
+      <Dot color={colour} />
       <col grow={1} gap={1}>
         <text style="heading" color={chosen ? "text" : "text-secondary"} truncate>{title}</text>
         <row gap={1}>
-          <Quiet shown={muted || chosen}><Toggle id={`mute-${each.name}`} label={`Mute ${title}`} text="M" on={muted} color="warning" onToggle={onMute} /></Quiet>
-          <Quiet shown={soloed || chosen}><Toggle id={`solo-${each.name}`} label={`Solo ${title}`} text="S" on={soloed} color="hot" onToggle={onSolo} /></Quiet>
-          <Quiet shown={armed || chosen}><Toggle id={`arm-${each.name}`} label={`Arm ${title}`} on={armed} color="danger" dot onToggle={onArm} /></Quiet>
+          <Quiet shown={isMuted || chosen}><Toggle id={`mute-${each.name}`} label={`Mute ${title}`} text="M" on={isMuted} color="warning" onToggle={onMute} /></Quiet>
+          {each.tool !== "bus" && <Quiet shown={soloed || chosen}><Toggle id={`solo-${each.name}`} label={`Solo ${title}`} text="S" on={soloed} color="hot" onToggle={onSolo} /></Quiet>}
+          {each.tool === "tape" && <Quiet shown={armed || chosen}><Toggle id={`arm-${each.name}`} label={`Arm ${title}`} on={armed} color="danger" dot onToggle={onArm} /></Quiet>}
         </row>
       </col>
       <Meter id={`meter-head-${each.name}`} label={`Level ${title}`} path={`${each.name}/mix`} w={4} h={ROW - 16} />
     </row>
   ));
-  const lane = memo(`lane-${each.name}`, [each.children, each.state.colour], () => (
+  const lane = memo(`lane-${each.name}`, [each.children, colour, tempo], () => (
     <box w={LEAD + BARS * BAR * ZOOM} h={ROW}>
-      {each.children.flatMap((clip) => (clip.tool !== "timeline" ? [] : [
-        <Clip name={clip.name} start={clip.state.start ?? 0} length={clip.state.length ?? Math.max(BAR, ...clip.state.notes.map((note) => note.start + note.length))} notes={clip.state.notes} colour={colourOf(each)} />,
-      ]))}
+      {each.children.flatMap((item) => {
+        if (item.tool === "timeline") return [<Clip name={item.state.title || ""} start={item.state.start} length={lengthOf(item.state)} notes={item.state.notes} colour={colour} />];
+        if (item.tool === "region") {
+          const length = lengthAt({ children: [each], clock: { tempo_map: { tempo_changes: tempo } } }, `${each.name}/${item.name}`);
+          return [<Clip name={item.name} start={item.state.start} length={Math.max(length, BEAT)} notes={[]} colour={colour} />];
+        }
+        return [];
+      })}
     </box>
   ));
   return (
@@ -219,8 +211,8 @@ const Clip = ({ name, start, length, notes, colour }: { name: string; start: num
 /** A toggle of a track's head shows while on, or while the track is chosen or pointed at. */
 const Quiet = ({ shown, children }: { shown: boolean; children?: Node }) => (shown ? <box>{children}</box> : <box reveal>{children}</box>);
 
-/** The devices of the chosen track: what plays it, then its effects in their order. */
-const Panel = ({ each, title }: { each: Track; title: string }) => {
+/** The devices of the chosen track or return: what plays it, then its effects in their order. */
+const Panel = ({ each, title }: { each: Strip; title: string }) => {
   const chain = each.children.find((child) => child.name === "chain");
   // Each it names, also one whose code did not load: it says so where it sits.
   const effects = chain?.tool === "chain" ? chain.state.order : [];
