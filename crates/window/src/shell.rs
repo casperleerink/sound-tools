@@ -20,13 +20,20 @@ pub(crate) mod start;
 pub(crate) use new_project::{NewProject, template_row};
 pub(crate) use save_template::SaveTemplate;
 
-/// Set once the window quits to open another project: `main` starts the app again after Rune
-/// let go of this one.
+/// Set once the window quits to open another project or an update: `main` starts the app
+/// again after Rune let go of this one.
 static STARTS_AGAIN: AtomicBool = AtomicBool::new(false);
 
-/// Whether the app quit to open another project.
+/// Whether the app quit to start again.
 pub(crate) fn starts_again() -> bool {
     STARTS_AGAIN.load(Ordering::Relaxed)
+}
+
+/// Quits, and `main` starts the app again on the last project: the way to another project
+/// and to a downloaded update, which installs before any window.
+pub(crate) fn start_again(tx: &mut Tx) {
+    STARTS_AGAIN.store(true, Ordering::Relaxed);
+    tx.quit();
 }
 
 /// What a window with dialogs of projects gives them.
@@ -173,8 +180,7 @@ impl Projects {
         if let Some(support) = &self.support {
             runtime::app::remember_project_in(support, folder)?;
         }
-        STARTS_AGAIN.store(true, Ordering::Relaxed);
-        tx.quit();
+        start_again(tx);
         Ok(())
     }
 

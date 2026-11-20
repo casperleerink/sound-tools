@@ -6,6 +6,7 @@
 
 mod import;
 mod keys;
+mod launch;
 mod other_apps;
 mod recorder;
 mod support;

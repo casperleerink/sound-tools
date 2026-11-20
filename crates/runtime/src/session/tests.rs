@@ -335,6 +335,11 @@ fn the_transport_state_is_no_edit_and_the_clock_says_it() {
     assert_eq!(opened.undo_label(), before);
 }
 
+/// Where the live input plays now.
+fn live_notes(session: &Session) -> Vec<sound_core::InputEndpoint> {
+    crate::notes_inputs(session.project(), session.selected())
+}
+
 /// The selection is worked out from the project as it is now; live notes go to the nearest
 /// instance that takes notes, or with nothing selected, to every one at the top.
 #[test]
@@ -347,12 +352,12 @@ fn the_selection_follows_the_project_and_live_notes_go_to_the_nearest_notes() {
             .unwrap()
     };
     let (track, song) = (notes_of(TRACK), notes_of("song"));
-    assert_eq!(opened.session.live_notes(), [song]);
+    assert_eq!(live_notes(&opened.session), [song]);
 
     let mix = id("song/t00/mix");
     let span = Some((Ticks(BAR), Ticks(2 * BAR)));
     opened.session.select(Some(mix), span);
-    assert_eq!(opened.session.live_notes(), [track]);
+    assert_eq!(live_notes(&opened.session), [track]);
     assert_eq!(opened.session.selected_span(), span);
     opened.write_outside("state/song/t00/mix.json", None);
     assert_eq!(opened.session.selected(), None);

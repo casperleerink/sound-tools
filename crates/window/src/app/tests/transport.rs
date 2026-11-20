@@ -1,7 +1,5 @@
 //! The transport of the title row and the notices, driven by key and label.
 
-use std::path::PathBuf;
-
 use rune::{Key, KeyEvent, Mods};
 use sound_core::Ticks;
 
@@ -168,18 +166,16 @@ fn the_click_the_computer_keys_and_write_automation_are_no_edit() {
 }
 
 #[test]
-fn record_shows_only_for_a_tool_that_records_and_is_lit_while_a_take_records() {
+fn record_shows_only_for_a_tool_that_records() {
     let (_scratch, mut window) = window();
     let has_record = |state: &State| {
         let controls = controls::collect(state).controls;
-        controls
-            .into_iter()
-            .find(|control| control.label == "Record")
+        controls.iter().any(|control| control.label == "Record")
     };
-    assert!(has_record(&window.state).is_none());
-    window.state.transport.records = true;
-    window.state.session.set_recording(true);
-    assert_eq!(has_record(&window.state).unwrap().checked, Some(true));
+    assert!(has_record(&window.state));
+    window.state.main = Some(InstanceId::new("gallery").unwrap());
+    redraw(&mut window);
+    assert!(!has_record(&window.state));
 }
 
 #[test]
@@ -253,37 +249,4 @@ fn a_long_notice_fits_bottom_right_in_three_lines_and_a_dismiss_takes_it_away() 
     click(&mut window, "notice-dismiss");
     assert_eq!(window.state.session.notice(), None);
     assert!(window.find("notice-error").is_none());
-}
-
-/// Pictures of the title row to look at, which no run of the app can show yet: a tool that
-/// records and a take that records, and a notice. `SNAPS=<folder> cargo nextest run -p
-/// sound-window --run-ignored only title_row_pictures`.
-#[test]
-#[ignore = "writes pictures to look at"]
-fn title_row_pictures() {
-    let Ok(folder) = std::env::var("SNAPS") else {
-        return;
-    };
-    let scratch = new_project();
-    let mut state = opened(&scratch.path().join("song"));
-    state.transport.records = true;
-    state.session.set_recording(true);
-    state
-        .session
-        .report("The plugin “Valhalla Room” did not load: it is not on this computer any more.");
-    let png = PathBuf::from(folder).join("recording-notice.png");
-    let spec = rune::AppSpec {
-        min_size: Some(MIN_SIZE),
-        poll: Some(poll),
-        setup: Some(setup),
-        on_key: Some(on_key),
-        fonts: &crate::FONTS,
-        families: ("Inter Display", "ui-monospace"),
-        ..rune::AppSpec::new("song", (1470.0, 920.0), || unreachable!(), view)
-    };
-    rune::App::new(spec)
-        .args(["--snap".to_string(), png.display().to_string()])
-        .init(move || state)
-        .run();
-    assert!(png.exists());
 }

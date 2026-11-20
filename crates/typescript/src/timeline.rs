@@ -288,10 +288,6 @@ pub(crate) struct Timeline {
     waiting: Schedule<bool>,
 }
 
-#[allow(
-    dead_code,
-    reason = "the window uses it once it does all the old app did"
-)]
 pub(crate) enum TimelineUpdate {
     /// Its round, or where it is placed. The old round rides back in here.
     Player(NotePlayerUpdate),
