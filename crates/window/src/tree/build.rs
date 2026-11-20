@@ -78,6 +78,9 @@ fn walk(node: &Node, memos: &Memos, bind: &mut impl FnMut(Shows)) {
             {
                 bind(Shows::Trim(trim.clone()));
             }
+            if let Some(listed) = super::shapes::listed(d) {
+                bind(Shows::Lists(listed));
+            }
             live_place(d.at.as_ref(), (Some(&d.w), Some(&d.h)), d.opacity.as_ref())
         }
         Node::Memo { key } => {

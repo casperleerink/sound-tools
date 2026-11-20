@@ -207,16 +207,18 @@ export type TextProps = TextLook &
     | { live: Num; unit: Unit | "position" | "time"; digits?: never; children?: never }
     | { live: Num; digits?: number; unit?: never; children?: never }
   );
-/** Line segments, `points` four numbers each (x1 y1 x2 y2), or a list feed the window draws as it changes. Segments end to end draw as one line; `fill` closes it and fills it, or under an open line the area below. */
+/** Line segments, `points` four numbers each (x1 y1 x2 y2), or a list feed: its numbers are heights, evenly from the left edge to the right, drawn as they change. Segments end to end draw as one line; `fill` closes it and fills it, or under an open line the area below. */
 export type Lines = { color: Color; width: number; points: number[] | Live; fill?: Color };
 /** Filled rectangles, `rects` four numbers each (x y w h), or a list feed. */
 export type Rects = { color: Color; rects: number[] | Live };
+type Span = number | [from: number, to: number];
 /**
- * Its points are in `units` [across, down] when given, stretched to `w` × `h`; else in the units
- * of the plane when placed; else points. Widths stay in points. `trim` [from, to], 0 to 1: only
- * that part of its lines' length draws, end to end in their order, such as the arc of a knob.
+ * Its points are in `units` [across, down] when given, stretched to `w` × `h`: each a length from
+ * 0, or its ends, as `[18, -18]` puts 18 at the top; across, the part of a list feed it shows.
+ * Else in the units of the plane when placed; else points. Widths stay in points. `trim` [from,
+ * to], 0 to 1: only that part of its lines' length draws, end to end, such as the arc of a knob.
  */
-export type ShapesProps = { key?: string; at?: [Num, Num]; units?: [number, number]; lines?: Lines[]; rects?: Rects[]; opacity?: Num; trim?: [Num, Num] } & (
+export type ShapesProps = { key?: string; at?: [Num, Num]; units?: [Span, Span]; lines?: Lines[]; rects?: Rects[]; opacity?: Num; trim?: [Num, Num] } & (
   | { w: Num; h: Num; place?: [x: Num, y: Num] }
   | { place: [x: Num, y: Num, w: Num, h: Num]; w?: never; h?: never }
 );

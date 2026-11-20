@@ -29,6 +29,7 @@ pub(crate) use icon::{Icons, report_missing};
 pub(crate) use overlay::overlays;
 pub(crate) use reach::Reach;
 pub(crate) use semantics::Press;
+pub(crate) use shapes::Listed;
 
 /// A node of `sdk/view.ts`. A test reads every field it sends, so the two cannot drift.
 #[derive(Deserialize)]
@@ -270,7 +271,7 @@ pub(crate) struct ShapesNode {
     opacity: Option<Num>,
     w: Num,
     h: Num,
-    units: Option<[f32; 2]>,
+    units: Option<[shapes::Span; 2]>,
     trim: Option<[Num; 2]>,
     #[serde(default)]
     lines: Vec<Lines>,
@@ -299,7 +300,7 @@ pub(crate) struct FieldNode {
 pub(crate) struct Lines {
     color: String,
     width: f32,
-    points: Vec<f32>,
+    points: shapes::Points,
     fill: Option<String>,
 }
 
@@ -307,7 +308,7 @@ pub(crate) struct Lines {
 #[cfg_attr(test, serde(deny_unknown_fields))]
 pub(crate) struct Rects {
     color: String,
-    rects: Vec<f32>,
+    rects: shapes::Points,
 }
 
 /// The view of one instance being drawn: where its keys and live names point.

@@ -71,11 +71,9 @@ fn control<'a>(controls: &'a [controls::Control], label: &str) -> &'a controls::
 
 /// The loudest the `peak` feed of `id` read in the last frame, in dB.
 fn peak_db(state: &State, id: &str) -> f32 {
-    let numbers = state.feeds.numbers();
-    let peak = numbers
-        .iter()
-        .find(|(name, _)| *name == format!("{id} peak"));
-    sound_core::feeds::db(peak.map_or(0.0, |(_, number)| *number))
+    let read = state.feeds.read_now();
+    let peak = read.get(&format!("{id} peak")).and_then(Value::as_f64);
+    sound_core::feeds::db(peak.unwrap_or(0.0) as f32)
 }
 
 fn act(state: &mut State, step: Value) {
@@ -97,7 +95,7 @@ fn playing_moves_the_playhead_and_the_meters_and_runs_no_view() {
     assert!(
         peak_db(&state, "song/t01/mix") > -60.0,
         "{:?}",
-        state.feeds.numbers()
+        state.feeds.read_now()
     );
     assert_eq!(state.tools.as_ref().unwrap().view_runs(), runs);
 }
@@ -521,7 +519,7 @@ fn the_meter_of_a_track_taken_away_and_brought_back_moves() {
     assert!(
         peak_db(&state, "song/t01/mix") > -60.0,
         "{:?}",
-        state.feeds.numbers()
+        state.feeds.read_now()
     );
 }
 
@@ -614,7 +612,7 @@ fn a_control_loop_plays_its_input_and_stops_the_piece() {
     assert!(
         peak_db(&state, "song/t00/mix") > -60.0,
         "{:?}",
-        state.feeds.numbers()
+        state.feeds.read_now()
     );
 }
 
@@ -935,7 +933,7 @@ fn a_press_plays_an_input_and_the_piece_as_a_control_loop_does() {
     assert!(
         peak_db(&state, "song/t00/mix") > -60.0,
         "{:?}",
-        state.feeds.numbers()
+        state.feeds.read_now()
     );
     act(
         &mut state,
@@ -2113,6 +2111,7 @@ fn code_that_opens_the_window_of_a_child_with_none_has_a_problem() {
 }
 
 mod behaviours;
+mod feeds;
 mod frame;
 mod projects;
 mod transport;

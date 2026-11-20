@@ -12,6 +12,7 @@ use sound_core::{InstanceId, Ticks};
 use sound_typescript::live::{DragPart, Ease, Eased, Leaves, Live, Num, Readout, number, text_of};
 
 use crate::app::State;
+use crate::tree::Listed;
 
 /// What a live value of a view shows: also its name, so the same shown twice binds once, and a
 /// new expression in its place, such as `live.playhead.minus(start)` after a drag, is another.
@@ -28,6 +29,7 @@ pub(crate) enum Shows {
     Opacity(Num),
     /// The part of a shape's lines that draws: [from, to], 0 to 1.
     Trim([Num; 2]),
+    Lists(Listed),
 }
 
 /// What Rune draws of a [`Shows`] every frame.
@@ -39,6 +41,8 @@ pub(crate) enum Shown {
     Offset(rune::Live<[f32; 2]>),
     Opacity(rune::Live<f32>),
     Trim(rune::Live<[f32; 2]>),
+    /// The lists it drew last.
+    Pixels(rune::Pixels, Rc<RefCell<Vec<Vec<f32>>>>),
 }
 
 impl Shown {
@@ -50,6 +54,7 @@ impl Shown {
             Self::Offset(offset) => e.absolute(0.0, 0.0).live_offset(offset),
             Self::Opacity(opacity) => e.live_opacity(opacity),
             Self::Trim(trim) => e.live_trim(trim),
+            Self::Pixels(pixels, _) => e.pixels(pixels),
         }
     }
 }
@@ -116,6 +121,7 @@ impl Lives {
             Shows::Offset(_) => Shown::Offset(rune::Live::new([0.0; 2])),
             Shows::Opacity(_) => Shown::Opacity(rune::Live::new(1.0)),
             Shows::Trim(_) => Shown::Trim(rune::Live::new([0.0, 1.0])),
+            Shows::Lists(_) => Shown::Pixels(rune::Pixels::new(), Rc::default()),
         };
         let binding = Binding {
             instance: instance.clone(),
@@ -285,6 +291,9 @@ impl Lives {
             (Shows::Trim(trim), Shown::Trim(shown)) => {
                 shown.set(trim.each_ref().map(|end| of(end).clamp(0.0, 1.0)));
             }
+            (Shows::Lists(listed), Shown::Pixels(pixels, last)) => {
+                (state.feeds).draw(state, &binding.instance, listed, pixels, last);
+            }
             _ => {}
         }
     }
@@ -311,6 +320,17 @@ impl Lives {
 
     pub(crate) fn eased(&self) -> usize {
         self.eased.borrow().len()
+    }
+
+    /// The size of each drawing of list feeds now, in pixels.
+    pub(crate) fn pixels(&self) -> Vec<(u32, u32)> {
+        let bindings = self.bindings.borrow();
+        (bindings.values())
+            .filter_map(|binding| match &binding.shown {
+                Shown::Pixels(pixels, _) => Some(pixels.size()),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Where each live rect is now.

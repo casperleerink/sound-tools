@@ -112,7 +112,7 @@ impl State {
             "playing": self.playing,
             "playhead": self.playhead.0,
             "time": self.time(),
-            "feeds": self.feeds.numbers().into_iter().map(|(name, number)| (name, json!(number))).collect::<serde_json::Map<_, _>>(),
+            "feeds": self.feeds.read_now(),
             "view_runs": self.tools.as_ref().map_or(0, Tools::view_runs),
             "problems": problems,
             "notice": self.session.notice(),
