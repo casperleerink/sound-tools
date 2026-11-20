@@ -1021,3 +1021,85 @@ fn a_thread_fed_recorded_events_shows_its_steps_and_working_line() {
     assert_eq!(steps[0].words, "Change Bass");
     assert_eq!(steps[0].mark.map(Mark::words), Some("· denied"));
 }
+
+/// A stand-in for `claude` that answers `auth status` as signed out.
+#[cfg(unix)]
+fn signed_out_claude(machine: &Path) -> Installed {
+    use std::os::unix::fs::PermissionsExt;
+    let program = machine.join("claude");
+    let script = "#!/bin/sh\necho '{\"loggedIn\": false}'\nexit 1\n";
+    std::fs::write(&program, script).unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    Installed {
+        program,
+        environment: HashMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
+    }
+}
+
+/// A turn that failed because Claude was signed out meanwhile, such as in a terminal: the
+/// sidebar finds out without a word in the thread, and asks to sign in again.
+#[cfg(unix)]
+#[test]
+fn a_failed_turn_finds_out_quietly_that_claude_was_signed_out_meanwhile() {
+    let machine = tempfile::tempdir().unwrap();
+    let programs = vec![(Provider::Claude, signed_out_claude(machine.path()))];
+    let mut harness = Harness::open(programs, machine, tempfile::tempdir().unwrap());
+    assert!(harness.chat.agents().ready(Provider::Claude).is_some());
+    harness.begin(MESSAGE);
+    harness.receive([AgentEvent::TurnStarted, failed("Not logged in")]);
+    let shown = harness.entries();
+    harness.wait_until(|harness| harness.chat.agents().ready(Provider::Claude).is_none());
+    let setup = &harness
+        .chat
+        .agents()
+        .program(Provider::Claude)
+        .unwrap()
+        .setup;
+    assert!(
+        matches!(setup, crate::setup::Setup::SignedOut { .. }),
+        "{setup:?}"
+    );
+    assert_eq!(harness.entries(), shown);
+}
+
+/// A thread whose folder cannot be written says so once, not at every event.
+#[cfg(unix)]
+#[test]
+fn a_thread_that_cannot_be_saved_says_so_once() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut harness = Harness::new();
+    let threads = harness.machine.path().join("agent/threads");
+    std::fs::create_dir_all(&threads).unwrap();
+    let locked = |mode| std::fs::set_permissions(&threads, std::fs::Permissions::from_mode(mode));
+    locked(0o555).unwrap();
+    harness.begin(MESSAGE);
+    for words in ["One", "Two", "Three"] {
+        let text = AgentEvent::TextDone {
+            text: words.to_string(),
+        };
+        harness.receive([text]);
+    }
+    harness.receive([completed()]);
+    harness.wait_until(|harness| !harness.chat.is_saving());
+    harness.poll();
+    locked(0o755).unwrap();
+    let said = harness.entries();
+    assert_eq!(
+        said.matches("This thread is not saved").count(),
+        1,
+        "{said}"
+    );
+}
+
+#[test]
+fn a_picture_that_cannot_be_read_says_so_and_attaches_nothing() {
+    let mut harness = Harness::new();
+    let outside = tempfile::tempdir().unwrap();
+    harness
+        .chat
+        .attach_files(vec![outside.path().join("Score.png")]);
+    harness.wait_until(|harness| !harness.chat.is_reading_attachments());
+    assert!(harness.chat.attachments().is_empty());
+    let said = harness.entries();
+    assert!(said.contains("Score.png could not be read"), "{said}");
+}
