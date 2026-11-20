@@ -10,7 +10,7 @@ What a new project can start from: Bare, an empty project, or a DAW written in T
 
 ## Requirements
 
-- macOS 11 or later, the main platform. Linux and Windows build from source too, see "Linux" and "Windows" below.
+- macOS 13 or later, the main platform. Linux and Windows build from source too, see "Linux" and "Windows" below.
 - To build it: Rust through `rustup`. `rust-toolchain.toml` pins the version and `rustup` installs it on the first build.
 - The first build takes about a minute, plus the download of the dependencies. Later builds take seconds.
 - Every checkout builds into its own `target/`, so a new worktree starts with a full build. One shared folder let worktrees on different commits overwrite each other's files, and tests ran the wrong code. `tooling/clean-builds.sh` deletes the builds of worktrees nobody used for two days. With [sccache](https://github.com/mozilla/sccache) as the `rustc-wrapper` in `~/.cargo/config.toml`, a new worktree reuses the dependencies other worktrees compiled, safely when several build at once. That makes its first build about 30% faster: crates with build scripts build again in each folder.
@@ -21,8 +21,7 @@ Linux x86_64 and arm64 build from source, and CI runs the tests on Ubuntu. On Ub
 
 ```sh
 sudo apt-get install build-essential pkg-config libasound2-dev libpipewire-0.3-dev \
-  libdbus-1-dev libclang-dev libfontconfig-dev libfreetype-dev libwayland-dev libx11-xcb-dev \
-  libxkbcommon-x11-dev libvulkan1 mesa-vulkan-drivers
+  libdbus-1-dev libclang-dev libxkbcommon-dev libvulkan1 mesa-vulkan-drivers
 ```
 
 Then build and run as on macOS. The window needs Vulkan: a graphics driver, or `mesa-vulkan-drivers` for a software one.
