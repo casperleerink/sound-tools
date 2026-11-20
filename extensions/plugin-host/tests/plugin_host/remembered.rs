@@ -1,17 +1,15 @@
 //! Where a plugin's window was and whether it was open, kept by this machine next to the scan
-//! cache, never in the project folder.
-//!
-//! GPUI's test platform places a window where it was asked to, on one display of 1920 by 1080,
-//! but cannot drag one. So a test writes the machine's file where a drag would have left it.
+//! cache, never in the project folder. The desktop has one display of 1920 by 1080; a test
+//! writes the machine's file where a drag would have left a window.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use gpui::TestAppContext;
 use plugin_host::{PluginFormat, Plugins, ScanCache};
 use test_plugin_support::RELOAD_KEY;
 
+use crate::desktop::Desktop;
 use crate::support::{
     FORMATS, Harness, Played, id, plugin_folder, record, scanner, tell_the_plugin,
 };
@@ -19,21 +17,6 @@ use crate::support::{
 const SLOT: &str = "track/instrument";
 
 const STORE: &str = "plugin-windows.json";
-
-fn windows(cx: &mut TestAppContext) -> usize {
-    cx.update(|cx| cx.windows().len())
-}
-
-fn window_origin(cx: &mut TestAppContext) -> (i32, i32) {
-    let handle = cx.update(|cx| cx.windows().first().copied()).unwrap();
-    let bounds = cx
-        .update(|cx| handle.update(cx, |_, window, _| window.bounds()))
-        .expect("the window is there");
-    (
-        f32::from(bounds.origin.x) as i32,
-        f32::from(bounds.origin.y) as i32,
-    )
-}
 
 /// `machine` stands for the cache folder of this machine, where the windows are kept.
 fn open_on(folder: tempfile::TempDir, machine: &Path, writes_state: bool) -> Harness {
@@ -85,8 +68,8 @@ fn every_file(folder: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 }
 
 /// As quitting and starting do.
-fn close_and_open_again(mut harness: Harness, machine: &Path, cx: &mut TestAppContext) -> Harness {
-    cx.update(|cx| harness.plugins.close_all_windows(cx));
+fn close_and_open_again(mut harness: Harness, machine: &Path, desktop: &mut Desktop) -> Harness {
+    desktop.quit(&harness.plugins);
     let problems = harness.plugins.close(&mut harness.project);
     assert!(problems.is_empty(), "{problems:?}");
     let Harness {
@@ -101,22 +84,21 @@ fn close_and_open_again(mut harness: Harness, machine: &Path, cx: &mut TestAppCo
     harness
 }
 
-#[gpui::test]
-fn a_window_that_was_open_opens_where_it_was_and_the_project_folder_does_not_change(
-    cx: &mut TestAppContext,
-) {
+#[test]
+fn a_window_that_was_open_opens_where_it_was_and_the_project_folder_does_not_change() {
     for format in FORMATS {
-        windows_are_remembered(format, cx);
+        windows_are_remembered(format);
     }
 }
 
-fn windows_are_remembered(format: PluginFormat, cx: &mut TestAppContext) {
+fn windows_are_remembered(format: PluginFormat) {
     let machine = tempfile::tempdir().unwrap();
     let machine = machine.path();
+    let mut desktop = Desktop::new(1.0);
     let mut harness = project_with_a_plugin(format, machine);
     harness.play(512);
     // Once round, so the folder has everything the project writes on its own.
-    let harness = close_and_open_again(harness, machine, cx);
+    let harness = close_and_open_again(harness, machine, &mut desktop);
     let before = every_file(harness.folder.path());
     let point = harness.project.history().unwrap().current();
 
@@ -125,44 +107,64 @@ fn windows_are_remembered(format: PluginFormat, cx: &mut TestAppContext) {
         machine,
         serde_json::json!({ SLOT: {"open": true, "x": 100, "y": 60, "display": 1} }),
     );
-    let harness = close_and_open_again(harness, machine, cx);
-    assert_eq!(windows(cx), 0);
-    cx.update(|cx| harness.plugins.settle_windows(cx));
+    let harness = close_and_open_again(harness, machine, &mut desktop);
+    assert!(desktop.shown.is_empty());
+    desktop.settle(&harness.plugins);
     assert!(harness.plugins.window_is_open(&id(SLOT)));
-    assert_eq!(windows(cx), 1);
-    assert_eq!(window_origin(cx), (100, 60), "{format:?}");
+    assert_eq!(desktop.window().position, (100, 60), "{format:?}");
+    assert!(!desktop.window().focus, "{format:?}");
     assert_eq!(harness.project.history().unwrap().current(), point);
 
-    let harness = close_and_open_again(harness, machine, cx);
+    let harness = close_and_open_again(harness, machine, &mut desktop);
     assert_eq!(remembered(&harness, machine)["open"], true, "{format:?}");
-    cx.update(|cx| harness.plugins.settle_windows(cx));
-    assert_eq!(windows(cx), 1);
-    assert_eq!(window_origin(cx), (100, 60), "{format:?}");
+    desktop.settle(&harness.plugins);
+    assert_eq!(desktop.window().position, (100, 60), "{format:?}");
 
-    cx.update(|cx| harness.plugins.close_window(&id(SLOT), cx));
-    let harness = close_and_open_again(harness, machine, cx);
+    harness.plugins.close_window(&id(SLOT));
+    desktop.settle(&harness.plugins);
+    let harness = close_and_open_again(harness, machine, &mut desktop);
     assert_eq!(remembered(&harness, machine)["open"], false, "{format:?}");
     assert_eq!(remembered(&harness, machine)["x"], 100, "{format:?}");
-    cx.update(|cx| harness.plugins.settle_windows(cx));
-    assert_eq!(windows(cx), 0);
+    desktop.settle(&harness.plugins);
+    assert!(desktop.shown.is_empty());
 
-    cx.update(|cx| harness.plugins.open_window(&id(SLOT), cx))
-        .unwrap();
-    assert_eq!(window_origin(cx), (100, 60), "{format:?}");
-    cx.update(|cx| harness.plugins.close_window(&id(SLOT), cx));
-    assert_eq!(windows(cx), 0);
-    let harness = close_and_open_again(harness, machine, cx);
+    desktop.open(&harness.plugins, &id(SLOT));
+    assert_eq!(desktop.window().position, (100, 60), "{format:?}");
+    harness.plugins.close_window(&id(SLOT));
+    desktop.settle(&harness.plugins);
+    assert!(desktop.shown.is_empty());
+    let harness = close_and_open_again(harness, machine, &mut desktop);
 
     assert_eq!(every_file(harness.folder.path()), before, "{format:?}");
 }
 
-#[gpui::test]
-fn a_window_off_every_display_opens_in_the_middle_and_a_gone_record_is_forgotten(
-    cx: &mut TestAppContext,
-) {
+/// The file keeps points, and a display of twice the pixels opens it at twice the numbers.
+#[test]
+fn a_window_moved_on_a_display_of_twice_the_pixels_is_kept_in_points() {
+    let machine = tempfile::tempdir().unwrap();
+    let machine = machine.path();
+    let mut desktop = Desktop::new(2.0);
+    let mut harness = project_with_a_plugin(PluginFormat::Clap, machine);
+    remember(
+        &harness,
+        machine,
+        serde_json::json!({ SLOT: {"open": true, "x": 100, "y": 60, "display": 1} }),
+    );
+    harness.play(512);
+    desktop.settle(&harness.plugins);
+    assert_eq!(desktop.window().position, (200, 120));
+    assert_eq!(desktop.window().content, (640, 480));
+    let harness = close_and_open_again(harness, machine, &mut desktop);
+    assert_eq!(remembered(&harness, machine)["x"], 100);
+    assert_eq!(remembered(&harness, machine)["y"], 60);
+}
+
+#[test]
+fn a_window_off_every_display_opens_in_the_middle_and_a_gone_record_is_forgotten() {
     for (x, display) in [(5000, 1), (100, 99)] {
         let machine = tempfile::tempdir().unwrap();
         let machine = machine.path();
+        let mut desktop = Desktop::new(1.0);
         let mut harness = project_with_a_plugin(PluginFormat::Clap, machine);
         remember(
             &harness,
@@ -173,24 +175,28 @@ fn a_window_off_every_display_opens_in_the_middle_and_a_gone_record_is_forgotten
             }),
         );
         harness.play(512);
-        cx.update(|cx| harness.plugins.settle_windows(cx));
-        assert_eq!(windows(cx), 1);
-        // The middle of the test display for a window of 320 by 240.
-        assert_eq!(window_origin(cx), (800, 420), "{x} on display {display}");
-        let harness = close_and_open_again(harness, machine, cx);
+        desktop.settle(&harness.plugins);
+        // The middle of the display for a window of 320 by 240.
+        assert_eq!(
+            desktop.window().position,
+            (800, 420),
+            "{x} on display {display}"
+        );
+        let harness = close_and_open_again(harness, machine, &mut desktop);
         let text = std::fs::read_to_string(machine.join(STORE)).unwrap();
         assert!(!text.contains("gone/instrument"), "{text}");
         assert_eq!(remembered(&harness, machine)["x"], 800);
-        cx.update(|cx| harness.plugins.close_all_windows(cx));
+        desktop.quit(&harness.plugins);
     }
 }
 
 /// `kReloadComponent` makes a new plugin, and the window of the old one goes with it.
-#[gpui::test]
-fn a_plugin_that_reloads_gets_its_window_back_where_it_was(cx: &mut TestAppContext) {
+#[test]
+fn a_plugin_that_reloads_gets_its_window_back_where_it_was() {
     let machine = tempfile::tempdir().unwrap();
     let machine = machine.path();
     tell_the_plugin(None, None);
+    let mut desktop = Desktop::new(1.0);
     let mut harness = open_on(tempfile::tempdir().unwrap(), machine, true);
     remember(
         &harness,
@@ -206,7 +212,7 @@ fn a_plugin_that_reloads_gets_its_window_back_where_it_was(cx: &mut TestAppConte
         }],
     );
     harness.play(512);
-    cx.update(|cx| harness.plugins.settle_windows(cx));
+    desktop.settle(&harness.plugins);
     assert!(harness.plugins.window_is_open(&id(SLOT)));
 
     harness.render(4096);
@@ -217,16 +223,35 @@ fn a_plugin_that_reloads_gets_its_window_back_where_it_was(cx: &mut TestAppConte
     }
     assert!(!harness.plugins.window_is_open(&id(SLOT)));
     harness.plugins.poll(&harness.project);
-    cx.update(|cx| harness.plugins.settle_windows(cx));
+    desktop.settle(&harness.plugins);
     assert!(harness.plugins.window_is_open(&id(SLOT)));
-    assert_eq!(windows(cx), 1);
-    assert_eq!(window_origin(cx), (100, 60));
-    cx.update(|cx| harness.plugins.close_all_windows(cx));
+    assert_eq!(desktop.window().position, (100, 60));
+    desktop.quit(&harness.plugins);
+}
+
+/// The app waits to bring windows back until it is active, else AppKit would give the keyboard
+/// to the floating plugin window.
+#[test]
+fn windows_come_back_only_once_the_app_is_active() {
+    let machine = tempfile::tempdir().unwrap();
+    let machine = machine.path();
+    let mut desktop = Desktop::new(1.0);
+    let mut harness = project_with_a_plugin(PluginFormat::Clap, machine);
+    remember(
+        &harness,
+        machine,
+        serde_json::json!({ SLOT: {"open": true, "x": 100, "y": 60} }),
+    );
+    harness.play(512);
+    assert_eq!(harness.plugins.settle_windows(false), []);
+    assert!(!harness.plugins.window_is_open(&id(SLOT)));
+    desktop.settle(&harness.plugins);
+    assert!(harness.plugins.window_is_open(&id(SLOT)));
 }
 
 /// `--render` and `--inspect` open read-only.
-#[gpui::test]
-fn a_read_only_project_keeps_no_window(cx: &mut TestAppContext) {
+#[test]
+fn a_read_only_project_keeps_no_window() {
     let machine = tempfile::tempdir().unwrap();
     let machine = machine.path();
     let harness = project_with_a_plugin(PluginFormat::Clap, machine);
@@ -239,25 +264,26 @@ fn a_read_only_project_keeps_no_window(cx: &mut TestAppContext) {
     drop((project, engine, plugins));
 
     let mut harness = open_on(folder, machine, false);
+    let mut desktop = Desktop::new(1.0);
     harness.play(512);
-    cx.update(|cx| harness.plugins.open_window(&id(SLOT), cx))
-        .unwrap();
-    cx.update(|cx| harness.plugins.close_window(&id(SLOT), cx));
+    desktop.open(&harness.plugins, &id(SLOT));
+    harness.plugins.close_window(&id(SLOT));
+    desktop.settle(&harness.plugins);
     harness.plugins.close(&mut harness.project);
     assert!(!machine.join(STORE).exists());
 }
 
-#[gpui::test]
-fn a_store_that_cannot_be_written_is_said_once(cx: &mut TestAppContext) {
+#[test]
+fn a_store_that_cannot_be_written_is_said_once() {
     let machine = tempfile::tempdir().unwrap();
     // A file where the folder of the cache should be.
     let blocked = machine.path().join("blocked");
     std::fs::write(&blocked, "").unwrap();
+    let mut desktop = Desktop::new(1.0);
     let mut harness = project_with_a_plugin(PluginFormat::Clap, &blocked);
     harness.play(512);
 
-    cx.update(|cx| harness.plugins.open_window(&id(SLOT), cx))
-        .unwrap();
+    desktop.open(&harness.plugins, &id(SLOT));
     let now = Instant::now();
     let said = |problems: Vec<plugin_host::PluginProblem>| {
         problems
@@ -273,7 +299,7 @@ fn a_store_that_cannot_be_written_is_said_once(cx: &mut TestAppContext) {
     );
     assert_eq!((first, second), (1, 0));
 
-    cx.update(|cx| harness.plugins.close_window(&id(SLOT), cx));
+    harness.plugins.close_window(&id(SLOT));
     let third = said(
         harness
             .plugins

@@ -11,6 +11,7 @@ mod background;
 mod consistency;
 #[cfg(unix)]
 mod crashing;
+mod desktop;
 mod editing;
 mod effects;
 mod lanes;

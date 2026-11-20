@@ -16,7 +16,6 @@ mod parameters;
 mod placements;
 mod processor;
 mod scan;
-pub mod view;
 mod vst3;
 mod window;
 
@@ -30,18 +29,21 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 
-use crate::parameters::lane_of_pin;
 use crate::processor::{AutomatedPin, AutomatedPins, HostedPlugin, HostedUpdate};
 
 #[cfg(unix)]
 pub use bridge::{PLAY_ARGUMENT, remember_this_program, serve as serve_plugin};
 pub use host::{Isolation, PluginProblem, Plugins, WeakPlugins};
 pub use parameters::{
-    MAX_NAMED_STEPS, Parameter, ParameterValue, StepName, Steps, read_parameters,
+    MAX_NAMED_STEPS, Parameter, ParameterValue, StepName, Steps, lane_of_pin, read_parameters,
 };
 pub use scan::{
     SCAN_ARGUMENT, ScanCache, ScanCommand, ScanFailure, ScannedPlugin, default_search_paths,
     one_per_plugin, scan_one_bundle,
+};
+pub use window::{
+    Display, Key, KeyDirection, Keystroke, Modifiers, ParentView, Placement, WindowCommand,
+    WindowId, WindowPlace, WindowSize,
 };
 
 /// The name to enable in `project.json`.
@@ -200,6 +202,15 @@ impl PluginRecord {
 
     fn asset(&self) -> AssetName {
         self.state_asset.0.clone()
+    }
+
+    /// Whether a lane may move `parameter`: one not pinned yet only while the record has room
+    /// to pin it.
+    pub fn can_take_lane(&self, parameter: &Parameter) -> bool {
+        match self.parameters.get(&parameter.id) {
+            Some(pin) => parameter.takes_lane_at(pin),
+            None => parameter.takes_lane() && self.parameters.len() < MAX_AUTOMATED,
+        }
     }
 }
 

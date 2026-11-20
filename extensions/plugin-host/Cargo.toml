@@ -26,7 +26,6 @@ clack-extensions = { workspace = true, features = [
 ] }
 clack-host.workspace = true
 dunce.workspace = true
-gpui.workspace = true
 raw-window-handle.workspace = true
 rtrb.workspace = true
 rtsan-standalone.workspace = true
@@ -34,7 +33,6 @@ serde.workspace = true
 serde_json.workspace = true
 sound-core.workspace = true
 sound-notes.workspace = true
-sound-ui.workspace = true
 thiserror.workspace = true
 vst3.workspace = true
 
@@ -50,7 +48,6 @@ no_denormals.workspace = true
 audio_thread_priority = { workspace = true, features = ["with_dbus"] }
 
 [dev-dependencies]
-gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 test-clap-plugin.workspace = true
 test-plugin-support.workspace = true

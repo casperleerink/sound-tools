@@ -3,13 +3,12 @@
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
-use gpui::Keystroke;
 use sound_core::PrepareConfig;
 
 use crate::PluginProblem;
 use crate::parameters::Parameter;
 use crate::processor::{Laned, PluginAudio, Started};
-use crate::window::WindowSize;
+use crate::window::{KeyDirection, Keystroke, WindowSize};
 
 /// One loaded plugin, seen from the main thread.
 pub(crate) trait LoadedPlugin {
@@ -160,12 +159,6 @@ pub(crate) trait PluginGui {
     }
 
     fn destroy(&mut self);
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum KeyDirection {
-    Down,
-    Up,
 }
 
 pub(crate) struct Opening {
