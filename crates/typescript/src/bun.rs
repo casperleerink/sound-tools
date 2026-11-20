@@ -233,7 +233,7 @@ pub(crate) struct MenuItemSpec {
 
 /// Where the sound and the piece are, which all code of a tool gets.
 #[derive(Clone, Copy, Debug, Serialize)]
-pub(crate) struct Clock {
+pub struct Clock {
     /// Engine time in seconds: the clock `at` of an event counts on.
     pub time: f64,
     pub transport: Transport,
@@ -249,7 +249,7 @@ pub(crate) struct ToldRecord<'a> {
 
 /// Where the project plays, as the window's playhead shows it, and how the clock plays.
 #[derive(Clone, Copy, PartialEq, Debug, Serialize)]
-pub(crate) struct Transport {
+pub struct Transport {
     pub playing: bool,
     pub tick: u64,
     pub bar: u64,

@@ -4,19 +4,6 @@
 
 use serde_json::{Map, Value};
 
-/// The instance inside the view's own that `path` names, if any, and the number in its record.
-/// A name of an instance holds no `[`, so a place in a list of the own record is told apart.
-#[allow(
-    dead_code,
-    reason = "the window uses it once it does all the old app did"
-)]
-pub(crate) fn split(path: &str) -> (Option<&str>, &str) {
-    match path.split_once('.') {
-        Some((child, number)) if !child.contains('[') => (Some(child), number),
-        _ => (None, path),
-    }
-}
-
 /// The parts of the path of a number in a record: `bands[0].gain_db` is `bands`, `0` and
 /// `gain_db`, `parameters.12.value` is `parameters`, `12` and `value`.
 pub(crate) fn parts(path: &str) -> impl Iterator<Item = &str> {
@@ -44,7 +31,7 @@ pub(crate) fn number_of(value: &Value) -> Option<f32> {
 
 /// Puts `to` at `path`, or takes the number out where `to` is `None`. An object on the way that
 /// the record leaves out is made, such as a pad of a kit at its defaults; an item of a list is not.
-pub(crate) fn set(value: &mut Value, path: &str, to: Option<Value>) {
+pub fn set(value: &mut Value, path: &str, to: Option<Value>) {
     let parts: Vec<&str> = parts(path).collect();
     let Some((last, objects)) = parts.split_last() else {
         return;
@@ -94,7 +81,7 @@ pub(crate) fn set(value: &mut Value, path: &str, to: Option<Value>) {
 mod tests {
     use serde_json::json;
 
-    use super::{at, set, split};
+    use super::{at, set};
 
     #[test]
     fn a_number_is_found_and_put_back_by_its_path_in_the_record() {
@@ -119,23 +106,5 @@ mod tests {
             record,
             json!({"pads": {"36": {"volume_db": -6}}, "bands": []})
         );
-    }
-
-    #[test]
-    fn the_first_dot_ends_the_instance_unless_it_is_a_place_in_a_list() {
-        assert_eq!(split("cutoff_hz"), (None, "cutoff_hz"));
-        assert_eq!(
-            split("bass/synth.cutoff_hz"),
-            (Some("bass/synth"), "cutoff_hz")
-        );
-        assert_eq!(
-            split("kit.pads.36.volume_db"),
-            (Some("kit"), "pads.36.volume_db")
-        );
-        assert_eq!(
-            split("eq.bands[0].gain_db"),
-            (Some("eq"), "bands[0].gain_db")
-        );
-        assert_eq!(split("voices[2].detune"), (None, "voices[2].detune"));
     }
 }

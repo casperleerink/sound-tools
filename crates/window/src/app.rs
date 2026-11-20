@@ -545,7 +545,7 @@ impl State {
 
     /// The numbers a lane moves of each instance of `shown`, for `held` of its view.
     fn holds(&self, shown: &BTreeSet<InstanceId>) -> BTreeMap<InstanceId, Vec<String>> {
-        sound_typescript::next::holds(&self.project, shown)
+        runtime::session::held(&self.project, shown, false)
     }
 
     /// Waits for Bun; a run without a window fails when it does not finish.
