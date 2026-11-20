@@ -30,11 +30,9 @@ use vst3::Steinberg::{
 use vst3::{Class, ComPtr, ComRef, ComWrapper};
 
 use crate::PluginProblem;
-use gpui::Keystroke;
-
-use crate::backend::{KeyDirection, PluginGui};
+use crate::backend::PluginGui;
 use crate::processor::not_ours;
-use crate::window::WindowSize;
+use crate::window::{Key, KeyDirection, Keystroke, WindowSize};
 
 /// The plugin's own window, from the VST 3 side, for a plugin that has an edit controller.
 pub(super) struct Vst3Gui {
@@ -334,48 +332,31 @@ struct Vst3Key {
 fn vst3_key(keystroke: &Keystroke) -> Vst3Key {
     use vst3::Steinberg::KeyModifier_::{kAlternateKey, kCommandKey, kControlKey, kShiftKey};
     use vst3::Steinberg::VirtualKeyCodes_::*;
-    let code = match keystroke.key.as_str() {
-        "backspace" => KEY_BACK,
-        "tab" => KEY_TAB,
-        "enter" => KEY_RETURN,
-        "escape" => KEY_ESCAPE,
-        "space" => KEY_SPACE,
-        "delete" => KEY_DELETE,
-        "insert" => KEY_INSERT,
-        "home" => KEY_HOME,
-        "end" => KEY_END,
-        "pageup" => KEY_PAGEUP,
-        "pagedown" => KEY_PAGEDOWN,
-        "left" => KEY_LEFT,
-        "right" => KEY_RIGHT,
-        "up" => KEY_UP,
-        "down" => KEY_DOWN,
-        "f1" => KEY_F1,
-        "f2" => KEY_F2,
-        "f3" => KEY_F3,
-        "f4" => KEY_F4,
-        "f5" => KEY_F5,
-        "f6" => KEY_F6,
-        "f7" => KEY_F7,
-        "f8" => KEY_F8,
-        "f9" => KEY_F9,
-        "f10" => KEY_F10,
-        "f11" => KEY_F11,
-        "f12" => KEY_F12,
-        _ => 0,
+    let (code, text) = match &keystroke.key {
+        Key::Text(text) => (0, text.as_str()),
+        Key::Space => (KEY_SPACE, " "),
+        Key::Enter => (KEY_RETURN, ""),
+        Key::Tab => (KEY_TAB, ""),
+        Key::Backspace => (KEY_BACK, ""),
+        Key::Delete => (KEY_DELETE, ""),
+        Key::Escape => (KEY_ESCAPE, ""),
+        Key::Insert => (KEY_INSERT, ""),
+        Key::Home => (KEY_HOME, ""),
+        Key::End => (KEY_END, ""),
+        Key::PageUp => (KEY_PAGEUP, ""),
+        Key::PageDown => (KEY_PAGEDOWN, ""),
+        Key::Left => (KEY_LEFT, ""),
+        Key::Right => (KEY_RIGHT, ""),
+        Key::Up => (KEY_UP, ""),
+        Key::Down => (KEY_DOWN, ""),
+        // F1 to F12 follow each other in `keycodes.h`.
+        Key::Function(number @ 1..=12) => (
+            KEY_F1 + vst3::Steinberg::VirtualKeyCodes::from(*number) - 1,
+            "",
+        ),
+        Key::Function(_) => (0, ""),
     };
-    // The character typed, which has the shift in it already. A key held with the command
-    // key types nothing, so its own name is the character then. Only one UTF-16 unit fits.
-    let typed = keystroke
-        .key_char
-        .as_deref()
-        .filter(|typed| !typed.is_empty());
-    let text = match (code, typed) {
-        (KEY_SPACE, _) => " ",
-        (0, Some(typed)) => typed,
-        (0, None) => keystroke.key.as_str(),
-        _ => "",
-    };
+    // Only one UTF-16 unit fits.
     let mut units = text.encode_utf16();
     let character = match (units.next(), units.next()) {
         (Some(unit), None) if !char::from_u32(u32::from(unit)).is_some_and(char::is_control) => {
@@ -383,20 +364,14 @@ fn vst3_key(keystroke: &Keystroke) -> Vst3Key {
         }
         _ => 0,
     };
-    let held = &keystroke.modifiers;
-    let other = if cfg!(target_os = "macos") {
-        held.control
-    } else {
-        held.platform
-    };
+    let held = keystroke.modifiers;
+    // `keycodes.h`: `kCommandKey` is the command key on macOS and the control key on Windows,
+    // and `kControlKey` the other one: the control key on macOS, the Windows key on Windows.
     let modifiers = [
         (held.shift, kShiftKey),
         (held.alt, kAlternateKey),
-        // `keycodes.h`: `kCommandKey` is the command key on macOS and the control key on
-        // Windows, which GPUI calls the secondary modifier. `kControlKey` is the other one: the
-        // control key on macOS and the Windows key on Windows.
-        (held.secondary(), kCommandKey),
-        (other, kControlKey),
+        (held.command, kCommandKey),
+        (held.control, kControlKey),
     ]
     .into_iter()
     .filter(|(down, _)| *down)
@@ -460,10 +435,9 @@ mod tests {
     use crate::PluginFormat;
     use crate::backend::Opening;
     use crate::scan::ScannedPlugin;
+    use crate::window::Modifiers;
 
-    /// The repository's VST 3 test plugin, loaded, logging every call it gets. These tests drive
-    /// the backend directly because GPUI's test platform has no `NSView` to give a plugin, so
-    /// through the host `attached` and `removed` would never run.
+    /// The repository's VST 3 test plugin, loaded, logging every call it gets.
     fn loaded(folder: &Path, log: &Path) -> Opening {
         // SAFETY: nextest runs one test per process and no thread but this one exists yet.
         unsafe { std::env::set_var(test_plugin_support::LOG_VARIABLE, log) };
@@ -626,45 +600,55 @@ mod tests {
         tell_the_plugin(test_plugin_support::RESIZE_IN_ATTACHED_VARIABLE, None);
     }
 
-    fn key(text: &str) -> Vst3Key {
-        vst3_key(&Keystroke::parse(text).expect("a keystroke"))
+    fn key(key: Key, modifiers: Modifiers) -> Vst3Key {
+        vst3_key(&Keystroke { key, modifiers })
+    }
+
+    fn text(text: &str) -> Key {
+        Key::Text(text.to_string())
     }
 
     #[test]
     fn a_key_reaches_a_vst3_view_as_its_character_its_code_and_its_modifiers() {
         use vst3::Steinberg::KeyModifier_::{kAlternateKey, kCommandKey, kControlKey, kShiftKey};
-        use vst3::Steinberg::VirtualKeyCodes_::{KEY_BACK, KEY_LEFT, KEY_RETURN, KEY_SPACE};
+        use vst3::Steinberg::VirtualKeyCodes_::{
+            KEY_BACK, KEY_F12, KEY_LEFT, KEY_RETURN, KEY_SPACE,
+        };
         let plain = |character: char, code, modifiers| Vst3Key {
             character: character as u16,
             code: code as i16,
             modifiers: modifiers as i16,
         };
-        assert_eq!(key("a"), plain('a', 0, 0));
-        // `parse` gives no character for a shifted key; the window gives the one it typed.
-        let mut shifted = Keystroke::parse("shift-a").expect("a keystroke");
-        shifted.key_char = Some("A".to_string());
-        assert_eq!(vst3_key(&shifted), plain('A', 0, kShiftKey));
-        // Command on macOS and control on Windows, and then the other one of the two.
-        assert_eq!(key("secondary-c"), plain('c', 0, kCommandKey));
-        let other = if cfg!(target_os = "macos") {
-            "ctrl"
-        } else {
-            "win"
+        let none = Modifiers::default();
+        let shift = Modifiers {
+            shift: true,
+            ..none
+        };
+        assert_eq!(key(text("a"), none), plain('a', 0, 0));
+        assert_eq!(key(text("A"), shift), plain('A', 0, kShiftKey));
+        let command = Modifiers {
+            command: true,
+            ..none
+        };
+        assert_eq!(key(text("c"), command), plain('c', 0, kCommandKey));
+        let control_alt = Modifiers {
+            control: true,
+            alt: true,
+            ..none
         };
         assert_eq!(
-            key(&format!("{other}-alt-x")),
+            key(text("x"), control_alt),
             plain('x', 0, kControlKey | kAlternateKey)
         );
-        assert_eq!(key("space"), plain(' ', KEY_SPACE, 0));
-        assert_eq!(key("enter"), plain('\0', KEY_RETURN, 0));
-        assert_eq!(key("backspace"), plain('\0', KEY_BACK, 0));
-        assert_eq!(key("shift-left"), plain('\0', KEY_LEFT, kShiftKey));
+        assert_eq!(key(Key::Space, none), plain(' ', KEY_SPACE, 0));
+        assert_eq!(key(Key::Enter, none), plain('\0', KEY_RETURN, 0));
+        assert_eq!(key(Key::Backspace, none), plain('\0', KEY_BACK, 0));
+        assert_eq!(key(Key::Left, shift), plain('\0', KEY_LEFT, kShiftKey));
+        assert_eq!(key(Key::Function(12), none), plain('\0', KEY_F12, 0));
         // A character outside the first plane does not fit in one UTF-16 unit.
-        let mut emoji = Keystroke::parse("a").expect("a keystroke");
-        emoji.key_char = Some("😀".to_string());
-        assert_eq!(vst3_key(&emoji), plain('\0', 0, 0));
-        // A named key that `keycodes.h` has no code for types nothing either.
-        assert_eq!(key("f20"), plain('\0', 0, 0));
+        assert_eq!(key(text("😀"), none), plain('\0', 0, 0));
+        // A function key that `keycodes.h` has no code for types nothing either.
+        assert_eq!(key(Key::Function(20), none), plain('\0', 0, 0));
     }
 
     #[test]

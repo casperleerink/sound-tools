@@ -28,7 +28,8 @@ pub struct Parameter {
 }
 
 impl Parameter {
-    pub(crate) fn takes(&self, value: f64) -> bool {
+    /// A pin outside the range moves nothing: a card says it is out of range.
+    pub fn takes(&self, value: f64) -> bool {
         (self.minimum..=self.maximum).contains(&value)
     }
 
@@ -44,7 +45,7 @@ impl Parameter {
 
     /// Inside the range: a CLAP plugin cuts a value to its whole step, so its first step may lie
     /// just below the minimum it gives.
-    pub(crate) fn step_value(&self, steps: &Steps, index: u32) -> f64 {
+    pub fn step_value(&self, steps: &Steps, index: u32) -> f64 {
         steps.value(index).max(self.minimum).min(self.maximum)
     }
 }
@@ -148,7 +149,7 @@ pub(crate) fn playable<'a>(
 }
 
 /// A lane names a pin by its path in the record, as a number of a built-in device.
-pub(crate) fn lane_of_pin(id: u32) -> String {
+pub fn lane_of_pin(id: u32) -> String {
     format!("parameters.{id}.value")
 }
 

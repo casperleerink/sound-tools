@@ -3,6 +3,7 @@
 
 use plugin_host::{ParameterValue, PluginFormat};
 
+use crate::pins::{level, pinned};
 use crate::support::{FORMATS, Harness, id, record};
 
 #[test]
@@ -42,4 +43,24 @@ fn a_clap_plugin_has_no_value_for_a_parameter_it_does_not_have() {
         cutoff.and_then(|cutoff| cutoff.text).as_deref(),
         Some("1000 Hz")
     );
+}
+
+/// What the card adds when the composer pins a parameter: what the plugin plays now, so pinning
+/// changes no sound. With no plugin loaded, the parameter's default.
+#[test]
+fn a_new_pin_starts_at_what_the_plugin_plays_now() {
+    for format in FORMATS {
+        let mut harness = Harness::new();
+        harness.add_track(pinned(format, 0.25), Vec::new());
+        harness.render(4096);
+        let instrument = id("track/instrument");
+        let parameters = harness.plugins.parameters(&instrument).unwrap();
+        let level = &parameters[&level(format)];
+        assert_ne!(level.default, 0.25);
+        let pin = harness.plugins.pin_now(&instrument, level);
+        assert_eq!(pin.value, 0.25, "{format:?}");
+        assert_eq!(pin.name, level.name);
+        let unloaded = harness.plugins.pin_now(&id("track"), level);
+        assert_eq!(unloaded.value, level.default);
+    }
 }
