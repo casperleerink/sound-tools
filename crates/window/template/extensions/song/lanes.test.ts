@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { editsOf } from "./edits";
 import { fakeSong, laneOf, tapeOf, trackOf } from "./fake";
-import { laneAt } from "./lanes";
+import { laneAt, movablesOf } from "./lanes";
 import { BAR, BEAT } from "./time";
 
 const child = (f: ReturnType<typeof fakeSong>, track: string, name: string) => (f.self.children as any[]).find((each) => each.name === track).children.find((each: { name: string }) => each.name === name);
@@ -105,4 +105,22 @@ test("an audio track has no envelope", () => {
   (f.self.children[0] as any).state.automation = [{ lane: "lane-vol", target: "mix.gain_db" }];
   editsOf(f.song).lanes.moveWith("audio-1", "lane-vol", "envelope");
   expect(child(f, "audio-1", "lane-vol").tool).toBe("lane");
+});
+
+test("a new lane offers the track's volume and pan, then each device's numbers in the chain's order, at their values, but what a lane moves", () => {
+  const chain = {
+    name: "chain", tool: "chain", state: { order: ["eq", "filter"] },
+    children: [
+      { name: "filter", tool: "filter", state: { cutoff_hz: 500 }, children: [] },
+      { name: "eq", tool: "eq", state: { bands: [{ frequency_hz: 100, gain_db: 3, q: 1 }] }, children: [] },
+    ],
+  };
+  const row = trackOf("t00", [{ name: "synth", tool: "instrument.synth", state: {}, children: [] }, chain, laneOf("lane-pan", [{ tick: 0, value: 0 }])], [{ lane: "lane-pan", target: "mix.pan" }]);
+  const offered = movablesOf(fakeSong({ children: [row] }).song.children[0]!);
+  expect(offered[0]).toEqual({ target: "mix.gain_db", text: "Volume", group: "Track", value: 0 });
+  expect(offered.some((each) => each.target === "mix.pan")).toBe(false);
+  expect([...new Set(offered.map((each) => each.group))]).toEqual(["Track", "Synth", "Eq", "Filter"]);
+  expect(offered.find((each) => each.target === "synth.cutoff_hz")).toMatchObject({ text: "Cutoff", value: 2000 });
+  expect(offered.find((each) => each.target === "chain/eq.bands.0.gain_db")).toMatchObject({ text: "Bands 1 gain", value: 3 });
+  expect(offered.find((each) => each.target === "chain/filter.cutoff_hz")).toMatchObject({ value: 500 });
 });

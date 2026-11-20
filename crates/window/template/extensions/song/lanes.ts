@@ -1,10 +1,10 @@
 // The automation of a track: lanes under it, each a line of points, an LFO or an envelope that
 // moves a number of the track's fader or of one of its devices over the song.
 // A lane's plane: x in ticks of the song, y down its travel, 0 its top (`max`) and 1 its bottom.
-import { builtInNumbers, type FilledStateOfTool, type Pointer } from "../sdk";
+import { builtInNumbers, type FilledStateOfTool, type Pointer, type Unit } from "../sdk";
 import { envelope, lfo } from "../lfo";
 import { freeName, splitTarget, type Mover } from "../track";
-import { isRow, nameFrom, type Child, type Draft, type Song } from "./model";
+import { isRow, mixOf, nameFrom, words, type Child, type Draft, type Song } from "./model";
 import { positionOf, valueOf } from "../ui/value";
 import { nearestOf } from "./time";
 
@@ -80,6 +80,62 @@ export function travelOf(row: Child, target: string): Travel {
   const lane = isRow(row) ? row.children.find((child) => child.tool === "lane" && row.state.automation.some((each) => each.lane === child.name && each.target === target)) : undefined;
   const values = lane?.tool === "lane" ? lane.state.points.map((point) => point.value) : [];
   return { min: Math.min(0, ...values), max: Math.max(1, ...values), scale: "linear" };
+}
+
+/** The unit a lane's number shows in, by its name as the window's cards tell it: a 0 to 1 number is a share. */
+export function unitOf(target: string, { min, max, scale }: Travel): Unit | undefined {
+  const [, number] = splitTarget(target);
+  if (scale === "fader") return "db";
+  const named = /_(hz|db|ms|seconds|percent)$/.exec(number)?.[1] as Unit | undefined;
+  if (named) return named;
+  if (number.split(".").at(-1) === "pan") return "pan";
+  return min === 0 && max === 1 ? "percent" : undefined;
+}
+
+/** A number a new lane of a track can move: what it is, what the menu calls it, the device it is of, and where it is now. */
+export type Movable = { target: string; text: string; group: string; value: number };
+
+/** The places of `pattern` in `state`: each `*` is every item of the list or key of the map there. */
+function expand(pattern: string, state: unknown): string[] {
+  const [head = "", ...rest] = pattern.split(".");
+  if (rest.length === 0) return [head];
+  const inner = (state as Record<string, unknown> | undefined)?.[head];
+  if (rest[0] !== "*") return expand(rest.join("."), inner).map((tail) => `${head}.${tail}`);
+  const keys = Object.keys((inner as object | undefined) ?? {});
+  return keys.flatMap((key) => expand(rest.slice(1).join("."), (inner as Record<string, unknown>)[key]).map((tail) => `${head}.${key}.${tail}`));
+}
+const numberIn = (state: unknown, path: string): unknown => path.split(".").reduce<unknown>((at, step) => (at as Record<string, unknown> | undefined)?.[step], state);
+
+/**
+ * What a new lane of `row` can move, a group a device: the track's volume and pan, its
+ * instrument's numbers, then each effect's in the chain's order; those a lane moves already left
+ * out. A plugin's numbers are not known here.
+ */
+export function movablesOf(row: Child): Movable[] {
+  if (!isRow(row)) return [];
+  const gain = mixOf(row)?.state.gain_db;
+  const own: Movable[] = [
+    { target: "mix.gain_db", text: "Volume", group: "Track", value: gain === "-inf" ? -100 : (gain ?? 0) },
+    { target: "mix.pan", text: "Pan", group: "Track", value: mixOf(row)?.state.pan ?? 0 },
+  ];
+  const chain = row.children.find((child) => child.name === "chain");
+  const effects = chain?.tool === "chain" ? chain.state.order.flatMap((name) => chain.children.filter((each) => each.name === name).map((each) => ({ path: `chain/${name}`, device: each }))) : [];
+  const synth = row.children.find((child) => child.name === "synth");
+  const devices = [...(synth ? [{ path: "synth", device: synth }] : []), ...effects];
+  const numbers = devices.flatMap(({ path, device }) =>
+    Object.entries(builtInNumbers[String(device.tool)] ?? {}).flatMap(([pattern, known]) =>
+      expand(pattern, device.state).map((number) => {
+        const target = `${path}.${number}`;
+        const held = numberIn(device.state, number);
+        const value = typeof held === "number" ? held : (known.default ?? laneValue(travelOf(row, target), 0.5));
+        // An item of a list counts from 1, a key of a map is as it is: `bands.0.gain_db` is `Bands 1 gain`.
+        const parts = number.split(".").map((part, at, all) => (/^\d+$/.test(part) && Array.isArray(numberIn(device.state, all.slice(0, at).join("."))) ? String(Number(part) + 1) : part));
+        return { target, text: words(parts.join(" ")), group: words(device.name), value };
+      }),
+    ),
+  );
+  const taken = new Set(row.state.automation.map((each) => each.target));
+  return [...own, ...numbers].filter((each) => !taken.has(each.target));
 }
 
 /** How far the points at `ticks` of `points` may move in time: one alone stays between its neighbours, many stay after 0. */
