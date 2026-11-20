@@ -111,7 +111,7 @@ test("a drop hears the files, a field left with Escape commits null", () => {
 
 test("a tool's action runs by its name; its key is what shortcut says", () => {
   render(board, clip);
-  expect(find("key")).toMatchObject({ text: "h" });
+  expect(find("key")).toMatchObject({ text: "H" });
   expect(act("board.home")).toEqual([[["state", "start"], 0]]);
 });
 

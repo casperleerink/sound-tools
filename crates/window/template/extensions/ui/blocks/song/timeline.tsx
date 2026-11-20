@@ -5,7 +5,6 @@ import { cannotRender } from "../../../song/tracks";
 import { BAR, barStarts, beatRuns, placeOf, type Runs } from "../../../song/time";
 import { GUTTER, laneGroups, PLANE, ROW, TIME, trackAt, trackY, type Page, type Row, type Track } from "../../../song/view";
 import { Button } from "../../button";
-import { keysOf } from "../../kbd";
 import { MenuList, type Item } from "../../menu";
 import { TextField } from "../../text-field";
 import { Tooltip } from "../../tooltip";
@@ -90,16 +89,16 @@ type Bounds = ReturnType<typeof boundsOf>;
 const emptyMenu = (page: Page): Item[] => {
   const { song } = page;
   return [
-    { text: "Add a clip at the playhead", icon: "plus", keys: keysOf(song.shortcut("add_clip")), onPress: () => void page.edits.clips.addAtPlayhead() },
-    { text: "Paste", icon: "copy", keys: keysOf(song.shortcut("paste_clips")), ...(song.memory.clipboard ? {} : { disabled: "Nothing is copied" }), onPress: () => void page.edits.clips.paste() },
-    { text: "Choose all clips", keys: keysOf(song.shortcut("select_all_clips")), onPress: () => page.edits.clips.all() },
+    { text: "Add a clip at the playhead", icon: "plus", keys: song.shortcut("add_clip"), onPress: () => void page.edits.clips.addAtPlayhead() },
+    { text: "Paste", icon: "copy", keys: song.shortcut("paste_clips"), ...(song.memory.clipboard ? {} : { disabled: "Nothing is copied" }), onPress: () => void page.edits.clips.paste() },
+    { text: "Choose all clips", keys: song.shortcut("select_all_clips"), onPress: () => page.edits.clips.all() },
   ];
 };
 
 /** The menu of a clip or a region, which works on all the chosen: the keys of each, and what only a menu does. */
 function itemMenu(page: Page, key: string, region: boolean): Item[] {
   const { song } = page;
-  const command = (text: string, command: "cut" | "copy" | "duplicate" | "delete", action: string, icon: Item["icon"]): Item => ({ text, icon, keys: keysOf(song.shortcut(action)), onPress: () => void page.edits.clips.command(command) });
+  const command = (text: string, command: "cut" | "copy" | "duplicate" | "delete", action: string, icon: Item["icon"]): Item => ({ text, icon, keys: song.shortcut(action), onPress: () => void page.edits.clips.command(command) });
   const track = rowOfKey(key);
   const owner = page.tracks.find((each) => each.name === track);
   const why = cannotRender(owner);

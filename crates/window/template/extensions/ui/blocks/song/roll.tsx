@@ -1,7 +1,6 @@
 import { h, live, memo, type Color, type Frozen, type Note, type Pointer } from "../../../sdk";
 import { noteCommand, noteKey, pitchName, STRENGTHS, SWINGS, type NoteCommand } from "../../../song/notes";
 import { BEAT, placeOf } from "../../../song/time";
-import { keysOf } from "../../kbd";
 import { MenuList, type Item } from "../../menu";
 import { EmptyState } from "../empty-state";
 import { barsOf, BEFORE, END, MOVE, PITCH, playheadOf, SHORTEST, signatureOf, START, ZOOM, type Roll } from "./roll-view";
@@ -115,7 +114,7 @@ const Playhead = ({ roll }: { roll: Roll }) => {
 export function noteItems(roll: Roll): Item[] {
   const { song } = roll.page;
   const { memory } = song;
-  const keys = (action: string) => keysOf(song.shortcut(action));
+  const keys = (action: string) => song.shortcut(action);
   const run = (command: NoteCommand, action: string, text: string, danger?: true): Item => ({ text, keys: keys(action), onPress: () => void noteCommand(song, command), ...(danger ? { danger } : {}) });
   const chosen = roll.state.notes.some((note) => roll.chosen.has(noteKey(note)));
   const first: Item[] = chosen

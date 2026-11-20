@@ -441,7 +441,7 @@ impl Lives {
             ) => {
                 let value = number(value, &sources);
                 let text = match digits {
-                    Some(digits) => format!("{value:.digits$}"),
+                    Some(digits) => fixed(value, *digits),
                     None => text_of(value, *unit, Some(state.project().clock())),
                 };
                 let mut widest = widest.borrow_mut();
@@ -695,5 +695,32 @@ impl Leaves for Sources<'_> {
             }
         }
         kept.value
+    }
+}
+
+/// `value` with `digits` after the point, a minus sign before a negative one as a readout has
+/// it, and none before a zero.
+fn fixed(value: f64, digits: usize) -> String {
+    let text = format!("{value:.digits$}");
+    match text.strip_prefix('-') {
+        Some(rest)
+            if rest
+                .chars()
+                .any(|digit| digit.is_ascii_digit() && digit != '0') =>
+        {
+            format!("\u{2212}{rest}")
+        }
+        Some(rest) => rest.to_string(),
+        None => text,
+    }
+}
+
+#[cfg(test)]
+mod fixed_tests {
+    #[test]
+    fn a_number_with_digits_has_a_minus_sign_and_no_negative_zero() {
+        assert_eq!(super::fixed(-4.25, 1), "\u{2212}4.2");
+        assert_eq!(super::fixed(-0.001, 2), "0.00");
+        assert_eq!(super::fixed(3.0, 0), "3");
     }
 }

@@ -190,13 +190,18 @@ fn the_composers_key_moves_an_action_and_its_shortcut_says_the_key_it_has() {
     let shows = |window: &rune::Runtime<State>, label: &str| {
         labels(&window.state).contains(&label.to_string())
     };
-    assert!(shows(&window, "Go on g"), "{:?}", labels(&window.state));
+    assert!(shows(&window, "Go on G"), "{:?}", labels(&window.state));
     let keymap = &mut window.state.keys.keymap;
     keymap
-        .set_keys("probe.go", vec!["j".into(), "g".into()])
+        .set_keys("probe.go", vec!["cmd-shift-j".into(), "g".into()])
         .unwrap();
     redraw(&mut window);
-    assert!(shows(&window, "Go on j"), "{:?}", labels(&window.state));
+    // As this system draws the key: the main one is Ctrl on Windows and Linux.
+    let drawn = match cfg!(target_os = "macos") {
+        true => "Go on ⇧⌘J",
+        false => "Go on Ctrl+Shift+J",
+    };
+    assert!(shows(&window, drawn), "{:?}", labels(&window.state));
     let keymap = &mut window.state.keys.keymap;
     keymap.set_keys("probe.go", vec!["j".into()]).unwrap();
     keys(&mut window, "g j");

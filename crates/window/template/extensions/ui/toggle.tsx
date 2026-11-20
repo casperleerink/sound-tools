@@ -7,7 +7,7 @@ import { Tooltip } from "./tooltip";
  * `color` while on. `color` is a meaning, such as `warning` for mute; `on` (white) when it has
  * none. Its face is `icon`, else `text`, else `label`; `dot` makes it a circle, as the arm of a track.
  */
-export const Toggle = ({ id, label, text, icon, on, color = "on", dot = false, size = "sm", w, tip, keys, onToggle }: { id: string; label: string; text?: string; icon?: IconName; on: boolean; color?: Color; dot?: boolean; size?: Size; w?: number; tip?: string; keys?: string; onToggle: () => void }) => {
+export const Toggle = ({ id, label, text, icon, on, color = "on", dot = false, size = "sm", w, tip, keys, onToggle }: { id: string; label: string; text?: string; icon?: IconName; on: boolean; color?: Color; dot?: boolean; size?: Size; w?: number; tip?: string; keys?: string | null; onToggle: () => void }) => {
   const face = text ?? label;
   const tall = height(size);
   const width = dot || icon !== undefined || face.length === 1 ? tall : w;

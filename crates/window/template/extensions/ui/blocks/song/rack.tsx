@@ -5,7 +5,6 @@ import { deviceName, HEAD, sendOf, type Page, type Strip as Channel } from "../.
 import theme from "../../../theme.json";
 import { Button } from "../../button";
 import { Dot } from "../../dot";
-import { keysOf } from "../../kbd";
 import { Knob } from "../../knob";
 import { MenuList, type Group, type Item } from "../../menu";
 import { Segmented } from "../../segmented";
@@ -101,8 +100,8 @@ const Devices = ({ page, each }: { page: Page; each: Channel }) => {
         const tool = String(device?.tool ?? "");
         const title = deviceName(song.catalog, { tool, state: device?.state });
         const moves: Item[] = order.length < 2 ? [] : [
-          { key: "earlier", text: "Move earlier", icon: "arrow-left", keys: keysOf(song.shortcut("effect_earlier")), disabled: at === 0 ? "" : null, onPress: () => (effects.choose(effect), effects.step(effect, -1)) },
-          { key: "later", text: "Move later", icon: "arrow-right", keys: keysOf(song.shortcut("effect_later")), disabled: at === order.length - 1 ? "" : null, onPress: () => (effects.choose(effect), effects.step(effect, 1)) },
+          { key: "earlier", text: "Move earlier", icon: "arrow-left", keys: song.shortcut("effect_earlier"), disabled: at === 0 ? "" : null, onPress: () => (effects.choose(effect), effects.step(effect, -1)) },
+          { key: "later", text: "Move later", icon: "arrow-right", keys: song.shortcut("effect_later"), disabled: at === order.length - 1 ? "" : null, onPress: () => (effects.choose(effect), effects.step(effect, 1)) },
         ];
         return (
           <Frame id={`slot-${effect}`} title={title} on={!chain?.state.off.includes(effect)} chosen={chosen?.name === effect}

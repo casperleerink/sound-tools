@@ -33,7 +33,7 @@ function rack(self: ReturnType<typeof song>, name = "t00", setup: (memory: Retur
   let shown: unknown = self;
   const view = (drawn: Parameters<typeof pageOf>[0], ctx: Song) => {
     shown = drawn;
-    const song = { ...ctx, memory, catalog: CATALOG, addOffer: (...said: string[]) => offers.push(said), shortcut: (action: string) => ({ effect_earlier: "alt-left", effect_later: "alt-right" })[action] ?? null } as unknown as Song;
+    const song = { ...ctx, memory, catalog: CATALOG, addOffer: (...said: string[]) => offers.push(said), shortcut: (action: string) => ({ effect_earlier: "⌥←", effect_later: "⌥→" })[action] ?? null } as unknown as Song;
     return <Rack page={pageOf(drawn, song)} name={name} />;
   };
   render(view, self as never);

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { act, apply, find, h, press, render, type Op, type Self } from "../../../sdk";
+import { act, apply, find, h, press, render, type Self } from "../../../sdk";
 import { song } from "../../../song";
 import { clipOf, regionOf, tapeOf, trackOf } from "../../../song/fake";
 import { BAR, BEAT } from "../../../song/time";
@@ -17,7 +17,7 @@ function opened(self: Song) {
   return render(song, self);
 }
 /** The value the changes `ops` set at the end of `path`, of the last that does. */
-const setAt = (ops: Op[], ...path: (string | number)[]) => ops.findLast(([at]) => path.every((step, index) => at.at(index - path.length) === step))?.[1];
+const setAt = (ops: ReturnType<typeof act>, ...path: (string | number)[]) => ops.findLast(([at]) => path.every((step, index) => at.at(index - path.length) === step))?.[1];
 test("a clip moves on the snap: sixteenths, then bars, then to the tick with snap off, and off the grid with cmd", () => {
   opened(two());
   expect(setAt(act("clip-t00/a", "drag", { dx: 1000 }), "start")).toBe(960);

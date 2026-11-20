@@ -15,7 +15,7 @@ function ruler(fake: ReturnType<typeof fakeSong>, keys: Record<string, string> =
 
 test("a right press on the ruler offers what it can add there, and a pick adds it", () => {
   const f = fakeSong({ children: [] }, { piece: { sections: [{ bar: 1, name: "Intro" }] } });
-  ruler(f, { delete_mark: "backspace" });
+  ruler(f, { delete_mark: "⌫" });
   press("ruler", { x: 100, right: true });
   // At bar 1 a section and the first tempo are there already, and no time signature change can be: shown, but no press.
   const offered = ["Add a time signature change", "Add a section", "Add a tempo change"].map((text) => find(text));

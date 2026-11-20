@@ -320,7 +320,7 @@ export interface ViewContext<_State, _I extends Inputs, M> {
   held(name: string): boolean;
   /** The devices the window offers to put in a child: built-in ones, plugins and the tools of the project. `addOffer` puts one. */
   catalog: readonly Offer[];
-  /** The key the action `name` of its tool has now, such as `"cmd-r"`, or `null` while it has none. */
+  /** The key the action `name` of its tool has now, as this system draws it: `⇧⌘R` on a Mac, `Ctrl+Shift+R` elsewhere; `null` while it has none. */
   shortcut(name: string): string | null;
   /** Shows a range of the plane `key` of its view, in its units: zoomed across so `x` fills it, as far as it zooms; scrolled down to the middle of `y`. Once the plane shows, if it does not yet. */
   show(key: string, range: { x?: [from: number, to: number]; y?: [from: number, to: number] }): void;
@@ -650,9 +650,21 @@ function contextOf(at: Tested): Context<any> {
   return {
     get state() { return tested!.self.state; }, get children() { return tested!.self.children; }, memory: at.memory, update, held: (name: string) => at.held.includes(name), clock, time: 0,
     send: nothing, play: nothing, select: nothing, addOffer: nothing, openWindow: nothing, show: nothing, catalog: [],
-    shortcut: (name: string) => at.spec?.actions?.[name]?.keys?.[0] ?? null,
+    shortcut: (name: string) => drawnKey(at.spec?.actions?.[name]?.keys?.[0]),
     openFile: async () => at.answers.openFile ?? null, confirm: async () => at.answers.confirm ?? false, render: async () => null, exportNotes: async () => false,
   } as unknown as Context<any>;
+}
+
+const SIGNS: Record<string, string> = {
+  cmd: "⌘", shift: "⇧", alt: "⌥", ctrl: "⌃", enter: "↩", backspace: "⌫", delete: "⌦", escape: "⎋", space: "Space", tab: "⇥",
+  up: "↑", down: "↓", left: "←", right: "→", pageup: "⇞", pagedown: "⇟", home: "↖", end: "↘",
+};
+/** A key as the window draws it on a Mac, `cmd-shift-z` as `⇧⌘Z`: what `shortcut` gives in a test. */
+function drawnKey(chord: string | undefined): string | null {
+  if (chord === undefined) return null;
+  const parts = chord.split(/-(?!$)/);
+  const held = ["ctrl", "alt", "shift", "cmd"].filter((each) => parts.slice(0, -1).includes(each));
+  return [...held, parts.at(-1)!].map((part) => SIGNS[part] ?? part.toUpperCase()).join("");
 }
 
 /** Presses `key` as a pointer does, at `p` in its units: a right press opens its `menu`. The changes it asked for. */

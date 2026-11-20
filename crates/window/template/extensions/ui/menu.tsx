@@ -8,7 +8,7 @@ import { height, type Size } from "./control";
  * under it, `disabled` why it cannot be done now (said in that line), `line` a line over it.
  * `key` and `label` default to `text`.
  */
-export type Item = { text: string; onPress: () => void; key?: string; label?: string; icon?: IconName; keys?: string; detail?: string | null; danger?: boolean; checked?: boolean; disabled?: string | null; line?: boolean };
+export type Item = { text: string; onPress: () => void; key?: string; label?: string; icon?: IconName; keys?: string | null; detail?: string | null; danger?: boolean; checked?: boolean; disabled?: string | null; line?: boolean };
 /** Items under a quiet heading; a heading alone says what the groups under it do. */
 export type Group = { heading: string; items: readonly Item[] };
 
@@ -32,7 +32,7 @@ const Row = ({ id, item, icons }: { id: string; item: Item; icons: boolean }) =>
         <text style="label" color={ink} truncate>{item.text}</text>
         {detail ? <text style="label" color="text-muted" truncate>{detail}</text> : null}
       </col>
-      {item.keys !== undefined && <Kbd keys={item.keys} />}
+      {item.keys && <Kbd keys={item.keys} />}
     </row>
   );
 };

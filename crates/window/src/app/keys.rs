@@ -355,7 +355,12 @@ impl State {
             (group.actions.iter()).map(|action| shortcuts::id(&group.name, &action.name))
         });
         ids.map(|id| {
-            let key = self.keys.keymap.keys(&id).first().cloned();
+            let key = self
+                .keys
+                .keymap
+                .keys(&id)
+                .first()
+                .map(|chord| key_label(chord));
             (id, key)
         })
         .collect()

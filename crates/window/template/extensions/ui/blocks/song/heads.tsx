@@ -5,7 +5,6 @@ import { chosenTrack, deviceName, HEAD, laneGroups, LOW_ROW, PLANE, RETURNS, ROW
 import { freeName } from "../../../track";
 import { Button } from "../../button";
 import { Dot } from "../../dot";
-import { keysOf } from "../../kbd";
 import { MenuList, type Item } from "../../menu";
 import { Quiet } from "../../quiet";
 import { Meter } from "../../meter";
@@ -99,14 +98,14 @@ const pressHead = (page: Page, name: string) => (p: Pointer) => {
 /** The menu of a track's or a return's name: rename, its lanes, render it, delete it. */
 function trackMenu(page: Page, each: Strip): Item[] {
   const { song } = page;
-  const items: Item[] = [{ text: "Rename", icon: "pencil", keys: keysOf(song.shortcut("rename_track")), onPress: () => (page.song.memory.renaming = each.name) }];
+  const items: Item[] = [{ text: "Rename", icon: "pencil", keys: song.shortcut("rename_track"), onPress: () => (page.song.memory.renaming = each.name) }];
   if (each.tool !== "bus") {
     const shown = song.memory.lanes.includes(each.name);
     items.push({ text: shown ? "Hide automation" : "Show automation", icon: "automation", onPress: () => page.edits.lanes.show(each.name, !shown) });
     const keys = each.children.flatMap((child) => (child.tool === "timeline" || child.tool === "region" ? [`${each.name}/${child.name}`] : []));
     items.push(...renders(page, each.name, () => keys, keys.length === 0 ? "The track has no clips" : cannotRender(each)));
   }
-  items.push({ text: "Delete", icon: "trash-2", danger: true, keys: keysOf(song.shortcut("delete_track")), onPress: () => void page.edits.tracks.askToRemove(each.name) });
+  items.push({ text: "Delete", icon: "trash-2", danger: true, keys: song.shortcut("delete_track"), onPress: () => void page.edits.tracks.askToRemove(each.name) });
   return items;
 }
 
@@ -201,7 +200,7 @@ const MasterRow = ({ page }: { page: Page }) => {
       onPress={() => page.edits.tracks.openMaster()}>
       <Dot />
       <row grow={1}><text style="heading" color="text">Master</text></row>
-      <Toggle id="mixer-toggle" label={mixer ? "Hide the mixer" : "Show the mixer"} icon="sliders-horizontal" on={mixer} tip={mixer ? "Hide the mixer" : "Show the mixer"} keys={keysOf(page.song.shortcut("mixer"))} onToggle={() => page.edits.tracks.toggleMixer()} />
+      <Toggle id="mixer-toggle" label={mixer ? "Hide the mixer" : "Show the mixer"} icon="sliders-horizontal" on={mixer} tip={mixer ? "Hide the mixer" : "Show the mixer"} keys={page.song.shortcut("mixer")} onToggle={() => page.edits.tracks.toggleMixer()} />
     </row>
   );
 };

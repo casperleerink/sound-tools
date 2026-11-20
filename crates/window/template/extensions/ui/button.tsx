@@ -15,7 +15,7 @@ const looks = {
  * A button with words, an icon of `ui/icons/`, or both; with an icon alone it is square. `label`
  * says what it does for an agent, `tip` for the composer. `children` go inside, such as what it opens.
  */
-export const Button = ({ id, label, text, icon, variant = "subtle", size = "md", tip, keys, onPress, children }: { id: string; label: string; text?: string; icon?: IconName; variant?: Variant; size?: Size; tip?: string; keys?: string; onPress?: () => void; children?: Child }) => {
+export const Button = ({ id, label, text, icon, variant = "subtle", size = "md", tip, keys, onPress, children }: { id: string; label: string; text?: string; icon?: IconName; variant?: Variant; size?: Size; tip?: string; keys?: string | null; onPress?: () => void; children?: Child }) => {
   const look = looks[variant];
   const square = text === undefined;
   const words = size === "sm" ? "label" : "heading";

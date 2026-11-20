@@ -6,7 +6,6 @@ import type { Page } from "../../../song/view";
 import { GUTTER, HEAD } from "../../../song/view";
 import { Button } from "../../button";
 import { Dot } from "../../dot";
-import { keysOf } from "../../kbd";
 import { Menu } from "../../menu";
 import { Select } from "../../select";
 import { ExpressionLane } from "./expression";
@@ -105,7 +104,7 @@ const BEAT_ROOM = 80;
 const Buttons = ({ roll }: { roll: Roll }) => {
   const { song, edits } = roll.page;
   const large = song.memory.editorLarge;
-  const keys = (action: string) => keysOf(song.shortcut(action));
+  const keys = (action: string) => song.shortcut(action);
   return (
     <row h={HEADER} pad={[2, 0]} gap={1} align="center">
       <Button id="editor-size" label={large ? "Make the note editor smaller" : "Make the note editor larger"} icon={large ? "chevron-down" : "chevron-up"} variant="ghost" size="sm"

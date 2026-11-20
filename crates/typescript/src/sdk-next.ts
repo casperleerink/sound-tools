@@ -45,7 +45,7 @@ export {
   Live
 } from "./sdk/values";
 export type {
-  Channel, Num
+  Num
 } from "./sdk/values";
 // a view: its elements, where live values start, `memo`, and the checks a test runs
 export {
@@ -53,8 +53,8 @@ export {
 } from "./sdk/view";
 export type {
   Actions, BoxProps, Card, Child, ChildProps, Color, ColorToken, Drag, Drawn, Dropped, Facts, FeedList,
-  FieldInfo, FieldProps, IconProps, Lines, Node, Offer, Op, Plane, Pointer, Radius, Rects, Role,
-  Self, Shadow, ShapesProps, Space, TextProps, TextStyle, Tree
+  FieldInfo, FieldProps, IconProps, Lines, Node, Offer, Plane, Pointer, Radius, Rects, Role,
+  Self, Shadow, ShapesProps, Space, TextProps, TextStyle
 } from "./sdk/view";
 export type {
   IconName

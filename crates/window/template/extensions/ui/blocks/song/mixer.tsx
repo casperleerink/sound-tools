@@ -4,7 +4,6 @@ import { colourOf, muted, sendsOf, titleOf } from "../../../song/model";
 import { MIXER, sendOf, type Page, type Strip as Each } from "../../../song/view";
 import { Button } from "../../button";
 import { Dot } from "../../dot";
-import { keysOf } from "../../kbd";
 import { Knob } from "../../knob";
 import { clearsOf } from "../../meter";
 import { SHORTEST_FADER, STRIP, Strip, VALUE_LINE } from "../../strip";
@@ -60,7 +59,7 @@ export const Mixer = ({ page }: MixerProps) => {
           {column(undefined)}
         </row>
         <row pad={2}>
-          <Button id="close-mixer" label="Hide the mixer" icon="x" variant="ghost" size="sm" tip="Hide the mixer" keys={keysOf(page.song.shortcut("mixer"))} onPress={() => page.edits.tracks.toggleMixer()} />
+          <Button id="close-mixer" label="Hide the mixer" icon="x" variant="ghost" size="sm" tip="Hide the mixer" keys={page.song.shortcut("mixer")} onPress={() => page.edits.tracks.toggleMixer()} />
         </row>
       </row>
     </col>
