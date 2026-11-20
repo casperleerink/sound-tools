@@ -247,6 +247,8 @@ fn recent_row(theme: &Theme, index: usize, folder: &Path) -> El {
         .label(format!("Open {name}"))
         .focusable(true)
         .w_full()
+        // Its words line up with the heading; its hover fill reaches out into the margin.
+        .ml(-theme.space(3))
         .px(theme.space(3))
         .py(theme.space(2))
         .gap(2.0)
