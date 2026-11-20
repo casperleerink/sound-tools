@@ -392,3 +392,59 @@ fn a_field_in_a_plane_passes_on_the_apps_keys_that_never_type_and_keeps_its_own(
         Some(crate::shell::Dialog::New(_))
     ));
 }
+
+/// A rack of a branch with a leaf in it. Its button takes the branch out and adds a timeline
+/// that loops with no length, which is refused as the sound is built; its view counts the
+/// leaves inside its children as its code knows them.
+const RACK: &str = r#"import { h, input, number, tool } from "./sdk";
+export const leaf = tool({ name: "leaf", title: "Leaf", when: "Never", doc: "A leaf.", state: {}, sound: () => input });
+export const branch = tool({ name: "branch", title: "Branch", when: "Never", doc: "A branch.", state: {}, behaviour: () => ({ connections: [] }) });
+export const rack = tool({
+  name: "rack", title: "Rack", when: "Never", doc: "A rack.", state: { count: number({ min: 0, max: 100, integer: true, default: 0 }) },
+  behaviour: () => ({ connections: [] }),
+  view: (self, { update }) => (
+    <row>
+      <box key="inner" label={`Inner ${self.children.flatMap((child) => child.children).length} ${self.state.count}`} w={20} h={20} onPress={() => {}} />
+      <box key="swap" label="Swap" w={20} h={20} onPress={() => update("Swap", (draft) => {
+        draft.children = draft.children.filter((child) => child.name !== "a");
+        draft.children.push({ name: "bad", tool: "timeline", state: { loop: true } });
+      })} />
+      <box key="count" label="Count" w={20} h={20} onPress={() => update("Count", (draft) => void (draft.state.count += 1))} />
+    </row>
+  ),
+});
+"#;
+
+/// An update refused as the sound is built leaves the code the children the project has: the
+/// sound is built deepest first, so the refusal comes before the rack tells its code its new
+/// children.
+#[test]
+fn an_update_refused_as_the_sound_is_built_leaves_the_code_the_children_there_are() {
+    let (_scratch, folder) = with_tools(&[("rack", RACK)]);
+    let chain = folder.join("state/song/t00/chain");
+    std::fs::create_dir_all(chain.join("rack/a")).unwrap();
+    std::fs::rename(chain.join("rack.json"), chain.join("rack/instance.json")).unwrap();
+    let branch = r#"{"tool": "branch", "state": {}}"#;
+    std::fs::write(chain.join("rack/a/instance.json"), branch).unwrap();
+    std::fs::write(
+        chain.join("rack/a/x.json"),
+        r#"{"tool": "leaf", "state": {}}"#,
+    )
+    .unwrap();
+    let mut state = opened(&folder);
+    let swapped = try_act(&mut state, json!({ "label": "Swap", "action": "press" }));
+    assert!(
+        swapped
+            .unwrap_err()
+            .to_string()
+            .contains("loops needs a `length`"),
+        "refused as the sound is built"
+    );
+    act(&mut state, json!({ "label": "Count", "action": "press" }));
+    frame(&mut state, 0.1);
+    state.settle();
+    let inner: Vec<String> = (labels(&state).into_iter())
+        .filter(|label| label.starts_with("Inner"))
+        .collect();
+    assert_eq!(inner, ["Inner 1 1"]);
+}

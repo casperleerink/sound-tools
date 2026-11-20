@@ -568,9 +568,6 @@ struct Told {
     /// How many edits of Bun the runtime heard, and how many of them Bun was told of.
     edits: u64,
     edits_told: u64,
-    /// The records a behaviour told it since the window last looked: one of a group that did
-    /// not apply is not what the project holds.
-    unconfirmed: BTreeSet<InstanceId>,
     /// How many records it was told, for a test that a frame tells none again.
     count: u64,
 }
@@ -781,7 +778,7 @@ impl Bun {
     pub(crate) fn tell<'a>(&self, records: impl IntoIterator<Item = Telling<'a>>) -> bool {
         let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
         let edits = told.edits;
-        self.tell_in(&mut told, records, edits).is_some()
+        self.tell_in(&mut told, records, edits)
     }
 
     pub(crate) fn records_told(&self) -> u64 {
@@ -812,20 +809,16 @@ impl Bun {
             .collect();
         records.extend(held.iter().map(|child| (child, None)));
         let edits = told.edits_told;
-        let Some(sent) = self.tell_in(&mut told, records, edits) else {
-            return false;
-        };
-        told.unconfirmed.extend(sent);
-        true
+        self.tell_in(&mut told, records, edits)
     }
 
-    /// The ids it told, or `None` when it did not go: what did not go is told again next time.
+    /// Whether it went: what did not go is told again next time.
     fn tell_in<'a>(
         &self,
         told: &mut Told,
         records: impl IntoIterator<Item = Telling<'a>>,
         edits: u64,
-    ) -> Option<Vec<InstanceId>> {
+    ) -> bool {
         let mut new = Vec::new();
         let mut keys = Vec::new();
         let mut gone = Vec::new();
@@ -848,7 +841,7 @@ impl Bun {
             }
         }
         if new.is_empty() && gone.is_empty() && edits == told.edits_told {
-            return Some(Vec::new());
+            return true;
         }
         let request = Request::Records {
             records: new,
@@ -856,33 +849,21 @@ impl Bun {
             edits,
         };
         if !self.send(&request) {
-            return None;
+            return false;
         }
         told.edits_told = edits;
         told.count += keys.len() as u64;
         for id in &gone {
             told.records.remove(*id);
         }
-        let mut sent: Vec<InstanceId> = gone.into_iter().cloned().collect();
-        sent.extend(keys.iter().map(|(id, _)| id.clone()));
         told.records.extend(keys);
-        Some(sent)
+        true
     }
 
     /// The runtime heard an edit Bun sent, applied or not.
     pub(crate) fn heard_edit(&self) {
         let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
         told.edits += 1;
-    }
-
-    /// The records a behaviour told Bun since the last call, to tell it again as they are.
-    #[allow(
-        dead_code,
-        reason = "the window uses it once it does all the old app did"
-    )]
-    pub(crate) fn take_unconfirmed(&self) -> BTreeSet<InstanceId> {
-        let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
-        std::mem::take(&mut told.unconfirmed)
     }
 }
 
