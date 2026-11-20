@@ -285,7 +285,8 @@ fn an_armed_audio_track_opens_the_input_and_records_a_region_as_one_step() {
     // Its recorder shows the level of the channel it records, the sound so far, no notes, and
     // where the take began.
     let (input, take, notes, taking) = shown_of_take(&window.state, "song/audio-1/rec");
-    assert_eq!((input, take, notes), (0.5, 96, 0));
+    // 96 columns of the band, four numbers each.
+    assert_eq!((input, take, notes), (0.5, 4 * 96, 0));
     assert!(taking["from"].is_u64(), "{taking}");
     // Space pauses, which ends the take.
     press(&mut window, "space");

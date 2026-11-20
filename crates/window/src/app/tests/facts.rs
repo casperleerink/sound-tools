@@ -178,9 +178,14 @@ impl crate::feeds::Recording for Recorded {
     fn began(&self, _: &InstanceId) -> Option<(sound_core::Ticks, f64)> {
         Some((self.1.start, 2.0))
     }
-    /// The seconds of the file each edge is at, to see where they fall.
+    /// The seconds after the take's start in the file each edge is at, to see where they fall.
     fn peaks(&self, _: &InstanceId, edges: &[f64]) -> Option<Vec<f32>> {
-        Some(edges.iter().map(|seconds| *seconds as f32).collect())
+        Some(
+            edges
+                .iter()
+                .map(|seconds| (*seconds - 2.0) as f32)
+                .collect(),
+        )
     }
 }
 
@@ -227,7 +232,10 @@ fn a_recorder_shows_its_input_its_take_and_when_it_began() {
     let notes = [0.0, 60.0, 480.0, 1.0, 240.0, 62.0, 720.0, 1.0];
     assert_eq!(feed("notes", 0), Some(Feed::List(notes.to_vec())));
     // The take began at the second 2 of its file; a quarter note at 120 bpm is half a second.
-    assert_eq!(feed("take", 2), Some(Feed::List(vec![2.0, 2.25, 2.5])));
+    // Two columns of the 960 ticks so far, each as tall as the second its left edge is after
+    // the take began, about the middle.
+    let band = [0.0, 0.5, 480.0, 0.0, 480.0, 0.375, 480.0, 0.25];
+    assert_eq!(feed("take", 2), Some(Feed::List(band.to_vec())));
     let facts = sound_core::facts::of(project, &sources, &id, None).unwrap();
     assert_eq!(facts.to_value()["taking"], json!({ "from": 960 }));
 }
