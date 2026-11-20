@@ -22,7 +22,7 @@ mod feeds;
 mod lane;
 pub mod live;
 mod meter;
-pub mod next;
+pub mod window;
 pub mod path;
 mod project;
 mod readout;
@@ -56,7 +56,7 @@ pub fn register_feeds(registry: &mut Registry) {
     registry.every_instance_feed(
         "sounding",
         "1 for each of the 128 keys down on its sound now, else 0: `sounding.60` is middle C.",
-        next::sounding,
+        window::sounding,
     );
 }
 
@@ -444,13 +444,13 @@ fn launch(
     let mut files = tool_files(extensions);
     write_icon_names(extensions).map_err(|error| error.to_string())?;
     // Bun runs for the generic card too.
-    let card = extensions.join(next::GENERIC_CARD).is_file();
+    let card = extensions.join(window::GENERIC_CARD).is_file();
     if files.is_empty() && !card {
         return Ok(None);
     }
     if card {
-        files.push(next::GENERIC_CARD.to_string());
-        files.extend(next::card_files(extensions));
+        files.push(window::GENERIC_CARD.to_string());
+        files.extend(window::card_files(extensions));
     }
     let program = bun_program().ok_or_else(|| {
         "Bun is not installed, so the tools of this project do not load: install it from https://bun.sh and open the project again".to_string()
@@ -472,7 +472,7 @@ fn launch(
                 if !card {
                     problems.push(folder_problem(format!(
                         "{} is missing, so a device whose tool has no view shows no card: write one that exports `card`, a `Card`",
-                        next::GENERIC_CARD
+                        window::GENERIC_CARD
                     )));
                 }
                 return Ok(Some(Launched {

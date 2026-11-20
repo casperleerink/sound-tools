@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use rune::Tx;
 use sound_core::{GROUPING_WINDOW, InstanceId};
-use sound_typescript::next::{FRAME_INTERVAL, Looped, Tools};
+use sound_typescript::window::{FRAME_INTERVAL, Looped, Tools};
 
 use crate::controls;
 use crate::feeds::UNREAD;

@@ -14,7 +14,7 @@ use runtime::app::ChosenDevices;
 use runtime::session::Session;
 use serde_json::Value;
 use sound_core::{Engine, InstanceId, OutputDevice, OutputStream, Project, Ticks};
-use sound_typescript::next::{Drawn, Tools};
+use sound_typescript::window::{Drawn, Tools};
 
 use crate::controls::Step;
 use crate::feeds::Feeds;
@@ -254,7 +254,7 @@ impl State {
         let (mut project, extensions) =
             runtime::open_with_loaded(&folder, control, plugins.clone(), tools)?;
         let wake = waker.clone();
-        let wake: sound_typescript::next::Waker = Arc::new(move || {
+        let wake: sound_typescript::window::Waker = Arc::new(move || {
             if let Some(wake) = wake.lock().unwrap_or_else(PoisonError::into_inner).as_ref() {
                 wake();
             }

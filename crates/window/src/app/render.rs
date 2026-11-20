@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::Result;
 use runtime::session::{Polled, Rendered};
 use sound_core::{InstanceId, Ticks};
-use sound_typescript::next::Answer;
+use sound_typescript::window::Answer;
 
 use super::State;
 

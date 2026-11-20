@@ -58,7 +58,7 @@ impl Theme {
     pub(crate) fn of(folder: &Path) -> (Theme, Option<String>) {
         let path = folder
             .join(sound_typescript::FOLDER)
-            .join(sound_typescript::next::THEME);
+            .join(sound_typescript::window::THEME);
         let own = std::fs::read_to_string(&path)
             .ok()
             .map(|json| serde_json::from_str(&json));

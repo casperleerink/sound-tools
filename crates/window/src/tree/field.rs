@@ -6,7 +6,7 @@ use std::collections::{BTreeSet, HashMap};
 use rune::{Align, El, Key, KeyEvent, TextEdit, Tx, text};
 use serde_json::{Value, json};
 use sound_core::InstanceId;
-use sound_typescript::next::Tools;
+use sound_typescript::window::Tools;
 
 use crate::app::State;
 

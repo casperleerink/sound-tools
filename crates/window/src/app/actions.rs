@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use anyhow::{Context as _, Result, anyhow, bail};
 use serde_json::{Value, json};
 use sound_core::InstanceId;
-use sound_typescript::next::Tools;
+use sound_typescript::window::Tools;
 
 use crate::controls::Target;
 use crate::tree;

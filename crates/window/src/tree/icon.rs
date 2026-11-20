@@ -7,7 +7,7 @@ use std::path::Path;
 use rune::{El, Icon, el};
 use serde::Deserialize;
 use sound_core::{InstanceId, Problem, Project};
-use sound_typescript::next::Tools;
+use sound_typescript::window::Tools;
 
 use crate::app::State;
 

@@ -6,7 +6,7 @@ use std::sync::PoisonError;
 
 use anyhow::{Context as _, Result};
 use serde_json::{Value, json};
-use sound_typescript::next::Tools;
+use sound_typescript::window::Tools;
 
 use crate::controls;
 

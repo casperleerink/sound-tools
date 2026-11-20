@@ -5,7 +5,7 @@
 use runtime::session::Drag;
 use sound_core::{InstanceId, Project, Ticks};
 
-use sound_typescript::next::Tools;
+use sound_typescript::window::Tools;
 
 use super::State;
 

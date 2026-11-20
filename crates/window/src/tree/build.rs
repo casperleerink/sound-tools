@@ -8,7 +8,7 @@ use std::rc::Rc;
 use rune::{Align, El, Phase, ScrollPos, ScrollSpec, col, el, memo, row, text};
 use sound_core::InstanceId;
 use sound_typescript::live::Num;
-use sound_typescript::next::Drawn;
+use sound_typescript::window::Drawn;
 
 use crate::app::State;
 use crate::lives::{Lives, Shown, Shows};

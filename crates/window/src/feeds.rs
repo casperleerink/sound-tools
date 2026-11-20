@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use sound_core::feeds::{self, Feed, FeedRequest, Readings, Sources};
 use sound_core::{AssetName, Assets, InstanceId, Problem, Project, Ticks};
 use sound_typescript::RecorderState;
-use sound_typescript::next::Drawn;
+use sound_typescript::window::Drawn;
 
 use crate::app::State;
 use crate::lives::Drew;

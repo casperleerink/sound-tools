@@ -270,7 +270,7 @@ impl Processor for Recorder {
         let mut cabled = context.event_inputs.get(Self::RECORD).iter().peekable();
         let notes = context.event_inputs.get(Self::NOTES);
         // What reaches it, as the keyboard plays, sounds on its track.
-        crate::next::sounds(&self.sounding, notes);
+        crate::window::sounds(&self.sounding, notes);
         let mut read = 0;
         // The block in stretches between what turns `record` on or off, each at its frame.
         let mut offset = 0;

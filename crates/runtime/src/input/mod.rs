@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use midi::{ComputerKeys, Keyboard};
 use sound_core::{InstanceId, Project, ProjectEvent, StreamTiming};
-use sound_typescript::next::Take;
+use sound_typescript::window::Take;
 
 pub use audio::{OpenInput, OpenedInput, system_input};
 pub use import::{Brought, Importing, Part, import};
@@ -28,7 +28,7 @@ use audio::AudioInput;
 use takes::Recorders;
 
 /// How a thread tells the owner it has news: the owner polls soon after.
-pub type Waker = sound_typescript::next::Waker;
+pub type Waker = sound_typescript::window::Waker;
 
 /// What happened since the last [`Input::poll`].
 #[derive(Debug)]
@@ -36,7 +36,7 @@ pub enum Happened {
     /// What the composer is to read, in their words.
     Notice(String),
     /// A take ended: for the `onTake` of the parent of its recorder, see
-    /// `sound_typescript::next::Tools::take`.
+    /// `sound_typescript::window::Tools::take`.
     Take(Take),
 }
 

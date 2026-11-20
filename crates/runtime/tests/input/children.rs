@@ -228,7 +228,7 @@ fn a_parent_learns_whether_notes_play_a_tool() {
     );
     opened.show("asks");
     let drawn = match opened.tools.drawn(&crate::support::id("asks")) {
-        Some(sound_typescript::next::Drawn::View { root, .. }) => root
+        Some(sound_typescript::window::Drawn::View { root, .. }) => root
             .downcast_ref::<serde_json::Value>()
             .unwrap()
             .to_string(),
@@ -278,14 +278,14 @@ impl Opened {
     /// Shows the view of `instance` and waits until Bun drew it.
     fn show(&mut self, instance: &str) {
         let instance = crate::support::id(instance);
-        self.tools.show(sound_typescript::next::Shown {
+        self.tools.show(sound_typescript::window::Shown {
             instances: [instance.clone()].into(),
             ..Default::default()
         });
         self.until("the view", |opened| {
             matches!(
                 opened.tools.drawn(&instance),
-                Some(sound_typescript::next::Drawn::View { .. })
+                Some(sound_typescript::window::Drawn::View { .. })
             )
         });
     }
