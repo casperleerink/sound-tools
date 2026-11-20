@@ -50,10 +50,8 @@ pub async fn login_shell_environment() -> io::Result<HashMap<OsString, OsString>
         // Dropped when the time is up, which ends the shell.
         .kill_on_drop(true)
         .output();
-    // Runs once at start, never in a gpui test, where this timer would not be deterministic.
-    #[allow(clippy::disallowed_methods)]
     let timeout = async {
-        smol::Timer::after(TIMEOUT).await;
+        crate::jobs::sleep(TIMEOUT).await;
         Err(io::Error::new(
             io::ErrorKind::TimedOut,
             "the login shell took over 10 s",

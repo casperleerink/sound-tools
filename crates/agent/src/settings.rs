@@ -3,87 +3,110 @@
 //!
 //! One small file per machine, `agent/settings.json` in the support folder, for every project.
 //! Never in a project: the agent writes there, and must not raise its own access by editing a
-//! file.
+//! file. Another process of the app reads it when it starts.
 //!
-//! [`AgentSettings`] holds them once for the app, so every sidebar shows and changes the same.
-//! It also knows where the composer's instructions for every project are: `instructions.md`
-//! beside the settings, read when an agent starts (see `crate::view::instructions`).
+//! [`AgentSettings`] also knows where the composer's instructions for every project are:
+//! `instructions.md` beside the settings, read when an agent starts.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use gpui::{AppContext as _, Context, EventEmitter, Task};
 use serde::{Deserialize, Serialize};
+use smol::channel::Sender;
 
+use crate::jobs::{self, Inbox, Job, Waker};
 use crate::store::write_whole;
 use crate::{ApprovalMode, Model, Provider};
 
 const INSTRUCTIONS_FILE: &str = "instructions.md";
 
-/// The settings of the app, read once and shared by every sidebar. A sidebar observes it to
-/// show it, and hears an [`AgentSettingsEvent`] to tell its agent.
+/// The settings of the app, read once in the background, and the models each provider offers.
 pub struct AgentSettings {
     settings: Settings,
     /// Where they are kept, or nowhere with `None`.
     file: Option<PathBuf>,
     /// Reads the file. No message goes until it is in.
-    reading: Option<Task<()>>,
-    /// Why the file did not read, so a sidebar made later can say so too.
+    reading: Option<Job>,
+    /// Why the file did not read.
     unreadable: Option<String>,
-    /// Writes the last change. A later change waits for it, so the last one is on disk.
-    saving: Option<Task<()>>,
+    /// Hands each change to the writer, in order, so the last one is on disk.
+    writes: Option<Sender<Settings>>,
     /// What each provider offers, asked once signed in. None until it answers.
     models: HashMap<Provider, Vec<Model>>,
+    inbox: Inbox<Done>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AgentSettingsEvent {
-    /// The file is read. [`AgentSettings::unreadable`] says whether it did not read.
-    Read,
-    /// The composer picked another mode. It applies at once, also to a running agent.
-    ApprovalModeChanged(ApprovalMode),
-    ModelChanged(Provider, String),
-    /// A change was not written, and says why.
+enum Done {
+    Read(Result<Settings, String>),
     NotSaved(String),
 }
 
-impl EventEmitter<AgentSettingsEvent> for AgentSettings {}
-
 impl AgentSettings {
     /// Reads `file` in the background. With `None` the defaults hold and nothing is saved.
-    pub fn new(file: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
+    pub fn new(file: Option<PathBuf>, waker: Waker) -> Self {
+        let inbox = Inbox::new(waker);
         let reading = file.clone().map(|file| {
-            cx.spawn(async move |settings, cx| {
-                let read = cx
-                    .background_spawn(async move { Settings::read(&file) })
-                    .await;
-                settings
-                    .update(cx, |settings, cx| settings.read(read, cx))
-                    .ok();
+            let outbox = inbox.outbox();
+            jobs::spawn(async move {
+                let read = smol::unblock(move || Settings::read(&file)).await;
+                outbox.send(Done::Read(read));
             })
+        });
+        let writes = file.clone().map(|file| {
+            let (sender, receiver) = smol::channel::unbounded::<Settings>();
+            let outbox = inbox.outbox();
+            // Detached: the changes still queued are written after the settings went.
+            smol::spawn(async move {
+                while let Ok(mut settings) = receiver.recv().await {
+                    // Only the last of what queued meanwhile needs writing.
+                    while let Ok(later) = receiver.try_recv() {
+                        settings = later;
+                    }
+                    let file = file.clone();
+                    let written = smol::unblock(move || settings.write(&file)).await;
+                    if let Err(error) = written {
+                        outbox.send(Done::NotSaved(error));
+                    }
+                }
+            })
+            .detach();
+            sender
         });
         Self {
             settings: Settings::default(),
             file,
             reading,
             unreadable: None,
-            saving: None,
+            writes,
             models: HashMap::new(),
+            inbox,
         }
     }
 
-    fn read(&mut self, read: Result<Settings, String>, cx: &mut Context<Self>) {
-        self.reading = None;
-        match read {
-            Ok(settings) => self.settings = settings,
-            Err(error) => {
-                self.unreadable = Some(format!("{error}. The agent uses its default settings."));
+    /// What came in: the file once read, or a change not written. Gives what the thread says
+    /// of it.
+    pub(crate) fn poll(&mut self) -> Vec<String> {
+        let mut notices = Vec::new();
+        while let Some(done) = self.inbox.take() {
+            match done {
+                Done::Read(read) => {
+                    self.reading = None;
+                    match read {
+                        Ok(settings) => self.settings = settings,
+                        Err(error) => {
+                            let unreadable =
+                                format!("{error}. The agent uses its default settings.");
+                            notices.push(unreadable.clone());
+                            self.unreadable = Some(unreadable);
+                        }
+                    }
+                }
+                Done::NotSaved(error) => notices.push(error),
             }
         }
-        cx.emit(AgentSettingsEvent::Read);
-        cx.notify();
+        notices
     }
 
     /// The composer's instructions for every project, beside the settings file.
@@ -110,69 +133,51 @@ impl AgentSettings {
         self.models.get(&provider).map_or(&[], Vec::as_slice)
     }
 
-    pub fn set_models(&mut self, provider: Provider, models: Vec<Model>, cx: &mut Context<Self>) {
-        if self.models.get(&provider) != Some(&models) {
-            self.models.insert(provider, models);
-            cx.notify();
-        }
+    pub(crate) fn set_models(&mut self, provider: Provider, models: Vec<Model>) {
+        self.models.insert(provider, models);
     }
 
-    pub fn set_approval_mode(&mut self, approval_mode: ApprovalMode, cx: &mut Context<Self>) {
-        if self.settings.approval_mode != approval_mode {
+    /// Whether it changed.
+    pub(crate) fn set_approval_mode(&mut self, approval_mode: ApprovalMode) -> bool {
+        let changed = self.settings.approval_mode != approval_mode;
+        if changed {
             self.settings.approval_mode = approval_mode;
-            cx.emit(AgentSettingsEvent::ApprovalModeChanged(approval_mode));
-            self.save(cx);
+            self.save();
         }
+        changed
     }
 
     /// Picks `provider` for new threads, with the model picked for it before.
-    pub fn set_provider(&mut self, provider: Provider, cx: &mut Context<Self>) {
+    pub(crate) fn set_provider(&mut self, provider: Provider) {
         if self.settings.provider != provider {
             self.settings.provider = provider;
-            self.save(cx);
+            self.save();
         }
     }
 
     /// Picks `provider` for new threads, and its model. `None` is the provider's default,
     /// which a running agent cannot be told: only the provider's list names it, so it applies
-    /// to the next agent.
-    pub fn set_model(&mut self, provider: Provider, model: Option<String>, cx: &mut Context<Self>) {
+    /// to the next agent. Whether it changed.
+    pub(crate) fn set_model(&mut self, provider: Provider, model: Option<String>) -> bool {
         let unchanged =
             self.settings.provider == provider && self.settings.model(provider) == model.as_deref();
         if unchanged {
-            return;
+            return false;
         }
         self.settings.provider = provider;
-        match model.clone() {
+        match model {
             Some(model) => self.settings.models.insert(provider, model),
             None => self.settings.models.remove(&provider),
         };
-        if let Some(model) = model {
-            cx.emit(AgentSettingsEvent::ModelChanged(provider, model));
-        }
-        self.save(cx);
+        self.save();
+        true
     }
 
-    fn save(&mut self, cx: &mut Context<Self>) {
-        cx.notify();
-        let Some(file) = self.file.clone() else {
-            return;
-        };
-        let settings = self.settings.clone();
-        let earlier = self.saving.take();
-        self.saving = Some(cx.spawn(async move |this, cx| {
-            if let Some(earlier) = earlier {
-                earlier.await;
-            }
-            let written = cx
-                .background_spawn(async move { settings.write(&file) })
-                .await;
-            if let Err(error) = written {
-                // With no settings left there is nobody to tell.
-                this.update(cx, |_, cx| cx.emit(AgentSettingsEvent::NotSaved(error)))
-                    .ok();
-            }
-        }));
+    fn save(&self) {
+        if let Some(writes) = &self.writes {
+            // The writer ends only once this sender is dropped.
+            writes.try_send(self.settings.clone()).ok();
+        }
     }
 }
 

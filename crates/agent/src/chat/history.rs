@@ -1,6 +1,11 @@
 //! Up and down in the composer recall the earlier messages of the thread, as a shell does.
 
-use sound_ui::components::text_input::Arrow;
+/// An arrow key past the first or the last row of the composer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Arrow {
+    Up,
+    Down,
+}
 
 /// Where the composer is among the earlier messages. Only an empty composer, or one that still
 /// shows a recalled message as it was, moves through them, so a draft is never lost.

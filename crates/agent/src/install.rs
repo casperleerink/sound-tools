@@ -201,11 +201,8 @@ async fn fetch(
                 _ => InstallError::Network,
             })?;
         let status = loop {
-            // Runs on the background executor, never in a gpui test, where this timer would
-            // not be deterministic.
-            #[allow(clippy::disallowed_methods)]
             let tick = async {
-                smol::Timer::after(PROGRESS_INTERVAL).await;
+                crate::jobs::sleep(PROGRESS_INTERVAL).await;
                 None
             };
             let exit = async { Some(child.status().await) };
