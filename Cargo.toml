@@ -95,8 +95,6 @@ objc2-core-audio = { version = "0.3", default-features = false }
 objc2-core-foundation = { version = "0.3", default-features = false }
 objc2-foundation = { version = "0.3", default-features = false }
 proptest = "1"
-# The agent's answers are markdown. Only the parser: no HTML output, no command line. MIT.
-pulldown-cmark = { version = "0.13.5", default-features = false }
 # The spectra of the Wavetable synth's tables, worked out on the control side. MIT.
 realfft = "3.5"
 # The native view of a window, which a plugin embeds its own view in. Same version as winit.

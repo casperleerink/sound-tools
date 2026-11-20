@@ -13,7 +13,6 @@ name = "plugin-scan"
 path = "src/bin/plugin-scan.rs"
 
 [dependencies]
-anyhow.workspace = true
 clack-extensions = { workspace = true, features = [
   "clack-host",
   "audio-ports",
