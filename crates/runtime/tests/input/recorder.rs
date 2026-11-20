@@ -429,3 +429,37 @@ fn a_take_too_short_to_place_leaves_no_file_and_says_so() {
     let files = std::fs::read_dir(&audio).map_or(0, Iterator::count);
     assert_eq!(files, 0);
 }
+
+/// A take given to code that hangs on it is kept by the code that runs next.
+#[test]
+fn a_take_the_code_hung_on_is_kept_by_the_next_code() {
+    let (mut studio, input) = open_studio(false);
+    let file = studio.folder.path().join("extensions/studio.tsx");
+    let hangs = STUDIO.replace(
+        "onTake: ({ update }, take) =>\n",
+        "onTake: ({ update }, take) =>\n    (() => { while (take.name) {} })() ??\n",
+    );
+    let loads = studio.tools.loads();
+    std::fs::write(&file, &hangs).unwrap();
+    studio.tools.code_changed();
+    studio.until("the code that hangs", |studio| studio.tools.loads() > loads);
+    studio.press("studio", "arm");
+    studio.start_playing();
+    studio.record_for(&input, 4_096);
+    studio.play_midi(60);
+    studio.record_for(&input, 4_096);
+    studio.press("studio", "done");
+    studio.until("the code hangs", |studio| {
+        studio.record_for(&input, 2_048);
+        let problems = studio.project.problems();
+        problems
+            .iter()
+            .any(|problem| problem.path == "extensions/studio.tsx")
+    });
+    std::fs::write(&file, STUDIO).unwrap();
+    studio.tools.code_changed();
+    studio.until("the take kept", |studio| {
+        studio.record_for(&input, 2_048);
+        !studio.made("timeline").is_empty() && !studio.made("region").is_empty()
+    });
+}

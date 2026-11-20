@@ -82,6 +82,9 @@ const MISTAKE: &str = "This device's card has a mistake, so it shows nothing unt
 /// How long [`Tools::settle`] waits for Bun at most, so a view in an endless loop cannot stop
 /// a run without a window. Bun calls code hung after 2 s itself.
 const SETTLE_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long a Bun that is stopped has to say what it said before: a process its code started
+/// may hold its pipe.
+const LAST_WORDS: Duration = Duration::from_millis(200);
 
 /// How often the control loops run, as in the GPUI app.
 pub const FRAME_INTERVAL: Duration = Duration::from_millis(33);
@@ -270,8 +273,11 @@ pub struct Tools {
     keys: BTreeMap<String, Option<String>>,
     /// The clock of the last step of the control loops, which other requests carry too.
     clock: Option<Clock>,
-    /// Takes that ended while no Bun ran, for the next one to keep.
+    /// Takes that ended while no Bun ran, or that one never did, for the next one to keep.
     held_takes: Vec<Take>,
+    /// Takes given to the running Bun, by the number of what it was told, until it says it
+    /// did them.
+    taking: Vec<(u64, Take)>,
     /// The tap of what reached the notes of each instance whose tool has `onNotes`, and how
     /// far it was read.
     taps: HashMap<InstanceId, (EventTap<NoteEvent>, u64)>,
@@ -345,6 +351,7 @@ impl Tools {
             keys: BTreeMap::new(),
             clock: None,
             held_takes: Vec::new(),
+            taking: Vec::new(),
             taps: HashMap::new(),
             waker,
             open_window: None,
@@ -706,10 +713,14 @@ impl Tools {
             self.changed_at = Some(Instant::now());
         }
         let mut changed = self.launched(project);
-        if let Some(events) = self.bun.as_ref().map(|bun| bun.events()) {
+        if let Some(bun) = self.bun.clone() {
+            // Read first: what it said for each thing it did is in the events by then.
+            let said_done = bun.said_done();
+            let events = bun.events();
             while let Ok(event) = events.try_recv() {
                 changed |= self.heard(event, project);
             }
+            self.taking.retain(|(sent, _)| *sent > said_done);
         }
         // Until it is quiet: an editor saves in several writes, an agent several files.
         if self
@@ -734,9 +745,8 @@ impl Tools {
     /// for the next one. Gives what to tell the composer: why it was not kept, or that it waits.
     pub fn take(&mut self, project: &mut Project, take: Take) -> Option<String> {
         let parent = take.recorder.parent();
-        let keeps = (parent.as_ref())
-            .and_then(|parent| self.info_of(project, parent))
-            .is_some_and(|info| info.on_take);
+        let info = (parent.as_ref()).and_then(|parent| self.info_of(project, parent));
+        let keeps = info.as_ref().is_some_and(|info| info.on_take);
         let (Some(parent), true) = (parent, keeps) else {
             return Some(format!(
                 "The take of {} was not kept: nothing keeps what it records yet. Ask the agent for it.",
@@ -752,15 +762,60 @@ impl Tools {
             state: &take.state,
             clock: self.clock_now(project),
         };
-        if self.bun.as_ref().is_some_and(|bun| bun.send(&request)) {
+        // A Bun that runs without the file of its tool keeps it once the file is fixed.
+        let runs = info.is_some_and(|info| !self.skipped.contains_key(&info.file));
+        let sent = (self.bun.as_ref())
+            .filter(|bun| runs && bun.send(&request))
+            .map(|bun| bun.sent());
+        if let Some(sent) = sent {
+            self.taking.push((sent, take));
             return None;
         }
-        let notice = format!(
-            "The take of {} waits for the code of the project to run again.",
-            take.recorder
-        );
+        let notice = take_waits(&take);
         self.held_takes.push(take);
         Some(notice)
+    }
+
+    /// Whether a take went to Bun that did not say it did it yet.
+    pub fn keeping_takes(&self) -> bool {
+        !self.taking.is_empty()
+    }
+
+    /// `bun` ends: the takes it did not say it did wait for the next one, after what it said
+    /// before it ended is heard.
+    fn hold_takes_of(&mut self, bun: &Bun, project: &mut Project) {
+        if self.taking.is_empty() {
+            return;
+        }
+        bun.kill();
+        let events = bun.events();
+        let start = Instant::now();
+        // Until it said all it will: its end comes last.
+        loop {
+            match events.try_recv() {
+                Ok(Event::Ended { .. }) | Err(smol::channel::TryRecvError::Closed) => break,
+                Ok(event) => {
+                    self.heard(event, project);
+                }
+                Err(smol::channel::TryRecvError::Empty) if start.elapsed() < LAST_WORDS => {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(smol::channel::TryRecvError::Empty) => break,
+            }
+        }
+        self.hold_takes_after(bun.said_done(), project);
+    }
+
+    /// The takes numbered after `said_done`, which a Bun that ended never did, wait for the
+    /// next one.
+    fn hold_takes_after(&mut self, said_done: u64, project: &mut Project) {
+        for (sent, take) in std::mem::take(&mut self.taking) {
+            if sent > said_done {
+                self.problems.push(crate::folder_problem(take_waits(&take)));
+                self.held_takes.push(take);
+            }
+        }
+        self.report(project);
     }
 
     /// The clock of the last step of the control loops, or the start of the song before one.
@@ -891,6 +946,9 @@ impl Tools {
             (self._watcher, self.watch_problem, self.changes) = (watcher, problem, changes);
         }
         let old = self.bun.take();
+        if let Some(old) = &old {
+            self.hold_takes_of(old, project);
+        }
         self.performer_gone(project);
         let (folder, opening, skipped) = (self.folder.clone(), self.opening, self.skipped.clone());
         let (send, launched) = mpsc::channel();
@@ -1098,6 +1156,10 @@ impl Tools {
                 false
             }
             Event::Ended { blame, why } => {
+                // It says its end last: what it did before is heard.
+                if let Some(said_done) = self.bun.as_ref().map(|bun| bun.said_done()) {
+                    self.hold_takes_after(said_done, project);
+                }
                 self.failed(blame, &why, project);
                 true
             }
@@ -2185,4 +2247,12 @@ mod card_file_tests {
         let files = super::card_files(extensions.path());
         assert_eq!(files, vec![format!("{}/eq.tsx", super::CARDS)]);
     }
+}
+
+/// What the composer reads of a take no code runs to keep yet.
+fn take_waits(take: &Take) -> String {
+    format!(
+        "The take of {} waits for the code of the project to run again.",
+        take.recorder
+    )
 }
