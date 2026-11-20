@@ -136,8 +136,12 @@ pub(super) fn empty(state: &State) -> El {
             "Ask the agent for the tools you want, or start from a template.",
         ),
     };
+    // Not Bare, whose project file is all it writes.
+    let some_tools = |template: &runtime::Template| {
+        (template.files.iter()).any(|(path, _)| *path != runtime::PROJECT_FILE)
+    };
     let choices = (state.shell.templates().iter())
-        .filter(|choice| !matches!(choice, Choice::Bundled(template) if template.files.is_empty()));
+        .filter(|choice| !matches!(choice, Choice::Bundled(template) if !some_tools(template)));
     let rows = choices.enumerate().map(|(index, choice)| {
         let choice = choice.clone();
         shell::template_row(
