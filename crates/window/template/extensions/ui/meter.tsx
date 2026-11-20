@@ -1,11 +1,5 @@
-import { h, live, Live } from "../sdk";
+import { h, live, type Live } from "../sdk";
 import { liveLevel, travelled, VOLUME } from "./value";
-
-/**
- * The loudest sample of a channel of `path` since the last frame. The window reads no feed by its
- * name yet, so not `live.feed("peak_left", path)`: what it read before feeds, a peak of a channel.
- */
-const channelPeak = (path: string, channel: 0 | 1) => new Live({ op: "peak", name: path, channel });
 
 /** How fast a bar falls, in its height a second; how long the peak line stays before it falls. */
 const [FALL, HOLD] = [0.6, 1.5];
@@ -31,8 +25,8 @@ export const Meter = ({ id, label, path, w, h: height }: { id: string; label: st
   const gap = w < 8 ? 1 : 2;
   const bar = (w - gap) / 2;
   const clip = Math.min(bar * 2 + gap, 4);
-  const channel = (side: 0 | 1, x: number) => {
-    const level = liveLevel(channelPeak(path, side));
+  const channel = (side: "peak_left" | "peak_right", x: number) => {
+    const level = liveLevel(live.feed(side, path));
     const filled = level.fall(FALL).times(height - clip - 1);
     const peak = level.hold(HOLD).fall(FALL).times(height - clip - 1);
     const green = filled.min(HOT * (height - clip - 1));
@@ -46,8 +40,8 @@ export const Meter = ({ id, label, path, w, h: height }: { id: string; label: st
   };
   return (
     <box key={id} label={label} role="meter" value={live.feed("peak", path).decibels()} w={w} h={height} radius="sm" clip onPress={() => clear(id)}>
-      {channel(0, 0)}
-      {channel(1, bar + gap)}
+      {channel("peak_left", 0)}
+      {channel("peak_right", bar + gap)}
       <box at={[0, 0]} w={w} h={clip} radius="sm" fill="danger" opacity={kept(id, path).gt(1)} />
     </box>
   );
