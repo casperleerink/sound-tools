@@ -7,9 +7,9 @@ A tool is TypeScript: a device, a page, or the song. One tool per file in `exten
 In `extensions/`:
 
 1. `bun check -p .`: types, tokens, props, paths.
-2. `bun test`: a test per thing the tool must do (see `song.test.tsx`): `render(tool, self, { held, facts, answers })`, then `find(keyOrLabel)`, `press(key, { x, right })`, `act(k, "drag", { dx, alt, over })`, `act(k, "drop", { audio })`, `act(k, "set", 6)`, `act("song.record")` (a tool action). Each returns the changes; `act` drags within bounds and on the snap, as the window does.
+2. `bun test`: a test per thing the tool must do: `render(tool, self, { held, facts, answers })`, then `find(keyOrLabel)`, `press(key, { x, right })`, `act(k, "drag", { dx, alt, over })`, `act(k, "drop", { audio })`, `act(k, "set", 6)`, `act("song.record")`, a tool action. Each returns the changes; `act` drags within bounds and snaps, as the window does.
 
-With `sound-tools` on the project folder:
+With `sound-tools <project>`:
 
 3. `--snap out.png` draws it (`--play 2` plays first). Look at it.
 4. `--tree out.json`: every control (key, label, role, value or `checked`, actions), `planes`, `feeds`, `problems`.
@@ -38,7 +38,7 @@ export const quieter = tool({
 });
 ```
 
-- Sound: `sdk/sound.ts` and fields: `sdk/fields.ts` are the reference; read their doc comments. In `sound` a field is a `Signal`, which code cannot read: choose with comparisons and `mix`, never `?:`.
+- Sound, fields and children: `sdk/sound.ts`, `sdk/fields.ts` and `sdk/tools.ts` are the reference, in their doc comments. In `sound` a field is a `Signal`, which code cannot read: choose with comparisons and `mix`, never `?:`.
 - Records live in `state/`: a page's own is `state/<name>.json`, `{"tool": "<name>", "state": {}}`; a folder only for a parent, its record `instance.json`. A device on a track: `state/song/<track>/chain/<name>.json`, its name in `order` of the chain's `instance.json`.
 - A device without a view gets a card: for a built-in tool, `ui/blocks/cards/<tool>.tsx` exporting `card: Card<"eq">` (`Card<"eq", { open: boolean }>` types its memory); else `ui/blocks/generic-card.tsx`. Test one with `render(card, { tool: "eq", state: { … } })`: its facts and the defaults the state leaves out are the tool's.
 
@@ -59,7 +59,7 @@ Use the top layer that fits.
 3. Components, `extensions/ui/`: Button, Toggle, Select, Menu, Popover, Tooltip, Knob (`said`, `disabled`), Slider, Fader, Meter, Pad, TextField, Cell, Handle, Display.
 4. Blocks, `extensions/ui/blocks/`: DeviceCard, cards, Panel, StepGrid, Keyboard, PaintGrid; `time.tsx`: Grid, Playhead and Clip for any timeline.
 
-`--main gallery --snap g.png` shows them. The app has the transport: add no Play button.
+In the DAW, `--main gallery --snap g.png` shows them. The app has the transport: add no Play button.
 
 ## Planes: time, pitch, your own units
 
