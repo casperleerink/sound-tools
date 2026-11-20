@@ -104,6 +104,9 @@ fn walk(scope: &Scope, node: &Node, bind: &mut impl FnMut(Shows)) {
             {
                 bind(Shows::Trim(trim.clone()));
             }
+            if let Some(listed) = super::shapes::listed(d) {
+                bind(Shows::Lists(listed));
+            }
             let placed = (d.place.as_ref())
                 .and_then(|place| scope.placed_shows(place, (Some(&d.w), Some(&d.h))));
             let size = d.place.is_none().then_some((Some(&d.w), Some(&d.h)));

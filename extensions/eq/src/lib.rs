@@ -323,7 +323,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         .tool::<EqState>(EXTENSION)?
         .behaviour(apply)
         .schema(Eq::AUTOMATION.parameters())
-        .feed("response", "Its response: pairs of x, octaves above 20 Hz (0 to 9.97, 20 kHz), and y, the gain of a steady sine in dB; all of it unless the binding shows another range.", |state, context| {
+        .feed("response", "Its response: the gain of a steady sine in dB at each of `points` places (157 unless the binding says), evenly in octaves above 20 Hz from 0 to 9.97 (20 kHz) unless the binding shows another range.", |state, context| {
             let rate = context.sample_rate as f32;
             context.curve(AUDIBLE_OCTAVES, 157, |octaves| {
                 db(response(state, hz_at(octaves), rate))

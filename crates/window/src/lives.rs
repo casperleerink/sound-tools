@@ -1,12 +1,12 @@
 //! What moves every frame without a view running again: the live values of the views and a
 //! drag, each bound to a Rune live value. A view's live value is a
 //! small expression (`sound_typescript::live`) worked out here, from the playhead, the time, the
-//! meters and the fields as they play, a drag and a plane. Kept while a tree that is shown binds
+//! feeds and the fields as they play, a drag and a plane. Kept while a tree that is shown binds
 //! it, and read only in a frame where what it reads moved: a binding to a drag or a plane rests
 //! with them.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use rune::LiveText;
@@ -14,10 +14,9 @@ use sound_core::{InstanceId, Ticks};
 use sound_typescript::live::{
     DragPart, Ease, Eased, Leaves, Live, Num, PlanePart, Readout, number, text_of,
 };
-use sound_typescript::next::Keys;
 
 use crate::app::State;
-use crate::tree::Place;
+use crate::tree::{Listed, Place};
 
 /// What a live value of a view shows: also its name, so the same shown twice binds once, and a
 /// new expression in its place, such as `live.playhead.minus(start)` after a drag, is another.
@@ -43,6 +42,7 @@ pub(crate) enum Shows {
         size: [Option<Num>; 2],
         parent: Option<[Num; 2]>,
     },
+    Lists(Listed),
 }
 
 /// What Rune draws of a [`Shows`] every frame.
@@ -54,6 +54,8 @@ pub(crate) enum Shown {
     Offset(rune::Live<[f32; 2]>),
     Opacity(rune::Live<f32>),
     Trim(rune::Live<[f32; 2]>),
+    /// The lists it drew last.
+    Pixels(rune::Pixels, Rc<RefCell<Vec<Vec<f32>>>>),
 }
 
 impl Shown {
@@ -65,6 +67,7 @@ impl Shown {
             Self::Offset(offset) => e.absolute(0.0, 0.0).live_offset(offset),
             Self::Opacity(opacity) => e.live_opacity(opacity),
             Self::Trim(trim) => e.live_trim(trim),
+            Self::Pixels(pixels, _) => e.pixels(pixels),
         }
     }
 }
@@ -109,9 +112,6 @@ pub(crate) struct Hand {
 pub(crate) struct Lives {
     bindings: RefCell<HashMap<String, Binding>>,
     eased: RefCell<HashMap<String, Eased>>,
-    /// The loudest of each channel of each meter read this frame, by instance path and name: a
-    /// meter keeps its loudest until read.
-    peaks: RefCell<BTreeMap<String, [f32; 2]>>,
     frame: Cell<u64>,
     dt: Cell<f64>,
     elapsed: Cell<f64>,
@@ -127,8 +127,6 @@ pub(crate) struct Lives {
     /// The live accessibility values of the views, by element key: their instance, their value,
     /// and what they said when the view was built.
     spoken: RefCell<HashMap<String, (InstanceId, Num, String)>>,
-    /// The keys down on the sounds the views read, and the frame they were last read in.
-    keys: RefCell<HashMap<InstanceId, (Option<u64>, Keys, u128)>>,
 }
 
 impl Lives {
@@ -136,7 +134,6 @@ impl Lives {
         Self {
             bindings: RefCell::default(),
             eased: RefCell::default(),
-            peaks: RefCell::default(),
             frame: Cell::new(0),
             dt: Cell::new(0.0),
             elapsed: Cell::new(0.0),
@@ -146,7 +143,6 @@ impl Lives {
             hands: RefCell::default(),
             moved: RefCell::default(),
             spoken: RefCell::default(),
-            keys: RefCell::default(),
         }
     }
 
@@ -169,6 +165,7 @@ impl Lives {
             Shows::Opacity(_) => Shown::Opacity(rune::Live::new(1.0)),
             Shows::Trim(_) => Shown::Trim(rune::Live::new([0.0, 1.0])),
             Shows::Placed { .. } => Shown::Rect(rune::Live::new([0.0; 4])),
+            Shows::Lists(_) => Shown::Pixels(rune::Pixels::new(), Rc::default()),
         };
         let binding = Binding {
             reads: self.reads(state, instance, &shows),
@@ -202,6 +199,10 @@ impl Lives {
                     .chain(size.iter().flatten())
                     .chain(parent.iter().flatten())
                     .collect()
+            }
+            Shows::Lists(_) => {
+                recorder.reads.borrow_mut().always = true;
+                Vec::new()
             }
         };
         for num in nums {
@@ -330,7 +331,6 @@ impl Lives {
         self.dt.set(dt);
         self.elapsed.set(self.elapsed.get() + dt);
         self.playhead.set(playhead.0 as f64);
-        self.peaks.borrow_mut().clear();
         self.moving.set(false);
         self.refresh(state);
         let mut spoken = self.spoken.borrow_mut();
@@ -352,8 +352,7 @@ impl Lives {
         self.eased
             .borrow_mut()
             .retain(|_, eased| eased.frame == frame);
-        (self.keys.borrow_mut()).retain(|_, (read, ..)| *read == Some(frame));
-        self.moving.get()
+        self.moving.get() || state.feeds.moved()
     }
 
     fn show(&self, state: &State, binding: &Binding) {
@@ -412,6 +411,9 @@ impl Lives {
                 let place = place.numbers().iter().map(of).collect::<Vec<_>>();
                 shown.set(state.planes.points(plane, &place, size, parent));
             }
+            (Shows::Lists(listed), Shown::Pixels(pixels, last)) => {
+                (state.feeds).draw(state, &binding.instance, listed, pixels, last);
+            }
             _ => {}
         }
     }
@@ -420,17 +422,6 @@ impl Lives {
     /// moved, since the last call: the view is built again.
     pub(crate) fn take_wider(&self) -> bool {
         self.wider.replace(false)
-    }
-
-    /// The loudest of each meter the views read this frame, in dB, by instance path, for the
-    /// agent's tree.
-    pub(crate) fn levels(&self) -> Vec<(String, f64)> {
-        let peaks = self.peaks.borrow();
-        let decibels =
-            |[left, right]: [f32; 2]| (20.0 * f64::from(left.max(right)).log10()).max(-120.0);
-        (peaks.iter())
-            .map(|(name, peaks)| (name.clone(), (decibels(*peaks) * 10.0).round() / 10.0))
-            .collect()
     }
 }
 
@@ -441,42 +432,6 @@ struct Sources<'a> {
     instance: &'a InstanceId,
 }
 
-impl Sources<'_> {
-    /// The keys down on the sound of `id`, read once a frame.
-    fn keys_down(&self, id: InstanceId) -> u128 {
-        let frame = self.lives.frame.get();
-        let project = self.state.project();
-        let mut keys = self.lives.keys.borrow_mut();
-        let (read, keys, down) = keys.entry(id.clone()).or_default();
-        if *read != Some(frame) {
-            (*read, *down) = (Some(frame), keys.follow(project, &id));
-        }
-        *down
-    }
-
-    /// The loudest sample of the meter at `path` inside the instance since the last frame, or
-    /// of the peaks it keeps as `path.name`.
-    fn peak(&self, path: &str, channel: Option<u8>) -> f64 {
-        let (path, name) = path.split_once('.').unwrap_or((path, "level"));
-        let Ok(id) = self.instance.child(path) else {
-            return 0.0;
-        };
-        let key = match name {
-            "level" => id.to_string(),
-            name => format!("{id}.{name}"),
-        };
-        let mut peaks = self.lives.peaks.borrow_mut();
-        let taken = *peaks.entry(key).or_insert_with(|| {
-            (self.state.project().peaks(&id, name)).map_or([0.0; 2], |peaks| peaks.take())
-        });
-        f64::from(match channel {
-            Some(0) => taken[0],
-            Some(_) => taken[1],
-            None => taken[0].max(taken[1]),
-        })
-    }
-}
-
 #[cfg(test)]
 impl Lives {
     pub(crate) fn bindings(&self) -> usize {
@@ -485,6 +440,17 @@ impl Lives {
 
     pub(crate) fn eased(&self) -> usize {
         self.eased.borrow().len()
+    }
+
+    /// The size of each drawing of list feeds now, in pixels.
+    pub(crate) fn pixels(&self) -> Vec<(u32, u32)> {
+        let bindings = self.bindings.borrow();
+        (bindings.values())
+            .filter_map(|binding| match &binding.shown {
+                Shown::Pixels(pixels, _) => Some(pixels.size()),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Where each live rect is now.
@@ -554,20 +520,14 @@ impl Leaves for Sources<'_> {
                 let tempo_map = self.state.project().clock().tempo_map();
                 tempo_map.change_at(Ticks(playhead as u64)).bpm.bpm()
             }
-            Live::Peak { name, channel } => self.peak(name, *channel),
+            Live::Feed { name, path } => {
+                (self.state.feeds).number(self.state, self.instance, path.as_deref(), name)
+            }
             Live::Value { name, child, .. } => (self.state.tools.as_ref()).map_or(0.0, |tools| {
                 let project = self.state.project();
                 let tick = Ticks(playhead as u64);
                 tools.field_now(project, self.instance, child.as_deref(), name, tick)
             }),
-            Live::Sounding { pitch, child } => {
-                let id = match child {
-                    Some(path) => self.instance.child(path).ok(),
-                    None => Some(self.instance.clone()),
-                };
-                let down = id.map_or(0, |id| self.keys_down(id));
-                f64::from(u8::from(down & (1 << pitch.min(&127)) != 0))
-            }
             Live::Drag { id, part } => {
                 let key = format!("{}{id}", self.state.prefix_of(self.instance));
                 let hand = self.lives.hand(&key);

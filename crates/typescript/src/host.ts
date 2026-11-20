@@ -25,7 +25,7 @@ type Next = {
   };
 };
 /** What the window knows of an instance that no record holds, see `Facts` in `sdk/view.ts`. */
-type Facts = { title: string; fields: object[] };
+type Facts = { title: string; fields: { name: string; default?: unknown }[] };
 const next: Next | undefined = existsSync(join(folder, "sdk/view.ts")) ? await import(join(folder, "sdk/view.ts")) : undefined;
 
 for (const name of ["log", "info", "debug", "warn"] as const) {
@@ -67,10 +67,10 @@ type Request =
   | { type: "answer"; question: number; answer: unknown }
   /**
    * The instances whose views the new window shows: each sends its tree now, and again when its
-   * records change. `cards` names those a card draws, with their facts; `facts` are those of the
-   * others and their children, `catalog` what `addOffer` puts, `keys` each action's key by `tool.action`.
+   * records change. `cards` names those a card draws; `facts` are those of each and of its
+   * children and grandchildren, `catalog` what `addOffer` puts, `keys` each action's key by `tool.action`.
    */
-  | { type: "show"; instances: string[]; cards: Record<string, { title: string; fields: { name: string; default: unknown }[] }>; held: Record<string, string[]>; facts?: Record<string, Facts>; catalog?: unknown[]; keys?: Record<string, string | null> }
+  | { type: "show"; instances: string[]; cards: string[]; held: Record<string, string[]>; facts?: Record<string, Facts>; catalog?: unknown[]; keys?: Record<string, string | null> }
   /** An action on an element of a shown view, by its key: `press` and `drag` with a pointer, `drop` with files, `commit` with text or `null`, or one it names with a number. */
   | { type: "act"; instance: string; key: string; action: string; value?: unknown };
 
@@ -694,11 +694,10 @@ function drawNext(instance: string) {
 function draw(instance: string) {
   const record = recordOf(instance);
   const spec = sdk.host.tools.get(record?.tool ?? "");
-  const card = fieldCards[instance];
   // The runtime says which instances a card draws: it and Bun read one list.
-  if (next && record && card) {
+  if (next && record && carded.has(instance)) {
     // Without a generic card that loaded, the runtime says why in its problems.
-    if (genericCard) drawCard(instance, record, card);
+    if (genericCard) drawCard(instance, record);
     else say({ type: "tree", instance, none: true });
     return;
   }
@@ -721,23 +720,30 @@ const nameOf = (instance: string) => instance.slice(instance.lastIndexOf("/") + 
 /** What the window told of the shown instances besides their records. */
 let known: { facts: Record<string, Facts>; catalog: unknown[]; keys: Record<string, string | null> } = { facts: {}, catalog: [], keys: {} };
 /** The facts of `id` as the window told them, or its title alone. */
-const factsOf = (id: string, tool: string): Facts => known.facts[id] ?? fieldCards[id] ?? { title: sdk.host.tools.get(tool)?.title ?? nameOf(id), fields: [] };
-/** The children of `instance` as its view gets them: with their facts. */
-const seenChildren = (instance: string) => childrenOf(instance).map((child) => ({ ...child, facts: factsOf(`${instance}/${child.name}`, child.tool) }));
+const factsOf = (id: string, tool: string): Facts => known.facts[id] ?? { title: sdk.host.tools.get(tool)?.title ?? nameOf(id), fields: [] };
+/** `children` of `parent` with their facts, and their children's, as views and actions get them. */
+const seen = (parent: string, children: readonly OwnedChild[], depth = 2): OwnedChild[] =>
+  depth === 0
+    ? [...children]
+    : children.map((child) => {
+        const id = `${parent}/${child.name}`;
+        return { ...child, facts: factsOf(id, child.tool), children: seen(id, child.children, depth - 1) } as OwnedChild;
+      });
+const seenChildren = (instance: string) => seen(instance, childrenOf(instance));
 /** The key the action `name` of `tool` has now: as the window told, none included, else its first own key. */
 const shortcutOf = (tool: string) => (name: string) => {
   const id = `${tool}.${name}`;
   return id in known.keys ? known.keys[id] : (sdk.host.tools.get(tool)?.actions?.[name]?.keys?.[0] ?? null);
 };
 
-/** The cards of the shown instances whose tools may have no view, and the project's view of such a card. */
-let fieldCards: Extract<Request, { type: "show" }>["cards"] = {};
+/** The shown instances whose tools have no view, and the project's view of such a card. */
+let carded = new Set<string>();
 let genericCard: unknown;
 /** The project's cards of built-in tools, by tool name, from `ui/blocks/cards/<tool>.tsx`. */
 const toolCards = new Map<string, unknown>();
 /** The file of the card that draws `instance` (its file runs that code, and is blamed for it), or `undefined` when no card does. */
 const cardFile = (instance: string) => {
-  if (fieldCards[instance] === undefined) return undefined;
+  if (!carded.has(instance)) return undefined;
   const tool = recordOf(instance)?.tool ?? "";
   return toolCards.has(tool) ? `${CARDS}/${tool}.tsx` : GENERIC_CARD;
 };
@@ -749,10 +755,11 @@ const GENERIC_CARD = "ui/blocks/generic-card.tsx";
 const CARDS = "ui/blocks/cards";
 
 /** The card of an instance whose tool has no view: the project's card of its tool, else the generic card. */
-function drawCard(instance: string, record: Entry, card: (typeof fieldCards)[string]) {
-  const defaults = Object.fromEntries(card.fields.map((field) => [field.name, field.default]));
+function drawCard(instance: string, record: Entry) {
+  const facts = factsOf(instance, record.tool);
+  const defaults = Object.fromEntries(facts.fields.filter((field) => "default" in field).map((field) => [field.name, field.default]));
   const state = frozen({ ...defaults, ...(record.state as object) });
-  const self = { name: nameOf(instance), state, children: [], facts: factsOf(instance, record.tool) };
+  const self = { name: nameOf(instance), state, children: [], facts };
   const key = `${instance} card`;
   if (!memories.has(key)) memories.set(key, {});
   // A card gets what a tool's view gets.
@@ -1118,7 +1125,7 @@ function contextOf<Extra extends object>(
   let children: OwnedChild[] | undefined;
   return Object.defineProperties(context, {
     state: { enumerable: true, value: filledState(spec, record) },
-    children: { enumerable: true, get: () => (children ??= childrenOf(instance)) },
+    children: { enumerable: true, get: () => (children ??= seen(instance, childrenOf(instance))) },
   }) as typeof context & { state: State; children: OwnedChild[] };
 }
 
@@ -1436,7 +1443,7 @@ function handle(request: Request): string | undefined {
       break;
     case "show": {
       const sent = { facts: request.facts ?? {}, catalog: request.catalog ?? [], keys: request.keys ?? {} };
-      // A view whose card, held numbers or facts changed, its own or a child's, draws again; every one when the catalog or the keys did.
+      // A view whose card, held numbers or facts changed, its own, a child's or a grandchild's, draws again; every one when the catalog or the keys did.
       const all = JSON.stringify([sent.catalog, sent.keys]) !== JSON.stringify([known.catalog, known.keys]);
       const same = (before: unknown, after: unknown) => JSON.stringify(before) === JSON.stringify(after);
       const factsMoved = Object.keys({ ...known.facts, ...sent.facts }).filter((id) => !same(known.facts[id], sent.facts[id]));
@@ -1444,11 +1451,11 @@ function handle(request: Request): string | undefined {
         (id) =>
           shown.has(id) &&
           (all ||
-            !same(fieldCards[id], request.cards[id]) ||
+            carded.has(id) !== request.cards.includes(id) ||
             !same(heldFields[id], request.held[id]) ||
-            factsMoved.some((moved) => moved === id || parentOf(moved)?.[0] === id)),
+            factsMoved.some((moved) => moved === id || moved.startsWith(`${id}/`))),
       );
-      fieldCards = request.cards;
+      carded = new Set(request.cards);
       heldFields = request.held;
       known = sent;
       show(request.instances);

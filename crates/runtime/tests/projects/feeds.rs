@@ -41,11 +41,6 @@ fn list(feed: Feed) -> Vec<f32> {
     }
 }
 
-/// The `y` of each pair of a curve.
-fn heights(curve: &[f32]) -> Vec<f32> {
-    curve.chunks(2).map(|pair| pair[1]).collect()
-}
-
 fn facts_of(harness: &Harness, path: &str) -> Value {
     let id = InstanceId::new(path).unwrap();
     facts::of(&harness.project, &Files::new(), &id, None)
@@ -96,15 +91,16 @@ fn the_compressor_curve_is_flat_under_its_threshold_and_a_loud_chord_is_turned_d
         "transfer",
         request(61, None),
     ));
-    for pair in curve.chunks(2) {
-        let (input, output) = (pair[0], pair[1]);
+    // One a dB, from -60 dBFS in.
+    assert_eq!(curve.len(), 61);
+    for (step, output) in curve.iter().enumerate() {
+        let input = -60.0 + step as f32;
         let expected = match input <= -40.0 {
             true => input,
             false => -40.0 + (input + 40.0) / 4.0,
         };
         assert!((output - expected).abs() < 1e-3, "{input} gave {output}");
     }
-    assert_eq!(curve.first(), Some(&-60.0));
 
     harness.play_from_the_start(BAR / 2);
     readings.next_frame(1.0 / 60.0);
@@ -149,7 +145,11 @@ fn the_gate_curve_steps_up_at_its_threshold() {
         "transfer",
         request(0, None),
     ));
-    assert_eq!(curve, [-60.0, -100.0, -30.0, -70.0, -30.0, -30.0, 0.0, 0.0]);
+    // One a dB, from -60 dBFS in: down by the range under the threshold.
+    assert_eq!(
+        (curve[0], curve[29], curve[30], curve[60]),
+        (-100.0, -71.0, -30.0, 0.0)
+    );
 }
 
 #[test]
@@ -195,8 +195,8 @@ fn a_low_pass_is_3_db_down_at_its_cutoff_and_an_eq_bell_has_its_gain_at_its_freq
     let harness = chord_into(low_pass);
     let at = |hz: f64| (hz / 20.0).log2();
     let one = |harness: &Harness, hz| {
-        let at = request(2, Some([at(hz), at(hz)]));
-        heights(&list(read(
+        let at = request(1, Some([at(hz), at(hz)]));
+        (list(read(
             harness,
             &Readings::new(),
             "rack/device",
@@ -221,9 +221,8 @@ fn a_low_pass_is_3_db_down_at_its_cutoff_and_an_eq_bell_has_its_gain_at_its_freq
         "response",
         request(157, None),
     ));
-    assert_eq!(curve.len(), 2 * 157);
-    assert_eq!(curve[0], 0.0);
-    assert!((20.0 * curve[curve.len() - 2].exp2() - 20_000.0).abs() < 1.0);
+    assert_eq!(curve.len(), 157);
+    assert!(curve[0].abs() < 0.05 && curve[156].abs() < 0.05);
 }
 
 #[test]
@@ -453,11 +452,11 @@ fn the_facts_of_an_eq_and_a_wavetable_show_their_nested_fields() {
     assert_eq!(facts["title"], "Eq");
     let bands = field(&facts["fields"], "bands");
     assert_eq!(bands["kind"], "list");
-    assert_eq!(bands["max_items"], 4);
+    assert_eq!(bands["maxItems"], 4);
     let frequency = field(&bands["item"]["fields"], "frequency_hz");
     assert_eq!(
         (&frequency["scale"], &frequency["unit"]),
-        (&"logarithmic".into(), &"hz".into())
+        (&"log".into(), &"hz".into())
     );
     assert_eq!(field(&bands["item"]["fields"], "shape")["kind"], "choice");
 

@@ -282,13 +282,13 @@ impl Extensions {
     /// for the agent that writes the first one, with the records of the built-in tools of
     /// `schemas`. Bun `logs` for a runtime that holds the project, see [`Bun::start`]. Waits
     /// for Bun, up to a timeout for each file: not on the thread that draws.
-    pub fn load(folder: &Path, schemas: &[ToolSchema], logs: bool) -> Option<FirstLoad> {
+    pub fn load(folder: &Path, built_in: &BuiltIn, logs: bool) -> Option<FirstLoad> {
         let folder = folder.join(FOLDER);
         if !folder.is_dir() {
             return None;
         }
         let opening = bun::new_opening();
-        let launched = write_sdk(&folder, schemas)
+        let launched = write_sdk(&folder, built_in)
             .map_err(|error| error.to_string())
             .and_then(|()| launch((&folder, opening), Skipped::new(), logs));
         Some(FirstLoad {
@@ -565,15 +565,26 @@ fn folder_problem(message: String) -> Problem {
     }
 }
 
+/// What the code of a project reads of the built-in tools, for the types of its SDK: their
+/// records, the feeds of each, and the JSON Schema of the facts of each that adds some.
+#[derive(Default)]
+pub struct BuiltIn {
+    pub schemas: Vec<ToolSchema>,
+    pub feeds: Vec<sound_core::feeds::FeedName>,
+    pub facts: Vec<(&'static str, serde_json::Value)>,
+}
+
 /// Writes what the runtime owns in `extensions/`, only where the text changed: the SDK with
-/// the records of the built-in tools of `schemas`.
-fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
+/// the records, feeds and facts of the built-in tools.
+fn write_sdk(extensions: &Path, built_in: &BuiltIn) -> std::io::Result<()> {
     // Bun's own types, once installed, declare `Bun` as well.
     let bun_types = extensions.join("node_modules/bun-types").is_dir();
-    let records = records::sdk_records(schemas);
+    let records = records::sdk_records(&built_in.schemas);
+    let feeds = records::sdk_feeds(&built_in.feeds, &built_in.facts);
     std::fs::create_dir_all(extensions.join("sdk"))?;
     let files = [
         ("sdk/records.ts", records.as_str()),
+        ("sdk/feeds.ts", feeds.as_str()),
         ("tsconfig.json", TSCONFIG),
         ("bun.d.ts", BUN_TYPES),
     ];
@@ -721,10 +732,10 @@ mod tests {
     #[test]
     fn the_types_of_bun_are_left_out_once_bun_types_are_installed() {
         let extensions = tempfile::tempdir().unwrap();
-        write_sdk(extensions.path(), &[]).unwrap();
+        write_sdk(extensions.path(), &BuiltIn::default()).unwrap();
         assert!(extensions.path().join("bun.d.ts").is_file());
         std::fs::create_dir_all(extensions.path().join("node_modules/bun-types")).unwrap();
-        write_sdk(extensions.path(), &[]).unwrap();
+        write_sdk(extensions.path(), &BuiltIn::default()).unwrap();
         assert!(!extensions.path().join("bun.d.ts").exists());
     }
 
@@ -735,10 +746,10 @@ mod tests {
         std::fs::create_dir_all(folder.join("sdk")).unwrap();
         std::fs::write(folder.join("sdk/my-helper.ts"), "export {}").unwrap();
         let has = |name: &str| folder.join(name).is_file();
-        write_sdk(folder, &[]).unwrap();
+        write_sdk(folder, &BuiltIn::default()).unwrap();
         assert!(has("sdk/live.ts") && !has("sdk/view.ts"));
         std::fs::write(folder.join(next::THEME), "{}").unwrap();
-        write_sdk(folder, &[]).unwrap();
+        write_sdk(folder, &BuiltIn::default()).unwrap();
         assert!(has("sdk/view.ts"));
         for (name, _) in SDK
             .iter()
@@ -748,7 +759,7 @@ mod tests {
         }
         assert!(has("sdk/my-helper.ts"));
         std::fs::remove_file(folder.join(next::THEME)).unwrap();
-        write_sdk(folder, &[]).unwrap();
+        write_sdk(folder, &BuiltIn::default()).unwrap();
         assert!(has("sdk/live.ts") && !has("sdk/view.ts") && !has("sdk/test.d.ts"));
         assert!(has("sdk/my-helper.ts"));
     }
@@ -757,7 +768,7 @@ mod tests {
     fn a_folder_with_no_tool_starts_no_bun_but_has_the_sdk() {
         let project = tempfile::tempdir().unwrap();
         std::fs::create_dir(project.path().join(FOLDER)).unwrap();
-        let extensions = Extensions::load(project.path(), &[], true)
+        let extensions = Extensions::load(project.path(), &BuiltIn::default(), true)
             .unwrap()
             .register(&mut Registry::new());
         assert!(extensions.bun.is_none());

@@ -85,7 +85,7 @@ impl State {
         Ok(())
     }
 
-    /// What `--tree` adds for an agent: the controls, where the piece plays and the meters.
+    /// What `--tree` adds for an agent: the controls, where the piece plays and the feeds the views read.
     pub(super) fn report(&self) -> Value {
         let controls = controls::collect(self).controls;
         let problems: Vec<String> = self
@@ -112,7 +112,7 @@ impl State {
             "playing": self.playing,
             "playhead": self.playhead.0,
             "time": self.time(),
-            "meters": self.lives.levels().into_iter().map(|(name, db)| (name, json!(db))).collect::<serde_json::Map<_, _>>(),
+            "feeds": self.feeds.read_now(),
             "view_runs": self.tools.as_ref().map_or(0, Tools::view_runs),
             "planes": self.planes.views().into_iter().map(|(key, view)| {
                 let mut said = json!(view);

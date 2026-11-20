@@ -56,7 +56,7 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 
 const FRAMES: &str = "The frames of the table of oscillator 1 (frames_2: of 2), at most 12 evenly chosen, first to last, each one cycle of `points` samples (96 unless the binding says) from -1 to 1, frame after frame.";
 const FRAME: &str = "The frame oscillator 1 (frame_2: 2) plays at its position, a mix of the two frames it is between: one cycle of `points` samples (96 unless the binding says) from -1 to 1.";
-const RESPONSE: &str = "The response of filter 1 (response_2: 2) for a quiet sound: pairs of x, octaves above 20 Hz (0 to 9.97, 20 kHz), and y, the gain in dB; flat while it is off.";
+const RESPONSE: &str = "The response of filter 1 (response_2: 2) for a quiet sound: the gain in dB at each of `points` places (157 unless the binding says), evenly in octaves above 20 Hz from 0 to 9.97 (20 kHz) unless the binding shows another range; flat while it is off.";
 
 /// Registers the wavetable tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {

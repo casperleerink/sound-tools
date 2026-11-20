@@ -7,12 +7,12 @@ A tool is TypeScript: a device on a track, the song page, or the whole project. 
 Run 1 and 2 in `extensions/`, the rest with `sound-tools` on the project folder.
 
 1. `bun check -p .`: types, token names and props.
-2. `bun test`: one test for each thing the tool must do, as `song.test.tsx` does: `render(tool, self, { held, facts, answers })`, then `find`, `press(key, { x, right })`, `act(keyOrLabel, "drag", { dx, alt, over })`, `act(k, "drop", { audio })`, `act(k, "set", 6)`, `act("song.record")` (an action of the tool), and `apply`. `act` drags within the drag's bounds and on its grid, as the window does.
+2. `bun test`: one test for each thing the tool must do, as `song.test.tsx` does: `render(tool, self, { held, facts, answers })`, then `find`, `press(key, { x, right })`, `act(keyOrLabel, "drag", { dx, alt, over })`, `act(k, "drop", { audio })`, `act(k, "set", 6)`, `act("song.record")` (an action of the tool), and `apply`. `act` drags within bounds and on the grid, as the window does.
 3. `sound-tools . --snap out.png --play 2`: a picture after two seconds of playing.
-4. `--tree out.json`: every element, and `controls` (key, label, role, value or `checked`, actions), `meters` and `problems`.
+4. `--tree out.json`: every element, and `controls` (key, label, role, value or `checked`, actions), `feeds` (what views read) and `problems`.
 5. `--act steps.json` runs actions first, on the project itself: `[{ "label": "Mute Track 2", "action": "toggle" }, { "key": "fader-t00", "action": "set", "value": -6 }, { "action": "undo" }]`. `--script steps.json` points by key: `{"events": [{ "t": 2, "type": "drag", "key": "fader-t00", "dy": 40 }]}`.
 
-`problems.txt` says why what does not load. `--inspect` prints the records; `--analyze` and `--render` play the sound.
+`problems.txt` says what does not load and why. `--inspect` prints the records; `--analyze` and `--render` play the sound.
 
 ## A tool
 
@@ -44,8 +44,8 @@ export const quieter = tool({
 `view: (self, ctx) => …` is a plain function of `self.state`, `self.children` and `self.facts`, run again after every change. Never name a variable `h`. A part of a view types its records with `Drawn<ValuesOf<typeof fields>, typeof children>`.
 
 - `ctx` is what `tick` gets: `update`, `send`, `play`, `clock`, `memory`, `held`, `catalog` (devices to put in a child with `addOffer`), `shortcut(action)` (its key now).
-- `self.facts`, and each child's: what the window knows that no record holds, such as `title`, `fields`, a region's `seconds`.
-- `memo(key, deps, () => …)` builds a part again only when one of `deps` changes.
+- `self.facts`, also of children and grandchildren: what no record holds, such as `title`, `fields`, a region's `seconds`.
+- `memo(key, deps, () => …)` builds a part again only when `deps` change.
 - `memory` is never saved: change it in a handler to draw again.
 
 ## Look: theme, primitives, components, blocks
@@ -69,10 +69,10 @@ A box with `plane={{ x: 0.03, y: 12 }}` (points per unit, or a `[from, to]` rang
 
 ## What moves every frame
 
-A live value is an expression the window works out every frame, without the view. Start from `live` (`playhead`, `playing`, `elapsed`, `bpm`, `field(name)`, `feed(name, path)`, `drag(id)`, `plane(key)`) and combine with `Live`'s methods: arithmetic, comparisons, `decibels`, `hold`, `fall`, `smooth`.
+The window works a live value out every frame, without the view. Start from `live` (`playhead`, `playing`, `elapsed`, `bpm`, `field(name)`, `feed(name, path)`, `drag(id)`, `plane(key)`) and combine with `Live`'s methods: arithmetic, comparisons, `decibels`, `hold`, `fall`, `smooth`.
 
 - `<text live={live.feed("peak", "t01/mix").hold(3).decibels()} unit="db" />`; `opacity={live.feed("sounding.60")}`.
-- A feed that is a list draws as `points` or `rects` of a `shapes`.
+- A list feed is the `points` (heights, evenly across) or `rects` of a `shapes`; `units={[w, [18, -18]]}` puts 18 at the top. `sdk/feeds.ts` names every feed and fact.
 - `at`, `place`, `w`, `h`, `opacity` and `trim` take one, as `ui/meter.tsx` does. Code cannot read one.
 - `binder(self, ctx, fields)` of `ui/field.ts` wires a number's control: what a lane plays, and the sound following its drag.
 

@@ -152,23 +152,6 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 /// The levels its curve shows, in dBFS: the range of the threshold.
 const LEVELS: [f64; 2] = [-60.0, 0.0];
 
-/// The curve of a steady sound from `from` to `to` dBFS: down by the range under the threshold,
-/// a step up at it.
-fn transfer(state: &GateState, [from, to]: [f64; 2]) -> Vec<f32> {
-    let (from, to) = (from as f32, to as f32);
-    let threshold = state.threshold_db.clamp(from, to);
-    let out = |input: f32, heard: f32| input + static_gain_db(state, heard);
-    [
-        (from, out(from, from)),
-        (threshold, out(threshold, threshold.next_down())),
-        (threshold, out(threshold, threshold)),
-        (to, out(to, to)),
-    ]
-    .into_iter()
-    .flat_map(|(input, output)| [input, output])
-    .collect()
-}
-
 /// Registers the gate tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
@@ -187,8 +170,10 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         )
         .feed(
             "transfer",
-            "Its curve, four corners: pairs of x, the level in, and y, the level out of a steady sound, both dBFS; x from -60 to 0 unless the binding shows another range.",
-            |state, context| transfer(state, context.range_or(LEVELS)),
+            "Its curve: the level out, in dBFS, of a steady sound at each of `points` levels in (61 unless the binding says), evenly from -60 to 0 dBFS unless the binding shows another range: a step at its threshold.",
+            |state, context| {
+                context.curve(LEVELS, 61, |input| input + static_gain_db(state, input))
+            },
         );
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())

@@ -136,13 +136,12 @@ pub(crate) enum Request<'a> {
     /// again when a record of it or inside it changes.
     Show {
         instances: Vec<&'a InstanceId>,
-        /// The card of each shown instance whose tool has no view: its `Facts` in
-        /// `sdk/view.ts`.
-        cards: &'a BTreeMap<InstanceId, Value>,
+        /// The shown instances whose tools have no view, which a card draws.
+        cards: &'a BTreeSet<InstanceId>,
         /// The numbers a lane moves of each shown instance, as its `held` names them.
         held: &'a BTreeMap<InstanceId, Vec<String>>,
-        /// What the window knows of each shown instance and of each of its children that no
-        /// record holds: `Facts` in `sdk/view.ts`.
+        /// What the window knows of each shown instance, its children and grandchildren that
+        /// no record holds: `Facts` in `sdk/view.ts`.
         facts: &'a BTreeMap<InstanceId, Value>,
         /// What `addOffer` puts: `Offer` in `sdk/view.ts`.
         catalog: &'a Value,

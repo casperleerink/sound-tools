@@ -4,6 +4,7 @@
 //! of a field is its TSDoc, as the agent docs say it too.
 
 use serde_json::Value;
+use sound_core::feeds::{FeedKind, FeedName};
 use sound_core::{FieldDoc, RecordSchema, ToolSchema, type_doc};
 
 use crate::built_in_schemas;
@@ -15,7 +16,8 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
     tools.sort_by_key(|schema| schema.tool);
     let mut text = String::from("// Built-in tools: their records, from their Rust types.\n");
     for schema in &tools {
-        text.push_str(&Writer::new(schema).types());
+        let doc = format!("The `state` of a record of the built-in `{}`.", schema.tool);
+        text.push_str(&Writer::new(schema).types("State", &doc));
     }
     text.push_str(
         "\n/**\n * Every built-in tool by its name: what its records hold, the numbers a cable moves (`number`),\n * the number inputs `send` plays (`input`), its bang inputs (`bang`) and the numbers it sends\n * out (`out`).\n */\nexport interface Tools {\n",
@@ -61,6 +63,55 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
         "\n/** The numbers of the record of each built-in tool that have a range, by their path with `*` for a place in a list or a key of a map: what a control on one turns it over. */\nexport const builtInNumbers: Record<string, Record<string, {{ min?: number; max?: number; scale: \"linear\" | \"log\" | \"fader\"; default?: number }}>> = {};\n",
         Value::Object(numbers)
     ));
+    text
+}
+
+/// `sdk/feeds.ts`: what views read of the built-in tools besides their records, by tool: the
+/// name, kind and doc of each feed, and the type of the facts of each tool that adds some. The
+/// facts every instance has, its title and fields, are `Facts` of `sdk/view.ts`.
+pub(crate) fn sdk_feeds(feeds: &[FeedName], facts: &[(&'static str, Value)]) -> String {
+    let mut text = String::from(
+        "// What views read of the built-in tools besides their records, from their Rust types.\n",
+    );
+    let facts: Vec<ToolSchema> = (facts.iter())
+        .filter(|(tool, _)| *tool != "*")
+        .map(|(tool, schema)| ToolSchema {
+            tool,
+            schema: schema.clone(),
+            numbers: Vec::new(),
+            live: &[],
+            outputs: &[],
+            check: |_| Ok(()),
+        })
+        .collect();
+    for schema in &facts {
+        let doc = format!(
+            "What a view of a `{}` knows that no record holds.",
+            schema.tool
+        );
+        text.push_str(&Writer::new(schema).types("Facts", &doc));
+    }
+    text.push_str("\n/** The facts each built-in tool adds to `title` and `fields`, by its name. */\nexport interface ToolFacts {\n");
+    for schema in &facts {
+        let name = type_name(schema.tool, "Facts");
+        text.push_str(&format!("  {}: {name};\n", property_name(schema.tool)));
+    }
+    text.push_str("}\n\n/**\n * The feeds of each built-in tool by its name, `\"*\"` those of every instance: a number, or a\n * list (`number[]`) for the `points` or `rects` of a `shapes`.\n */\nexport interface ToolFeeds {\n");
+    let mut tools: Vec<&str> = feeds.iter().map(|feed| feed.tool).collect();
+    tools.dedup();
+    for tool in tools {
+        text.push_str(&format!("  {}: {{\n", property_name(tool)));
+        for feed in feeds.iter().filter(|feed| feed.tool == tool) {
+            let kind = match feed.kind {
+                FeedKind::Number => "number",
+                FeedKind::List => "number[]",
+            };
+            text.push_str(&tsdoc(feed.doc, "    "));
+            text.push_str(&format!("    {}: {kind};\n", property_name(feed.name)));
+        }
+        text.push_str("  };\n");
+    }
+    text.push_str("}\n");
     text
 }
 
@@ -157,12 +208,14 @@ impl<'a> Writer<'a> {
         writer
     }
 
-    /// The type of the record, and a named type for each object type in it.
-    fn types(&self) -> String {
+    /// The type of the schema, named for its tool and `suffix`, and a named type for each
+    /// object type in it.
+    fn types(&self, suffix: &str, doc: &str) -> String {
         let tool = self.schema.tool;
         let mut text = format!(
-            "\n/** The `state` of a record of the built-in `{tool}`. */\nexport type {} = {};\n",
-            type_name(tool, "State"),
+            "\n{}export type {} = {};\n",
+            tsdoc(doc, ""),
+            type_name(tool, suffix),
             self.object_or_type(&self.schema.schema, 0),
         );
         for name in &self.objects {

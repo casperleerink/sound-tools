@@ -1,10 +1,10 @@
 // A number of a record wired to a control: its range, unit and default from its field, what a
 // lane plays while one holds it, the sound following a drag, and its change as one step of undo. `<Knob {...field("depth")} />`.
 import { live, type Fields, type Live, type Unit } from "../sdk";
-import type { Range } from "./value";
+import type { Range, Scale } from "./value";
 
 /** What a number field says of itself: a tool's `number(...)`, or one of a generic card. */
-export type NumberLike = { min: number; max: number; default?: number; integer?: boolean; unit?: Unit | null; label?: string; log?: boolean };
+export type NumberLike = { min: number; max: number; default?: number; integer?: boolean; unit?: Unit | null; label?: string; scale?: Scale };
 
 /** What a Knob, Fader or Slider of one number takes. */
 export type Bound = Range & { id: string; path?: string; label: string; value: number; unit?: Unit; initial?: number; held?: Live; onChange: (value: number) => void };
@@ -16,6 +16,9 @@ const words = (name: string) => {
   const said = parts.join(" ");
   return said.charAt(0).toUpperCase() + said.slice(1);
 };
+
+/** A lane's name of a number deep in the tool's own record, `bands.0.gain_db`, as `live.field` reads it: `bands[0].gain_db`, not a child `bands`. */
+const played = (path: string) => (path.includes("/") ? path : path.replace(/^([^.[]+)\.([^.]+)\./, "$1[$2]."));
 
 /**
  * The control of the number `path` (`cutoff_hz` of the tool's own record, or `t00/mix.gain_db`
@@ -30,11 +33,11 @@ export const control = (held: (name: string) => boolean, path: string, field: Nu
     value,
     min: field.min,
     max: field.max,
-    scale: (field.log ?? (field.unit === "hz" && field.min > 0)) ? "log" : "linear",
+    scale: field.scale ?? (field.unit === "hz" && field.min > 0 ? "log" : "linear"),
     ...(field.integer ? { step: 1 } : {}),
     ...(field.unit ? { unit: field.unit } : {}),
     ...(field.default === undefined ? {} : { initial: field.default }),
-    ...(held(path) ? { held: live.field(path) } : {}),
+    ...(held(path) ? { held: live.field(played(path)) } : {}),
     onChange,
   };
 };

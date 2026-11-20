@@ -101,10 +101,7 @@ pub fn evaluate(live: &Live, leaves: &(impl Leaves + ?Sized)) -> f64 {
         | Live::Elapsed
         | Live::Value { .. }
         | Live::Held { .. }
-        | Live::Sounding { .. }
-        | Live::Peak { .. }
-        | Live::DevicePeak { .. }
-        | Live::Input { .. }
+        | Live::Feed { .. }
         | Live::Drag { .. }
         | Live::Plane { .. }
         | Live::Hover { .. }
@@ -193,30 +190,9 @@ impl<'de> Visitor<'de> for NumVisitor {
     }
 
     fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Num, A::Error> {
-        let mut live = serde_json::Value::deserialize(MapAccessDeserializer::new(map))?;
-        fed_as_before(&mut live);
-        let live = Live::deserialize(live).map_err(A::Error::custom)?;
+        let live = Live::deserialize(MapAccessDeserializer::new(map))?;
         Ok(Num::Live(Box::new(live)))
     }
-}
-
-/// `live.feed` of `sdk/view.ts` as the values the window had before feeds: `peak` of a path, or
-/// of the device itself, and `sounding.<pitch>`.
-fn fed_as_before(live: &mut serde_json::Value) {
-    if live["op"] != "feed" {
-        return;
-    }
-    let path = (live.get("path").and_then(serde_json::Value::as_str)).map(str::to_string);
-    let name = live["name"].as_str().unwrap_or_default();
-    let pitch = (name.strip_prefix("sounding.")).and_then(|pitch| pitch.parse::<u8>().ok());
-    *live = match (name, path, pitch) {
-        ("peak", Some(path), _) => serde_json::json!({ "op": "peak", "name": path }),
-        ("peak", None, _) => serde_json::json!({ "op": "device_peak" }),
-        (_, child, Some(pitch)) => {
-            serde_json::json!({ "op": "sounding", "pitch": pitch, "child": child })
-        }
-        _ => return,
-    };
 }
 
 impl Num {
@@ -253,20 +229,11 @@ pub enum Live {
         name: String,
         child: Option<String>,
     },
-    /// The loudest sample since the last frame: of a `meter` at a path inside, or of peaks
-    /// an instance inside it keeps, as `path.name`.
-    Peak {
+    /// What the instance at `path` inside this one, or this one, publishes as `name` this frame:
+    /// a number feed, or `list.N`, one number of a list feed.
+    Feed {
         name: String,
-        /// 0 left, 1 right; the louder when left out.
-        channel: Option<u8>,
-    },
-    /// The same, of what the device plays.
-    DevicePeak {
-        channel: Option<u8>,
-    },
-    /// The loudest sample of a channel of the audio input at the last poll, while it is open.
-    Input {
-        channel: usize,
+        path: Option<String>,
     },
     Drag {
         id: String,
@@ -280,12 +247,6 @@ pub enum Live {
     /// 1 while the pointer is over the shape of `key`.
     Hover {
         key: String,
-    },
-    /// 1 while the key `pitch` is down on the sound of a tool of the project, or of its child
-    /// at the path `child`: what a clip, a key or its code plays. Only the new window has it.
-    Sounding {
-        pitch: u8,
-        child: Option<String>,
     },
     /// 1 while the pointer is over a control, the keys are on it or a drag holds it: the space
     /// of the key `name`, or one whose drag turns the field `name`, so a fader shows the

@@ -1,4 +1,4 @@
-import { h, input, live, Live, tool, type Child } from "./sdk";
+import { h, live, Live, tool, type Child, type Declaration } from "./sdk";
 import { Button } from "./ui/button";
 import { Cell } from "./ui/cell";
 import { Display, displayWidth, DISPLAY_HEIGHT } from "./ui/display";
@@ -48,14 +48,25 @@ type Memory = {
 
 const pattern = (on: number[]): Step[] => Array.from({ length: 16 }, (_, i) => ({ on: on.includes(i), velocity: on.includes(i) ? 0.5 + (i % 4) * 0.15 : 0.8 }));
 
+const PARTS = { hum: "timeline", synth: "instrument.synth", scope: "analyzer", rec: "recorder" } as const;
+
 /** Every component and block of `ui/` in its states, to look at the kit at once: `sound-tools . --main gallery --snap gallery.png`. */
 export const gallery = tool({
   name: "gallery",
   title: "Gallery",
   when: "You want to see every part of the look of this project: its components and blocks",
-  doc: "Shows every component of `ui/` and every block of `ui/blocks/` in its states. Plays nothing.",
+  doc: "Shows every component of `ui/` and every block of `ui/blocks/` in its states, and feeds: its clip `hum` plays a chord on its `synth` into the analyzer `scope` while the song plays.",
   state: {},
-  sound: () => input,
+  children: PARTS,
+  behaviour: (): Declaration<typeof PARTS> => ({
+    connections: [
+      { from: { child: "hum", notes: "notes" }, to: { child: "synth", notes: "notes" } },
+      { from: { notes: "notes" }, to: { child: "synth", notes: "notes" } },
+      { from: { notes: "notes" }, to: { child: "rec", notes: "notes" } },
+      { from: { child: "synth" }, to: { child: "scope" } },
+      { from: { child: "scope" }, to: { port: "audio" } },
+    ],
+  }),
   memory: (): Memory => ({
     toggles: { mute: true, solo: false, arm: true, freeze: true, sync: false },
     wave: "saw",
@@ -131,7 +142,7 @@ export const gallery = tool({
             <Section title="Values">
               <row gap={4} align="end">
                 <row>
-                  {knob("cutoff", "Cutoff", { min: 20, max: 20000, log: true, unit: "hz", initial: 2000 })}
+                  {knob("cutoff", "Cutoff", { min: 20, max: 20000, scale: "log", unit: "hz", initial: 2000 })}
                   {knob("resonance", "Resonance", { min: 0, max: 1, unit: "percent" })}
                   {knob("pan", "Pan", { min: -1, max: 1, unit: "pan", bipolar: true, initial: 0 })}
                   <Knob {...bound("note", "Note", { min: 36, max: 96, integer: true, unit: "pitch" })} />
@@ -185,6 +196,9 @@ export const gallery = tool({
               onExpand={() => (memory.expanded = !memory.expanded)}
             />
           </Section>
+          <Section title="Feeds">
+            <Feeds />
+          </Section>
           <row gap={8}>
             <Section title="Keys">
               <Keyboard id="keys" low={48} high={72} onPlay={(pitch) => play(pitch)} />
@@ -237,6 +251,31 @@ const Curve = () => {
   const y = (x: number) => tall * 0.35 + Math.max(0, x - w * 0.55) ** 2 / 90;
   for (let x = 0; x < w; x += 4) points.push(x, y(x), x + 4, y(x + 4));
   return <shapes at={[0, 0]} w={w} h={tall} lines={[{ color: "text", width: 1.5, points, fill: "text/5" }]} />;
+};
+
+/** What the children publish while the song plays, drawn without the view: a number, a list as a filled line, and the notes of a take as rects. */
+const Feeds = () => {
+  const [w, tall] = [displayWidth(4), DISPLAY_HEIGHT];
+  return (
+    <row gap={4} align="end">
+      <col gap={1}>
+        <text style="label" color="text-secondary">Loudness</text>
+        <text key="loudness" live={live.feed("loudness", "scope")} digits={1} w={48} />
+      </col>
+      <col gap={1}>
+        <text style="label" color="text-secondary">Spectrum</text>
+        <box w={w} h={tall} radius="sm" fill="well" clip>
+          <shapes key="spectrum" w={w} h={tall} units={[w, [0, -90]]} lines={[{ color: "sound", width: 1.5, points: live.feed("spectrum", "scope"), fill: "sound/24" }]} />
+        </box>
+      </col>
+      <col gap={1}>
+        <text style="label" color="text-secondary">Notes of a take</text>
+        <box w={w} h={tall} radius="sm" fill="well" clip>
+          <shapes key="taken" w={w} h={tall} units={[15360, [84, 36]]} rects={[{ color: "text", rects: live.feed("notes", "rec") }]} />
+        </box>
+      </col>
+    </row>
+  );
 };
 
 /** A take as it records: its wave grows with the time, filled below, and runs no view. */

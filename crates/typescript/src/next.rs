@@ -95,9 +95,9 @@ const NOT_RUNNING: &str = "the code of the project does not run now, so this did
 #[derive(Default)]
 pub struct Shown {
     pub instances: BTreeSet<InstanceId>,
-    /// The card of each shown instance whose tool has no view, which the project's card of its
-    /// tool or its generic card draws: its facts.
-    pub cards: BTreeMap<InstanceId, Value>,
+    /// The shown instances whose tools have no view, which the project's card of their tool or
+    /// its generic card draws.
+    pub cards: BTreeSet<InstanceId>,
     /// The numbers a lane moves of each shown instance, see `holds`.
     pub holds: BTreeMap<InstanceId, Vec<String>>,
     /// The numbers a lane moves that a hand writes into now, as `holds` names them: an update
@@ -215,7 +215,7 @@ pub struct Tools {
     /// A drag plays numbers: changed records wait for its end, so no view runs as it moves.
     deferred: bool,
     shown: BTreeSet<InstanceId>,
-    cards: BTreeMap<InstanceId, Value>,
+    cards: BTreeSet<InstanceId>,
     /// The numbers a lane moves of each shown instance.
     holds: BTreeMap<InstanceId, Vec<String>>,
     writes: BTreeMap<InstanceId, Vec<String>>,
@@ -296,7 +296,7 @@ impl Tools {
             changed_records: every_instance(project),
             deferred: false,
             shown: BTreeSet::new(),
-            cards: BTreeMap::new(),
+            cards: BTreeSet::new(),
             holds: BTreeMap::new(),
             writes: BTreeMap::new(),
             told_shown: true,
@@ -409,8 +409,8 @@ impl Tools {
         (self.holds, self.facts, self.keys) = (holds, facts, keys);
         (self.catalog, self.told_catalog) = (catalog, told);
         // A built-in device a card shows is told to Bun, as one inside a tool of the project is.
-        let new: Vec<InstanceId> = (cards.keys())
-            .filter(|id| !self.cards.contains_key(*id))
+        let new: Vec<InstanceId> = (cards.iter())
+            .filter(|id| !self.cards.contains(*id))
             .cloned()
             .collect();
         self.changed_records.extend(new);
@@ -951,7 +951,7 @@ impl Tools {
                     return false;
                 }
                 // Bun draws a card for an instance it got one for, with the generic card.
-                let card = self.cards.contains_key(&instance);
+                let card = self.cards.contains(&instance);
                 let before = self.drawn.remove(&instance);
                 let problem = (error.as_ref()).and_then(|error| match card {
                     true => Some(Problem {
@@ -1536,7 +1536,7 @@ impl Tools {
 
     /// Whether a card draws `id`, as the window last showed it.
     pub fn draws_card(&self, id: &InstanceId) -> bool {
-        self.cards.contains_key(id)
+        self.cards.contains(id)
     }
 
     /// Whether `tool` is a tool of the project that loaded.
@@ -1568,7 +1568,7 @@ impl Tools {
         instance: &InstanceId,
         message: &str,
     ) -> Option<Problem> {
-        if self.cards.contains_key(instance) {
+        if self.cards.contains(instance) {
             return Some(Problem {
                 path: format!("{FOLDER}/{}", self.card_file(project, instance)),
                 message: message.to_string(),
@@ -1739,9 +1739,9 @@ impl Tools {
         let ids = std::mem::take(&mut self.changed_records);
         let records: Vec<(&InstanceId, Option<(&str, String)>)> = (ids.iter())
             .map(|id| {
-                let tool = project.tool_of(id).filter(|_| {
-                    told_to_bun(project, &self.tools, id) || self.cards.contains_key(id)
-                });
+                let tool = project
+                    .tool_of(id)
+                    .filter(|_| told_to_bun(project, &self.tools, id) || self.cards.contains(id));
                 (
                     id,
                     tool.and_then(|tool| Some((tool, project.state_json(id)?))),
@@ -1788,18 +1788,13 @@ impl Tools {
 
 /// The keys down on the sound of a tool of the project, followed from what its keys did.
 #[derive(Default)]
-pub struct Keys {
+struct Keys {
     tap: Option<EventTap<NoteEvent>>,
     next: u64,
     down: u128,
 }
 
 impl Keys {
-    /// The keys down now on the sound of `id`, a bit for each pitch.
-    pub fn follow(&mut self, project: &Project, id: &InstanceId) -> u128 {
-        self.follow_tap(project.tap::<NoteEvent>(id, SOUNDING_TAP))
-    }
-
     /// The keys down now on the sound whose keys `tap` hears.
     fn follow_tap(&mut self, tap: Option<EventTap<NoteEvent>>) -> u128 {
         let Some(tap) = tap else {

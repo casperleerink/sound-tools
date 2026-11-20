@@ -52,7 +52,7 @@ export {
   act, apply, find, Fragment, h, live, memo, press, render
 } from "./sdk/view";
 export type {
-  Actions, BoxProps, Card, Child, ChildProps, Color, ColorToken, Drag, Drawn, Dropped, Facts, Feeds,
+  Actions, BoxProps, Card, Child, ChildProps, Color, ColorToken, Drag, Drawn, Dropped, Facts, FeedList,
   FieldInfo, FieldProps, IconProps, Lines, Node, Offer, Op, Plane, Pointer, Radius, Rects, Role,
   Self, Shadow, ShapesProps, Space, TextProps, TextStyle, Tree
 } from "./sdk/view";
