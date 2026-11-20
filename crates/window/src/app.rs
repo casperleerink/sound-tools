@@ -25,6 +25,7 @@ use crate::tree;
 mod actions;
 mod chrome;
 mod dialog;
+mod drops;
 mod export;
 mod frame;
 mod headless;
@@ -161,6 +162,7 @@ pub(crate) struct State {
     pub(crate) transport: transport::Transport,
     /// The drag that plays numbers into the session's gesture now.
     pub(crate) plays: plays::Playing,
+    pub(crate) drops: drops::Drops,
     pub(crate) shell: crate::shell::Projects,
     pub(crate) incoming: input::Incoming,
     pub(crate) export: export::Export,
@@ -323,6 +325,7 @@ impl State {
                     playing,
                 ),
             },
+            drops: drops::Drops::default(),
             shell: crate::shell::Projects::new(
                 crate::shell::Projects::machine(),
                 headless,

@@ -133,6 +133,7 @@ impl Found {
         let pressed = b.press.then(|| "press".to_string());
         let drag = b.drag.is_some().then(|| "drag".to_string());
         let enter = b.enter.then(|| "enter".to_string());
+        let drop = b.drop.then(|| "drop".to_string());
         let opens = b.overlay_of(Opens::Press).is_some();
         let open = opens.then(|| "open".to_string());
         let menu = b.opens_menu().then(|| "menu".to_string());
@@ -142,6 +143,7 @@ impl Found {
             .chain(b.actions.iter().cloned())
             .chain(drag)
             .chain(enter)
+            .chain(drop)
             .collect();
         let value = |num: &sound_typescript::live::Num| state.lives.value(state, id, num);
         let place = (b.place.as_ref()).map(|place| place.numbers().iter().map(value).collect());

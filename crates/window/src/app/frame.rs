@@ -90,6 +90,7 @@ impl State {
             true
         });
         self.imported();
+        self.dropped();
         changed |= self.serve_wants();
         if changed {
             self.trees_came();
@@ -161,6 +162,7 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
     }
     state.imported();
     changed |= state.menu_failures() | state.devices_listed();
+    state.dropped();
     changed |= state.serve_wants();
     super::plays::settle(state);
     // What the views name changes only with what they show, and a lane bound or let go as a

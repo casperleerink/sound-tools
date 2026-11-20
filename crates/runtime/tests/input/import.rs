@@ -59,7 +59,7 @@ fn a_sound_is_copied_into_the_assets_and_one_that_does_not_play_is_not() {
 }
 
 #[test]
-fn a_midi_file_becomes_a_timeline_for_each_part() {
+fn a_midi_file_becomes_its_parts() {
     let project = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
     let assets = Assets::new(project.path());
@@ -76,5 +76,6 @@ fn a_midi_file_becomes_a_timeline_for_each_part() {
     let [part] = parts.as_slice() else {
         panic!("{parts:?}");
     };
-    assert_eq!(part["notes"][0]["pitch"], 60, "{part}");
+    assert_eq!(part.name, "Tune");
+    assert_eq!(part.notes, clip.notes);
 }
