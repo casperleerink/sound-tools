@@ -291,7 +291,19 @@ fn going_elsewhere_waits_for_a_drag_and_a_take_and_says_why() {
     window.state.session.finish(drag);
     let here = current(&window);
 
-    window.state.session.set_recording(true);
+    // A take of the computer keys, by the transport's Record.
+    window.key(super::host::event("cmd-k"));
+    redraw(&mut window);
+    act(
+        &mut window.state,
+        json!({ "label": "Record", "action": "press" }),
+    );
+    let start = std::time::Instant::now();
+    while !window.state.session.recording() {
+        assert!(start.elapsed().as_secs() < 30, "the take did not start");
+        redraw(&mut window);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
     let (second_card, into) = (
         card(line(&window, second).start),
         line(&window, first).title(),
