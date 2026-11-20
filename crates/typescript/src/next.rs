@@ -6,6 +6,7 @@
 //!
 //! Any change in `extensions/`, a crash or a hang of Bun starts a new Bun.
 
+use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -121,12 +122,16 @@ pub enum Looped {
     Nothing,
 }
 
+/// A tree of a view as the window keeps it: what [`Tools::read_trees`] made of the JSON Bun
+/// sent, which is dropped then.
+pub type Tree = Rc<dyn Any>;
+
 /// What the window shows of an instance: the tree of its view, or why there is none.
 pub enum Drawn {
     View {
-        root: Rc<Value>,
+        root: Tree,
         /// The parts a `memo` built, by key, with the number of the Bun and of the build.
-        memos: HashMap<String, ((u64, u64), Rc<Value>)>,
+        memos: HashMap<String, ((u64, u64), Tree)>,
     },
     /// Its tool has no view of `sdk/view.ts`, or is no tool of the project.
     None,
@@ -244,6 +249,9 @@ pub struct Tools {
     loads: u64,
     /// How many trees came, for a test that a frame runs no view.
     view_runs: u64,
+    /// How many times what a view draws came, a tree or not.
+    trees_heard: u64,
+    read: fn(Value) -> Tree,
     /// What code asked of the window since it last looked.
     wants: Vec<Want>,
     /// The tempo map and the sections as Bun was told them.
@@ -312,6 +320,8 @@ impl Tools {
             performed_on: BTreeSet::new(),
             loads: 0,
             view_runs: 0,
+            trees_heard: 0,
+            read: |value| Rc::new(value),
             wants: Vec::new(),
             told_song: None,
             catalog: Vec::new(),
@@ -373,6 +383,16 @@ impl Tools {
 
     pub fn view_runs(&self) -> u64 {
         self.view_runs
+    }
+
+    /// How many times what a view draws came: a tree, or why there is none.
+    pub fn trees_heard(&self) -> u64 {
+        self.trees_heard
+    }
+
+    /// Keeps each tree that comes as `read` makes it of its JSON: as the JSON without it.
+    pub fn read_trees(&mut self, read: fn(Value) -> Tree) {
+        self.read = read;
     }
 
     /// What is wrong with `extensions/`.
@@ -950,6 +970,7 @@ impl Tools {
                 if !self.shown.contains(&instance) {
                     return false;
                 }
+                self.trees_heard += 1;
                 // Bun draws a card for an instance it got one for, with the generic card.
                 let card = self.cards.contains(&instance);
                 let before = self.drawn.remove(&instance);
@@ -980,7 +1001,7 @@ impl Tools {
                     (Some(tree), None) => {
                         self.view_runs += 1;
                         let bun = self.bun.as_ref().map_or(0, |bun| bun.number());
-                        drawn(tree, before, bun)
+                        drawn(tree, before, bun, self.read)
                     }
                     (None, None) => Drawn::None,
                 };
@@ -1833,7 +1854,7 @@ pub(crate) fn sounding(context: &FeedContext<'_>) -> Vec<f32> {
 /// A tree as Bun `bun` sends it, with the memos the window kept from `before` that it still
 /// uses. A memo's version holds the number of its Bun, whose builds count from one again: an
 /// older Bun's memos are not this one's, which sends every memo it uses.
-fn drawn(mut tree: Value, before: Option<Drawn>, bun: u64) -> Drawn {
+fn drawn(mut tree: Value, before: Option<Drawn>, bun: u64, read: fn(Value) -> Tree) -> Drawn {
     let mut memos = match before {
         Some(Drawn::View { memos, .. }) => memos,
         _ => HashMap::new(),
@@ -1847,10 +1868,10 @@ fn drawn(mut tree: Value, before: Option<Drawn>, bun: u64) -> Drawn {
     if let Some(Value::Object(fresh)) = tree.get_mut("memos").map(Value::take) {
         for (key, mut memo) in fresh {
             let version = memo.get("v").and_then(Value::as_u64).unwrap_or_default();
-            memos.insert(key, ((bun, version), Rc::new(memo["node"].take())));
+            memos.insert(key, ((bun, version), read(memo["node"].take())));
         }
     }
-    let root = Rc::new(tree.get_mut("root").map(Value::take).unwrap_or_default());
+    let root = read(tree.get_mut("root").map(Value::take).unwrap_or_default());
     Drawn::View { root, memos }
 }
 

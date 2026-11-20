@@ -110,7 +110,7 @@ pub(crate) struct State {
     /// The JSON Schema of each built-in tool's record, by tool name.
     schemas: HashMap<&'static str, Value>,
     pub(crate) lives: Lives,
-    pub(crate) trees: tree::Trees,
+    pub(crate) walked: tree::Walked,
     pub(crate) planes: tree::Planes,
     pub(crate) feeds: Feeds,
     pub(crate) playing: bool,
@@ -247,6 +247,7 @@ impl State {
         let tools = extensions.map(|extensions| {
             let mut tools = Tools::start(extensions, &project, !headless, wake.clone());
             tools.open_windows_with(plugin_windows::opener(plugins.clone()));
+            tools.read_trees(tree::read);
             tools
         });
         let events = Rc::new(Events::waking(waker.clone()));
@@ -287,7 +288,7 @@ impl State {
             theme,
             schemas,
             lives: Lives::new(),
-            trees: tree::Trees::default(),
+            walked: tree::Walked::default(),
             planes: tree::Planes::default(),
             feeds: Feeds::new(),
             playing: false,

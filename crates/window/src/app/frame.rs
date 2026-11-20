@@ -29,9 +29,9 @@ impl State {
     /// what the trees bind now stays bound.
     fn discover(&mut self, settle: bool) -> bool {
         let changed = self.show_named(settle);
-        self.trees.keep(self);
         // What follows reads only the trees, which a frame mostly leaves as they were.
-        if !self.trees.unwalked(&self.shown) {
+        let heard = self.tools.as_ref().map_or(0, Tools::trees_heard);
+        if !self.walked.unwalked(heard, &self.shown) {
             return changed;
         }
         self.lives.keep(&tree::bound(self));

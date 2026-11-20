@@ -14,7 +14,7 @@ use sound_typescript::RecorderState;
 use sound_typescript::next::Drawn;
 
 use crate::app::State;
-use crate::tree::Listed;
+use crate::tree::{Kept, Listed};
 
 /// A list feed in the `points` or `rects` of a `shapes`: `live.feed(name, path)`.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
@@ -34,8 +34,6 @@ pub(crate) struct Feeds {
     lists: RefCell<BTreeMap<(InstanceId, String), usize>>,
     /// How many drawings of lists drew anew this frame.
     drew: Cell<usize>,
-    /// Whether each op a view sent is a live value the window knows.
-    known: RefCell<HashMap<String, bool>>,
     /// What was said of what the views read that is not there, last.
     unread: RefCell<Vec<Problem>>,
 }
@@ -52,7 +50,6 @@ impl Feeds {
             last: BTreeMap::new(),
             lists: RefCell::default(),
             drew: Cell::new(0),
-            known: RefCell::default(),
             unread: RefCell::default(),
         }
     }
@@ -66,14 +63,23 @@ impl Feeds {
             let Some(Drawn::View { root, memos }) = state.drawn(id) else {
                 continue;
             };
-            let mut said = Vec::new();
-            let walk = |value: &Value, key: &str, said: &mut Vec<String>| {
-                self.unread_in(state, id, value, key, said);
-            };
-            walk(root, "the view", &mut said);
-            for (key, (_, memo)) in memos {
-                walk(memo, key, &mut said);
-            }
+            let trees = std::iter::once(root).chain(memos.values().map(|(_, memo)| memo));
+            let unread = trees.filter_map(Kept::of).flat_map(|read| &read.unread);
+            let mut said: Vec<String> = unread
+                .filter_map(|unread| match unread {
+                    Unread::Feed { key, name, path } => {
+                        // Nothing there yet gives nothing, as while a view runs again after a
+                        // device went.
+                        let there = inside(id, path.as_deref());
+                        let gives = there.and_then(|at| feeds::gives(state.project(), &at, name));
+                        (gives == Some(false)).then(|| {
+                            let of = path.as_ref().map_or(String::new(), |path| format!(" of {path}"));
+                            format!("{key} reads the feed \"{name}\"{of}, which is not there")
+                        })
+                    }
+                    Unread::Op { key, op } => Some(format!("{key} reads \"{op}\", which is no live value")),
+                })
+                .collect();
             if !said.is_empty() {
                 said.sort();
                 said.dedup();
@@ -88,64 +94,6 @@ impl Feeds {
             said.clone_from(&problems);
             problems
         })
-    }
-
-    /// What `value` of the view of `id`, in the element `key` or its own, reads that is not
-    /// there.
-    fn unread_in(
-        &self,
-        state: &State,
-        id: &InstanceId,
-        value: &Value,
-        key: &str,
-        said: &mut Vec<String>,
-    ) {
-        match value {
-            Value::Object(map) => {
-                // An element's key, not that of a live value, such as a plane's.
-                let element = map.contains_key("t").then(|| map.get("key")).flatten();
-                let key = element.and_then(Value::as_str).unwrap_or(key);
-                match map.get("op").and_then(Value::as_str) {
-                    Some("feed") => {
-                        let name = map.get("name").and_then(Value::as_str).unwrap_or_default();
-                        let path = map.get("path").and_then(Value::as_str);
-                        let there = inside(id, path);
-                        let gives = there.and_then(|at| feeds::gives(state.project(), &at, name));
-                        // Nothing there yet gives nothing, as while a view runs again after a
-                        // device went.
-                        if gives == Some(false) {
-                            let of = path.map_or(String::new(), |path| format!(" of {path}"));
-                            said.push(format!(
-                                "{key} reads the feed \"{name}\"{of}, which is not there"
-                            ));
-                        }
-                    }
-                    Some(op) if !self.knows(op) => {
-                        said.push(format!("{key} reads \"{op}\", which is no live value"));
-                    }
-                    _ => {}
-                }
-                for inside in map.values() {
-                    self.unread_in(state, id, inside, key, said);
-                }
-            }
-            Value::Array(items) => {
-                for inside in items {
-                    self.unread_in(state, id, inside, key, said);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn knows(&self, op: &str) -> bool {
-        let mut known = self.known.borrow_mut();
-        if let Some(known) = known.get(op) {
-            return *known;
-        }
-        let knows = sound_typescript::live::is_known(op);
-        known.insert(op.to_string(), knows);
-        knows
     }
 
     /// Starts a frame `seconds` after the last.
@@ -400,5 +348,65 @@ fn inside(instance: &InstanceId, path: Option<&str>) -> Option<InstanceId> {
     match path {
         Some(path) => instance.child(path).ok(),
         None => Some(instance.clone()),
+    }
+}
+
+/// What a tree of a view reads that may not be there, by the key of the element that reads it.
+pub(crate) enum Unread {
+    /// A feed, which the device at `path` may not give.
+    Feed {
+        key: String,
+        name: String,
+        path: Option<String>,
+    },
+    /// A live value the window does not know.
+    Op { key: String, op: String },
+}
+
+/// What the tree `value` reads that may not be there.
+pub(crate) fn unread_in(value: &Value) -> Vec<Unread> {
+    let mut unread = Vec::new();
+    walk(value, "the view", &mut HashMap::new(), &mut unread);
+    unread
+}
+
+/// What `value`, in the element `key` or its own, reads that may not be there; `known` says of
+/// each op seen whether it is a live value.
+fn walk(value: &Value, key: &str, known: &mut HashMap<String, bool>, unread: &mut Vec<Unread>) {
+    match value {
+        Value::Object(map) => {
+            // An element's key, not that of a live value, such as a plane's.
+            let element = map.contains_key("t").then(|| map.get("key")).flatten();
+            let key = element.and_then(Value::as_str).unwrap_or(key);
+            match map.get("op").and_then(Value::as_str) {
+                Some("feed") => unread.push(Unread::Feed {
+                    key: key.to_string(),
+                    name: (map.get("name").and_then(Value::as_str))
+                        .unwrap_or_default()
+                        .to_string(),
+                    path: map.get("path").and_then(Value::as_str).map(str::to_string),
+                }),
+                Some(op) => {
+                    let knows = *(known.entry(op.to_string()))
+                        .or_insert_with(|| sound_typescript::live::is_known(op));
+                    if !knows {
+                        unread.push(Unread::Op {
+                            key: key.to_string(),
+                            op: op.to_string(),
+                        });
+                    }
+                }
+                None => {}
+            }
+            for inside in map.values() {
+                walk(inside, key, known, unread);
+            }
+        }
+        Value::Array(items) => {
+            for inside in items {
+                walk(inside, key, known, unread);
+            }
+        }
+        _ => {}
     }
 }

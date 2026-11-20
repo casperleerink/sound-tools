@@ -2,7 +2,6 @@
 
 use std::path::Path;
 
-use serde::Deserialize;
 
 use serde_json::json;
 
@@ -533,9 +532,9 @@ fn every_node_the_template_draws_is_one_the_window_reads() {
         let Some(Drawn::View { root, memos }) = state.drawn(id) else {
             continue;
         };
-        for node in std::iter::once(root).chain(memos.values().map(|(_, node)| node)) {
-            if let Err(error) = tree::Node::deserialize(&**node) {
-                panic!("{id}: {error}: {node}");
+        for tree in std::iter::once(root).chain(memos.values().map(|(_, tree)| tree)) {
+            if let Err(error) = tree::Kept::of(tree).unwrap().node() {
+                panic!("{id}: {error}");
             }
             read += 1;
         }
