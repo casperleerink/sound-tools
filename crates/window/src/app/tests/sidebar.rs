@@ -219,19 +219,6 @@ fn a_turn_that_changes_two_files_is_one_undo_step() {
 /// The composer is a text field: a key it does not take is no shortcut of the window, but the
 /// panel's own keys work from inside it.
 #[test]
-fn a_key_the_composer_does_not_take_is_no_shortcut() {
-    let (_scratch, mut window) = window("agent-empty");
-    chord(&mut window, 'l');
-    assert_eq!(focused(&window).as_deref(), Some("agent-composer"));
-    chord(&mut window, 'k');
-    assert!(!window.state.session.transport().keys);
-    chord(&mut window, 'b');
-    assert!(!window.state.panel.open);
-    chord(&mut window, 'k');
-    assert!(window.state.session.transport().keys);
-}
-
-#[test]
 fn a_closed_panel_shows_the_agent_at_work_on_its_icon() {
     let (_scratch, mut window) = window("agent-empty");
     let _commands = connect(&mut window);
@@ -637,7 +624,7 @@ fn open_settings_opens_the_settings_page_on_the_agents_and_its_cards_work() {
 }
 
 #[test]
-fn settings_opens_on_the_agents_whose_fields_take_the_keys_from_the_shortcuts() {
+fn settings_opens_on_the_agents_whose_fields_type_and_pass_on_cmd_k() {
     let (_scratch, mut window) = window("agent-empty");
     chord(&mut window, ',');
     let page = window.state.settings.page.as_ref().expect("the page");
@@ -646,9 +633,20 @@ fn settings_opens_on_the_agents_whose_fields_take_the_keys_from_the_shortcuts() 
     typed(&mut window, " ");
     chord(&mut window, 'k');
     assert!(!window.state.playing, "Space typed, not played");
-    assert!(
-        !window.state.session.transport().keys,
-        "cmd-K is no shortcut there"
-    );
+    assert!(window.state.session.transport().keys, "cmd-K never types");
+    assert!(window.state.settings.page.is_some());
+}
+
+#[test]
+fn the_composer_passes_on_the_apps_keys_that_never_type() {
+    let (_scratch, mut window) = window("agent-empty");
+    chord(&mut window, 'l');
+    typed(&mut window, "hi ");
+    assert!(!window.state.playing);
+    chord(&mut window, 'k');
+    assert!(window.state.session.transport().keys);
+    typed(&mut window, "a");
+    assert_eq!(composer(&window), "hi a");
+    chord(&mut window, ',');
     assert!(window.state.settings.page.is_some());
 }

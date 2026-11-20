@@ -522,3 +522,31 @@ fn audio_picture() {
         .run();
     assert!(png.exists());
 }
+
+#[test]
+fn the_search_passes_on_the_apps_keys_that_never_type_and_escape_leaves_it_then_the_page() {
+    let scratch = new_project();
+    let mut window = window_of(without_agent(kept(&scratch)));
+    chord(&mut window, ',', false);
+    click(&mut window, "settings-shortcuts");
+    redraw(&mut window);
+    click(&mut window, "shortcuts-search");
+    window.key(KeyEvent {
+        key: Key::Text("k".into()),
+        mods: Mods::default(),
+    });
+    chord(&mut window, 'k', false);
+    assert!(window.state.session.transport().keys);
+    assert_eq!(window.state.settings.search.text, "k");
+    chord(&mut window, 'z', false);
+    assert_eq!(window.state.settings.search.text, "");
+    for _ in 0..2 {
+        window.key(KeyEvent {
+            key: Key::Escape,
+            mods: Mods::default(),
+        });
+        redraw(&mut window);
+        assert!(!window.state.typing_now());
+    }
+    assert!(window.state.settings.page.is_none());
+}

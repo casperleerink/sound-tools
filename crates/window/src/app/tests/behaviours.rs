@@ -368,3 +368,27 @@ fn rings(window: &rune::Runtime<State>) -> usize {
     let elements = window.elements().into_iter();
     elements.filter(|element| element.focus_visible).count()
 }
+
+#[test]
+fn a_field_in_a_plane_passes_on_the_apps_keys_that_never_type_and_keeps_its_own() {
+    let (_scratch, folder) = with_tools(&[("placed", PLACED_RENAME)]);
+    let mut window = laid_out(opened(&folder));
+    click(&mut window, "t00/chain/placed:clip");
+    redraw(&mut window);
+    type_in(&mut window, "K");
+    let main = |c: char| rune::KeyEvent {
+        key: rune::Key::Command(c),
+        mods: MAIN_MODIFIER,
+    };
+    window.key(main('k'));
+    redraw(&mut window);
+    assert!(window.state.session.transport().keys);
+    assert_eq!(focused(&window).as_deref(), Some("t00/chain/placed:rename"));
+    window.key(main('a'));
+    window.key(main('n'));
+    redraw(&mut window);
+    assert!(matches!(
+        window.state.shell.dialog,
+        Some(crate::shell::Dialog::New(_))
+    ));
+}

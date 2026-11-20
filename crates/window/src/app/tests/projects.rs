@@ -144,3 +144,27 @@ fn cmd_n_opens_the_new_project_and_escape_closes_it() {
     key(&mut window, rune::Key::Escape);
     assert!(window.state.shell.dialog.is_none());
 }
+
+#[test]
+fn a_field_of_a_dialog_keeps_the_apps_keys_but_quit() {
+    let scratch = new_project();
+    let mut window = laid_out(kept(&scratch));
+    let main = |c: char| rune::KeyEvent {
+        key: rune::Key::Command(c),
+        mods: MAIN_MODIFIER,
+    };
+    window.key(main('n'));
+    redraw(&mut window);
+    click(&mut window, "project-name");
+    key(&mut window, rune::Key::Text("x".into()));
+    window.key(main(','));
+    window.key(main('k'));
+    redraw(&mut window);
+    assert!(window.state.settings.page.is_none());
+    assert!(!window.state.session.transport().keys);
+    assert!(matches!(window.state.shell.dialog, Some(Dialog::New(_))));
+    assert!(window.shell_request.is_none());
+    window.key(main('q'));
+    redraw(&mut window);
+    assert!(matches!(window.shell_request, Some(rune::Shell::Quit)));
+}
