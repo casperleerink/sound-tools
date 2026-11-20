@@ -155,6 +155,17 @@ test("an audio track shows its region chosen alone, else asks for one", () => {
   expect(find("slot-region")).toBeUndefined();
 });
 
+test("an audio clip's Start reaches the end of its file, not past it", () => {
+  const whole = regionOf("r1", 0, 3);
+  rack(song([tapeOf("audio-1", [chainOf([]), { ...whole, state: { ...whole.state, file_end_seconds: null } }])]), "audio-1", (memory) => {
+    memory.selected = ["audio-1/r1"];
+    memory.regionMore = true;
+  });
+  const changed = act("Start of r1.wav", "set", 20) as [unknown[], number][];
+  const start = changed.find(([path]) => path.at(-1) === "file_start_seconds")?.[1] ?? 0;
+  expect(Math.round(start * 100) / 100).toBe(2.95);
+});
+
 test("the panel's strip names its pan and says the volume and pan at rest, with the input of an audio track over mute and solo", () => {
   rack(rich());
   const strip = JSON.stringify(find("strip-t00"));

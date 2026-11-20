@@ -1,7 +1,7 @@
 import { h, live, type Color } from "../../../sdk";
 import { lengthAt } from "../../../song/clips";
 import { colourOf, itemAt, rowOfKey } from "../../../song/model";
-import { GAIN } from "../../../song/regions";
+import { fileEndOf, GAIN } from "../../../song/regions";
 import type { Page } from "../../../song/view";
 import { Cell } from "../../cell";
 import { Display, drawingOf } from "../../display";
@@ -44,7 +44,7 @@ export const RegionCard = ({ page, region }: RegionCardProps) => {
           knob("fade_out_ms", "Fade out", { min: 0, max: Math.max(fade - fade_in_ms, 1), unit: "ms", default: 0 }, fade_out_ms, (ms) => edits.regions.setFade(region, "out", ms, seconds)),
         ]}
         more={[
-          knob("file_start_seconds", "Start", { min: 0, max: Math.max(to ?? from + 60, 0.05), unit: "seconds", default: 0 }, from, (at) => edits.regions.setStart(region, at)),
+          knob("file_start_seconds", "Start", { min: 0, max: Math.max(fileEndOf(item) ?? from + 60, 0.05), unit: "seconds", default: 0 }, from, (at) => edits.regions.setStart(region, at)),
           <Cell text="End" value={to === null ? "End of file" : shown(to, "seconds")} />,
         ]}
         expanded={song.memory.regionMore} onExpand={() => (song.memory.regionMore = !song.memory.regionMore)} />

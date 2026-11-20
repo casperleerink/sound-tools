@@ -11,6 +11,9 @@ const clamp = (value: number, low: number, high: number) => Math.min(Math.max(va
 /** A gain a tenth of a dB apart, in its range; one under it counts from its bottom. */
 const gainOf = (db: number) => clamp(Math.round(db * 10) / 10, GAIN[0], GAIN[1]);
 
+/** Where in its file a region ends, in seconds: its end, else the end of its file; none while its file is not known. */
+export const fileEndOf = ({ state, facts }: Extract<NonNullable<ReturnType<typeof itemAt>>, { tool: "region" }>) => state.file_end_seconds ?? facts.file.seconds ?? null;
+
 /** What a view does to the regions: `seconds` is how long the region plays, as its facts say. */
 export const regionEdits = (song: Song) => {
   const changes = () => song.clock.tempo_map.tempo_changes;
@@ -86,12 +89,12 @@ export const regionEdits = (song: Song) => {
         else region.fade_out_ms = fade;
       });
     },
-    /** A knob of its card: where in its file it starts, in seconds. What it plays stays where it was in time: it starts that much later or earlier. */
+    /** A knob of its card: where in its file it starts, in seconds, short of its end. What it plays stays where it was in time: it starts that much later or earlier. */
     setStart(key: string, at: number) {
       const region = itemAt(song.children, key);
       if (region?.tool !== "region") return;
-      const { start, file_start_seconds, file_end_seconds } = region.state;
-      const to = clamp(at, 0, file_end_seconds === null ? Infinity : file_end_seconds - 0.05);
+      const { start, file_start_seconds } = region.state;
+      const to = clamp(at, 0, (fileEndOf(region) ?? Infinity) - 0.05);
       const later = to - file_start_seconds;
       edits.trimStart(key, { dx: later >= 0 ? ticksAcross(changes(), start, later) : -ticksBefore(start, -later) });
     },
