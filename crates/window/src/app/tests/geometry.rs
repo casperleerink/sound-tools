@@ -770,3 +770,48 @@ fn a_line_through_a_point_that_drags_is_drawn_again_as_it_moves_and_bun_runs_no_
     assert!((3..=5).contains(&again), "{again}");
     assert_eq!(view_runs(&window), runs);
 }
+
+/// A handle that only drags, in a plane far wider than the window.
+const HANDLE: &str = r#"import { h, input, text, tool } from "./sdk";
+export const handle = tool({
+  name: "handle", title: "Handle", when: "Never", doc: "A handle.", sound: () => input,
+  state: { heard: text({ default: "" }) },
+  view: (_, { update }) => (
+    <box key="song" label="Song" w={400} h={60} plane={{ x: 0.1 }}>
+      <box key="grip" label="Grip" place={[0, 0, 200, 30]} fill="fill" drag={{ x: true }}
+        onDragEnd={({ dx }) => update("Drag", (draft) => void (draft.state.heard = `${dx}`))} />
+      <box key="far" label="Far" place={[96000, 0, 960, 30]} />
+    </box>
+  ),
+});
+"#;
+
+/// A held element that scrolls out of what its plane builds stays built, so its release ends
+/// the drag.
+#[test]
+fn a_drag_held_while_its_plane_scrolls_far_away_still_ends() {
+    let (_scratch, folder) = with_tools(&[("handle", HANDLE)]);
+    let mut window = laid_out(opened(&folder));
+    redraw(&mut window);
+    let grip = "t00/chain/handle:grip";
+    let (x, y) = window.find(grip).unwrap();
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    let at = travel(&mut window, (x, y), (4.0, 0.0), 5);
+    let shift = rune::Mods {
+        shift: true,
+        ..rune::Mods::default()
+    };
+    for _ in 0..40 {
+        wheel(&mut window, [at.0, at.1], [0.0, -500.0], shift);
+    }
+    redraw(&mut window);
+    window.pointer_up(at.0, at.1);
+    redraw(&mut window);
+    window.state.settle();
+    let id = InstanceId::new("song/t00/chain/handle").unwrap();
+    let record: Value =
+        serde_json::from_str(&window.state.project().state_json(&id).unwrap()).unwrap();
+    assert_ne!(record["heard"], Value::Null);
+    assert!(window.state.gesture.is_none());
+}

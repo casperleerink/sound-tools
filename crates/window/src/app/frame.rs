@@ -23,6 +23,8 @@ const IDLE: Duration = Duration::from_millis(250);
 /// How often facts are read for a change no edit brings, such as a file that arrived: reading
 /// those of 900 instances took 1.5 ms.
 const FACTS: f64 = 0.25;
+/// How long quitting waits for the takes to end and their code to keep them.
+const FINISHING: Duration = Duration::from_secs(5);
 
 impl State {
     /// Shows what the views name, and waits for their trees in a run without a window. Only
@@ -136,7 +138,7 @@ pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
     // What a plugin's window does not use: the shortcuts, then the computer keys.
     for spare in state.plugin_windows.take_spare_keys() {
         match &spare {
-            Spare::Down(key) => super::keys::on_key(state, key, tx),
+            Spare::Down { key, repeat } => super::keys::key_down(state, key, *repeat, tx),
             Spare::Up(key) => super::keys::on_key_up(state, key, tx),
             Spare::LetGo => {
                 state.let_go_of_keys();
@@ -283,13 +285,33 @@ pub(super) fn run_loops(state: &mut State, seconds: f64) -> bool {
 
 /// The main window closes: the app ends with it, not with the last plugin window open.
 pub(crate) fn closing(state: &mut State, tx: &mut Tx) {
+    finish_takes(state);
     state.plugin_windows.close_all(&state.plugins);
     tx.quit();
 }
 
-/// Before any window goes, so every plugin lets go of its view and saves its state, and the
-/// agent's writes end.
+/// Before any window goes, so what was recorded is in the song, every plugin lets go of its
+/// view and saves its state, and the agent's writes end.
 pub(crate) fn quitting(state: &mut State, tx: &mut Tx) {
+    finish_takes(state);
     state.plugin_windows.close_all(&state.plugins);
     crate::sidebar::before_quit(state, tx);
+}
+
+/// The piece stops, which ends the takes, and their code keeps them: frames until it did, or
+/// until [`FINISHING`] passed.
+fn finish_takes(state: &mut State) {
+    if !state.session.recording() {
+        return;
+    }
+    state.session.background(|project| project.engine().stop());
+    let (start, began) = (std::time::Instant::now(), state.last);
+    while start.elapsed() < FINISHING {
+        frame(state, began + start.elapsed().as_secs_f64());
+        let keeping = state.tools.as_ref().is_some_and(Tools::keeping_takes);
+        if !state.session.recording() && !keeping {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
 }

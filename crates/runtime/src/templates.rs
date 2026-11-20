@@ -292,11 +292,8 @@ fn read(path: &Path) -> Result<Option<String>> {
 /// Writes `contents` at `path`, making its folder, or removes the file when there are none.
 fn put(path: &Path, contents: Option<&str>) -> Result<()> {
     match contents {
-        Some(contents) => {
-            make_room(path)?;
-            std::fs::write(path, contents)
-                .with_context(|| format!("could not write {}", path.display()))
-        }
+        Some(contents) => sound_core::write_atomically(path, contents.as_bytes())
+            .with_context(|| format!("could not write {}", path.display())),
         None => match std::fs::remove_file(path) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
                 Err(error).with_context(|| format!("could not remove {}", path.display()))
@@ -509,6 +506,18 @@ mod tests {
         assert_eq!(song(folder.path()).as_deref(), Some("ours"));
         // Asked once: the agent's merge is what the project has from here.
         assert!(update(folder.path()).unwrap().is_none());
+    }
+
+    /// An update writes a new file in place of the old one, never into it: a crash leaves the
+    /// old file or the new one whole. A hard link to the old one keeps it.
+    #[test]
+    fn an_update_never_writes_into_the_old_file() {
+        let folder = made_earlier(Some("old"), Some("old"));
+        let link = folder.path().join("old-song");
+        std::fs::hard_link(folder.path().join(SONG), &link).unwrap();
+        assert!(update(folder.path()).unwrap().is_none());
+        assert_eq!(song(folder.path()).as_deref(), Some(template_song()));
+        assert_eq!(read(&link).unwrap().as_deref(), Some("old"));
     }
 
     #[test]

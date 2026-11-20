@@ -1166,19 +1166,17 @@ fn gather(scope: &Scope, node: &Node, into: &mut Gathered) {
     let plane = scope.plane.clone().unwrap_or_default();
     let key = key.map(|key| scope.key(key));
     let planes = &scope.state.planes;
+    // The element that has the keys stays built, and the one the pointer holds, which hears
+    // its release only while it is built.
     let focused = planes.focused.borrow().clone();
-    let holds_focus = |key: &str| {
-        focused.as_deref() == Some(key)
-            || (focused.as_ref()).is_some_and(|focused| {
-                planes
-                    .found
-                    .borrow()
-                    .get(focused)
-                    .is_some_and(|found| found.top == key)
-            })
+    let held = scope.state.gesture.as_ref().map(|gesture| &gesture.key);
+    let kept = |key: &str| {
+        [focused.as_ref(), held].into_iter().flatten().any(|kept| {
+            kept == key || (planes.found.borrow().get(kept)).is_some_and(|found| found.top == key)
+        })
     };
     let shown = (0..2).all(|i| rect[i] + rect[i + 2] >= shows[i][0] && rect[i] <= shows[i][1]);
-    if !shown && !key.as_deref().is_some_and(holds_focus) {
+    if !shown && !key.as_deref().is_some_and(kept) {
         return;
     }
     let Some(key) = key else {

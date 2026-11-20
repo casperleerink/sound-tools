@@ -532,6 +532,10 @@ pub(crate) struct LoadFailure {
 struct Busy {
     /// How many things it was told and has not done.
     pending: usize,
+    /// How many things it was told, and how many it said it did, in that order: a thing that
+    /// never will be, as it hung or stopped, is not counted.
+    sent: u64,
+    said_done: u64,
     /// When it last took a step: started the code of a tool, finished what it was told, or was
     /// told something when it had nothing to do.
     since: Instant,
@@ -568,9 +572,6 @@ struct Told {
     /// How many edits of Bun the runtime heard, and how many of them Bun was told of.
     edits: u64,
     edits_told: u64,
-    /// The records a behaviour told it since the window last looked: one of a group that did
-    /// not apply is not what the project holds.
-    unconfirmed: BTreeSet<InstanceId>,
     /// How many records it was told, for a test that a frame tells none again.
     count: u64,
 }
@@ -645,6 +646,8 @@ impl Bun {
         let (printing, printed) = mpsc::channel::<()>();
         let busy = Arc::new(Mutex::new(Busy {
             pending: 0,
+            sent: 0,
+            said_done: 0,
             since: Instant::now(),
             runs: None,
         }));
@@ -723,6 +726,20 @@ impl Bun {
         self.is_done() && self.events.is_empty()
     }
 
+    /// How many things it was told: the number of the last.
+    pub(crate) fn sent(&self) -> u64 {
+        self.busy
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .sent
+    }
+
+    /// How many things it said it did: those numbered up to this ran, and what they said waits
+    /// in [`Bun::events`].
+    pub(crate) fn said_done(&self) -> u64 {
+        (self.busy.lock().unwrap_or_else(PoisonError::into_inner)).said_done
+    }
+
     /// Whether it did all it was told: what it said for it waits in [`Bun::events`].
     pub(crate) fn is_done(&self) -> bool {
         self.busy
@@ -768,6 +785,7 @@ impl Bun {
                 busy.since = Instant::now();
             }
             busy.pending += 1;
+            busy.sent += 1;
         }
         let sent = self.lines.try_send(line).is_ok();
         if !sent {
@@ -781,7 +799,7 @@ impl Bun {
     pub(crate) fn tell<'a>(&self, records: impl IntoIterator<Item = Telling<'a>>) -> bool {
         let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
         let edits = told.edits;
-        self.tell_in(&mut told, records, edits).is_some()
+        self.tell_in(&mut told, records, edits)
     }
 
     pub(crate) fn records_told(&self) -> u64 {
@@ -812,20 +830,16 @@ impl Bun {
             .collect();
         records.extend(held.iter().map(|child| (child, None)));
         let edits = told.edits_told;
-        let Some(sent) = self.tell_in(&mut told, records, edits) else {
-            return false;
-        };
-        told.unconfirmed.extend(sent);
-        true
+        self.tell_in(&mut told, records, edits)
     }
 
-    /// The ids it told, or `None` when it did not go: what did not go is told again next time.
+    /// Whether it went: what did not go is told again next time.
     fn tell_in<'a>(
         &self,
         told: &mut Told,
         records: impl IntoIterator<Item = Telling<'a>>,
         edits: u64,
-    ) -> Option<Vec<InstanceId>> {
+    ) -> bool {
         let mut new = Vec::new();
         let mut keys = Vec::new();
         let mut gone = Vec::new();
@@ -848,7 +862,7 @@ impl Bun {
             }
         }
         if new.is_empty() && gone.is_empty() && edits == told.edits_told {
-            return Some(Vec::new());
+            return true;
         }
         let request = Request::Records {
             records: new,
@@ -856,33 +870,21 @@ impl Bun {
             edits,
         };
         if !self.send(&request) {
-            return None;
+            return false;
         }
         told.edits_told = edits;
         told.count += keys.len() as u64;
         for id in &gone {
             told.records.remove(*id);
         }
-        let mut sent: Vec<InstanceId> = gone.into_iter().cloned().collect();
-        sent.extend(keys.iter().map(|(id, _)| id.clone()));
         told.records.extend(keys);
-        Some(sent)
+        true
     }
 
     /// The runtime heard an edit Bun sent, applied or not.
     pub(crate) fn heard_edit(&self) {
         let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
         told.edits += 1;
-    }
-
-    /// The records a behaviour told Bun since the last call, to tell it again as they are.
-    #[allow(
-        dead_code,
-        reason = "the window uses it once it does all the old app did"
-    )]
-    pub(crate) fn take_unconfirmed(&self) -> BTreeSet<InstanceId> {
-        let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
-        std::mem::take(&mut told.unconfirmed)
     }
 }
 
@@ -985,6 +987,7 @@ fn hear(
             Ok(Line::Done) => {
                 let mut busy = lock();
                 busy.since = Instant::now();
+                busy.said_done += 1;
                 done(&mut busy);
                 busy.runs = None;
             }
@@ -1046,6 +1049,16 @@ impl Bun {
         (self.printed.lock().unwrap_or_else(PoisonError::into_inner))
             .recv_timeout(Duration::from_secs(1))
             .ok();
+    }
+
+    /// Stops the process at once, without waiting for it: what it said before comes in
+    /// [`Bun::events`], up to [`Event::Ended`].
+    pub(crate) fn kill(&self) {
+        let mut child = self.child.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(child) = child.as_mut() {
+            // Already ended: nothing to stop.
+            child.kill().ok();
+        }
     }
 }
 

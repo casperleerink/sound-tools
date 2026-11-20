@@ -1237,6 +1237,30 @@ fn a_drag_across_cells_paints_each_it_enters_once_as_one_step() {
     assert_eq!(alive(&window.state), Value::Null);
 }
 
+#[test]
+fn escape_during_a_paint_leaves_nothing_painted() {
+    let (_scratch, folder) = with_tools(&[("cells", CELLS)]);
+    let mut window = laid_out(opened(&folder));
+    let before = window.state.project().undo_label();
+    let (x, y) = window.find("t00/chain/cells:cell-0").unwrap();
+    let (to, _) = window.find("t00/chain/cells:cell-3").unwrap();
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    for step in 1..=10 {
+        window.pointer_move(x + (to - x) * step as f32 / 10.0, y);
+        window.frame(1.0 / 60.0);
+    }
+    key(&mut window, rune::Key::Escape);
+    window.pointer_up(to, y);
+    redraw(&mut window);
+    window.state.settle();
+    let id = InstanceId::new("song/t00/chain/cells").unwrap();
+    let record: Value =
+        serde_json::from_str(&window.state.project().state_json(&id).unwrap()).unwrap();
+    assert_eq!(record["alive"], Value::Null);
+    assert_eq!(window.state.project().undo_label(), before);
+}
+
 /// Track 1's instrument: how many of its keys from C2 sound, and a key a press plays.
 const PIANO: &str = r#"import { h, live, Live, note, sine, tool } from "./sdk";
 export const piano = tool({
@@ -1384,6 +1408,25 @@ fn a_drag_on_a_step_sets_how_hard_it_plays_and_never_also_presses_it() {
     assert_eq!(held["velocity"], 0.7);
     click(&mut window, "t00/chain/kit:step");
     assert_eq!(kit_record(&window.state)["on"], true);
+}
+
+/// Escape or the window losing the keys while the mouse is held on an element lets go of it
+/// without pressing it.
+#[test]
+fn a_press_cancelled_while_held_does_nothing() {
+    let (_scratch, mut window) = kit();
+    let (x, y) = window.find("t00/chain/kit:step").unwrap();
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    key(&mut window, rune::Key::Escape);
+    window.pointer_up(x, y);
+    redraw(&mut window);
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    window.window_focus(false);
+    window.pointer_up(x, y);
+    redraw(&mut window);
+    assert_eq!(kit_record(&window.state)["on"], Value::Null);
 }
 
 #[test]

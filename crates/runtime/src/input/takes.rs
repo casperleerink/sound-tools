@@ -513,10 +513,20 @@ impl Input {
             let clock = audio.placement.clock().clone();
             let start = audio.placement.start;
             records.extend(audio.notes.map(|notes| (audio.recorder.clone(), notes)));
-            let sound = takes.into_iter().filter_map(|(id, imported)| {
+            for (id, imported) in takes {
                 let file = imported.audio.info();
-                let (start, file_start, file_end) =
-                    take_place(&file, head?, (start, audio.end?), &clock)?;
+                let placed = (head.zip(audio.end))
+                    .and_then(|(head, end)| take_place(&file, head, (start, end), &clock));
+                // It ended before it was tied to the timeline, or holds nothing of the take.
+                let Some((start, file_start, file_end)) = placed else {
+                    let path = project.assets().path(imported.asset.asset_name());
+                    if let Err(error) = std::fs::remove_file(&path) {
+                        eprintln!("error: {}: {error}", path.display());
+                    }
+                    let notice = "A take of sound was too short to keep.".to_string();
+                    self.happened.push(Happened::Notice(notice));
+                    continue;
+                };
                 let mut state = json!({
                     "asset": imported.asset.to_string(),
                     "start": start.0,
@@ -526,9 +536,8 @@ impl Input {
                     fields.insert("file_end_seconds".to_string(), json!(end));
                 }
                 let name = imported.asset.asset_name().name().to_string();
-                Some((id, Finished::Sound(name, state)))
-            });
-            records.extend(sound);
+                records.push((id, Finished::Sound(name, state)));
+            }
         }
         self.write(project, records);
         self.show_audio();

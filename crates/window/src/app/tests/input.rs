@@ -463,3 +463,65 @@ fn a_take_of_sound_on_a_track_of_notes_is_a_problem() {
             .any(|problem| problem.message.contains("record sound on an audio track"))
     });
 }
+
+/// Quits as the app does, before any window goes.
+fn quit(window: &mut rune::Runtime<State>) {
+    window.update(|state: &mut State, tx: &mut rune::Tx| {
+        crate::app::frame::quitting(state, tx);
+    });
+    assert!(!window.state.session.recording());
+}
+
+/// Quitting while a take of notes records keeps it: it is in the song before the app goes.
+#[test]
+fn quitting_while_notes_record_keeps_the_take() {
+    let scratch = new_project();
+    let mut window = window_of(&scratch.path().join("song"));
+    let clips = children_of(&window.state, "song/t00", "timeline");
+    press(&mut window, "cmd-k");
+    press(&mut window, "r");
+    release(&mut window, "r");
+    until(&mut window, "the take", |state| state.session.recording());
+    press(&mut window, "a");
+    for _ in 0..12 {
+        redraw(&mut window);
+    }
+    release(&mut window, "a");
+    quit(&mut window);
+    assert!(children_of(&window.state, "song/t00", "timeline").len() > clips.len());
+}
+
+/// Quitting while a take of sound records keeps it, as a region in the song.
+#[test]
+fn quitting_while_sound_records_keeps_the_take() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    for (path, contents) in AUDIO_TRACK {
+        let path = folder.join("state/song").join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
+    let mut window = window_of(&folder);
+    let microphone = Microphone::default();
+    let waker = Arc::new(|| {});
+    window.state.incoming.live = (window.state.session)
+        .background(|project| Input::new(project, microphone.devices(), waker));
+    act(
+        &mut window.state,
+        json!({ "label": "Arm Audio 1", "action": "toggle" }),
+    );
+    until(&mut window, "the input", |_| {
+        microphone.openings.load(Ordering::Relaxed) == 1
+    });
+    press(&mut window, "r");
+    until(&mut window, "the take", |state| state.session.recording());
+    let start = Instant::now();
+    while start.elapsed() < PATIENCE && window.state.session.status().frames < 24_000 {
+        microphone.write_until(window.state.session.status().frames + 2_048);
+        redraw(&mut window);
+    }
+    // A device goes on bringing what it hears while the app quits.
+    microphone.write_until(window.state.session.status().frames + 48_000);
+    quit(&mut window);
+    assert!(!children_of(&window.state, "song/audio-1", "region").is_empty());
+}

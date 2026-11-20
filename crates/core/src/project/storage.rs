@@ -819,13 +819,13 @@ mod tests {
 }
 
 /// Writes a temporary file next to the target and renames it into place. A reader sees the old
-/// file or the new one, never a part. A failure leaves the old file complete. Records and
-/// assets both go through this.
+/// file or the new one, never a part. A failure leaves the old file complete. Records, assets
+/// and the code a template update writes go through this.
 ///
 /// No `sync_all`: it costs about 6 ms per file on macOS, which made undo of a deleted folder of
 /// 100 records block for 0.7 s. The rename still protects against a crash of the process.
 /// Surviving a power loss is left to git and snapshots.
-pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let folder = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
     fs::create_dir_all(folder)?;
     // Hidden, so it is never a record, a tool's code or a file history keeps.

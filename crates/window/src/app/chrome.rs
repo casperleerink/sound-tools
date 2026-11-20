@@ -84,16 +84,22 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
         .children(notices::view(state));
     let overlays = tree::overlays(state)
         .into_iter()
-        .chain(problems::list(state))
         .chain(super::history::overlays(state))
         .chain(menu_layer)
-        .chain(super::menu::installed_dialog(state))
-        .chain(super::dialog::view(state))
-        .chain(super::export::view(state))
-        .chain(crate::shell::overlay(state, theme))
+        .chain(dialogs(state))
         .chain(crate::sidebar::overlays(state));
     // On the root, which hears the key ups when nothing has the focus.
     rune_kit::root(base, overlays).on_key_up(super::keys::on_key_up)
+}
+
+/// The dialogs over the window. While one is open it keeps every key (`keys::on_key`).
+pub(super) fn dialogs(state: &State) -> Vec<El> {
+    (problems::list(state).into_iter())
+        .chain(super::menu::installed_dialog(state))
+        .chain(super::dialog::view(state))
+        .chain(super::export::view(state))
+        .chain(crate::shell::overlay(state, &state.theme))
+        .collect()
 }
 
 fn title_row(state: &State, menu: El) -> El {

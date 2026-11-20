@@ -420,3 +420,63 @@ fn a_take_nothing_keeps_says_so() {
     let recorder = InstanceId::new("studio/rec").unwrap();
     assert!(studio.project.tool_of(&recorder).is_some());
 }
+
+/// A take that ends before it is tied to the timeline has no place on it: its file goes, and
+/// the composer is told.
+#[test]
+fn a_take_too_short_to_place_leaves_no_file_and_says_so() {
+    let (mut studio, input) = open_studio(false);
+    studio.press("studio", "arm");
+    studio.until("the input opens", |_| {
+        input.openings.load(Ordering::Relaxed) == 1
+    });
+    studio.start_playing();
+    studio.press("studio", "done");
+    // The input brings nothing before the take ends.
+    studio.until("the take ends", |studio| {
+        studio.render(2_048);
+        !studio.input.is_recording()
+    });
+    let said = "A take of sound was too short to keep.";
+    studio.until("the notice", |studio| {
+        studio.notices.iter().any(|notice| notice == said)
+    });
+    assert!(studio.made("region").is_empty());
+    let audio = studio.folder.path().join("assets/audio");
+    let files = std::fs::read_dir(&audio).map_or(0, Iterator::count);
+    assert_eq!(files, 0);
+}
+
+/// A take given to code that hangs on it is kept by the code that runs next.
+#[test]
+fn a_take_the_code_hung_on_is_kept_by_the_next_code() {
+    let (mut studio, input) = open_studio(false);
+    let file = studio.folder.path().join("extensions/studio.tsx");
+    let hangs = STUDIO.replace(
+        "onTake: ({ update }, take) =>\n",
+        "onTake: ({ update }, take) =>\n    (() => { while (take.name) {} })() ??\n",
+    );
+    let loads = studio.tools.loads();
+    std::fs::write(&file, &hangs).unwrap();
+    studio.tools.code_changed();
+    studio.until("the code that hangs", |studio| studio.tools.loads() > loads);
+    studio.press("studio", "arm");
+    studio.start_playing();
+    studio.record_for(&input, 4_096);
+    studio.play_midi(60);
+    studio.record_for(&input, 4_096);
+    studio.press("studio", "done");
+    studio.until("the code hangs", |studio| {
+        studio.record_for(&input, 2_048);
+        let problems = studio.project.problems();
+        problems
+            .iter()
+            .any(|problem| problem.path == "extensions/studio.tsx")
+    });
+    std::fs::write(&file, STUDIO).unwrap();
+    studio.tools.code_changed();
+    studio.until("the take kept", |studio| {
+        studio.record_for(&input, 2_048);
+        !studio.made("timeline").is_empty() && !studio.made("region").is_empty()
+    });
+}

@@ -171,7 +171,7 @@ fn view(_: &Frame, _: &mut Cx<Frame>) -> El {
                 &frame.events,
                 frame.window,
                 event,
-                KeyDirection::Up,
+                (KeyDirection::Up, false),
             );
             true
         })
@@ -184,13 +184,13 @@ fn poll(frame: &mut Frame, _: f64, tx: &mut Tx) -> bool {
     false
 }
 
-fn on_key(frame: &mut Frame, event: &KeyEvent, _: &mut Tx) -> bool {
+fn on_key(frame: &mut Frame, event: &KeyEvent, tx: &mut Tx) -> bool {
     key(
         &frame.plugins,
         &frame.events,
         frame.window,
         event,
-        KeyDirection::Down,
+        (KeyDirection::Down, tx.key_repeat()),
     );
     true
 }

@@ -403,9 +403,19 @@ pub(crate) fn in_views(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
 }
 
 pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
+    let repeat = tx.key_repeat();
+    key_down(state, key, repeat, tx)
+}
+
+/// A key went down, or the OS sent it again as it is held: `repeat`.
+pub(crate) fn key_down(state: &mut State, key: &KeyEvent, repeat: bool, tx: &mut Tx) -> bool {
+    // A held key does an app's action once; undo and redo go on.
+    if repeat && app_action(state, key).is_some_and(|action| !BEFORE_TOOLS.contains(&&*action)) {
+        return true;
+    }
     // A dialog keeps every key until it closes, but Quit, which works in any window: its own
     // buttons and fields take theirs.
-    if !state.waiting.asked.is_empty() || state.shell.dialog.is_some() {
+    if !super::chrome::dialogs(state).is_empty() {
         if app_action(state, key).as_deref() == Some("quit") {
             tx.quit();
         }
@@ -422,7 +432,6 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
         state.let_go_of_keys();
     }
     let modified = held.platform || held.control || held.alt;
-    let repeat = tx.key_repeat();
     // A key the computer keys hold stays theirs: its repeats reach no one else.
     if state.computer_key(&name, modified, repeat, false) {
         return true;

@@ -105,7 +105,11 @@ pub(crate) enum Content {
 /// passes, so a note the computer keys started ends.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Spare {
-    Down(KeyEvent),
+    /// A key went down, or the OS sent it again as it is held: `repeat`.
+    Down {
+        key: KeyEvent,
+        repeat: bool,
+    },
     Up(KeyEvent),
     /// The keys that are down will not come up here: the window lost the keyboard, or ⌘ went
     /// down, under which macOS sends no key up.
@@ -146,18 +150,21 @@ impl Events {
 }
 
 /// A key typed in the plugin's `window` while its own view did not take it: the plugin may use
-/// it, else it goes to the main window.
+/// it, else it goes to the main window. `repeat`: the OS sent it again as it is held.
 pub(crate) fn key(
     host: &impl Host,
     events: &Events,
     window: WindowId,
     event: &KeyEvent,
-    direction: KeyDirection,
+    (direction, repeat): (KeyDirection, bool),
 ) {
     let used = keystroke(event).is_some_and(|keystroke| host.key(window, &keystroke, direction));
     match direction {
         KeyDirection::Down if used => {}
-        KeyDirection::Down => events.spare(Spare::Down(event.clone())),
+        KeyDirection::Down => events.spare(Spare::Down {
+            key: event.clone(),
+            repeat,
+        }),
         KeyDirection::Up => events.spare(Spare::Up(event.clone())),
     }
 }
