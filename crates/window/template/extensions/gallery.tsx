@@ -18,7 +18,7 @@ import { Slider } from "./ui/slider";
 import { TextField } from "./ui/text-field";
 import { Toggle } from "./ui/toggle";
 import { shown } from "./ui/value";
-import { DeviceCard } from "./ui/blocks/device-card";
+import { DeviceCard, Frame } from "./ui/blocks/device-card";
 import { EmptyState } from "./ui/blocks/empty-state";
 import { Keyboard } from "./ui/blocks/keyboard";
 import { PaintGrid } from "./ui/blocks/paint-grid";
@@ -170,6 +170,7 @@ export const gallery = tool({
             </Section>
           </row>
           <Section title="Device card">
+            <Frame id="frame" title="Filter" onPower={() => {}} onRemove={() => {}}>
             <DeviceCard
               id="card"
               title="Filter"
@@ -184,6 +185,7 @@ export const gallery = tool({
               expanded={memory.expanded}
               onExpand={() => (memory.expanded = !memory.expanded)}
             />
+            </Frame>
           </Section>
           <row gap={8}>
             <Section title="Keys">

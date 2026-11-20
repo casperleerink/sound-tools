@@ -91,42 +91,42 @@ const Devices = ({ page, each }: { page: Page; each: Channel }) => {
     <row gap={2} align="start">
       {each.tool === "tape" && [clip !== null ? <RegionCard page={page} region={clip} /> : <NoClip />, <box w={1} h={CARD_HEIGHT} fill="border" />]}
       {synth && (
-      <Frame id="slot-instrument" title={nameOf(song.catalog, String(synth.tool), synth.state)}
-        menu={{ label: `Instrument of ${titleOf(each)}`, groups: offered(song.catalog, "notes", String(synth.tool), (key) => effects.replace(key)) }}>
-        <child path={`${name}/synth`} />
-      </Frame>
-    )}
-    {order.map((effect, at) => {
-      const device = chain?.children.find((child) => child.name === effect);
-      const tool = String(device?.tool ?? "");
-      const title = nameOf(song.catalog, tool, device?.state);
-      const moves: PickGroup = {
-        picks: order.length < 2 ? [] : [
-          { key: "earlier", text: "Move earlier", icon: "arrow-left", keys: shortcut(song.shortcut("effect_earlier")), unavailable: at === 0 ? "" : null, onPick: () => (effects.choose(effect), effects.step(effect, -1)) },
-          { key: "later", text: "Move later", icon: "arrow-right", keys: shortcut(song.shortcut("effect_later")), unavailable: at === order.length - 1 ? "" : null, onPick: () => (effects.choose(effect), effects.step(effect, 1)) },
-        ],
-      };
-      return (
-        <Frame id={`slot-${effect}`} title={title} on={!chain?.state.off.includes(effect)} chosen={chosen?.name === effect}
-          menu={{ label: `Menu of ${title}`, groups: [moves, { heading: "Replace with", picks: [] }, ...offered(song.catalog, "audio", tool, (key) => effects.replace(key, effect))] }}
-          onPower={() => effects.toggle(effect)} onRemove={() => effects.remove(effect)} onChoose={() => effects.choose(effect)}
-          end={KEYED.has(tool) && <Sidechain page={page} name={name} effect={effect} title={title} />}
-          drag={{ x: true }} onDragEnd={dropped(effect)}>
-          <child path={`${name}/chain/${effect}`} />
+        <Frame id="slot-instrument" title={nameOf(song.catalog, String(synth.tool), synth.state)}
+          menu={{ label: `Instrument of ${titleOf(each)}`, groups: offered(song.catalog, "notes", String(synth.tool), (key) => effects.replace(key)) }}>
+          <child path={`${name}/synth`} />
         </Frame>
-      );
-    })}
-    {empty && (
-      <col h={HEADER} px={2} justify="center">
-        <text style="heading" color="text-muted">No devices yet</text>
+      )}
+      {order.map((effect, at) => {
+        const device = chain?.children.find((child) => child.name === effect);
+        const tool = String(device?.tool ?? "");
+        const title = nameOf(song.catalog, tool, device?.state);
+        const moves: PickGroup = {
+          picks: order.length < 2 ? [] : [
+            { key: "earlier", text: "Move earlier", icon: "arrow-left", keys: shortcut(song.shortcut("effect_earlier")), unavailable: at === 0 ? "" : null, onPick: () => (effects.choose(effect), effects.step(effect, -1)) },
+            { key: "later", text: "Move later", icon: "arrow-right", keys: shortcut(song.shortcut("effect_later")), unavailable: at === order.length - 1 ? "" : null, onPick: () => (effects.choose(effect), effects.step(effect, 1)) },
+          ],
+        };
+        return (
+          <Frame id={`slot-${effect}`} title={title} on={!chain?.state.off.includes(effect)} chosen={chosen?.name === effect}
+            menu={{ label: `Menu of ${title}`, groups: [moves, { heading: "Replace with", picks: [] }, ...offered(song.catalog, "audio", tool, (key) => effects.replace(key, effect))] }}
+            onPower={() => effects.toggle(effect)} onRemove={() => effects.remove(effect)} onChoose={() => effects.choose(effect)}
+            end={KEYED.has(tool) && <Sidechain page={page} name={name} effect={effect} title={title} />}
+            drag={{ x: true }} onDragEnd={dropped(effect)}>
+            <child path={`${name}/chain/${effect}`} />
+          </Frame>
+        );
+      })}
+      {empty && (
+        <col h={HEADER} px={2} justify="center">
+          <text style="heading" color="text-muted">No devices yet</text>
+        </col>
+      )}
+      <col h={HEADER} justify="center">
+        <Picker id="add-effect" label="Add effect" size="md" groups={offered(song.catalog, "audio", null, (key) => effects.add(key))}>
+          <icon name="plus" size={16} color="text-secondary" />
+          <text style="heading" color="text-secondary">Add effect</text>
+        </Picker>
       </col>
-    )}
-    <col h={HEADER} justify="center">
-      <Picker id="add-effect" label="Add effect" size="md" groups={offered(song.catalog, "audio", null, (key) => effects.add(key))}>
-        <icon name="plus" size={16} color="text-secondary" />
-        <text style="heading" color="text-secondary">Add effect</text>
-      </Picker>
-    </col>
     </row>
   );
 };
