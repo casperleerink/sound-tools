@@ -62,6 +62,10 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
     let base = col()
         .w_full()
         .h_full()
+        .on_layout_tx(|s: &mut State, [_, _, width, height], tx| {
+            s.panel.window = (width, height);
+            tx.live_only();
+        })
         .fill(theme.color("background"))
         .children(screen)
         .children(notices::view(state));

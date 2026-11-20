@@ -140,6 +140,22 @@ fn cmd_b_leaves_the_keys_where_they_are_unless_they_were_in_the_panel() {
 }
 
 #[test]
+fn opening_the_panel_widens_a_window_too_narrow_for_it_and_closing_keeps_the_size() {
+    let scratch = new_project();
+    let mut window = framed(&scratch, Some(Agent::default()), None);
+    chord(&mut window, 'b');
+    assert_eq!(window.state.panel.widen.take(), Some((1500.0, 920.0)));
+    chord(&mut window, 'b');
+    assert_eq!(window.state.panel.widen, None);
+    window.set_viewport((1600.0, 900.0), 1.0);
+    redraw(&mut window);
+    window.frame(1.0 / 60.0);
+    chord(&mut window, 'b');
+    assert!(open(&window));
+    assert_eq!(window.state.panel.widen, None);
+}
+
+#[test]
 fn a_closed_panel_shows_the_agent_working_on_its_icon() {
     let scratch = new_project();
     let busy = Agent {
