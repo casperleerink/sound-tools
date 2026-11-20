@@ -73,7 +73,7 @@ const Column = ({ page, each, sent, fader }: { page: Page; each: Each | undefine
   const chosen = page.song.memory.track === name;
   const press = (clicks: number) => (each ? (clicks === 2 ? page.edits.tracks.openPanel(each.name) : choose(page.song, [], each.name)) : clicks === 2 && page.edits.tracks.openMaster());
   return (
-    <col w={COLUMN} pad={[1, 0]} gap={1} radius="lg" fill="surface" border="border-strong">
+    <col w={COLUMN} pad={[1, 0]} gap={1} radius="lg" fill="background" border="border-strong">
       <row key={`strip-name-${name}`} label={`Choose ${title} strip`} role="tab" value={chosen} h={NAME} pad={[2, 0]} gap={2} align="center" radius="md" fill={chosen ? "selected" : undefined} hover="fill" onPress={(p) => press(p.clicks)}>
         <Dot color={each && (muted(each) ? "text-muted" : colourOf(each))} />
         <text style="heading" color={chosen ? "text" : "text-secondary"} truncate>{title}</text>
