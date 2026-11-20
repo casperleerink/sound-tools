@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { fitted, shown, stepped, typedOver, typedValue } from "./value";
+import { fitted, shown, stepped, travelled, typedOver, typedValue, valueAt, VOLUME } from "./value";
 
 test("a value steps from min and stays in range, without float noise", () => {
   const range = { min: 1, max: 10, step: 4 };
@@ -37,4 +37,9 @@ test("a pitch shows and reads as a note", () => {
   expect(Math.round((typedValue(shown(60.3, "pitch"), "pitch") ?? 0) * 100)).toBe(6030);
   const range = { min: 20, max: 20000, scale: "log" as const };
   expect(typedOver(shown(2345.6, "hz"), 2345.6, range, "hz")).toBeUndefined();
+});
+
+test("a fader's volume goes to silence at its foot, in tenths of a dB, and reads and types -inf", () => {
+  expect([valueAt(0, VOLUME), valueAt(travelled(-12.3, VOLUME), VOLUME), valueAt(1, VOLUME), fitted(9, VOLUME)]).toEqual([-Infinity, -12.3, 6, 6]);
+  expect([shown(-Infinity, "db"), typedValue("-inf", "db"), typedOver("−inf dB", -Infinity, VOLUME, "db")]).toEqual(["−inf dB", -Infinity, undefined]);
 });

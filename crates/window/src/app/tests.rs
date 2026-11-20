@@ -2122,6 +2122,7 @@ mod geometry;
 mod history;
 mod input;
 mod menu_settings;
+mod mixer;
 mod plays;
 mod projects;
 mod ruler;

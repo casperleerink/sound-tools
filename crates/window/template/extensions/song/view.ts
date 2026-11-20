@@ -7,9 +7,9 @@ import type { bus } from "../bus";
 import type { tape } from "../tape";
 import type { track } from "../track";
 import { control, type Bound } from "../ui/field";
-import { MAX_DB, MIN_DB } from "../ui/fader";
+import { VOLUME } from "../ui/value";
 import { trackBelow } from "./clips";
-import { isRow, isStrip, lanesOf, mixOf, ordered, rowOfKey, type fields, type Memory, type parts, type Song } from "./model";
+import { isRow, isStrip, lanesOf, ordered, rowOfKey, type fields, type Memory, type parts, type Song } from "./model";
 import { BAR } from "./time";
 
 /** The plane the ruler, the timeline and the lanes share across, and the heads down. */
@@ -128,11 +128,32 @@ export function pageOf(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song:
 /** What every block of the song's page gets. */
 export type Page = ReturnType<typeof pageOf>;
 
-/** The volume of the fader of `name`, a track, a return or the master, as a Fader takes it: one undo step. */
-export function volumeOf({ self, song, edits }: Page, name: string): Bound {
+/** The fader `fader` of `name`, a track, a return or the master: its mix, or a send `send-<return>`. */
+function faderOf({ self }: Page, name: string, fader = "mix") {
   const owner = self.children.find((child) => child.name === name);
-  const mix = name === "master" ? owner : owner && isStrip(owner) ? mixOf(owner) : undefined;
-  const gain = mix?.tool === "fader" ? mix.state.gain_db : undefined;
+  const found = name === "master" ? owner : owner && isStrip(owner) ? owner.children.find((child) => child.name === fader) : undefined;
+  return found?.tool === "fader" ? found : undefined;
+}
+
+/** A gain in dB on the fader's scale, as a Fader or a Knob takes it: -inf is silence. */
+function gainOf(page: Page, path: string, gain: number | "-inf" | undefined, change: (db: number | "-inf") => void): Bound {
+  const value = gain === "-inf" ? -Infinity : (gain ?? 0);
+  return { ...control(page.song.held, path, { min: VOLUME.min, max: VOLUME.max, unit: "db" }, value, (db) => change(db === -Infinity ? "-inf" : db)), ...VOLUME, initial: 0 };
+}
+
+/** The volume of the fader of `name`, a track, a return or the master, as a Fader takes it: one undo step. */
+export function volumeOf(page: Page, name: string): Bound {
   const path = name === "master" ? "master.gain_db" : `${name}/mix.gain_db`;
-  return control(song.held, path, { min: MIN_DB, max: MAX_DB, unit: "db" }, gain === "-inf" ? MIN_DB : (gain ?? 0), (db) => edits.tracks.volume(name, db));
+  return gainOf(page, path, faderOf(page, name)?.state.gain_db, (db) => page.edits.tracks.volume(name, db));
+}
+
+/** How loud `name` sends into the return `back`, as a Knob takes it: one undo step. */
+export function sendOf(page: Page, name: string, back: string): Bound {
+  return gainOf(page, `${name}/send-${back}.gain_db`, faderOf(page, name, `send-${back}`)?.state.gain_db ?? "-inf", (db) => page.edits.tracks.send(name, back, db));
+}
+
+/** The pan of `name`, a track, a return or the master, as a Knob takes it: one undo step. */
+export function panOf(page: Page, name: string): Bound {
+  const path = name === "master" ? "master.pan" : `${name}/mix.pan`;
+  return control(page.song.held, path, { min: -1, max: 1, unit: "pan", default: 0 }, faderOf(page, name)?.state.pan ?? 0, (pan) => page.edits.tracks.pan(name, pan));
 }
