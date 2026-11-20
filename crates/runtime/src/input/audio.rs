@@ -200,9 +200,6 @@ impl AudioInput {
         };
         let (status, sample_rate) = (reader.status(), reader.sample_rate());
         let commands = self.start_recorder(reader, assets.clone());
-        for command in self.commands.drain(..) {
-            commands.send(command).ok();
-        }
         self.failed = false;
         self.open = Some(Open {
             _stream: stream,
@@ -220,8 +217,13 @@ impl AudioInput {
     /// writes the takes in order and says what came of it. While nothing records it still
     /// takes what the input brings, so its ring never fills. It ends, and its files close, when
     /// the input closes.
-    fn start_recorder(&self, reader: CaptureReader, assets: Assets) -> Sender<RecorderCommand> {
+    fn start_recorder(&mut self, reader: CaptureReader, assets: Assets) -> Sender<RecorderCommand> {
         let (commands, received) = mpsc::channel();
+        // What waited while the input opened comes before its first run: a take that began
+        // meanwhile has its sound from its first frame.
+        for command in self.commands.drain(..) {
+            commands.send(command).ok();
+        }
         let (reports, waker) = (self.reports.0.clone(), self.waker.clone());
         let started = std::thread::Builder::new()
             .name("recorder".into())

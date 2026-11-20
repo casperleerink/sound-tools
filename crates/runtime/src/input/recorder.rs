@@ -9,8 +9,10 @@
 //! sounding then, and the engine status says which project frame that engine frame was.
 //! Nothing of this is on the audio thread, and the recorder plays nothing.
 
+use std::collections::VecDeque;
 use std::ops::Range;
 use std::sync::Arc;
+use std::time::Duration;
 
 use sound_core::{
     Assets, CaptureReader, Clock, EngineStatus, Frames, InstanceId, StreamTiming, Ticks,
@@ -32,8 +34,8 @@ pub struct TakeRequest {
 /// or a take starts again at a loop while the one before waits for its last frames.
 #[derive(Debug)]
 pub enum RecorderCommand {
-    /// Begin recording `.0`: a take on each of these tracks, all from the next frame of the
-    /// input.
+    /// Begin recording `.0`: a take on each of these tracks, all from the input of a little
+    /// before, see [`PRE_ROLL`].
     Start(u64, Vec<TakeRequest>),
     /// End recording `id` and close every file of it: once the takes hold `frames` frames of
     /// the input, the last one heard before the end, or at once when `None`. What the input
@@ -121,7 +123,15 @@ pub struct Recorder {
     lost: u64,
     read: Vec<f32>,
     picked: Vec<f32>,
+    /// The last [`PRE_ROLL`] of what the input brought, which a recording starts with.
+    recent: VecDeque<f32>,
+    /// The frame of the input `recent` starts at.
+    recent_first: u64,
 }
+
+/// What a recording that starts takes of the input from before its start, which the place of
+/// the take trims: the start comes to the recorder a poll or so after the take began.
+const PRE_ROLL: Duration = Duration::from_millis(500);
 
 impl Recorder {
     pub fn new(input: CaptureReader, assets: Assets) -> Self {
@@ -133,6 +143,8 @@ impl Recorder {
             lost,
             read: Vec::new(),
             picked: Vec::new(),
+            recent: VecDeque::new(),
+            recent_first: 0,
         }
     }
 
@@ -149,6 +161,12 @@ impl Recorder {
                     // its files are closed and given back, not lost.
                     reports.extend(self.finish(id));
                     reports.extend(self.start(id, requests));
+                    // The command comes a little after the take began: what the input brought
+                    // just before goes in first, and the place of the take trims what was not
+                    // part of it.
+                    let recent: Vec<f32> = self.recent.iter().copied().collect();
+                    let first = self.recent_first;
+                    reports.extend(self.write(first, &recent, |recording| recording.id == id));
                 }
                 RecorderCommand::Finish { id, frames: None } => {
                     reports.extend(self.take_input());
@@ -216,27 +234,59 @@ impl Recorder {
         failed
     }
 
-    /// Writes everything the ring holds into the takes of the recordings that run.
+    /// Writes everything the ring holds into the takes of the recordings that run, and keeps
+    /// the last of it for a recording that starts.
     fn take_input(&mut self) -> Vec<RecorderReport> {
         self.read.clear();
         let first = self.input.read(&mut self.read);
         let lost = self.input.lost_frames();
         let before = std::mem::replace(&mut self.lost, lost);
         let mut reports = Vec::new();
-        if self.recordings.is_empty() {
-            return reports;
-        }
-        if lost != before {
+        if lost != before && !self.recordings.is_empty() {
             reports.push(RecorderReport::Behind {
                 frames: lost - before,
             });
         }
-        if self.read.is_empty() {
+        let read = std::mem::take(&mut self.read);
+        reports.extend(self.write(first, &read, |_| true));
+        self.keep_recent(first, &read);
+        self.read = read;
+        reports
+    }
+
+    /// Keeps the last [`PRE_ROLL`] of the input, `read` from frame `first` on.
+    fn keep_recent(&mut self, first: u64, read: &[f32]) {
+        let channels = self.input.channels().max(1);
+        let frames = (read.len() / channels) as u64;
+        let end = first + frames;
+        let kept = (self.recent.len() / channels) as u64;
+        // A gap the ring could not hold breaks what was kept.
+        if self.recent_first + kept != first {
+            self.recent.clear();
+        }
+        self.recent.extend(read);
+        let rate = u64::from(self.input.sample_rate());
+        let most = (rate * PRE_ROLL.as_millis() as u64 / 1_000) as usize * channels;
+        let over = self.recent.len().saturating_sub(most);
+        self.recent.drain(..over);
+        self.recent_first = end - (self.recent.len() / channels) as u64;
+    }
+
+    /// Writes `samples`, the input from frame `first` on, into the takes of the recordings
+    /// `into` picks.
+    fn write(
+        &mut self,
+        first: u64,
+        samples: &[f32],
+        into: impl Fn(&Recording) -> bool,
+    ) -> Vec<RecorderReport> {
+        let mut reports = Vec::new();
+        if samples.is_empty() {
             return reports;
         }
         let channels = self.input.channels();
         let first_nanos = self.input.nanos_of(first).unwrap_or_default();
-        for recording in &mut self.recordings {
+        for recording in self.recordings.iter_mut().filter(|each| into(each)) {
             if recording.first_nanos.is_none() {
                 recording.first_nanos = Some(first_nanos);
                 let growing = recording.takes.iter().filter_map(|take| {
@@ -254,14 +304,12 @@ impl Recorder {
                 });
             }
             // Past the end a finish waits for, the input is no part of the recording.
-            let read = self.read.len() / channels;
+            let read = samples.len() / channels;
             let wanted = recording.until.map_or(read as u64, |until| {
                 until.saturating_sub(recording.frames).min(read as u64)
             });
             recording.frames += wanted;
-            let read = (self.read)
-                .get(..wanted as usize * channels)
-                .unwrap_or_default();
+            let read = samples.get(..wanted as usize * channels).unwrap_or_default();
             for take in &mut recording.takes {
                 let Some(file) = &mut take.file else {
                     continue;
