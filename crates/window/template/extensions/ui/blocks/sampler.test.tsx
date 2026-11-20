@@ -1,27 +1,18 @@
 import { expect, test } from "bun:test";
-import { act, find, h, press, render, type Card, type FieldInfo } from "../../sdk";
+import { act, find, h, press, render, type Card, type Facts, type FilledStateOfTool } from "../../sdk";
 import { drawingOf } from "../display";
 import { card } from "./cards/sampler";
 
-const num = (name: string, min: number, max: number, value: number, more: object = {}) =>
-  ({ name, label: name, kind: "number", min, max, scale: "linear", integer: false, unit: null, default: value, ...more }) as FieldInfo;
-const FIELDS = [
-  num("tune", -24, 24, 0), num("attack_seconds", 0.001, 10, 0.002, { scale: "log" }), num("decay_seconds", 0.001, 10, 0.4, { scale: "log" }), num("sustain", 0, 1, 1),
-  num("release_seconds", 0.001, 10, 0.3, { scale: "log" }), num("velocity_to_volume", 0, 1, 0.5), num("gain_db", -48, 24, 0, { unit: "db" }),
-  { name: "loop", label: "Loop", kind: "switch", default: false }, { name: "reverse", label: "Reverse", kind: "switch", default: false },
-] as FieldInfo[];
-const DEFAULTS = { root: 60, tune: 0, start_seconds: 0, reverse: false, loop: false, attack_seconds: 0.002, decay_seconds: 0.4, sustain: 1, release_seconds: 0.3, velocity_to_volume: 0.5, gain_db: 0 };
 const LIBRARY = [
   { id: "piano/grand", name: "Grand piano", category: "Piano", size: "1.0 GB", here: false },
   { id: "strings/violin-section", name: "Violin section", category: "Strings", size: "46 MB", here: true },
 ];
-type Facts = { file?: object | null; sfz?: string | null; instrument?: object | null };
-const open = (state: object, facts: Facts = {}, openFile: string | null = null) => {
+const open = (state: Partial<FilledStateOfTool<"sampler">>, facts: Partial<Facts<"sampler">> = {}, openFile: string | null = null) => {
   render((() => <box />) as Card, { name: "other", state: {}, children: [] });
-  return render(card, { name: "sampler", state: { ...DEFAULTS, ...state }, children: [] } as never, { facts: { title: "Sampler", fields: FIELDS, library: LIBRARY, ...facts }, answers: { openFile } } as never);
+  return render(card, { tool: "sampler", state }, { facts: { library: LIBRARY, ...facts }, answers: { openFile } });
 };
-const pluck = { file: { name: "pluck.wav", state: "plays", seconds: 2 } };
-const trimmed = { sample: "pluck.wav", start_seconds: 0.1, end_seconds: 1.5, loop: true, loop_start_seconds: 0.4 };
+const pluck: Partial<Facts<"sampler">> = { file: { name: "pluck.wav", state: "plays", seconds: 2 } };
+const trimmed: Partial<FilledStateOfTool<"sampler">> = { sample: "pluck.wav", start_seconds: 0.1, end_seconds: 1.5, loop: true, loop_start_seconds: 0.4 };
 const said = (label: string) => JSON.stringify(find(label));
 /** What a step changed, by the name of each field. */
 const changed = (ops: [readonly (string | number)[], unknown][]) => Object.fromEntries(ops.map(([path, value]) => [path.at(-1), value]));

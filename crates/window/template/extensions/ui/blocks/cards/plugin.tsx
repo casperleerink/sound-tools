@@ -2,7 +2,6 @@ import { h, live, type Card, type Node } from "../../../sdk";
 import theme from "../../../theme.json";
 import { Button } from "../../button";
 import { Cell } from "../../cell";
-import { played } from "../../field";
 import { Knob } from "../../knob";
 import { MenuList } from "../../menu";
 import { Select } from "../../select";
@@ -129,7 +128,7 @@ export const card: Card<"plugin"> = (self, ctx) => {
     }
     // The plugin's own words for a value need a call into it, which a card cannot make: the number shows.
     const path = `parameters.${id}.value`;
-    const held = laned(id) ? live.field(played(path)) : undefined;
+    const held = laned(id) ? live.field(path) : undefined;
     const knob = steps > 2
       ? <Knob id={`pin-${id}`} label={label} text={parameter.name} value={stepOf(parameter, steps, pin.value)} min={0} max={steps - 1} step={1} initial={stepOf(parameter, steps, parameter.default)} onChange={(index) => set(id, change, stepValue(parameter, steps, index))} />
       : <Knob id={`pin-${id}`} path={path} label={label} text={parameter.name} value={pin.value} min={parameter.min} max={parameter.max} initial={parameter.default} {...(held ? { held } : {})} onChange={(value) => set(id, change, Math.min(Math.max(value, parameter.min), parameter.max))} />;

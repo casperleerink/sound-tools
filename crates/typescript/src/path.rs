@@ -3,6 +3,24 @@
 //! `eq.bands[0].gain_db`, or `voices[2].detune` in the record of the view's own tool.
 
 use serde_json::{Map, Value};
+use sound_core::{InstanceId, Project};
+
+/// The instance a path of `instance` names a number of, and that number: an instance inside it
+/// when the path starts with one, else `instance` itself (`pads.36.pan` of a kit and
+/// `osc_1.position` of a wavetable are its own).
+pub fn number_at<'a>(
+    project: &Project,
+    instance: &InstanceId,
+    path: &'a str,
+) -> (InstanceId, &'a str) {
+    if let Some((inside, number)) = path.split_once('.')
+        && let Ok(id) = instance.child(inside)
+        && project.tool_of(&id).is_some()
+    {
+        return (id, number);
+    }
+    (instance.clone(), path)
+}
 
 /// The parts of the path of a number in a record: `bands[0].gain_db` is `bands`, `0` and
 /// `gain_db`, `parameters.12.value` is `parameters`, `12` and `value`.

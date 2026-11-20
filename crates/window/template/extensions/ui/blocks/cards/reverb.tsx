@@ -1,7 +1,7 @@
 import { h, live, type Card } from "../../../sdk";
 import { Cell } from "../../cell";
 import { Display, drawingOf } from "../../display";
-import { cardBinder } from "../../field";
+import { binder } from "../../field";
 import { Handle } from "../../handle";
 import { Knob } from "../../knob";
 import { Toggle } from "../../toggle";
@@ -25,9 +25,9 @@ const dashed = (end: number, dashes = 12) =>
  * reflections as marks, a handle at its start (the pre-delay) and its end (the decay); then size,
  * damping, width and mix; behind More the cuts, diffusion, freeze, pre-delay and decay.
  */
-export const card: Card<"reverb"> = (self, ctx) => {
-  const field = cardBinder<"reverb">(self, ctx);
-  const expanded = ctx.memory.expanded === true;
+export const card: Card<"reverb", { expanded: boolean }> = (self, ctx) => {
+  const field = binder(self, ctx);
+  const expanded = ctx.memory.expanded ?? false;
   const { w, h: tall } = drawingOf(4);
   const [preDelay, decay] = [field.number("pre_delay_ms", "Pre-delay"), field.number("decay_seconds", "Decay")];
   // Where the tail starts and ends as it plays, and where it starts in the record, which the decay's travel is laid from.

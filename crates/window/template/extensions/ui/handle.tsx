@@ -1,5 +1,5 @@
 import { h, live, Live, type Child, type Drag, type Num, type Pointer } from "../sdk";
-import { played, type Bound } from "./field";
+import { type Bound } from "./field";
 import { fitted, liveTravelled, liveValueAt, shown, stepped, travelled, valueOf, type Range } from "./value";
 
 /** What a pointer takes: more than the dot, for a trackpad. The dot, and the dot with a number in it. */
@@ -90,7 +90,7 @@ const along = (axis: HandleAxis | Num, size: number, moved: Live) => {
   const at = travelled(axis.value, travel);
   const now = moved.over(size).plus(at);
   // What plays: a drag's `plays`, a knob, a lane, an undo; the drag itself where nothing names the number.
-  const place: Num = axis.held ? liveTravelled(axis.held, travel) : axis.path === undefined ? now.clamp(0, 1) : liveTravelled(live.field(played(axis.path)), travel);
+  const place: Num = axis.held ? liveTravelled(axis.held, travel) : axis.path === undefined ? now.clamp(0, 1) : liveTravelled(live.field(axis.path), travel);
   if (axis.held) return { axis, place };
   return {
     axis,

@@ -2,7 +2,7 @@ import { h, live, type Card } from "../../../sdk";
 import { Choice } from "../../choice";
 import { Curve } from "../../curve";
 import { Display, drawingOf, heightOf } from "../../display";
-import { cardBinder } from "../../field";
+import { binder } from "../../field";
 import { Handle } from "../../handle";
 import { Knob } from "../../knob";
 import { DeviceCard } from "../device-card";
@@ -18,7 +18,7 @@ const REFERENCE = heightOf(-12, LEVELS);
  * drive, tone, output and mix.
  */
 export const card: Card<"saturator"> = (self, ctx) => {
-  const field = cardBinder<"saturator">(self, ctx);
+  const field = binder(self, ctx);
   const { w, h: tall } = drawingOf(4, true);
   const drive = field.number("drive_db", "Drive");
   // The bend is at -drive dBFS in: more drive is further left.

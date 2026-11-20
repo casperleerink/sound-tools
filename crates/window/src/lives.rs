@@ -484,7 +484,9 @@ impl Lives {
                         place: read,
                         mark: numbers.len() == 2,
                         size: size.each_ref().map(|size| size.as_ref().map(of)),
-                        parent: parent.as_ref().map(|(at, shift)| (at.each_ref().map(of), *shift)),
+                        parent: parent
+                            .as_ref()
+                            .map(|(at, shift)| (at.each_ref().map(of), *shift)),
                     }
                 });
                 binding.units.set(Some(units));

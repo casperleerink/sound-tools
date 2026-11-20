@@ -3,7 +3,7 @@ import theme from "../../../theme.json";
 import { Cell } from "../../cell";
 import { Choice } from "../../choice";
 import { Display, drawingOf } from "../../display";
-import { cardBinder } from "../../field";
+import { binder } from "../../field";
 import { Handle } from "../../handle";
 import { Knob } from "../../knob";
 import { Toggle } from "../../toggle";
@@ -21,8 +21,8 @@ const across = (pan: number) => 0.5 + pan / (2 * WIDEST);
  * gain, with one handle (pan sideways, gain up), its channels above; then gain, pan, width and
  * mute; behind More bass mono, the frequency below which it is mono, and the inverts.
  */
-export const card: Card<"utility"> = (self, ctx) => {
-  const field = cardBinder<"utility">(self, ctx);
+export const card: Card<"utility", { expanded: boolean }> = (self, ctx) => {
+  const field = binder(self, ctx);
   const { w, h: tall } = drawingOf(4, true);
   const [gain, pan] = [field.number("gain_db", "Gain"), field.number("pan", "Pan")];
   const travel = stretched(gain, FLOOR, TOP - FLOOR);
@@ -57,6 +57,6 @@ export const card: Card<"utility"> = (self, ctx) => {
         <Cell><Toggle {...field.toggle("mute", "Mute")} color="peach" /></Cell>,
       ]}
       more={[below]}
-      expanded={ctx.memory.expanded === true} onExpand={() => (ctx.memory.expanded = ctx.memory.expanded !== true)} />
+      expanded={(ctx.memory.expanded ?? false)} onExpand={() => (ctx.memory.expanded = !ctx.memory.expanded)} />
   );
 };

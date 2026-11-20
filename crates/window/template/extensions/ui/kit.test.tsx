@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { act, find, h, live, press, render, type Card, type FieldInfo } from "../sdk";
 import { Choice } from "./choice";
 import { decibelTicks, Display, FREQUENCY_TICKS } from "./display";
-import { cardBinder } from "./field";
+import { binder } from "./field";
 import { Handle } from "./handle";
 import { Pad } from "./pad";
 import { Readout } from "./readout";
@@ -23,7 +23,7 @@ const [W, H] = [400, 100];
 /** A handle on band 1's frequency and gain, as a card binds it. */
 const draw = (held: string[] = [], props: { onChange?: boolean } = {}) =>
   render(((self, ctx) => {
-    const field = cardBinder(self, ctx);
+    const field = binder(self, ctx);
     const [x, y] = [field.number("bands[0].frequency_hz"), { ...field.number("bands[0].gain_db"), travel: { min: -18, max: 18 } }];
     return <Handle id="band-1" label="Band 1" w={W} h={H} x={x} y={y} number="1"
       onChange={props.onChange ? (hz, db) => field.change("Change frequency and gain", { "bands[0].frequency_hz": hz, "bands[0].gain_db": db }) : undefined} />;
@@ -50,7 +50,7 @@ test("arrows nudge its first number, a double click sets both to their defaults"
   draw();
   expect(act("Band 1", "increment", 1)[0]![1]).toBeGreaterThan(1000);
   render(((self, ctx) => {
-    const field = cardBinder(self, ctx);
+    const field = binder(self, ctx);
     return <Handle id="h" label="H" w={W} h={H} x={field.number("bands[0].frequency_hz")} y={field.number("bands[0].gain_db")} />;
   }) as Card, { name: "eq", state: { bands: [{ frequency_hz: 300, gain_db: 4, on: true, shape: "bell" }] }, children: [] }, { facts: { title: "EQ", fields: FIELDS } });
   expect(act("H", "reset")).toEqual([[["state", "bands", 0, "frequency_hz"], 1000], [["state", "bands", 0, "gain_db"], 0]]);
@@ -65,7 +65,7 @@ test("a number a lane holds does not drag, and the other one still does", () => 
 
 test("a card's binder reads and writes inside lists, names its steps and refuses what a lane holds", () => {
   render(((self, ctx) => {
-    const field = cardBinder(self, ctx);
+    const field = binder(self, ctx);
     const on = field.toggle("bands[0].on");
     const shape = field.choice("bands[0].shape", "Shape");
     return <col><Choice {...shape} /><box key={on.id} label={on.label} role="switch" value={on.on} onPress={on.onToggle} /></col>;

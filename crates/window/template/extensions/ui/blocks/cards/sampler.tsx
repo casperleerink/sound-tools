@@ -3,7 +3,7 @@ import theme from "../../../theme.json";
 import { Button } from "../../button";
 import { Cell } from "../../cell";
 import { Display, drawingOf } from "../../display";
-import { cardBinder, type Bound } from "../../field";
+import { binder, type Bound } from "../../field";
 import { Handle } from "../../handle";
 import { Knob } from "../../knob";
 import { MenuList, type Group, type Item } from "../../menu";
@@ -27,11 +27,11 @@ const megabytes = (bytes: number) => `${Math.round(bytes / 1e6)} MB`;
  * display or chosen becomes the sample. A library or SFZ instrument has its own pitch and
  * envelope: the card has only its gain.
  */
-export const card: Card<"sampler"> = (self, ctx) => {
-  const field = cardBinder<"sampler">(self, ctx);
+export const card: Card<"sampler", { expanded: boolean }> = (self, ctx) => {
+  const field = binder(self, ctx);
   const { memory, update } = ctx;
   const { state, facts } = self;
-  const expanded = memory.expanded === true;
+  const expanded = memory.expanded ?? false;
   const { w, h: tall } = drawingOf(6);
   const file = state.sample ? (facts.file ?? { name: state.sample, state: "unknown" as const }) : null;
   const length = file?.state === "plays" ? (file.seconds ?? 0) : 0;

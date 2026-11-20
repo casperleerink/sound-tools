@@ -580,7 +580,7 @@ fn write_sdk(extensions: &Path, built_in: &BuiltIn) -> std::io::Result<()> {
     // Bun's own types, once installed, declare `Bun` as well.
     let bun_types = extensions.join("node_modules/bun-types").is_dir();
     let records = records::sdk_records(&built_in.schemas);
-    let feeds = records::sdk_feeds(&built_in.feeds, &built_in.facts);
+    let feeds = records::sdk_feeds(&built_in.feeds, &built_in.facts, &built_in.schemas);
     std::fs::create_dir_all(extensions.join("sdk"))?;
     let files = [
         ("sdk/records.ts", records.as_str()),

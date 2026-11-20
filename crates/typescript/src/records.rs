@@ -67,12 +67,29 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
 }
 
 /// `sdk/feeds.ts`: what views read of the built-in tools besides their records, by tool: the
-/// name, kind and doc of each feed, and the type of the facts of each tool that adds some. The
-/// facts every instance has, its title and fields, are `Facts` of `sdk/view.ts`.
-pub(crate) fn sdk_feeds(feeds: &[FeedName], facts: &[(&'static str, Value)]) -> String {
+/// name, kind and doc of each feed, the type of the facts of each tool that adds some, and the
+/// title and fields of each, which a test of a card gets. The facts every instance has, its
+/// title and fields, are `Facts` of `sdk/view.ts`.
+pub(crate) fn sdk_feeds(
+    feeds: &[FeedName],
+    facts: &[(&'static str, Value)],
+    schemas: &[ToolSchema],
+) -> String {
     let mut text = String::from(
         "// What views read of the built-in tools besides their records, from their Rust types.\n",
     );
+    let built_in = built_in_schemas();
+    let cards: serde_json::Map<String, Value> = (schemas.iter().chain(&built_in))
+        .map(|schema| {
+            let card = sound_core::facts::card(schema.tool, &schema.schema);
+            let card = serde_json::json!({ "title": card.title, "fields": card.fields });
+            (schema.tool.to_string(), card)
+        })
+        .collect();
+    text.push_str(&format!(
+        "\n/** The title and fields of each built-in tool, as the window gives them in its facts. */\nexport const cards: Record<string, {{ title: string; fields: unknown[] }}> = {};\n",
+        Value::Object(cards)
+    ));
     let facts: Vec<ToolSchema> = (facts.iter())
         .filter(|(tool, _)| *tool != "*")
         .map(|(tool, schema)| ToolSchema {

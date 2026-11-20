@@ -4,12 +4,12 @@
 
 import type theme from "../theme.json";
 import type { Clock, Offer as Offered } from "./clock";
-import type { ToolFacts, ToolFeeds } from "./feeds";
+import { cards, type ToolFacts, type ToolFeeds } from "./feeds";
 import type { Fields, Inputs, Note, Unit, ValuesOf } from "./fields";
 import type { IconName } from "./icons";
-import type { Tools } from "./records";
+import { defaultStates, type Tools } from "./records";
 import { registry, type ChildTools, type Context, type FilledStateOfTool, type OwnedChild, type ProjectTool, type ToolSpec } from "./tools";
-import { Live, splitPath, type LiveNode, type Num } from "./values";
+import { Live, type LiveNode, type Num } from "./values";
 
 // Design tokens: every name comes from theme.json, so a misspelled one is a type error.
 type Theme = typeof theme;
@@ -41,8 +41,12 @@ export const live = {
   elapsed: new Live({ op: "elapsed" }),
   /** The tempo where the piece plays, in beats a minute. */
   bpm: new Live({ op: "bpm" }),
-  /** A number field of the record as it plays (what a lane or a drag's `plays` puts in it, else the record), or of an instance inside as `"t01/mix.gain_db"`. */
-  field: (name: string): Live => new Live({ op: "value", ...splitPath(name), fraction: false }),
+  /**
+   * A number of the record as it plays (what a lane or a drag's `plays` puts in it, else the
+   * record), by its path as a lane names it: `cutoff_hz`, `bands[0].gain_db`, `osc_1.position`;
+   * or of an instance inside, `t01/mix.gain_db`: a path starts with a child only when one has that name.
+   */
+  field: (path: string): Live => new Live({ op: "value", name: path, fraction: false }),
   /**
    * What the instance at `path` inside this one publishes as `name`, or this one when left out:
    * a number, `live.feed("peak", "t01/mix")`, one of a list, `live.feed("sounding.60")`, or a
@@ -293,11 +297,12 @@ type CardState<T> = T extends keyof Tools ? FilledStateOfTool<T> : Record<string
 /**
  * A card of a device without a view: `Card<"eq">` is the project's card of the built-in tool
  * `eq`, exported as `card` from `ui/blocks/cards/eq.tsx`; `Card` is the generic card of the
- * others, from `ui/blocks/generic-card.tsx`. It gets what a tool's view gets.
+ * others, from `ui/blocks/generic-card.tsx`. It gets what a tool's view gets; `M` is what its
+ * `memory` holds, which starts empty.
  */
-export type Card<T extends keyof Tools | undefined = undefined> = (
+export type Card<T extends keyof Tools | undefined = undefined, M extends object = Record<string, unknown>> = (
   self: Drawn<CardState<T>, {}, T>,
-  ctx: Context<CardState<T>, Inputs, Record<string, unknown>, {}>,
+  ctx: Context<CardState<T>, Inputs, Partial<M>, {}>,
 ) => Node;
 
 /** A device the window offers to put in a child, with what it takes: notes it plays, or sound it changes. */
@@ -513,14 +518,14 @@ function perform(at: Instance | undefined, key: string, action: string, value: V
 
 /** What an `update` sees of a record: its state and, when it read them, its children. */
 type Part = { state?: unknown; children?: readonly { name: string }[] };
-/** The number at `path` of `part`, as `held` names it: `cutoff_hz`, `pads.36.volume_db`, `t01/mix.gain_db`. */
+/** The number at `path` of `part`, as `live.field` names it: `cutoff_hz`, `pads.36.volume_db`, `t01/mix.gain_db`. */
 function numberAt(part: Part, path: string): unknown {
-  const { child, name } = splitPath(path);
-  let at: any = part;
-  for (const step of child?.split("/") ?? []) at = at?.children?.find((each: { name: string }) => each.name === step);
-  at = at?.state;
-  for (const step of name.split(/[.[\]]+/).filter(Boolean)) at = at?.[step];
-  return at;
+  const dot = path.indexOf(".");
+  const steps = dot < 0 ? [] : path.slice(0, dot).split("/");
+  let child: any = part;
+  for (const step of steps) child = child?.children?.find((each: { name: string }) => each.name === step);
+  const [at, name]: [any, string] = child === undefined || steps.length === 0 ? [part, path] : [child, path.slice(dot + 1)];
+  return name.split(/[.[\]]+/).filter(Boolean).reduce((value, step) => value?.[step], at?.state);
 }
 /** Throws when a change from `before` to `after` moves a number a lane plays: it is not the code's to change. */
 function refuseHeld(held: readonly string[], before: Part, after: Part) {
@@ -564,20 +569,31 @@ let tested: Tested | undefined;
 
 /**
  * Runs the view of a tool, or a `Card`, on `self` as the window does, and keeps it for `find`,
- * `press` and `act`. `held` names the numbers a lane moves; `facts` are its own, a child's are in
- * `self`; `answers` are what `confirm` and `openFile` get. Its memory lasts while it is the same.
+ * `press` and `act`. A card of a built-in tool takes `{ tool, state }`: its facts and the
+ * defaults its state leaves out are the tool's. `held` names the numbers a lane moves; `facts`
+ * are its own, a child's are in `self`; `answers` are what `confirm` and `openFile` get. Its
+ * memory lasts while it is the same.
  */
 export function render<T extends ProjectTool>(tool: T, self: Given<Self<T>>, options?: Options<Facts<T>>): Node;
+export function render<T extends keyof Tools, M extends object>(card: Card<T, M>, self: { tool: T; name?: string; state?: Partial<FilledStateOfTool<T>> }, options?: Options<Facts<T>>): Node;
 export function render<C extends (self: any, ctx: any) => Node>(card: C, self: Given<Parameters<C>[0]>, options?: Options<Parameters<C>[0]["facts"]>): Node;
-export function render(drawn: ProjectTool | Draw, given: unknown, { held = [], facts, answers = {} }: Options<Facts> = {}): Node {
+export function render(drawn: ProjectTool | ((self: any, ctx: any) => Node), given: unknown, { held = [], facts, answers = {} }: Options<Facts> = {}): Node {
   const spec = typeof drawn === "function" ? undefined : registry.tools.get(String(drawn));
   const draw = (typeof drawn === "function" ? drawn : spec?.view) as Draw | undefined;
   if (!draw) throw new Error(`${String(drawn)} has no view`);
   const same = tested?.draw === draw;
   if (!same) instances.delete(TESTED);
   const memory = same ? tested!.memory : (spec?.memory?.() ?? {});
-  const { name, children } = given as { name: string; children: readonly Kid[] };
-  const self = { ...(given as object), children: told(children), facts: { title: spec?.title ?? name, fields: [], ...facts } } as unknown as Drawn<unknown>;
+  const { tool, name = tool ?? "", state, children = [] } = given as { tool?: string; name?: string; state?: object; children?: readonly Kid[] };
+  const card = tool === undefined ? undefined : (cards[tool] as Facts | undefined);
+  if (tool !== undefined && !card) throw new Error(`${tool} is no built-in tool`);
+  const self = {
+    ...(given as object),
+    name,
+    state: card ? { ...defaultStates[tool!], ...state } : state,
+    children: told(children),
+    facts: { ...(card ?? { title: spec?.title ?? name, fields: [] }), ...facts },
+  } as unknown as Drawn<unknown>;
   tested = { draw, spec, self, memory, held, answers, ops: [], acting: false };
   return redraw(tested);
 }

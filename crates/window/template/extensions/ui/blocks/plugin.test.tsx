@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { act, find, h, press, render, type Card } from "../../sdk";
+import { act, find, h, press, render, type Card, type Facts } from "../../sdk";
 import { card } from "./cards/plugin";
 
 // The parameters of the repo's test CLAP plugin, as the facts list them.
@@ -8,11 +8,10 @@ const PARAMETERS = [
   { id: 1, name: "Wave", min: 0, max: 2, default: 0, steps: 3, names: [{ value: 0, name: "Sine" }, { value: 1, name: "Saw" }, { value: 2, name: "Square" }], automatable: false },
   { id: 5, name: "Bright", min: 0, max: 1, default: 0, steps: 2, names: [], automatable: true },
 ];
-type Facts = { name?: string | null; status?: string; window?: string; parameters?: typeof PARAMETERS };
-const open = (parameters: Record<string, { name: string; value: number }> = {}, facts: Facts = {}, held: string[] = []) => {
+const open = (parameters: Record<string, { name: string; value: number }> = {}, facts: Partial<Facts<"plugin">> = {}, held: string[] = []) => {
   render((() => <box />) as Card, { name: "other", state: {}, children: [] });
-  const state = { format: "clap", plugin_id: "sound-tools.test-tone", state_asset: "tone", parameters };
-  return render(card, { name: "plugin", state, children: [] } as never, { facts: { title: "Test Tone", fields: [], name: "Test Tone", status: "plays", window: "closed", parameters: PARAMETERS, ...facts }, held } as never);
+  const state = { format: "clap", plugin_id: "sound-tools.test-tone", state_asset: "tone", parameters } as const;
+  return render(card, { tool: "plugin", state }, { facts: { title: "Test Tone", name: "Test Tone", status: "plays", window: "closed", parameters: PARAMETERS, ...facts }, held });
 };
 const said = (label: string) => JSON.stringify(find(label));
 

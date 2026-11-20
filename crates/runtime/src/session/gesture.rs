@@ -200,21 +200,7 @@ impl Session {
     }
 }
 
-/// The instance a path of `instance` names a number of, and that number: an instance inside it
-/// when the path starts with one, else `instance` itself (`pads.36.pan` of a kit is its own).
-pub(super) fn number_at<'a>(
-    project: &Project,
-    instance: &InstanceId,
-    path: &'a str,
-) -> (InstanceId, &'a str) {
-    if let Some((inside, number)) = path.split_once('.')
-        && let Ok(id) = instance.child(inside)
-        && project.tool_of(&id).is_some()
-    {
-        return (id, number);
-    }
-    (instance.clone(), path)
-}
+pub(super) use sound_typescript::path::number_at;
 
 /// Whether a lane decides `number` of `id`. While `writing`, a lane a hand writes into does not.
 fn is_held(project: &Project, id: &InstanceId, number: &str, writing: bool) -> bool {

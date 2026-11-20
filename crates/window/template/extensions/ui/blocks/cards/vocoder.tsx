@@ -1,6 +1,6 @@
 import { h, live, type Card } from "../../../sdk";
 import { Display, drawingOf, FREQUENCY_TICKS, OCTAVES } from "../../display";
-import { cardBinder } from "../../field";
+import { binder } from "../../field";
 import { Knob } from "../../knob";
 import { DeviceCard } from "../device-card";
 
@@ -12,7 +12,7 @@ const [MOST, HEIGHT] = [64, 0.6];
  * then bands, release, formant and mix. Its voice is the rack's sidechain.
  */
 export const card: Card<"vocoder"> = (self, ctx) => {
-  const field = cardBinder<"vocoder">(self, ctx);
+  const field = binder(self, ctx);
   const { w, h: tall } = drawingOf(4);
   const bands = live.field("bands").round();
   const across = w / OCTAVES[1];

@@ -1280,12 +1280,12 @@ impl Tools {
         name: &str,
         tick: Ticks,
     ) -> f64 {
-        let id = match child {
-            Some(path) => instance.child(path).ok(),
-            None => Some(instance.clone()),
-        };
-        let Some(id) = id else {
-            return 0.0;
+        let (id, name) = match child {
+            Some(path) => match instance.child(path) {
+                Ok(id) => (id, name),
+                Err(_) => return 0.0,
+            },
+            None => crate::path::number_at(project, instance, name),
         };
         let at = crate::feeds::Moment::at(tick);
         if let Some((value, _)) = crate::feeds::lane_value(project, &id, name, at) {

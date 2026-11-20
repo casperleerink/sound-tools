@@ -1,34 +1,22 @@
 import { expect, test } from "bun:test";
-import { act, defaultStates, find, h, press, render, type Card, type FieldInfo } from "../../sdk";
+import { act, defaultStates, find, h, press, render, type Card, type FilledStateOfTool } from "../../sdk";
 import { drawingOf } from "../display";
 import { card } from "./cards/wavetable";
 
-// The fields of the record as the window's facts give them, from its new state.
-const choices: Record<string, (string | number)[]> = {
-  table: ["basic_shapes", "vowels"], effect: ["none", "fm", "sync", "warp", "fold"], "sub.octave": [-1, -2], type: ["low_pass", "band_pass", "high_pass", "notch"],
-  slope: [12, 24], character: ["clean", "warm"], routing: ["serial", "parallel", "split"], shape: ["sine", "triangle", "saw_up", "saw_down", "square", "sample_and_hold"],
-  division: ["1/4", "1/8"], feel: ["straight", "dotted", "triplet"], mode: ["poly", "mono"], source: ["env_2", "key", "velocity", "mod_wheel", "lfo_1"], destination: ["filter_1_cutoff", "amp_level", "osc_1_position"],
-};
-const ranges: Record<string, [number, number, string?]> = {
-  position: [0, 1], effect_amount: [0, 1], octave: [-3, 3], semitone: [-12, 12], detune_cents: [-50, 50], gain: [0, 1], pan: [-1, 1], voices: [1, 8], amount: [-1, 1],
-  cutoff_hz: [20, 20000, "log"], resonance: [0, 1], drive_db: [0, 24], attack_seconds: [0.001, 10, "log"], decay_seconds: [0.001, 10, "log"], sustain: [0, 1], release_seconds: [0.001, 10, "log"],
-  attack_curve: [0, 1], decay_curve: [0, 1], release_curve: [0, 1], rate_hz: [0.01, 40, "log"], polyphony: [1, 16], glide_seconds: [0, 5],
-};
-const fieldOf = (name: string, value: unknown, group = ""): FieldInfo => {
-  if (Array.isArray(value)) return { name, label: name, kind: "list", item: fieldOf("", value[0]), maxItems: 8 } as FieldInfo;
-  if (typeof value === "object" && value !== null) return { name, label: name, kind: "group", fields: Object.entries(value).map(([key, each]) => fieldOf(key, each, name)) } as FieldInfo;
-  if (typeof value === "boolean") return { name, label: name, kind: "switch", default: value } as FieldInfo;
-  const options = choices[`${group}.${name}`] ?? choices[name];
-  if (options) return { name, label: name, kind: "choice", options: options.map((option) => ({ value: option, text: String(option) })), default: value } as FieldInfo;
-  const [min, max, scale] = ranges[name] ?? [0, 1];
-  return { name, label: name, kind: "number", min, max, scale: scale ?? "linear", integer: false, unit: null, default: value } as FieldInfo;
-};
-const NEW = defaultStates.wavetable as Record<string, unknown>;
-const FIELDS = Object.entries(NEW).map(([name, value]) => fieldOf(name, value));
-const open = (state: Record<string, unknown> = {}) => {
+/** A group the record gives is all the card sees of it, as in the window: these fill the rest. */
+const NEW = defaultStates.wavetable as FilledStateOfTool<"wavetable">;
+const open = (state: Partial<FilledStateOfTool<"wavetable">> = {}, held: string[] = []) => {
   render((() => <box />) as Card, { name: "other", state: {}, children: [] });
-  return render(card, { name: "wavetable", state: { ...structuredClone(NEW), ...state }, children: [] } as never, { facts: { title: "Wavetable", fields: FIELDS, tables: [] } } as never);
+  return render(card, { tool: "wavetable", state }, { facts: { tables: [] }, held });
 };
+
+test("wavetable: a lane on a number of a group shows what it plays on its knob and its drawing, and takes no change", () => {
+  open({}, ["osc_1.position"]);
+  const playing = '{"op":"value","name":"osc_1.position"';
+  expect(JSON.stringify(find("Wavetable Osc 1 position"))).toContain(playing);
+  expect(JSON.stringify(find("Wavetable Osc 1 position on the table"))).toContain(playing);
+  expect(() => act("Wavetable Osc 1 position", "set", 0.9)).toThrow("a lane plays osc_1.position");
+});
 const marked = (page: string) => JSON.stringify(find(`Wavetable ${page}`)).includes('"w":4');
 const named = (ops: [readonly (string | number)[], unknown][]) => ops.map(([path, value]) => [path.slice(1).join("."), typeof value === "number" ? Math.round(value * 100) / 100 : value]);
 
@@ -54,10 +42,10 @@ test("wavetable: its pages show one at a time, and the tabs change no record", (
 });
 
 test("wavetable: a page is marked by what it shows, not by what the folded card shows", () => {
-  open({ osc_1: { ...(NEW.osc_1 as object), position: 0.9, table: "vowels" }, filter_1: { ...(NEW.filter_1 as object), cutoff_hz: 400 } });
+  open({ osc_1: { ...NEW.osc_1, position: 0.9, table: "vowels" }, filter_1: { ...NEW.filter_1, cutoff_hz: 400 } });
   press("More of Wavetable");
   expect(["Osc", "Voice", "Filter", "Env", "LFO", "Matrix"].map(marked)).toEqual([false, false, false, false, false, false]);
-  open({ osc_1: { ...(NEW.osc_1 as object), gain: 0.4 }, lfo_2: { ...(NEW.lfo_2 as object), sync: true } });
+  open({ osc_1: { ...NEW.osc_1, gain: 0.4 }, lfo_2: { ...NEW.lfo_2, sync: true } });
   press("More of Wavetable");
   expect(["Osc", "Voice", "Filter", "Env", "LFO", "Matrix"].map(marked)).toEqual([true, false, false, false, true, false]);
 });

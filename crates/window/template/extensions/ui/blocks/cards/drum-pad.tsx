@@ -2,7 +2,7 @@ import { h, live, type Card, type Dropped } from "../../../sdk";
 import theme from "../../../theme.json";
 import { Button } from "../../button";
 import { Cell } from "../../cell";
-import { cardBinder } from "../../field";
+import { binder } from "../../field";
 import { Knob } from "../../knob";
 import { Pad } from "../../pad";
 import { Select } from "../../select";
@@ -26,11 +26,11 @@ type PadNumber = "volume_db" | "pitch_semitones" | "decay_ms" | "pan";
  * play that file. Beside them the sound of the chosen pad and its volume, pitch, decay and pan;
  * behind More its choke switch and a way back to the kit.
  */
-export const card: Card<"drum-pad"> = (self, ctx) => {
-  const field = cardBinder<"drum-pad">(self, ctx);
+export const card: Card<"drum-pad", { expanded: boolean; pad: number }> = (self, ctx) => {
+  const field = binder(self, ctx);
   const { memory } = ctx;
   const pads = self.facts.pads ?? [];
-  const chosen = Math.min(Math.max(Number(memory.pad ?? 0), 0), Math.max(pads.length - 1, 0));
+  const chosen = Math.min(Math.max(memory.pad ?? 0, 0), Math.max(pads.length - 1, 0));
   const pad = pads[chosen];
   const note = String(FIRST_NOTE + chosen);
   const record = (self.state.pads as Record<string, Record<string, unknown>> | undefined)?.[note] ?? {};
@@ -81,10 +81,9 @@ export const card: Card<"drum-pad"> = (self, ctx) => {
 
   /** A number of the chosen pad: what plays, its kit's value on a reset, the sound following a drag. */
   const knob = (name: PadNumber, text: string, unit: "db" | "semitones" | "ms" | "pan") => {
-    const path = `pads.${note}.${name}`;
-    const bound = field.number(path as never, text);
+    const bound = field.number(`pads.${note}.${name}`, text);
     const value = typeof record[name] === "number" ? (record[name] as number) : pad[name];
-    return { ...bound, unit, value, initial: pad.kit[name], held: ctx.held(path) ? live.field(path) : undefined, onChange: (to: number) => setPad(`Change ${text.toLowerCase()}`, chosen, { [name]: to }) };
+    return { ...bound, unit, value, initial: pad.kit[name], onChange: (to: number) => setPad(`Change ${text.toLowerCase()}`, chosen, { [name]: to }) };
   };
   // The record first: the facts follow an edit a moment later.
   const file = typeof record.sample === "string" ? record.sample : typeof record.sound === "string" ? undefined : pad.file?.name;
@@ -113,6 +112,6 @@ export const card: Card<"drum-pad"> = (self, ctx) => {
         <Cell><Toggle id="choke" label={`${field.title} choke`} text="Choke" on={choke} tip="A hit of a pad in the choke group cuts the others" onToggle={() => setPad(choke ? "Take out of choke group" : "Add to choke group", chosen, { choke: !choke })} /></Cell>,
         <Cell><Button id="reset-pad" label={`${field.title} reset pad`} text="Reset" size="sm" tip="Back to the kit's sound and settings" onPress={() => ctx.update("Reset pad", (draft) => void delete (draft.state as { pads?: Record<string, unknown> }).pads?.[note])} /></Cell>,
       ]}
-      expanded={memory.expanded === true} onExpand={() => (memory.expanded = memory.expanded !== true)} />
+      expanded={(memory.expanded ?? false)} onExpand={() => (memory.expanded = !memory.expanded)} />
   );
 };

@@ -54,7 +54,7 @@ test("a track's lanes show under it: a head that says what each moves and what p
   shown();
   expect(find("lane-name-t00-lane-vol")).toMatchObject({ label: "Menu of the Volume lane of Track 1" });
   expect(find("lane-name-t00-lane-cut")).toMatchObject({ label: "Menu of the Synth · Cutoff lane of Track 1" });
-  expect(JSON.stringify(find("lane-head-t00-lane-vol"))).toContain('"live":{"op":"value","child":"t00/mix","name":"gain_db"');
+  expect(JSON.stringify(find("lane-head-t00-lane-vol"))).toContain('"live":{"op":"value","name":"t00/mix.gain_db"');
   expect(find("point-t00-lane-vol-3840")).toMatchObject({ label: "Point at 2.1, 0 dB", role: "button", value: false });
   expect(find("Add a lane to Track 1")).toBeDefined();
   // A line bends from beside a chosen point, and a flat one not at all.

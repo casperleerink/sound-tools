@@ -1,7 +1,7 @@
 import { h, live, type Card } from "../../../sdk";
 import { Cell } from "../../cell";
 import { Display, drawingOf } from "../../display";
-import { cardBinder } from "../../field";
+import { binder } from "../../field";
 import { Knob } from "../../knob";
 import { Select } from "../../select";
 import { Toggle } from "../../toggle";
@@ -15,8 +15,8 @@ const [SUNG, MOVED] = [0.8, 0.55];
  * voice is sung and a soft block of how far it is moved, its key and scale above; then retune
  * and humanize; behind More the voice, ignore vibrato, formants and mix.
  */
-export const card: Card<"pitch-correction"> = (self, ctx) => {
-  const field = cardBinder<"pitch-correction">(self, ctx);
+export const card: Card<"pitch-correction", { expanded: boolean }> = (self, ctx) => {
+  const field = binder(self, ctx);
   const { w, h: tall } = drawingOf(4, true);
   const [heard, target, correction] = [live.feed("heard"), live.feed("target"), live.feed("correction")];
   // Semitones from the target are halves of the drawing: it is ±50 cents wide.
@@ -47,6 +47,6 @@ export const card: Card<"pitch-correction"> = (self, ctx) => {
         <Cell span={2}><Toggle {...field.toggle("ignore_vibrato", "Ignore vibrato")} /></Cell>,
         <Knob {...field.number("mix", "Mix")} unit="percent" />,
       ]}
-      expanded={ctx.memory.expanded === true} onExpand={() => (ctx.memory.expanded = ctx.memory.expanded !== true)} />
+      expanded={(ctx.memory.expanded ?? false)} onExpand={() => (ctx.memory.expanded = !ctx.memory.expanded)} />
   );
 };

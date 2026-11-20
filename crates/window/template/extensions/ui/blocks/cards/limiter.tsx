@@ -1,7 +1,7 @@
 import { h, live, type Card } from "../../../sdk";
 import { Cell } from "../../cell";
 import { Display } from "../../display";
-import { cardBinder } from "../../field";
+import { binder } from "../../field";
 import { Handle } from "../../handle";
 import { Knob } from "../../knob";
 import { Select } from "../../select";
@@ -18,7 +18,7 @@ const INSET = 6;
  * lookahead.
  */
 export const card: Card<"limiter"> = (self, ctx) => {
-  const field = cardBinder<"limiter">(self, ctx);
+  const field = binder(self, ctx);
   const { w, h: tall } = curveArea();
   // No lane moves the ceiling, so it is no number path of the limiter's.
   const ceiling = field.number("ceiling_db" as "gain_db", "Ceiling");

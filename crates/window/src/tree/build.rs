@@ -113,9 +113,7 @@ fn walk(scope: &Scope, node: &Node, bind: &mut impl FnMut(Shows)) {
                 bind(Shows::Drawn(moving));
             }
             let placed = (d.place.as_ref())
-                .and_then(|place| {
-                    scope.placed_shows(place, (Some(&d.w), Some(&d.h)), d.inside())
-                });
+                .and_then(|place| scope.placed_shows(place, (Some(&d.w), Some(&d.h)), d.inside()));
             let size = d.place.is_none().then_some((Some(&d.w), Some(&d.h)));
             (placed.into_iter())
                 .chain(live_place(
