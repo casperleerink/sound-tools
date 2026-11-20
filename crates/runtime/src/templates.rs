@@ -75,8 +75,7 @@ pub fn choices() -> Result<Vec<Choice>> {
 }
 
 /// Makes `folder` for a new project unless it is there and has files in it: it must be
-/// missing, empty (see [`is_empty`]) or an empty project, one that holds nothing but its
-/// `project.json` and what the runtime writes.
+/// missing, empty (see [`is_empty`]) or an empty project, see [`is_empty_project`].
 fn check_new(folder: &Path) -> Result<()> {
     let empty_project = || -> Result<bool> {
         Ok(folder.join(PROJECT_FILE).exists() && is_empty_project(folder, folder)?)
@@ -293,8 +292,8 @@ fn with_extensions(contents: &str) -> Result<String> {
     Ok(serde_json::to_string_pretty(&file)?)
 }
 
-/// Whether `folder`, in the project at `root`, holds no file but `project.json` and what the
-/// runtime writes.
+/// Whether `folder`, in the project at `root`, holds no file but `project.json`, what the
+/// runtime writes and the code of its template as it wrote it, such as the kit of Bare.
 fn is_empty_project(root: &Path, folder: &Path) -> Result<bool> {
     let entries = std::fs::read_dir(folder)
         .with_context(|| format!("could not read {}", folder.display()))?;
@@ -308,7 +307,11 @@ fn is_empty_project(root: &Path, folder: &Path) -> Result<bool> {
             .replace('\\', "/");
         let empty = match path.is_dir() {
             true => written::written_by_the_runtime(&inside) || is_empty_project(root, &path)?,
-            false => inside == PROJECT_FILE || written::written_by_the_runtime(&inside),
+            false => {
+                inside == PROJECT_FILE
+                    || written::written_by_the_runtime(&inside)
+                    || read(&root.join(KEPT).join(&inside))? == read(&path)?
+            }
         };
         if !empty {
             return Ok(false);
@@ -377,6 +380,16 @@ mod tests {
         std::fs::write(opened.join("AGENTS.md"), "").unwrap();
         write(&opened, daw).unwrap();
         assert!(opened.join("state/song/instance.json").exists());
+
+        // So does a Bare one, whose kit is as Bare wrote it; not once a file of it changed.
+        let bare = folder.path().join("bare");
+        write(&bare, named("Bare").unwrap()).unwrap();
+        let knob = bare.join("extensions/ui/knob.tsx");
+        std::fs::write(&knob, "// mine").unwrap();
+        write(&bare, daw).unwrap_err();
+        std::fs::remove_file(&knob).unwrap();
+        write(&bare, daw).unwrap();
+        assert!(bare.join("extensions/song.tsx").exists());
     }
 
     /// A project from the DAW template whose `song.tsx` and the kept one are `before`, as if an
