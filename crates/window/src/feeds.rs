@@ -73,11 +73,15 @@ impl Feeds {
                         let there = inside(id, path.as_deref());
                         let gives = there.and_then(|at| feeds::gives(state.project(), &at, name));
                         (gives == Some(false)).then(|| {
-                            let of = path.as_ref().map_or(String::new(), |path| format!(" of {path}"));
+                            let of = path
+                                .as_ref()
+                                .map_or(String::new(), |path| format!(" of {path}"));
                             format!("{key} reads the feed \"{name}\"{of}, which is not there")
                         })
                     }
-                    Unread::Op { key, op } => Some(format!("{key} reads \"{op}\", which is no live value")),
+                    Unread::Op { key, op } => {
+                        Some(format!("{key} reads \"{op}\", which is no live value"))
+                    }
                 })
                 .collect();
             if !said.is_empty() {

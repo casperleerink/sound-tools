@@ -486,7 +486,10 @@ impl Walked {
     /// out of all the trees is out of date.
     pub(crate) fn unwalked(&self, heard: u64, shown: &BTreeSet<InstanceId>) -> bool {
         let mut walked = self.0.borrow_mut();
-        if walked.as_ref().is_some_and(|(at, then)| *at == heard && then == shown) {
+        if walked
+            .as_ref()
+            .is_some_and(|(at, then)| *at == heard && then == shown)
+        {
             return false;
         }
         *walked = Some((heard, shown.clone()));
