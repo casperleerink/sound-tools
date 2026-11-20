@@ -41,6 +41,8 @@ export type KnobProps = Range & {
   bipolar?: boolean;
   /** What a lane plays into it, when one does: it shows that, with a dot and a tip that say why. */
   held?: Live;
+  /** The value in the device's own words, such as a plugin's `3.2 kHz`: shown for the number while no lane holds it. */
+  words?: string;
   /** A small dial without its name, as in a mixer's strip: its value under it, or `beside` it, `w` wide. */
   small?: { beside?: boolean; w: number; quiet?: boolean };
   onChange: (value: number) => void;
@@ -51,7 +53,7 @@ export type KnobProps = Range & {
  * ten times finer), arrows step it, a double click or Backspace sets `initial`, and a click on
  * the value or Enter types one. The arc is the one bright line and follows the drag.
  */
-export const Knob = ({ id, path, label, text, value, initial, unit, bipolar = false, held, small, onChange, ...range }: KnobProps) => {
+export const Knob = ({ id, path, label, text, value, initial, unit, bipolar = false, held, words, small, onChange, ...range }: KnobProps) => {
   const at = travelled(value, range);
   const set = (next: number) => onChange(fitted(next, range));
   // A drag from the value line turns the knob too.
@@ -63,7 +65,8 @@ export const Knob = ({ id, path, label, text, value, initial, unit, bipolar = fa
   const dragEnd = ({ dy }: Pointer) => onChange(valueAt(at - dy / TRAVEL, range));
   const actions = { set, increment: (by: number) => onChange(stepped(value, by, range)), decrement: (by: number) => onChange(stepped(value, -by, range)), ...(initial === undefined ? {} : { reset: () => set(initial) }) };
   const readout = held ?? playing ?? liveShownAt(dragged, range);
-  const number = unit === undefined ? <text style="number" color="text" live={readout} /> : <text style="number" color="text" live={readout} unit={unit} />;
+  const number = words !== undefined && !held ? <text style="number" color="text" truncate>{words}</text>
+    : unit === undefined ? <text style="number" color="text" live={readout} /> : <text style="number" color="text" live={readout} unit={unit} />;
   if (small) {
     const line = (
       <TypeIn id={id} label={label} value={value} unit={unit} range={range} w={small.w} h={LINE + 4} drag={drag} onDragEnd={dragEnd} onChange={set}>

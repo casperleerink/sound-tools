@@ -53,8 +53,10 @@ export const card: Card<"plugin"> = (self, ctx) => {
   );
   const name = facts.name ?? state.plugin_id;
   if (facts.status === "missing") return <DeviceCard id="card" title={title} display={says("This plugin is not on this computer. Install it, or pick another.")} />;
-  // The host can start a stopped plugin again, but a card has no way to ask it yet.
-  if (facts.status === "stopped") return <DeviceCard id="card" title={title} display={says(`${name} stopped working. Open the project again to start it.`)} />;
+  if (facts.status === "stopped") {
+    const again = <Button id="plugin-start-again" label={`${title} start again`} text="Start again" size="sm" onPress={() => ctx.send("start_again", 1)} />;
+    return <DeviceCard id="card" title={title} display={<col gap={1}>{says(`${name} stopped working.`)}{again}</col>} />;
+  }
   if (facts.status === "not_loaded") return <DeviceCard id="card" title={title} display={says("This plugin did not load, so there is nothing to open.")} />;
 
   const parameters = new Map(facts.parameters.map((parameter) => [parameter.id, parameter as Parameter]));
@@ -66,17 +68,13 @@ export const card: Card<"plugin"> = (self, ctx) => {
       const pin = (draft.state as { parameters?: Record<string, Pin> }).parameters?.[id];
       if (pin) pin.value = value;
     });
-  /** A parameter comes off the card, or goes on it at its default: the card does not ask the plugin what it plays. */
+  /** A parameter comes off the card, or goes on it at what the plugin plays now, which only the plugin knows. */
   const pinOrUnpin = (id: number) =>
-    ctx.update(pins[id] ? `Remove ${pins[id]!.name}` : `Add ${parameters.get(id)!.name}`, (draft) => {
-      const all = ((draft.state as { parameters?: Record<string, Pin> }).parameters ??= {});
-      if (all[id]) delete all[id];
-      else all[id] = { name: parameters.get(id)!.name, value: parameters.get(id)!.default };
-    });
+    pins[id] ? ctx.update(`Remove ${pins[id]!.name}`, (draft) => void delete (draft.state as { parameters?: Record<string, Pin> }).parameters?.[id]) : ctx.send("pin", id);
 
   const window = facts.window === "none"
     ? <col>{lines("This plugin has no window of its own.", OWN * LETTERS_A_CELL).map((line) => <text style="label" color="text-secondary">{line}</text>)}</col>
-    : <Button id="plugin-window" label={`${title} ${facts.window === "open" ? "show window" : "open window"}`} text={facts.window === "open" ? "Show window" : "Open window"} size="sm" onPress={() => ctx.openWindow("")} />;
+    : <Button id="plugin-window" label={`${title} ${facts.window === "open" ? "close window" : "open window"}`} text={facts.window === "open" ? "Close window" : "Open window"} size="sm" onPress={() => (facts.window === "open" ? ctx.send("close_window", 1) : ctx.openWindow(""))} />;
   const listed = [
     ...facts.parameters.map((parameter) => {
       const has = pinned.includes(parameter.id);
@@ -127,12 +125,11 @@ export const card: Card<"plugin"> = (self, ctx) => {
       const select = <Select id={`pin-${id}`} label={label} options={options} value={outside ? -1 : stepOf(parameter, steps, pin.value)} w={LIST * CELL - 8} menuW={160} onChange={(index) => set(id, change, stepValue(parameter, steps, index))} />;
       return [<Cell span={LIST} text={parameter.name} {...(outside ? { value: "Out of range" } : {})}>{select}</Cell>, LIST];
     }
-    // The plugin's own words for a value need a call into it, which a card cannot make: the number shows.
     const path = `parameters.${id}.value`;
     const held = laned(id) ? live.field(played(path)) : undefined;
     const knob = steps > 2
       ? <Knob id={`pin-${id}`} label={label} text={parameter.name} value={stepOf(parameter, steps, pin.value)} min={0} max={steps - 1} step={1} initial={stepOf(parameter, steps, parameter.default)} onChange={(index) => set(id, change, stepValue(parameter, steps, index))} />
-      : <Knob id={`pin-${id}`} path={path} label={label} text={parameter.name} value={pin.value} min={parameter.min} max={parameter.max} initial={parameter.default} {...(held ? { held } : {})} onChange={(value) => set(id, change, Math.min(Math.max(value, parameter.min), parameter.max))} />;
+      : <Knob id={`pin-${id}`} path={path} label={label} text={parameter.name} value={pin.value} min={parameter.min} max={parameter.max} initial={parameter.default} {...(held ? { held } : {})} {...(facts.texts[id] === undefined ? {} : { words: facts.texts[id] })} onChange={(value) => set(id, change, Math.min(Math.max(value, parameter.min), parameter.max))} />;
     return [outside ? <Cell text={parameter.name} value="Out of range"><box opacity={0.4}>{knob}</box></Cell> : knob, 1];
   };
   // In the order of their ids, each in the row with the most room.

@@ -2191,6 +2191,28 @@ fn code_that_opens_the_window_of_a_child_with_none_has_a_problem() {
     assert_eq!(state.report()["plugin_windows"], json!([]));
 }
 
+/// A card opens the window of its own device with the path `""`: a plugin's card does. A tool of
+/// the project has none, which is the problem, not the path.
+#[test]
+fn code_that_opens_its_own_window_names_itself() {
+    const SELF: &str = r#"import { h, input, tool } from "./sdk";
+export const own = tool({ name: "own", title: "Own", when: "Never", doc: "Opens its own window.", state: {}, sound: () => input,
+  view: (_, { openWindow }) => <box key="open" label="Open own window" onPress={() => openWindow("")} /> });
+"#;
+    let (_scratch, folder) = with_tools(&[("own", SELF)]);
+    let mut state = opened(&folder);
+    act(
+        &mut state,
+        json!({ "label": "Open own window", "action": "press" }),
+    );
+    frame(&mut state, 0.1);
+    let problems = state.report()["problems"].to_string();
+    assert!(
+        problems.contains(r#"its openWindow(\"\") was refused: it has no window of its own"#),
+        "{problems}"
+    );
+}
+
 mod audio;
 mod behaviours;
 mod budget;

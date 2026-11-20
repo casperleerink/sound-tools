@@ -226,6 +226,8 @@ struct Hosted {
     /// lane means the same pin to both until the next run.
     lanes: AutomatedPins,
     shown: BTreeMap<u32, Shown>,
+    /// The last text of each parameter, with the bits of its value.
+    texts: BTreeMap<u32, (u64, Option<String>)>,
 }
 
 /// Both formats change a plugin's latency by starting it again.
@@ -498,11 +500,19 @@ impl Plugins {
         Some(table.loaded.get_mut(id)?.parameters().clone())
     }
 
-    /// The plugin's own text, such as `1.2 kHz`. Calls into the plugin, as
-    /// [`Self::parameter_value`].
+    /// The plugin's own text for `value`, such as `1.2 kHz`. A card reads it every frame, so
+    /// the plugin is asked once per value, as [`Self::parameter_value`] asks it.
     pub fn parameter_text(&self, id: &InstanceId, parameter: u32, value: f64) -> Option<String> {
         let mut table = self.0.table.try_borrow_mut().ok()?;
-        table.loaded.get_mut(id)?.plugin.text(parameter, value)
+        let hosted = table.loaded.get_mut(id)?;
+        if let Some((known, text)) = hosted.texts.get(&parameter)
+            && *known == value.to_bits()
+        {
+            return text.clone();
+        }
+        let text = hosted.plugin.text(parameter, value);
+        (hosted.texts).insert(parameter, (value.to_bits(), text.clone()));
+        text
     }
 
     /// Loads the plugin the record names, for the engine. A run whose record changed only its
@@ -656,6 +666,7 @@ impl Plugins {
             laned,
             lanes: AutomatedPins::NONE,
             shown: BTreeMap::new(),
+            texts: BTreeMap::new(),
         };
         // The record wins over the state just loaded. The backend gave the plugin every pin
         // before activating it; they go again in the first block for a plugin that took

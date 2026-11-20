@@ -8,18 +8,21 @@ const PARAMETERS = [
   { id: 1, name: "Wave", min: 0, max: 2, default: 0, steps: 3, names: [{ value: 0, name: "Sine" }, { value: 1, name: "Saw" }, { value: 2, name: "Square" }], automatable: false },
   { id: 5, name: "Bright", min: 0, max: 1, default: 0, steps: 2, names: [], automatable: true },
 ];
-type Facts = { name?: string | null; status?: string; window?: string; parameters?: typeof PARAMETERS };
+type Facts = { name?: string | null; status?: string; window?: string; parameters?: typeof PARAMETERS; texts?: Record<string, string> };
 const open = (parameters: Record<string, { name: string; value: number }> = {}, facts: Facts = {}, held: string[] = []) => {
   render((() => <box />) as Card, { name: "other", state: {}, children: [] });
   const state = { format: "clap", plugin_id: "sound-tools.test-tone", state_asset: "tone", parameters };
-  return render(card, { name: "plugin", state, children: [] } as never, { facts: { title: "Test Tone", fields: [], name: "Test Tone", status: "plays", window: "closed", parameters: PARAMETERS, ...facts }, held } as never);
+  return render(card, { name: "plugin", state, children: [] } as never, { facts: { title: "Test Tone", fields: [], name: "Test Tone", status: "plays", window: "closed", parameters: PARAMETERS, texts: {}, ...facts }, held } as never);
 };
 const said = (label: string) => JSON.stringify(find(label));
 
-test("plugin: a parameter pinned from the list turns on the card; taking it off is one step each", () => {
+test("plugin: a parameter pinned from the list turns on the card in the plugin's words; taking it off is one step", () => {
   open();
-  expect(press("Cutoff")).toEqual([[["state", "parameters", "0"], { name: "Cutoff", value: 1000 }]]);
+  // The plugin pins it at what it plays now, which only it knows: the card asks, and changes no record itself.
+  expect(press("Cutoff")).toEqual([]);
+  open({ 0: { name: "Cutoff", value: 1000 } }, { texts: { 0: "1000 Hz" } });
   expect(find("Test Tone Cutoff")).toMatchObject({ role: "slider", value: 1000 });
+  expect(said("Test Tone Cutoff")).toContain("1000 Hz");
   expect(act("Test Tone Cutoff", "set", 2000)).toEqual([[["state", "parameters", "0", "value"], 2000]]);
   expect(press("Cutoff")).toEqual([[["state", "parameters", "0"], undefined]]);
   expect(find("Test Tone Cutoff")).toBeUndefined();
@@ -46,7 +49,7 @@ test("plugin: a pin a lane moves cannot come off, and the window button names wh
   expect(() => press("Cutoff")).toThrow("has no press");
   expect(find("Test Tone open window")).toBeDefined();
   open({}, { window: "open" });
-  expect(find("Test Tone show window")).toBeDefined();
+  expect(find("Test Tone close window")).toBeDefined();
   open({}, { window: "none" });
   expect(JSON.stringify(find("card"))).toContain("This plugin has no window of");
 });
@@ -56,6 +59,7 @@ test("plugin: one that cannot play says why where the display would be", () => {
   expect(JSON.stringify(find("card"))).toContain("This plugin is not on this");
   open({}, { status: "stopped", parameters: [] });
   expect(JSON.stringify(find("card"))).toContain("Test Tone stopped working.");
+  expect(find("Test Tone start again")).toBeDefined();
   open({}, { status: "not_loaded", parameters: [] });
   expect(find("Test Tone parameters")).toBeUndefined();
 });

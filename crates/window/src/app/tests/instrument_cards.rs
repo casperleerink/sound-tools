@@ -103,7 +103,10 @@ fn a_drag_up_the_wavetable_plays_its_position_before_release_as_one_step() {
 /// The loudest the feed `name` of the track's instrument read in the last frame.
 fn level(state: &State, name: &str) -> f64 {
     let read = state.feeds.read_now();
-    (read.get(&format!("song/t00/synth {name}")).and_then(Value::as_f64)).unwrap_or(0.0)
+    (read
+        .get(&format!("song/t00/synth {name}"))
+        .and_then(Value::as_f64))
+    .unwrap_or(0.0)
 }
 
 #[test]
@@ -121,4 +124,40 @@ fn a_press_on_a_drum_pad_plays_that_pad() {
     }
     assert!(loudest[1] > 0.1, "pad 2 played {}", loudest[1]);
     assert_eq!(loudest[0], 0.0, "pad 1 played too");
+}
+
+/// The library's Download reaches the sampler from its card: here the files are not there to
+/// fetch, so the download fails and the card offers it again.
+#[test]
+fn the_samplers_download_button_starts_its_download() {
+    let library = tempfile::tempdir().unwrap();
+    sampler::library::set_folder(library.path().join("library"));
+    sampler::library::set_source(&format!(
+        "file://{}",
+        library.path().join("nothing").display()
+    ));
+    let record = json!({ "tool": "sampler", "state": { "library": "piano/kawai-upright" } });
+    let (_scratch, mut window) = with_instrument(record);
+    assert!(window.find("t00/synth:download").is_some(), "no Download");
+    let drawn = |state: &State| match state.drawn(&InstanceId::new("song/t00/synth").unwrap()) {
+        Some(crate::app::Drawn::View { root, .. }) => root.to_string(),
+        _ => String::new(),
+    };
+    act(
+        &mut window.state,
+        json!({ "label": "Sampler download", "action": "press" }),
+    );
+    for _ in 0..200 {
+        wait(&mut window, 1.0 / 60.0);
+        if drawn(&window.state).contains("Try again") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(
+        drawn(&window.state).contains("The download of"),
+        "{}",
+        drawn(&window.state)
+    );
+    assert!(drawn(&window.state).contains("Try again"));
 }

@@ -212,6 +212,13 @@ pub(crate) struct Shown {
     pub play: Option<ErasedPlay>,
     /// Its card, made once from the schema it registered.
     pub card: std::cell::OnceCell<Arc<super::facts::Card>>,
+    pub commands: Vec<RegisteredCommand>,
+}
+
+/// See [`ToolRegistration::command`].
+pub(crate) struct RegisteredCommand {
+    pub name: &'static str,
+    pub run: Box<dyn Fn(&dyn Any, &InstanceId, Option<f64>) -> Option<(String, Record)>>,
 }
 
 impl Shown {
@@ -267,6 +274,19 @@ impl Registry {
 
     pub(crate) fn shown(&self, tool: &str) -> Option<&Shown> {
         self.shown.get(tool)
+    }
+
+    /// The bang inputs of each tool that has some, see [`ToolRegistration::command`].
+    pub fn commands(&self) -> Vec<(&'static str, Vec<&'static str>)> {
+        (self.shown.iter())
+            .filter(|(_, shown)| !shown.commands.is_empty())
+            .map(|(tool, shown)| {
+                (
+                    *tool,
+                    shown.commands.iter().map(|command| command.name).collect(),
+                )
+            })
+            .collect()
     }
 
     /// Files and folders at the top of `extensions/` that the runtime writes itself, such as
@@ -532,6 +552,26 @@ impl<S: State> ToolRegistration<'_, S> {
         facts: impl Fn(&S, &FactsContext<'_>) -> F + 'static,
     ) -> Self {
         self.shown.facts = Some(super::facts::erase(facts));
+        self
+    }
+
+    /// An input `name` that code plays with `send(name)` or `send(name, value)`, such as a
+    /// card's Download button: `run` gets the record, the instance and the value, on the main
+    /// thread. What it gives back, a label and a record, is one undo step; what it starts
+    /// otherwise reaches the card through the facts.
+    pub fn command(
+        self,
+        name: &'static str,
+        run: impl Fn(&S, &InstanceId, Option<f64>) -> Option<(String, S)> + 'static,
+    ) -> Self {
+        self.shown.commands.retain(|kept| kept.name != name);
+        self.shown.commands.push(RegisteredCommand {
+            name,
+            run: Box::new(move |state, id, value| {
+                let (label, state) = run(state.downcast_ref::<S>()?, id, value)?;
+                Some((label, Record::new(state)))
+            }),
+        });
         self
     }
 

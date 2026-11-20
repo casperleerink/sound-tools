@@ -336,7 +336,8 @@ pub(crate) enum Event {
         instance: InstanceId,
         child: Option<String>,
         name: String,
-        value: Option<f32>,
+        /// A whole `f64`: a plugin's parameter id does not fit an `f32`.
+        value: Option<f64>,
         at: Option<f64>,
     },
     /// A card or a control loop played a note of an instance, or of its child `child`: a key

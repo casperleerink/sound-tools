@@ -260,13 +260,41 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 };
 
 pub fn register(registry: &mut Registry, plugins: Plugins) -> Result<(), RegistryError> {
-    let shown = plugins.clone();
+    let (shown, pin_plugins) = (plugins.clone(), plugins.clone());
     registry
         .tool::<PluginRecord>(EXTENSION)?
-        .behaviour(move |state, context| apply(&plugins, state, context))
+        .behaviour({
+            let plugins = plugins.clone();
+            move |state, context| apply(&plugins, state, context)
+        })
         // Its numbers are the plugin's, which no schema lists: a card finds them in its facts.
         .schema(&[])
-        .facts(move |record, context| facts::Facts::of(&shown, record, context.instance()));
+        .facts(move |record, context| facts::Facts::of(&shown, record, context.instance()))
+        .command("start_again", {
+            let plugins = plugins.clone();
+            move |_, id, _| {
+                plugins.start_again(id);
+                None
+            }
+        })
+        .command("close_window", {
+            let plugins = plugins.clone();
+            move |_, id, _| {
+                plugins.close_window(id);
+                None
+            }
+        })
+        // Pins the parameter of the id sent at what the plugin plays now, so pinning changes no
+        // sound.
+        .command("pin", move |record, id, parameter| {
+            let parameter = u32::try_from(parameter? as i64).ok()?;
+            let parameters = pin_plugins.parameters(id)?;
+            let pin = pin_plugins.pin_now(id, parameters.get(&parameter)?);
+            let mut record = record.clone();
+            let label = format!("Add {}", pin.name);
+            record.parameters.insert(parameter, pin);
+            Some((label, record))
+        });
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

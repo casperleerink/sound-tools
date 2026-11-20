@@ -234,6 +234,7 @@ pub fn built_in() -> Result<sound_typescript::BuiltIn> {
         schemas: registry.tool_schemas(),
         feeds: sound_core::feeds::names(&registry),
         facts: sound_core::facts::describe(&registry),
+        commands: registry.commands(),
     })
 }
 

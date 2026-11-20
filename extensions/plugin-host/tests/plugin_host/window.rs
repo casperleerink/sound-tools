@@ -57,8 +57,10 @@ fn log_folder() -> tempfile::TempDir {
     tempfile::tempdir().expect("a temporary folder")
 }
 
-fn close_window(harness: &Harness, desktop: &mut Desktop) {
-    harness.plugins.close_window(&id(SLOT));
+/// As the card's Close window sends it.
+fn close_window(harness: &mut Harness, desktop: &mut Desktop) {
+    let closed = harness.project.command(&id(SLOT), "close_window", None);
+    assert_eq!(closed.ok(), Some(true));
     desktop.settle(&harness.plugins);
 }
 
@@ -72,7 +74,7 @@ fn opening_the_window_makes_it_once_and_a_second_open_only_brings_it_forward() {
 fn a_window_is_made_once(format: PluginFormat) {
     let folder = log_folder();
     let log = folder.path().join("calls.txt");
-    let harness = open(format, &log);
+    let mut harness = open(format, &log);
     let mut desktop = Desktop::new(1.0);
     let slot = id(SLOT);
     assert_eq!(harness.plugins.window_offered(&slot), Some(true));
@@ -138,7 +140,7 @@ fn a_window_is_made_once(format: PluginFormat) {
     );
     assert_eq!(times(&log, MADE_A_WINDOW) - made_before, 1, "{format:?}");
 
-    close_window(&harness, &mut desktop);
+    close_window(&mut harness, &mut desktop);
     assert!(desktop.shown.is_empty());
 }
 
@@ -157,7 +159,7 @@ fn closing_the_window_leaves_the_plugin(format: PluginFormat) {
     let slot = id(SLOT);
     desktop.open(&harness.plugins, &slot);
     let made_before = times(&log, MADE_A_WINDOW);
-    close_window(&harness, &mut desktop);
+    close_window(&mut harness, &mut desktop);
     assert!(!harness.plugins.window_is_open(&slot));
     assert!(desktop.shown.is_empty());
     assert_eq!(
@@ -177,7 +179,7 @@ fn closing_the_window_leaves_the_plugin(format: PluginFormat) {
     desktop.open(&harness.plugins, &slot);
     assert!(harness.plugins.window_is_open(&slot));
     assert_eq!(times(&log, MADE_A_WINDOW) - made_before, 1, "{format:?}");
-    close_window(&harness, &mut desktop);
+    close_window(&mut harness, &mut desktop);
     assert!(desktop.shown.is_empty());
 }
 
@@ -193,7 +195,7 @@ fn a_plugin_sizes_its_own_window(format: PluginFormat) {
     let folder = log_folder();
     let log = folder.path().join("calls.txt");
     tell_the_plugin_to_ask_for_a_window_size(640, 480);
-    let harness = open(format, &log);
+    let mut harness = open(format, &log);
     let mut desktop = Desktop::new(1.0);
     desktop.open(&harness.plugins, &id(SLOT));
     // A CLAP plugin asks from `show`, after the window was made, so the window is still the
@@ -233,7 +235,7 @@ fn a_plugin_sizes_its_own_window(format: PluginFormat) {
         window_calls(&log)
     );
 
-    close_window(&harness, &mut desktop);
+    close_window(&mut harness, &mut desktop);
     assert!(desktop.shown.is_empty());
     tell_the_plugin_to_ask_for_a_window_size(0, 0);
 }
@@ -305,7 +307,7 @@ fn nested_resize_ends_on(asked: (u32, u32), from_inside: (u32, u32)) {
     let log = folder.path().join("calls.txt");
     tell_the_plugin_to_ask_for_a_window_size(asked.0, asked.1);
     tell_the_plugin_to_ask_again_from_inside_the_answer(from_inside.0, from_inside.1);
-    let harness = open(PluginFormat::Vst3, &log);
+    let mut harness = open(PluginFormat::Vst3, &log);
     let mut desktop = Desktop::new(1.0);
     desktop.open(&harness.plugins, &id(SLOT));
     harness.plugins.poll(&harness.project);
@@ -327,7 +329,7 @@ fn nested_resize_ends_on(asked: (u32, u32), from_inside: (u32, u32)) {
     );
     assert_eq!(desktop.content(), from_inside, "{calls:?}");
 
-    close_window(&harness, &mut desktop);
+    close_window(&mut harness, &mut desktop);
     assert!(desktop.shown.is_empty());
     tell_the_plugin_to_ask_for_a_window_size(0, 0);
     tell_the_plugin_to_ask_again_from_inside_the_answer(0, 0);
@@ -532,7 +534,7 @@ fn window_calls_are_on_the_main_thread(format: PluginFormat) {
     play(2, &mut harness);
     desktop.open(&harness.plugins, &id(SLOT));
     play(2, &mut harness);
-    close_window(&harness, &mut desktop);
+    close_window(&mut harness, &mut desktop);
     play(2, &mut harness);
 
     let calls = lifecycle(&log);

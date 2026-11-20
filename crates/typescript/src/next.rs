@@ -1063,6 +1063,22 @@ impl Tools {
                 at,
             } => {
                 let played = self.played_on(project, &instance, child.as_deref());
+                let command = played
+                    .as_ref()
+                    .ok()
+                    .filter(|id| self.info_of(project, id).is_none());
+                if let Some(id) = command.cloned() {
+                    match project.command(&id, &name, value) {
+                        Ok(true) => return false,
+                        Ok(false) => {}
+                        Err(error) => {
+                            let message = format!("its send({name:?}) was refused: {error}");
+                            self.tool_problem(project, &instance, &message);
+                            return false;
+                        }
+                    }
+                }
+                let value = value.map(|value| value as f32);
                 let performed = match &played {
                     Ok(id) if project.tool_of(id) == Some(RECORDER) => {
                         Some(record_on(project, id, &name, value, at))
@@ -1254,13 +1270,15 @@ impl Tools {
                 false
             }
             Event::OpenWindow { instance, path } => {
-                let opened =
-                    (self.child_of(project, &instance, &path)).and_then(|child| {
-                        match &self.open_window {
-                            Some(open) => open(project, &child),
-                            None => Err("this window opens no other".to_string()),
-                        }
-                    });
+                // A card opens its own device's window with the path "".
+                let child = match path.is_empty() {
+                    true => Ok(instance.clone()),
+                    false => self.child_of(project, &instance, &path),
+                };
+                let opened = child.and_then(|child| match &self.open_window {
+                    Some(open) => open(project, &child),
+                    None => Err("this window opens no other".to_string()),
+                });
                 if let Err(why) = opened {
                     let message = format!("its openWindow({path:?}) was refused: {why}");
                     self.tool_problem(project, &instance, &message);

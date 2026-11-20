@@ -421,6 +421,32 @@ impl Project {
         self.instances.get(id).map(|record| record.tool)
     }
 
+    /// Plays the input `name` of the tool of `id` with `value`, see
+    /// [`ToolRegistration::command`]: what it changes is a run of its label. Whether its tool
+    /// has one.
+    pub fn command(
+        &mut self,
+        id: &InstanceId,
+        name: &str,
+        value: Option<f64>,
+    ) -> Result<bool, ProjectError> {
+        let Some(record) = self.instances.get(id) else {
+            return Ok(false);
+        };
+        let shown = self.registry.shown(record.tool);
+        let Some(command) = (shown.into_iter().flat_map(|shown| &shown.commands))
+            .find(|command| command.name == name)
+        else {
+            return Ok(false);
+        };
+        if let Some((label, record)) = (command.run)(record.state.as_any(), id, value) {
+            let mut changes = Changes::new();
+            changes.changes.push(Change::Set(id.clone(), record));
+            self.publish_run(id, &label, changes)?;
+        }
+        Ok(true)
+    }
+
     /// The names of the children each record of `tool` must have, see
     /// [`JsonTool::required_children`].
     pub fn required_children(&self, tool: &str) -> &[String] {

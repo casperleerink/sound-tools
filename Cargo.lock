@@ -4627,6 +4627,7 @@ dependencies = [
  "rune",
  "rune-kit",
  "runtime",
+ "sampler",
  "serde",
  "serde_json",
  "smol",
