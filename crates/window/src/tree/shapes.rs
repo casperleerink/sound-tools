@@ -381,3 +381,37 @@ impl Raster {
         pixel[3] = (out * 255.0).round() as u8;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The alpha of the pixel `[x, y]` of a drawing `w` pixels wide.
+    fn alpha(rgba: &[u8], w: u32, [x, y]: [u32; 2]) -> u8 {
+        rgba[((y * w + x) * 4 + 3) as usize]
+    }
+
+    #[test]
+    fn a_list_in_rects_is_its_rects_and_one_in_lines_stands_in_the_ends_of_its_units() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/template");
+        let (theme, _) = Theme::of(std::path::Path::new(root));
+        let feed = serde_json::json!({ "op": "feed", "name": "notes" });
+        let node = serde_json::json!({
+            "w": 10, "h": 10, "units": [10, [10, 0]],
+            "rects": [{ "color": "text", "rects": feed }],
+            "lines": [{ "color": "text", "width": 1, "points": feed }],
+        });
+        let listed = listed(&serde_json::from_value(node).unwrap()).unwrap();
+        // The line first, then the rects: a line along 10, the top, and a rect from 0 to 5 up.
+        let (w, h, rgba) = listed.raster(&theme, &[vec![10.0, 10.0], vec![0.0, 0.0, 5.0, 5.0]]);
+        assert_eq!((w, h), (20, 20));
+        assert_eq!(alpha(&rgba, w, [10, 0]), 255, "the line at the top");
+        assert_eq!(
+            alpha(&rgba, w, [5, 15]),
+            255,
+            "inside the rect, at the bottom left"
+        );
+        assert_eq!(alpha(&rgba, w, [15, 15]), 0, "right of the rect");
+        assert_eq!(alpha(&rgba, w, [5, 5]), 0, "above the rect, under the line");
+    }
+}
