@@ -2149,6 +2149,7 @@ mod frame;
 mod geometry;
 mod history;
 mod input;
+mod instrument_cards;
 mod lanes;
 mod menu_settings;
 mod mixer;
