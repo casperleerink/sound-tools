@@ -11,7 +11,7 @@ import { BLACK_KEY, KEYS, type Roll } from "./roll-view";
 export const PianoKeys = ({ roll }: { roll: Roll }) => {
   const { key, top, track } = roll;
   return memo(`keys-${key}`, [top, track.name], () => {
-    const sounding = (pitch: number) => <box inset={[0, 0, 0, 0]} radius="sm" fill="sound/60" opacity={live.feed(`sounding.${pitch}`, `${track.name}/synth`)} inert />;
+    const sounding = (pitch: number) => <box inset={[0, 0, 0, 0]} radius="sm" fill="sound/60" opacity={live.feed(`sounding.${pitch}`, track.name)} inert />;
     const piano = (pitch: number, place: [number, number, number, number], fill: "fill-strong" | "well") => (
       <box key={`piano-${pitch}`} label={`Play ${pitchName(pitch)}`} role="button" place={place} radius="sm" fill={fill} hover="text-muted" onPress={() => roll.hear(pitch)}>
         {sounding(pitch)}
