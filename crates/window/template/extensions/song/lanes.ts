@@ -265,10 +265,11 @@ export const laneEdits = (song: Song) => {
         row.children.splice(row.children.findIndex((child) => child.name === lane), 1);
         const name = freeName(row.children.map((child) => child.name), `${PREFIX[tool]}-${nameFrom(target)}`);
         if (tool === "lane") row.children.push({ name: name as `lane-${string}`, tool: "lane", state: { points: [{ tick: 0, value: held }], scale: range.scale } });
-        else if (tool === "lfo") row.children.push({ name: name as `lfo-${string}`, tool: lfo, state: { low, high, scale } });
+        else if (tool === "lfo") row.children.push({ name: name as `lfo-${string}`, tool: lfo, state: { shape: "sine", rate: "1/4", low, high, scale } });
         else {
           const owner = draft.children.find((child) => child.name === track);
-          if (owner?.tool === "track") owner.children.push({ name: name as `env-${string}`, tool: envelope, state: { low, high, scale } });
+          const times = Object.fromEntries(Object.entries(ENVELOPE).map(([field, spec]) => [field, spec.default])) as Record<keyof typeof ENVELOPE, number>;
+          if (owner?.tool === "track") owner.children.push({ name: name as `env-${string}`, tool: envelope, state: { ...times, low, high, scale } });
         }
         row.state.automation = row.state.automation.map((each) => (each.lane === lane ? { ...each, lane: name } : each));
       });

@@ -72,7 +72,7 @@ const LaneHead = ({ page, row }: { page: Page; row: LaneRow }) => {
     const items = laneItems(page, row);
     const cut = short(lane.name);
     return (
-      <col key={`lane-head-${lane.id}`} label={`${lane.name} lane of ${lane.title}`} place={[0, row.top, HEAD - 1, row.height]} px={2} gap={1} justify="center" align="start" border="border" borderSides={[0, 0, 1, 0]}>
+      <col key={`lane-head-${lane.id}`} label={`${lane.name} of ${lane.title}`} place={[0, row.top, HEAD - 1, row.height]} px={2} gap={1} justify="center" align="start" border="border" borderSides={[0, 0, 1, 0]}>
         <row key={`lane-name-${lane.id}`} label={`Menu of the ${lane.name} lane of ${lane.title}`} role="button" h={20} px={1} gap={1} align="center" radius="sm" hover="fill">
           <text style="label" color="text-secondary" truncate>{cut}</text>
           <icon name="chevron-down" size={12} color="text-muted" />
