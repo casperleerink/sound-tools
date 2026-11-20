@@ -269,8 +269,14 @@ fn the_song_of_the_template_with_100_audio_clips_on_16_audio_tracks_runs_no_view
         let at = song.join(format!("audio-{track:02}"));
         std::fs::create_dir_all(at.join("chain")).unwrap();
         let files = [
-            ("instance.json", r#"{"tool": "tape", "state": {"colour": "teal"}}"#),
-            ("rec.json", r#"{"tool": "recorder", "state": {"channels": [0]}}"#),
+            (
+                "instance.json",
+                r#"{"tool": "tape", "state": {"colour": "teal"}}"#,
+            ),
+            (
+                "rec.json",
+                r#"{"tool": "recorder", "state": {"channels": [0]}}"#,
+            ),
             ("chain/instance.json", r#"{"tool": "chain", "state": {}}"#),
             ("mix.json", r#"{"tool": "fader", "state": {}}"#),
         ];
@@ -281,7 +287,11 @@ fn the_song_of_the_template_with_100_audio_clips_on_16_audio_tracks_runs_no_view
     for clip in 0..100 {
         let (track, at) = (clip % 16, clip / 16);
         let record = serde_json::json!({ "tool": "region", "state": { "asset": "tone.wav", "start": at * 3 * 3840 } });
-        std::fs::write(song.join(format!("audio-{track:02}/r{at}.json")), record.to_string()).unwrap();
+        std::fs::write(
+            song.join(format!("audio-{track:02}/r{at}.json")),
+            record.to_string(),
+        )
+        .unwrap();
     }
     let mut window = laid_out(opened(&folder));
     let start = std::time::Instant::now();

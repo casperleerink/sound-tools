@@ -14,7 +14,9 @@ use super::*;
 /// A tone of `seconds` at 48 kHz, half as loud as it can be: a 16-bit mono WAV.
 pub(super) fn tone(path: &Path, seconds: f32) {
     let samples: Vec<i16> = (0..(seconds * 48_000.0) as usize)
-        .map(|frame| ((frame as f32 * 220.0 / 48_000.0 * std::f32::consts::TAU).sin() * 16_000.0) as i16)
+        .map(|frame| {
+            ((frame as f32 * 220.0 / 48_000.0 * std::f32::consts::TAU).sin() * 16_000.0) as i16
+        })
         .collect();
     let data = (samples.len() * 2) as u32;
     let mut bytes = Vec::new();
@@ -55,7 +57,10 @@ const TONE: (&str, &str) = (
 );
 
 fn rect(window: &rune::Runtime<State>, key: &str) -> [f32; 4] {
-    window.presented(key).unwrap_or_else(|| panic!("no {key}")).0
+    window
+        .presented(key)
+        .unwrap_or_else(|| panic!("no {key}"))
+        .0
 }
 
 /// The clip `tone`, chosen alone, once its file was read: it is as long as its four seconds,
@@ -65,8 +70,13 @@ fn chosen_tone() -> (tempfile::TempDir, rune::Runtime<State>) {
     let mut window = window_of(&folder);
     until(&mut window, "the length of the file", |_| true);
     let start = Instant::now();
-    while window.presented("wave-audio-1/tone").is_none() || rect(&window, "clip-audio-1/tone")[2] < 190.0 {
-        assert!(start.elapsed().as_secs() < 30, "the clip never took its file's length");
+    while window.presented("wave-audio-1/tone").is_none()
+        || rect(&window, "clip-audio-1/tone")[2] < 190.0
+    {
+        assert!(
+            start.elapsed().as_secs() < 30,
+            "the clip never took its file's length"
+        );
         redraw(&mut window);
     }
     let [x, y, w, h] = rect(&window, "clip-audio-1/tone");
@@ -74,7 +84,10 @@ fn chosen_tone() -> (tempfile::TempDir, rune::Runtime<State>) {
     redraw(&mut window);
     window.pointer_up(x + w / 2.0, y + h / 2.0);
     redraw(&mut window);
-    assert!(window.presented("fade-in-audio-1/tone").is_some(), "chosen alone, it shows its handles");
+    assert!(
+        window.presented("fade-in-audio-1/tone").is_some(),
+        "chosen alone, it shows its handles"
+    );
     (scratch, window)
 }
 
@@ -82,14 +95,31 @@ fn chosen_tone() -> (tempfile::TempDir, rune::Runtime<State>) {
 fn tone_record(state: &State) -> (Value, Value) {
     let id = InstanceId::new("song/audio-1/tone").unwrap();
     let played = serde_json::from_str(&state.project().state_json(&id).unwrap()).unwrap();
-    (played, record(state, "song/audio-1/tone.json")["state"].clone())
+    (
+        played,
+        record(state, "song/audio-1/tone.json")["state"].clone(),
+    )
 }
 
 /// The loudest of the first eighth of the clip `tone`, as its wave shows it.
 fn first_of_wave(state: &State) -> f32 {
-    let (id, sources) = (InstanceId::new("song/audio-1/tone").unwrap(), state.sources());
-    let request = FeedRequest { tick: sound_core::Ticks(0), points: 8, range: Some([0.0, 7680.0]) };
-    match read(state.project(), &Readings::new(), &sources, &id, "wave", request) {
+    let (id, sources) = (
+        InstanceId::new("song/audio-1/tone").unwrap(),
+        state.sources(),
+    );
+    let request = FeedRequest {
+        tick: sound_core::Ticks(0),
+        points: 8,
+        range: Some([0.0, 7680.0]),
+    };
+    match read(
+        state.project(),
+        &Readings::new(),
+        &sources,
+        &id,
+        "wave",
+        request,
+    ) {
         Some(Feed::List(list)) => list[0],
         other => panic!("{other:?}"),
     }
@@ -115,8 +145,14 @@ fn the_end_of_an_audio_clip_trims_on_the_snap_as_one_step_and_its_wave_follows()
     redraw(&mut window);
     let (played, saved) = tone_record(&window.state);
     assert_eq!(saved["file_end_seconds"], 3.0, "{played}");
-    assert_eq!(window.state.project().undo_label().as_deref(), Some("Trim a region"));
-    assert!((rect(&window, "wave-audio-1/tone")[2] - wave * 0.75).abs() < 1.0, "the wave is as long as it plays");
+    assert_eq!(
+        window.state.project().undo_label().as_deref(),
+        Some("Trim a region")
+    );
+    assert!(
+        (rect(&window, "wave-audio-1/tone")[2] - wave * 0.75).abs() < 1.0,
+        "the wave is as long as it plays"
+    );
     window.state.undo().unwrap();
     assert_eq!(tone_record(&window.state).1.get("file_end_seconds"), None);
 }
@@ -125,28 +161,42 @@ fn the_end_of_an_audio_clip_trims_on_the_snap_as_one_step_and_its_wave_follows()
 fn a_fade_handle_plays_its_fade_as_it_drags_the_wave_follows_and_its_release_is_one_step() {
     let (_scratch, mut window) = chosen_tone();
     let runs = window.state.tools.as_ref().unwrap().view_runs();
-    let before = (first_of_wave(&window.state), window.state.project().undo_label());
+    let before = (
+        first_of_wave(&window.state),
+        window.state.project().undo_label(),
+    );
     let [x, y, w, h] = rect(&window, "fade-in-audio-1/tone");
     let held = drag_by(&mut window, (x + w / 2.0, y + h / 2.0), 48.0);
     // Held: the engine plays a second's fade in, the file keeps none, and no view ran.
     let (played, saved) = tone_record(&window.state);
-    assert!((played["fade_in_ms"].as_f64().unwrap() - 1000.0).abs() < 25.0, "{played}");
+    assert!(
+        (played["fade_in_ms"].as_f64().unwrap() - 1000.0).abs() < 25.0,
+        "{played}"
+    );
     assert_eq!(saved.get("fade_in_ms"), None);
     assert_eq!(window.state.tools.as_ref().unwrap().view_runs(), runs);
-    assert!(first_of_wave(&window.state) < before.0 * 0.6, "the wave fades in");
+    assert!(
+        first_of_wave(&window.state) < before.0 * 0.6,
+        "the wave fades in"
+    );
     window.pointer_up(held.0, held.1);
     redraw(&mut window);
     redraw(&mut window);
     let kept = tone_record(&window.state).1["fade_in_ms"].as_f64().unwrap();
     assert!((kept - 1000.0).abs() < 25.0, "{kept}");
-    assert_eq!(window.state.project().undo_label().as_deref(), Some("Change fade in"));
+    assert_eq!(
+        window.state.project().undo_label().as_deref(),
+        Some("Change fade in")
+    );
     window.state.undo().unwrap();
     assert_eq!(window.state.project().undo_label(), before.1);
 }
 
 /// The width of the take on `track` as the window draws it now.
 fn take_width(window: &rune::Runtime<State>, track: &str) -> Option<f32> {
-    window.presented(&format!("take-{track}")).map(|(rect, ..)| rect[2])
+    window
+        .presented(&format!("take-{track}"))
+        .map(|(rect, ..)| rect[2])
 }
 
 #[test]
@@ -156,7 +206,10 @@ fn a_take_draws_its_sound_as_it_grows_and_leaves_an_audio_clip_with_its_wave() {
     let microphone = Microphone::default();
     window.state.incoming.live = (window.state.session)
         .background(|project| Input::new(project, microphone.devices(), Arc::new(|| {})));
-    act(&mut window.state, json!({ "label": "Arm Audio 1", "action": "toggle" }));
+    act(
+        &mut window.state,
+        json!({ "label": "Arm Audio 1", "action": "toggle" }),
+    );
     press(&mut window, "r");
     until(&mut window, "the take", |state| state.session.recording());
     let mut widths = Vec::new();
@@ -167,25 +220,38 @@ fn a_take_draws_its_sound_as_it_grows_and_leaves_an_audio_clip_with_its_wave() {
         }
         widths.push(take_width(&window, "audio-1").expect("the take draws while it records"));
     }
-    assert!(widths[1] > widths[0] + 20.0, "it grows with the playhead: {widths:?}");
+    assert!(
+        widths[1] > widths[0] + 20.0,
+        "it grows with the playhead: {widths:?}"
+    );
     let (_, sound, ..) = shown_of_take(&window.state, "song/audio-1/rec");
     assert!(sound > 0, "its wave reads the sound so far");
 
     press(&mut window, "space");
     until(&mut window, "the clip of the take", |state| {
         microphone.write_until(state.session.status().frames + 2_048);
-        take_width_gone(state) && !super::input::children_of(state, "song/audio-1", "region").is_empty()
+        take_width_gone(state)
+            && !super::input::children_of(state, "song/audio-1", "region").is_empty()
     });
     let region = super::input::children_of(&window.state, "song/audio-1", "region").remove(0);
     let start = Instant::now();
-    while window.presented(&format!("wave-audio-1/{region}")).is_none() {
-        assert!(start.elapsed().as_secs() < 30, "the clip of the take draws no wave");
+    while window
+        .presented(&format!("wave-audio-1/{region}"))
+        .is_none()
+    {
+        assert!(
+            start.elapsed().as_secs() < 30,
+            "the clip of the take draws no wave"
+        );
         redraw(&mut window);
     }
     // The facts that the take ended reach the view at their next poll.
     let start = Instant::now();
     while take_width(&window, "audio-1").is_some() {
-        assert!(start.elapsed().as_secs() < 30, "the take still draws after it ended");
+        assert!(
+            start.elapsed().as_secs() < 30,
+            "the take still draws after it ended"
+        );
         redraw(&mut window);
     }
 }
@@ -193,4 +259,55 @@ fn a_take_draws_its_sound_as_it_grows_and_leaves_an_audio_clip_with_its_wave() {
 /// The recorder of `audio-1` no longer says it takes.
 fn take_width_gone(state: &State) -> bool {
     shown_of_take(state, "song/audio-1/rec").3.is_null()
+}
+
+/// A picture to look at: an armed audio track a second and a half into a take, beside a clip.
+/// `SNAPS=<folder> cargo nextest run -p sound-window --run-ignored only take_picture`.
+#[test]
+#[ignore = "writes a picture to look at"]
+fn take_picture() {
+    let Ok(folder) = std::env::var("SNAPS") else {
+        return;
+    };
+    let (_scratch, song) = with_audio_track(&[TONE]);
+    let mut window = window_of(&song);
+    let microphone = Microphone::default();
+    window.state.incoming.live = (window.state.session)
+        .background(|project| Input::new(project, microphone.devices(), Arc::new(|| {})));
+    window.state.session.dismiss_notice();
+    act(
+        &mut window.state,
+        json!({ "label": "Arm Audio 1", "action": "toggle" }),
+    );
+    act(
+        &mut window.state,
+        json!({ "key": "song", "action": "view", "value": { "left": 0, "zoom": 2 } }),
+    );
+    // From bar 3, after the clip.
+    window
+        .state
+        .session
+        .background(|project| project.engine().seek(sound_core::Ticks(7680)));
+    press(&mut window, "r");
+    until(&mut window, "the take", |state| state.session.recording());
+    while window.state.session.status().frames < 72_000 {
+        microphone.write_until(window.state.session.status().frames + 2_048);
+        redraw(&mut window);
+    }
+    let png = PathBuf::from(folder).join("take.png");
+    let state = window.state;
+    let spec = rune::AppSpec {
+        min_size: Some(MIN_SIZE),
+        poll: Some(poll),
+        setup: Some(setup),
+        on_key: Some(on_key),
+        fonts: &crate::FONTS,
+        families: ("Inter Display", "ui-monospace"),
+        ..rune::AppSpec::new("song", (1470.0, 956.0), || unreachable!(), view)
+    };
+    rune::App::new(spec)
+        .args(["--snap".to_string(), png.display().to_string()])
+        .init(move || state)
+        .run();
+    assert!(png.exists());
 }
