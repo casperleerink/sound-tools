@@ -2,7 +2,7 @@
 //! view of its main instance filling the rest. In a run without a window the engine plays
 //! offline, a step per frame, and Bun answers before each frame, so a run is always the same.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -119,6 +119,10 @@ pub(crate) struct State {
     pub(crate) shown: BTreeSet<InstanceId>,
     /// The view a held press paints, and the keys of the elements it entered.
     painting: Option<(InstanceId, BTreeSet<String>)>,
+    /// The modal layers the view drew last, and as the frame before saw them: Rune lets go of
+    /// a held press as one opens, with no cancelled release (`frame` ends what it held).
+    pub(crate) modals: Cell<usize>,
+    modals_seen: usize,
     /// The press that may become a drag now.
     pub(crate) gesture: Option<tree::Gesture>,
     /// The element a drag ended on in this frame: the release that ends a drag is no press.
@@ -327,6 +331,8 @@ impl State {
             theme_loads,
             shown: BTreeSet::new(),
             painting: None,
+            modals: Cell::new(0),
+            modals_seen: 0,
             gesture: None,
             dragged: None,
             open: Vec::new(),

@@ -179,6 +179,10 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
     let mut changed = false;
     // A press that a drag's release brings comes before the next frame.
     state.dragged = None;
+    if state.modals.get() > state.modals_seen {
+        state.let_go_of_pointer();
+    }
+    state.modals_seen = state.modals.get();
     state.open_menu();
     if headless {
         changed |= state.settle();

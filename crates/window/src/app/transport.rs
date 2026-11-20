@@ -201,6 +201,13 @@ impl State {
             .edit(|project| project.commit(TEMPO_STEP, tempo_changed(project, at, bpm)));
     }
 
+    /// The tempo goes back to what it was before the drag.
+    pub(super) fn cancel_tempo_drag(&mut self) {
+        if let Some(dragging) = self.transport.dragging.take() {
+            self.session.cancel(dragging.drag);
+        }
+    }
+
     fn drag_tempo(&mut self, d: &rune::Drag, tx: &mut Tx) {
         match d.phase {
             rune::Phase::Down => {

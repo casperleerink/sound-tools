@@ -209,6 +209,34 @@ fn undo_waits_for_the_drag_on_the_tempo_and_says_why() {
     assert_eq!(window.state.session.notice(), None);
 }
 
+/// A dialog that opens over a held drag, as one the app opens when work it started ends, ends
+/// the drag as a cancel: undo is not refused afterwards.
+#[test]
+fn a_dialog_that_opens_during_a_drag_cancels_it() {
+    let (_scratch, mut window) = window();
+    act(
+        &mut window.state,
+        json!({ "label": "Tempo", "action": "set", "value": 100 }),
+    );
+    let (x, y) = window.find("tempo").unwrap();
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    window.pointer_move(x, y - 20.0);
+    redraw(&mut window);
+    assert_eq!(tempo(&window.state), 110.0);
+    window.state.project_menu.installed = Some(("Installed".into(), "Done.".into()));
+    redraw(&mut window);
+    window.pointer_up(x, y - 20.0);
+    redraw(&mut window);
+    assert_eq!(tempo(&window.state), 100.0);
+    assert!(!window.state.session.gesture_open());
+    window.state.project_menu.installed = None;
+    redraw(&mut window);
+    chord(&mut window, Key::Command('z'), false);
+    assert_eq!(window.state.session.notice(), None);
+    assert_eq!(tempo(&window.state), 120.0);
+}
+
 #[test]
 fn tab_reaches_the_transport_and_enter_types_the_tempo() {
     let (_scratch, mut window) = window();

@@ -29,7 +29,7 @@ mod shapes;
 
 pub(crate) use build::{bound, code_failed, enterable, keyed, view};
 pub(crate) use field::{Fields, follow_fields};
-pub(crate) use gesture::{Gesture, Pointer};
+pub(crate) use gesture::{Gesture, Pointer, cancel_gesture};
 pub(crate) use icon::{Icons, report_missing};
 pub(crate) use overlay::overlays;
 pub(crate) use plane::{MISPLACED, Planes};

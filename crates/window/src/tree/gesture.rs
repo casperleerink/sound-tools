@@ -121,6 +121,23 @@ impl Gesture {
     }
 }
 
+/// The held press ends without a release, as a cancelled one ends it.
+pub(crate) fn cancel_gesture(s: &mut State) {
+    let Some(gesture) = s.gesture.take() else {
+        return;
+    };
+    s.drops.set_over(None);
+    if let Some(drag) = gesture.drag.filter(|_| gesture.far) {
+        drag_cancelled(s, &drag.id);
+    }
+}
+
+/// The drag of `id` ends without a drop: the sound from before it, and the hand back.
+fn drag_cancelled(s: &mut State, id: &str) {
+    plays::cancelled(s);
+    s.lives.move_hand(s, id, Hand::default());
+}
+
 /// What the pointer does to the element `b`, keyed `key` in the window: press, drag, paint,
 /// right press, and how the pointer looks over it.
 pub(super) fn pointer(scope: &Scope, mut e: El, b: &BoxNode, key: &str, press: &Press) -> El {
@@ -217,7 +234,7 @@ pub(super) fn pointer(scope: &Scope, mut e: El, b: &BoxNode, key: &str, press: &
                     // Rune presses it after this: the release is this press, or the end of a drag.
                     s.dragged = Some(key.clone());
                     let Some(drag) = gesture.drag.as_ref().filter(|_| gesture.far) else {
-                        // Escape, the window losing the keys or a modal opening lets go of it.
+                        // Escape or the window losing the keys lets go of it.
                         if !gesture.far && !d.cancelled() && (press.pressed || press.opens) {
                             let start = [d.start_x, d.start_y];
                             let window = [d.window_point()[0] - d.dx, d.window_point()[1] - d.dy];
@@ -234,8 +251,7 @@ pub(super) fn pointer(scope: &Scope, mut e: El, b: &BoxNode, key: &str, press: &
                     };
                     let id = drag.id.clone();
                     if d.cancelled() {
-                        plays::cancelled(s);
-                        s.lives.move_hand(s, &id, Hand::default());
+                        drag_cancelled(s, &id);
                         return;
                     }
                     if !plays::let_go(s) {
