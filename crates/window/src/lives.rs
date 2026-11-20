@@ -16,7 +16,7 @@ use sound_typescript::live::{
 };
 
 use crate::app::State;
-use crate::tree::{Listed, Place};
+use crate::tree::{Listed, Place, Planes};
 
 /// What a live value of a view shows: also its name, so the same shown twice binds once, and a
 /// new expression in its place, such as `live.playhead.minus(start)` after a drag, is another.
@@ -54,12 +54,15 @@ pub(crate) enum Shown {
     Offset(rune::Live<[f32; 2]>),
     Opacity(rune::Live<f32>),
     Trim(rune::Live<[f32; 2]>),
-    /// The lists it drew last, and in a plane where the part that shows is.
-    Pixels(
-        rune::Pixels,
-        Rc<RefCell<Vec<Vec<f32>>>>,
-        Option<rune::Live<[f32; 4]>>,
-    ),
+    /// What it drew last, and in a plane where the part that shows is.
+    Pixels(rune::Pixels, Rc<RefCell<Drew>>, Option<rune::Live<[f32; 4]>>),
+}
+
+/// What a drawing of list feeds drew last: its lists, and in a plane where it was then.
+#[derive(Default)]
+pub(crate) struct Drew {
+    pub(crate) lists: Vec<Vec<f32>>,
+    pub(crate) rect: [f32; 4],
 }
 
 impl Shown {
@@ -83,6 +86,18 @@ struct Binding {
     shows: Shows,
     shown: Shown,
     reads: Reads,
+    /// Where a place is in its plane's units, as last read: a zoom alone reads none again.
+    units: Cell<Option<Units>>,
+}
+
+/// A place read: [x, y, w, h], or [x, y] of a mark and its size in points, and where its parent
+/// is.
+#[derive(Clone, Copy)]
+struct Units {
+    place: [f32; 4],
+    mark: bool,
+    size: [Option<f32>; 2],
+    parent: Option<[f32; 2]>,
 }
 
 /// What a binding reads: something that may move in any frame, or only drags, planes, and the
@@ -100,7 +115,7 @@ struct Reads {
 struct Moved {
     drags: HashSet<String>,
     planes: HashSet<String>,
-    scales: HashSet<String>,
+    scales: Vec<String>,
 }
 
 /// A drag of `live.drag(id)`, in the units of the plane around what it moves.
@@ -129,6 +144,9 @@ pub(crate) struct Lives {
     /// The drags by id in the window, kept until a new tree says where the records put it.
     hands: RefCell<HashMap<String, Hand>>,
     moved: RefCell<Moved>,
+    /// The points per unit of each plane, as its bindings last showed them: few, so looked up
+    /// along, which a frame of thousands of places does faster than by hash.
+    scales: RefCell<Vec<(String, [f32; 2])>>,
     /// The live accessibility values of the views, by element key: their instance, their value,
     /// and what they said when the view was built.
     spoken: RefCell<HashMap<String, (InstanceId, Num, String)>>,
@@ -147,6 +165,7 @@ impl Lives {
             wider: Cell::new(false),
             hands: RefCell::default(),
             moved: RefCell::default(),
+            scales: RefCell::default(),
             spoken: RefCell::default(),
         }
     }
@@ -181,6 +200,7 @@ impl Lives {
             instance: instance.clone(),
             shows,
             shown: shown.clone(),
+            units: Cell::new(None),
         };
         self.show(state, &binding);
         bindings.insert(name, binding);
@@ -235,15 +255,29 @@ impl Lives {
         self.refresh(state, false);
     }
 
-    /// The planes `keys` moved, and with `scaled` their points per unit changed too: what binds
-    /// to them shows it at once.
-    pub(crate) fn move_planes(&self, state: &State, keys: &[String], scaled: bool) {
+    /// The planes moved: what binds to them shows it at once, and what is placed in those whose
+    /// points per unit changed.
+    pub(crate) fn move_planes(&self, state: &State) {
         let mut moved = self.moved.borrow_mut();
-        moved.planes.extend(keys.iter().cloned());
-        if scaled {
-            moved.scales.extend(keys.iter().cloned());
+        let mut scales = self.scales.borrow_mut();
+        let keys = state.planes.keys();
+        scales.retain(|(key, _)| keys.contains(key));
+        for key in keys {
+            let per = state.planes.per(&key);
+            match scales.iter_mut().find(|(each, _)| *each == key) {
+                Some((_, was)) if *was == per => {}
+                Some((_, was)) => {
+                    *was = per;
+                    moved.scales.push(key.clone());
+                }
+                None => {
+                    scales.push((key.clone(), per));
+                    moved.scales.push(key.clone());
+                }
+            }
+            moved.planes.insert(key);
         }
-        drop(moved);
+        drop((moved, scales));
         self.refresh(state, false);
     }
 
@@ -304,11 +338,13 @@ impl Lives {
         let moved = self.moved.take();
         for binding in self.bindings.borrow().values() {
             let reads = &binding.reads;
-            let moved = (frame && reads.always)
+            let read = (frame && reads.always)
                 || reads.drags.iter().any(|id| moved.drags.contains(id))
-                || reads.planes.iter().any(|key| moved.planes.contains(key))
-                || reads.scales.iter().any(|key| moved.scales.contains(key));
-            if moved {
+                || reads.planes.iter().any(|key| moved.planes.contains(key));
+            if read {
+                binding.units.set(None);
+            }
+            if read || reads.scales.iter().any(|key| moved.scales.contains(key)) {
                 self.show(state, binding);
             }
         }
@@ -369,7 +405,6 @@ impl Lives {
     }
 
     fn show(&self, state: &State, binding: &Binding) {
-        let project = state.project();
         let sources = Sources {
             lives: self,
             state,
@@ -388,7 +423,7 @@ impl Lives {
                 let value = number(value, &sources);
                 let text = match digits {
                     Some(digits) => format!("{value:.digits$}"),
-                    None => text_of(value, *unit, Some(project.clock())),
+                    None => text_of(value, *unit, Some(state.project().clock())),
                 };
                 let mut widest = widest.borrow_mut();
                 if text.chars().count() > widest.chars().count() {
@@ -419,10 +454,28 @@ impl Lives {
                 },
                 Shown::Rect(shown),
             ) => {
-                let size = size.each_ref().map(|size| size.as_ref().map(of));
-                let parent = parent.as_ref().map(|at| at.each_ref().map(of));
-                let place = place.numbers().iter().map(of).collect::<Vec<_>>();
-                shown.set(state.planes.points(plane, &place, size, parent));
+                let units = binding.units.get().unwrap_or_else(|| {
+                    let numbers = place.numbers();
+                    let mut read = [0.0; 4];
+                    for (read, number) in read.iter_mut().zip(numbers) {
+                        *read = of(number);
+                    }
+                    Units {
+                        place: read,
+                        mark: numbers.len() == 2,
+                        size: size.each_ref().map(|size| size.as_ref().map(of)),
+                        parent: parent.as_ref().map(|at| at.each_ref().map(of)),
+                    }
+                });
+                binding.units.set(Some(units));
+                let place = match units.mark {
+                    true => &units.place[..2],
+                    false => &units.place[..],
+                };
+                let per = (self.scales.borrow().iter())
+                    .find(|(key, _)| key == plane)
+                    .map_or_else(|| state.planes.per(plane), |(_, per)| *per);
+                shown.set(Planes::points(per, place, units.size, units.parent));
             }
             (Shows::Lists(listed), Shown::Pixels(pixels, last, rect)) => {
                 let drawn = (pixels, rect.as_ref());
@@ -473,7 +526,8 @@ impl Lives {
         (bindings.values())
             .filter_map(|binding| match &binding.shown {
                 Shown::Pixels(_, last, rect) => {
-                    Some((last.borrow().clone(), rect.as_ref().map(rune::Live::get)))
+                    let lists = last.borrow().lists.clone();
+                    Some((lists, rect.as_ref().map(rune::Live::get)))
                 }
                 _ => None,
             })

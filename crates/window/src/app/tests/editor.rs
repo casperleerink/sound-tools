@@ -208,12 +208,12 @@ fn two_thousand_notes_of_the_editor_scroll_play_zoom_and_drag_within_their_budge
     let ([scroll, play, zoom], _) =
         super::budget::measure(&mut window, "editor", "roll-t00-bass", "note-42");
     assert!(
-        scroll < super::budget::SCROLL_AND_PLAY,
+        scroll < super::budget::FRAME,
         "a scroll frame took {scroll:?}"
     );
     assert!(
-        play < super::budget::SCROLL_AND_PLAY,
+        play < super::budget::FRAME,
         "a play frame took {play:?}"
     );
-    assert!(zoom < super::budget::ZOOM, "a zoom frame took {zoom:?}");
+    assert!(zoom < super::budget::FRAME, "a zoom frame took {zoom:?}");
 }

@@ -334,7 +334,7 @@ fn view(state: &mut State, key: &str, value: Option<&Value>) -> Result<()> {
     let (x, y) = (range("x")?, range("y")?);
     state.planes.find_plane(key).map_err(anyhow::Error::msg)?;
     state.planes.show(key, x, y);
-    state.lives.move_planes(state, &[key.to_string()], true);
+    state.lives.move_planes(state);
     state.handled();
     Ok(())
 }

@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 use sound_core::InstanceId;
 
-use super::budget::{SCROLL_AND_PLAY, ZOOM, measured, timed};
+use super::budget::{FRAME, measured, timed};
 use super::{frame, laid_out, new_project, opened, redraw};
 use crate::app::State;
 
@@ -266,6 +266,6 @@ fn sixty_four_lanes_of_two_hundred_points_scroll_and_zoom_without_the_view() {
         "Bun ran the view"
     );
     eprintln!("64 lanes of 200 points: scroll {scroll:?}, zoom {zoom:?} a frame");
-    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame took {scroll:?}");
-    assert!(zoom < ZOOM, "a zoom frame took {zoom:?}");
+    assert!(scroll < FRAME, "a scroll frame took {scroll:?}");
+    assert!(zoom < FRAME, "a zoom frame took {zoom:?}");
 }

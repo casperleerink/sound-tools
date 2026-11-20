@@ -1,6 +1,7 @@
 //! Planes: boxes with units of their own (`plane`), which the window scrolls and zooms by
-//! itself, and what `place` puts in them at any depth. A scroll moves one live offset; a zoom,
-//! or a scroll to a stretch not built yet, builds what shows again in Rust. Bun hears neither.
+//! itself, and what `place` puts in them at any depth. A scroll moves one live offset; a zoom
+//! moves the live place of each placed element, and builds what shows again in Rust only once it
+//! rests, as does a scroll to a stretch not built yet. Bun hears neither.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
@@ -62,6 +63,8 @@ struct Camera {
     opened: bool,
     /// What its content was last built for.
     built: Cell<Option<Stretch>>,
+    /// How long ago it last zoomed, in seconds.
+    zoomed: f64,
     follow: Option<Follow>,
 }
 
@@ -85,13 +88,14 @@ enum Axis {
     Shared(String),
 }
 
-/// What a plane's content is built for: the points per unit and the stretch of each axis. A
-/// stretch is as long as the plane; what is built reaches to the end of the next, so a scroll
-/// inside a stretch shows only what is built.
+/// What a plane's content is built for: the points per unit its elements are built at, and the
+/// part of each axis built, in units. That part begins where a stretch as long as the plane
+/// begins and reaches to the end of the next, so a scroll inside a stretch shows only what is
+/// built.
 #[derive(Clone, Copy, PartialEq, Debug)]
 struct Stretch {
     per: [f32; 2],
-    at: [i32; 2],
+    range: [[f32; 2]; 2],
 }
 
 /// What a plane shows, in its units, as `live.plane` and `--tree` tell it.
@@ -106,6 +110,9 @@ pub(crate) struct View {
 
 /// How long a plane is taken to be before it is laid out, in points.
 const UNLAID: f32 = 1000.0;
+/// How long a zoom rests before what is placed is built again at its scale, in seconds: until
+/// then each placed element only moves and sizes.
+const ZOOM_RESTS: f64 = 0.15;
 /// How much a step of Cmd-= or Cmd-- zooms.
 const ZOOM_STEP: f32 = 1.25;
 /// How long what a plane follows rests before its moving again is a new start, in seconds: as
@@ -158,16 +165,14 @@ impl Planes {
             .collect()
     }
 
-    /// Where an element `place` puts in `plane` is, in points from its parent at `parent`:
-    /// `place` [x, y, w, h], or a mark [x, y] of `size` points centred there.
+    /// Where an element `place` puts in a plane of `per` points per unit is, in points from its
+    /// parent at `parent`: `place` [x, y, w, h], or a mark [x, y] of `size` points centred there.
     pub(crate) fn points(
-        &self,
-        plane: &str,
+        [px, py]: [f32; 2],
         place: &[f32],
         size: [Option<f32>; 2],
         parent: Option<[f32; 2]>,
     ) -> [f32; 4] {
-        let [px, py] = self.per(plane);
         let [ox, oy] = parent.unwrap_or_default();
         match *place {
             [x, y, w, h] => [(x - ox) * px, (y - oy) * py, w * px, h * py],
@@ -209,6 +214,7 @@ impl Planes {
             thumbs: [rune::Live::new([0.0; 4]), rune::Live::new([0.0; 4])],
             opened: false,
             built: Cell::new(None),
+            zoomed: f64::INFINITY,
             follow: None,
         });
         camera.axes = axes;
@@ -236,19 +242,18 @@ impl Planes {
     }
 
     /// The plane `key` is `size` points: a range shows where it opens, once.
-    fn laid_out(&self, key: &str, size: [f32; 2]) -> bool {
+    fn laid_out(&self, key: &str, size: [f32; 2]) {
         let mut cameras = self.cameras.borrow_mut();
         let Some(camera) = cameras.get_mut(key) else {
-            return false;
+            return;
         };
-        let resized = camera.size != size;
         camera.size = size;
         camera.open();
         drop(cameras);
-        let asked = self.asked.borrow_mut().remove(key);
-        let shown = asked.is_some_and(|[x, y]| self.show(key, x, y));
+        if let Some([x, y]) = self.asked.borrow_mut().remove(key) {
+            self.show(key, x, y);
+        }
         self.sync();
-        resized || shown
     }
 
     /// Scrolls the plane `key` by `by` points of its content, or the planes it moves with:
@@ -305,6 +310,7 @@ impl Planes {
             return false;
         }
         camera.zoom = zoom;
+        camera.zoomed = 0.0;
         let after = per(&cameras, &owner, 0, 0);
         let (low, high) = bounds(&cameras, &owner, 0);
         let camera = cameras.get_mut(&owner).expect("an owner is a camera");
@@ -461,16 +467,51 @@ impl Planes {
         }
     }
 
-    /// Whether a plane shows a stretch its content was not built for: the view builds again.
+    /// Whether a plane shows more than its content was built for, or its scale changed and does
+    /// not zoom now: the view builds again.
     fn stale(&self) -> bool {
         let cameras = self.cameras.borrow();
         (cameras.iter()).any(|(key, camera)| {
-            (camera.built.get()).is_some_and(|built| built != stretch(&cameras, key))
+            let Some(built) = camera.built.get() else {
+                return false;
+            };
+            let now = [per(&cameras, key, 0, 0), per(&cameras, key, 1, 0)];
+            let size = laid(camera.size);
+            let outside = (0..2).any(|i| {
+                let ([from, to], begins) = (built.range[i], at(&cameras, key, i, 0));
+                begins < from || begins + size[i] / now[i] > to
+            });
+            outside || (built.per != now && !zooming(&cameras, key))
         })
     }
 
+    /// One frame `dt` seconds on: whether a zoom rested in it.
+    fn rest(&self, dt: f64) -> bool {
+        let mut cameras = self.cameras.borrow_mut();
+        let mut rested = false;
+        for camera in cameras.values_mut() {
+            let was = camera.zoomed;
+            camera.zoomed += dt;
+            rested |= was < ZOOM_RESTS && camera.zoomed >= ZOOM_RESTS;
+        }
+        rested
+    }
+
+    /// Whether a plane zoomed and has not rested yet: the window draws on until it has.
+    pub(crate) fn zooming(&self) -> bool {
+        (self.cameras.borrow().values()).any(|camera| camera.zoomed < ZOOM_RESTS)
+    }
+
+    /// How many times the points per unit of the plane `key` across are of those its content
+    /// was built at: 1 but while it zooms.
+    pub(crate) fn stretched(&self, key: &str) -> f32 {
+        let cameras = self.cameras.borrow();
+        let built = cameras.get(key).and_then(|camera| camera.built.get());
+        built.map_or(1.0, |built| per(&cameras, key, 0, 0) / built.per[0])
+    }
+
     /// Every plane's key: the planes a camera moves.
-    fn keys(&self) -> Vec<String> {
+    pub(crate) fn keys(&self) -> Vec<String> {
         self.cameras.borrow().keys().cloned().collect()
     }
 
@@ -597,16 +638,29 @@ fn bounds(cameras: &HashMap<String, Camera>, key: &str, i: usize) -> (f32, f32) 
     (low, low.max(high - view))
 }
 
-/// The stretch the plane `key` shows now.
+/// What the plane `key` builds now: the stretch it shows, at the points per unit it has, or
+/// while it zooms at those it was built at, so what was built is kept.
 fn stretch(cameras: &HashMap<String, Camera>, key: &str) -> Stretch {
-    let size = cameras
-        .get(key)
-        .map_or([UNLAID; 2], |camera| laid(camera.size));
-    let per = [per(cameras, key, 0, 0), per(cameras, key, 1, 0)];
+    let camera = cameras.get(key);
+    let size = camera.map_or([UNLAID; 2], |camera| laid(camera.size));
+    let now = [per(cameras, key, 0, 0), per(cameras, key, 1, 0)];
+    let built = camera.and_then(|camera| camera.built.get());
     Stretch {
-        per,
-        at: std::array::from_fn(|i| (at(cameras, key, i, 0) * per[i] / size[i]).floor() as i32),
+        per: match (zooming(cameras, key), built) {
+            (true, Some(built)) => built.per,
+            _ => now,
+        },
+        range: std::array::from_fn(|i| {
+            let long = size[i] / now[i];
+            let from = (at(cameras, key, i, 0) / long).floor() * long;
+            [from, from + 2.0 * long]
+        }),
     }
+}
+
+/// Whether the plane `key` zooms across now, and has not rested.
+fn zooming(cameras: &HashMap<String, Camera>, key: &str) -> bool {
+    owner(cameras, key, 0).is_some_and(|owner| cameras[owner].zoomed < ZOOM_RESTS)
 }
 
 fn laid(size: [f32; 2]) -> [f32; 2] {
@@ -615,34 +669,25 @@ fn laid(size: [f32; 2]) -> [f32; 2] {
 
 impl Scope<'_> {
     /// Places `e` at `place` in the plane around it, from its parent: `size` are the points of
-    /// a mark. What is live moves every frame.
+    /// a mark. It moves every frame its place or its plane's zoom moves.
     pub(super) fn put(&self, e: El, place: &Place, size: (Option<&Num>, Option<&Num>)) -> El {
-        let Some(plane) = &self.plane else {
+        let Some(shows) = self.placed_shows(place, size) else {
             return e;
         };
-        if let Some(shows) = self.placed_shows(place, size) {
-            // Sized as it is now as well: Rune lays out and focuses only what has a size.
-            let [.., w, h] = self.rect(place, size);
-            let per = self.state.planes.per(plane);
-            return self.bind(e.w(w * per[0]).h(h * per[1]), shows);
-        }
-        let fixed = |num: Option<&Num>| num.and_then(Num::fixed);
-        let numbers: Vec<f32> = place.numbers().iter().filter_map(Num::fixed).collect();
-        let from =
-            (self.parent.as_ref()).map(|at| at.each_ref().map(|at| at.fixed().unwrap_or(0.0)));
-        let size = [fixed(size.0), fixed(size.1)];
-        let [x, y, w, h] = self.state.planes.points(plane, &numbers, size, from);
-        let e = e.absolute(x, y);
-        match place {
-            Place::Box(_) => e.w(w).h(h),
+        // Sized as it is now as well: Rune lays out and focuses only what has a size.
+        let [.., w, h] = self.rect(place, size);
+        let per = (self.plane.as_deref()).map_or([1.0; 2], |plane| self.state.planes.per(plane));
+        let e = match place {
+            Place::Box(_) => e.w(w * per[0]).h(h * per[1]),
             Place::Mark(_) => {
-                let e = if size[0].is_some() { e.w(w) } else { e };
-                if size[1].is_some() { e.h(h) } else { e }
+                let e = if size.0.is_some() { e.w(w * per[0]) } else { e };
+                if size.1.is_some() { e.h(h * per[1]) } else { e }
             }
-        }
+        };
+        self.bind(e, shows)
     }
 
-    /// What a place in the plane around it binds, when anything of it is live.
+    /// What a place in the plane around it binds.
     pub(super) fn placed_shows(
         &self,
         place: &Place,
@@ -653,17 +698,11 @@ impl Scope<'_> {
             Place::Mark(_) => [size.0.cloned(), size.1.cloned()],
             Place::Box(_) => [None, None],
         };
-        let parent = self.parent.clone();
-        let live = |num: &Num| num.fixed().is_none();
-        let any = (place.numbers().iter())
-            .chain(size.iter().flatten())
-            .chain(parent.iter().flatten())
-            .any(live);
-        any.then(|| Shows::Placed {
+        Some(Shows::Placed {
             plane: plane.clone(),
             place: place.clone(),
             size,
-            parent,
+            parent: self.parent.clone(),
         })
     }
 
@@ -711,21 +750,17 @@ pub(super) fn plane(scope: &Scope, e: El, b: &BoxNode, key: &str, spec: &PlaneSp
         placed: None,
         ..scope.clone()
     };
-    let (shows, built) = {
+    let built = {
         let cameras = planes.cameras.borrow();
         let built = stretch(&cameras, key);
-        let size = cameras
-            .get(key)
-            .map_or([UNLAID; 2], |camera| laid(camera.size));
-        let shows: [[f32; 2]; 2] = std::array::from_fn(|i| {
-            let long = size[i] / built.per[i];
-            let from = built.at[i] as f32 * long;
-            [from, from + 2.0 * long]
-        });
-        (shows, built)
+        if let Some(camera) = cameras.get(key) {
+            camera.built.set(Some(built));
+        }
+        built
     };
     let mut gathered = Gathered {
-        shows: Some(shows),
+        shows: Some(built.range),
+        per: built.per,
         ..Gathered::default()
     };
     for child in b.children.iter().filter(|child| !is_overlay(child)) {
@@ -735,7 +770,6 @@ pub(super) fn plane(scope: &Scope, e: El, b: &BoxNode, key: &str, spec: &PlaneSp
         let mut cameras = planes.cameras.borrow_mut();
         let camera = cameras.get_mut(key).expect("ensured");
         camera.extent = gathered.extent;
-        camera.built.set(Some(built));
         (
             camera.drawn.clone(),
             camera.offset.clone(),
@@ -761,7 +795,7 @@ pub(super) fn plane(scope: &Scope, e: El, b: &BoxNode, key: &str, spec: &PlaneSp
                     if moved {
                         s.planes.by_hand(&key);
                     }
-                    s.camera_moved(tx, moved, false);
+                    s.camera_moved(tx, moved);
                 },
             )
     });
@@ -774,8 +808,8 @@ pub(super) fn plane(scope: &Scope, e: El, b: &BoxNode, key: &str, spec: &PlaneSp
     e.clip_soft(0.0)
         .drawn_rect_into(&drawn)
         .on_layout_tx(move |s: &mut State, rect: [f32; 4], tx: &mut rune::Tx| {
-            let resized = s.planes.laid_out(&laid_key, [rect[2], rect[3]]);
-            s.camera_moved(tx, true, resized);
+            s.planes.laid_out(&laid_key, [rect[2], rect[3]]);
+            s.camera_moved(tx, true);
         })
         .on_wheel(
             move |s: &mut State, wheel: rune::WheelEvent, tx: &mut rune::Tx| {
@@ -789,18 +823,18 @@ pub(super) fn plane(scope: &Scope, e: El, b: &BoxNode, key: &str, spec: &PlaneSp
                         s.planes.scroll(&wheel_key, by.map(|by| -by))
                     }
                 };
-                s.camera_moved(tx, moved, wheel.mods.cmd)
+                s.camera_moved(tx, moved)
             },
         )
         .on_magnify(
             move |s: &mut State, pinch: rune::MagnifyEvent, tx: &mut rune::Tx| {
                 let moved = s.planes.zoom(&pinch_key, 1.0 + pinch.delta, pinch.x);
-                s.camera_moved(tx, moved, true)
+                s.camera_moved(tx, moved)
             },
         )
         .on_key(move |s: &mut State, key: &KeyEvent, tx: &mut rune::Tx| {
-            let (moved, zoomed) = s.planes.keyed(&keys_key, key);
-            s.camera_moved(tx, moved, zoomed)
+            let moved = s.planes.keyed(&keys_key, key);
+            s.camera_moved(tx, moved)
         })
         .children(gathered.flow)
         .child(
@@ -824,10 +858,10 @@ impl Planes {
     }
 
     /// A key while the plane `key` has the keys: Page and Home keys scroll it, Cmd-= and Cmd--
-    /// zoom it. Whether it moved, and whether it zoomed.
-    fn keyed(&self, key: &str, pressed: &KeyEvent) -> (bool, bool) {
+    /// zoom it. Whether it moved.
+    fn keyed(&self, key: &str, pressed: &KeyEvent) -> bool {
         let Some(view) = self.view(key) else {
-            return (false, false);
+            return false;
         };
         let [across, down] = [view.right - view.left, view.bottom - view.top];
         let down_scrolls = {
@@ -847,7 +881,7 @@ impl Planes {
             if moved {
                 self.by_hand(key);
             }
-            (moved, false)
+            moved
         };
         match &pressed.key {
             Key::PageDown => scrolled(page(1.0)),
@@ -855,12 +889,12 @@ impl Planes {
             Key::Home => scrolled([-f32::MAX / 4.0, 0.0]),
             Key::End => scrolled([f32::MAX / 4.0, 0.0]),
             _ if pressed.mods.cmd && text(&["=", "+"]) => {
-                (self.zoom(key, ZOOM_STEP, self.middle(key)), true)
+                self.zoom(key, ZOOM_STEP, self.middle(key))
             }
             _ if pressed.mods.cmd && text(&["-"]) => {
-                (self.zoom(key, 1.0 / ZOOM_STEP, self.middle(key)), true)
+                self.zoom(key, 1.0 / ZOOM_STEP, self.middle(key))
             }
-            _ => (false, false),
+            _ => false,
         }
     }
 
@@ -972,6 +1006,8 @@ fn outside(state: &State, id: &InstanceId, node: &Node, in_plane: bool, keys: &m
 #[derive(Default)]
 pub(super) struct Gathered {
     shows: Option<[[f32; 2]; 2]>,
+    /// The points per unit what is placed is built at.
+    per: [f32; 2],
     pub(super) flow: Vec<El>,
     pub(super) placed: Vec<El>,
     extent: Option<[f32; 4]>,
@@ -1050,16 +1086,13 @@ fn gather(scope: &Scope, node: &Node, into: &mut Gathered) {
         rect,
         &mut planes.found.borrow_mut(),
     );
-    // Built again when its tree or the zoom changes; one with a field each time, as what the
-    // field says and whether it has the keys are the window's.
+    // Built again when its tree or the scale it is built at changes; one with a field each
+    // time, as what the field says and whether it has the keys are the window's.
     if scope.state.shows_a_field() && holds_field(scope, node) {
         into.placed.push(build(scope, node));
         return;
     }
-    let version = (
-        version_of(scope, node),
-        planes.per(&plane).map(f32::to_bits),
-    );
+    let version = (version_of(scope, node), into.per.map(f32::to_bits));
     into.placed.push(memo(key, version, || build(scope, node)));
 }
 
@@ -1181,22 +1214,23 @@ impl State {
     /// One frame `dt` seconds on: the planes that follow a place page on. Whether the views
     /// build again, as a plane shows a stretch not built.
     pub(crate) fn follow_planes(&self, dt: f64) -> bool {
-        if !self.planes.follow(self, dt) {
-            return false;
+        let rested = self.planes.rest(dt);
+        let followed = self.planes.follow(self, dt);
+        if followed {
+            self.lives.move_planes(self);
         }
-        self.lives.move_planes(self, &self.planes.keys(), false);
-        self.planes.stale()
+        (followed || rested) && self.planes.stale()
     }
 
     /// A camera moved, or did not: what is placed and what binds to the planes shows it at
     /// once, and the view builds again in Rust only when a plane shows a stretch not built.
     /// Whether it moved, which takes the wheel or the pinch that moved it.
-    pub(crate) fn camera_moved(&mut self, tx: &mut rune::Tx, moved: bool, scaled: bool) -> bool {
+    pub(crate) fn camera_moved(&mut self, tx: &mut rune::Tx, moved: bool) -> bool {
         if !moved {
             tx.live_only();
             return false;
         }
-        self.lives.move_planes(self, &self.planes.keys(), scaled);
+        self.lives.move_planes(self);
         match self.planes.stale() {
             // What is placed lands where the camera says, not by a glide.
             true => tx.instant(),

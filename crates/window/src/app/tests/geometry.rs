@@ -3,7 +3,7 @@
 use serde_json::{Value, json};
 use sound_core::InstanceId;
 
-use super::{BOARD, act, key, laid_out, opened, redraw, travel, with_tools};
+use super::{BOARD, act, drawn_frame, key, laid_out, opened, redraw, travel, with_tools};
 use crate::app::State;
 use crate::controls;
 
@@ -297,7 +297,8 @@ fn a_wheel_scrolls_a_plane_and_its_ruler_with_no_view_run_and_no_build() {
 }
 
 #[test]
-fn a_pinch_zooms_about_the_pointer_and_builds_again_in_rust_only() {
+fn a_pinch_zooms_about_the_pointer_moving_what_is_placed_and_builds_again_in_rust_once_it_rests()
+ {
     let (_scratch, mut window) = lanes();
     redraw(&mut window);
     let song = rect(&window, "song");
@@ -311,8 +312,19 @@ fn a_pinch_zooms_about_the_pointer_and_builds_again_in_rust_only() {
     let view = window.state.planes.view(&format!("{PREFIX}song")).unwrap();
     assert_eq!(view.zoom, 2.0);
     assert_eq!(rect(&window, "clip-0")[2], 384.0);
+    assert_eq!(window.state.planes.builds.get(), builds, "a zoom frame built");
+    // A press finds what is placed where it shows, not where it was built.
+    let clip = rect(&window, "clip-0");
+    let picked = window.element_at(clip[0] + clip[2] - 10.0, clip[1] + 5.0);
+    let key = format!("{PREFIX}clip-0");
+    assert_eq!(picked.as_ref().and_then(rune::Picked::key), Some(key.as_str()));
+    for _ in 0..12 {
+        let seconds = window.state.last + 1.0 / 60.0;
+        drawn_frame(&mut window, seconds);
+    }
+    assert_eq!(rect(&window, "clip-0")[2], 384.0);
     assert_eq!(view_runs(&window), runs);
-    assert!(window.state.planes.builds.get() > builds);
+    assert!(window.state.planes.builds.get() > builds, "the rested zoom never built");
     // Cmd and the wheel zoom too, within the plane's zoom.
     let cmd = rune::Mods {
         cmd: true,

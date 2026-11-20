@@ -141,7 +141,7 @@ impl State {
                 } => {
                     let key = format!("{}{key}", self.prefix_of(&instance));
                     self.planes.show(&key, x, y);
-                    self.lives.move_planes(self, &[key], true);
+                    self.lives.move_planes(self);
                 }
                 Want::Repeat(range) => {
                     let looped = match range {

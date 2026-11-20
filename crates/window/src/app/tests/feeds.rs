@@ -141,14 +141,15 @@ fn a_list_that_rests_is_not_drawn_again_until_its_record_changes() {
 }
 
 #[test]
-fn a_list_in_a_plane_reads_and_draws_only_the_part_the_plane_shows() {
+fn a_list_in_a_plane_reads_and_draws_only_the_part_the_plane_shows_and_stretches_while_it_zooms()
+{
     // The compressor's curve from -60 to 0 dB in, 1200 units long in a plane that shows 300.
     let code = r#"import { h, live, tool } from "./sdk";
 export const scope = tool({
   name: "scope", title: "Scope", when: "Never", doc: "Shows its curve.", state: {},
   behaviour: () => ({ connections: [{ from: { port: "audio" }, to: { child: "comp" } }, { from: { child: "comp" }, to: { port: "audio" } }] }),
   view: () => (
-    <box key="curve" w={300} h={60} plane={{ x: 1, y: 60 }}>
+    <box key="curve" w={300} h={60} plane={{ x: 1, y: 60, zoom: [1, 4] }}>
       <shapes key="long" place={[0, 0, 1200, 1]} units={[[-60, 0], [0, -60]]} lines={[{ color: "text", width: 1, points: live.feed("transfer", "comp") }]} />
     </box>
   ),
@@ -186,15 +187,40 @@ export const scope = tool({
     );
     let state = &window.state;
     assert!(state.planes.show("curve", Some([600.0, 900.0]), None));
-    state
-        .lives
-        .move_planes(state, &["curve".to_string()], false);
+    state.lives.move_planes(state);
     assert_eq!(
         seen(&window),
         (
             300,
             [-30.0, -15.0],
             Some([600.0, 0.0, 300.0, 60.0]),
+            (600, 120)
+        )
+    );
+    // Zoomed in twice as far, what it drew stretches with the plane until the zoom rests.
+    let drew = window.state.feeds.drew();
+    assert!(state.planes.show("curve", Some([600.0, 750.0]), None));
+    state.lives.move_planes(state);
+    assert_eq!(
+        seen(&window),
+        (
+            300,
+            [-30.0, -15.0],
+            Some([1200.0, 0.0, 600.0, 60.0]),
+            (600, 120)
+        )
+    );
+    assert_eq!(window.state.feeds.drew(), drew);
+    for _ in 0..12 {
+        let seconds = window.state.last + 1.0 / 60.0;
+        drawn_frame(&mut window, seconds);
+    }
+    assert_eq!(
+        seen(&window),
+        (
+            300,
+            [-30.0, -23.0],
+            Some([1200.0, 0.0, 300.0, 60.0]),
             (600, 120)
         )
     );

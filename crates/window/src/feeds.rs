@@ -14,6 +14,7 @@ use sound_typescript::RecorderState;
 use sound_typescript::next::Drawn;
 
 use crate::app::State;
+use crate::lives::Drew;
 use crate::tree::Listed;
 
 /// A list feed in the `points` or `rects` of a `shapes`: `live.feed(name, path)`.
@@ -186,19 +187,28 @@ impl Feeds {
     }
 
     /// Draws the lists of `listed` in the view of `instance` into `pixels`, when they are not
-    /// those it drew `last`; in a plane, only the part that shows, which `rect` moves to. A list
-    /// that is empty, such as the wave of a file still read, is read again next frame.
+    /// those it drew `last`; in a plane, only the part that shows, which `rect` moves to. While
+    /// the plane zooms, what it drew stretches with it, read and drawn again once it rests. A
+    /// list that is empty, such as the wave of a file still read, is read again next frame.
     pub(crate) fn draw(
         &self,
         state: &State,
         instance: &InstanceId,
         listed: &Listed,
         (pixels, rect): (&rune::Pixels, Option<&rune::Live<[f32; 4]>>),
-        last: &RefCell<Vec<Vec<f32>>>,
+        last: &RefCell<Drew>,
     ) {
+        let stretched = listed.plane().map_or(1.0, |plane| state.planes.stretched(plane));
+        if let Some(rect) = rect.filter(|_| stretched != 1.0) {
+            let [x, y, w, h] = last.borrow().rect;
+            rect.set([x * stretched, y, w * stretched, h]);
+            return;
+        }
         let seen = listed.seen(state, instance);
         if let Some(rect) = rect {
-            rect.set(seen.and_then(|seen| seen.rect()).unwrap_or_default());
+            let at = seen.and_then(|seen| seen.rect()).unwrap_or_default();
+            rect.set(at);
+            last.borrow_mut().rect = at;
         }
         let Some(seen) = seen else {
             return;
@@ -224,12 +234,12 @@ impl Feeds {
             .collect();
         let mut last = last.borrow_mut();
         let size = Listed::pixels(&seen, &lists);
-        if *last == lists && pixels.size() == size && size != (0, 0) {
+        if last.lists == lists && pixels.size() == size && size != (0, 0) {
             return;
         }
         let (w, h, rgba) = listed.raster(&state.theme, &seen, &lists);
         pixels.set(w, h, rgba);
-        *last = lists;
+        last.lists = lists;
         self.drew.set(self.drew.get() + 1);
     }
 
