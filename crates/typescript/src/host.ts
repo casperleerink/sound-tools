@@ -3,7 +3,7 @@
 // message per line: the runtime tells on stdin, this says on stdout. What a tool logs goes to
 // stderr, so it cannot break a message.
 
-import { existsSync, realpathSync, writeSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { Child, Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, MenuOptions, MovedNumber, NoteEvent, Offers, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
@@ -21,8 +21,11 @@ type Next = {
     run(instance: string, draw: unknown, self: unknown, ctx: unknown): unknown;
     perform(instance: string, key: string, action: string, value?: unknown): void;
     forget(instance: string): void;
+    refuseHeld(held: readonly string[], before: object, after: object): void;
   };
 };
+/** What the window knows of an instance that no record holds, see `Facts` in `sdk/view.ts`. */
+type Facts = { title: string; fields: object[] };
 const next: Next | undefined = existsSync(join(folder, "sdk/view.ts")) ? await import(join(folder, "sdk/view.ts")) : undefined;
 
 for (const name of ["log", "info", "debug", "warn"] as const) {
@@ -70,10 +73,14 @@ type Request =
   | { type: "behaviour"; question: number; tool: string; instance: string }
   /** The answer to a question of `ask`. */
   | { type: "answer"; question: number; answer: unknown }
-  /** The instances whose views the new window shows: each sends its tree now, and again when its records change. */
-  | { type: "show"; instances: string[]; cards: Record<string, { title: string; fields: { name: string; default: unknown }[] }>; held: Record<string, string[]> }
-  /** An action on an element of a shown view, by its key: `press`, `drag` with `{ dx, dy }`, or one it names. */
-  | { type: "act"; instance: string; key: string; action: string; value?: number | string | { dx: number; dy: number } };
+  /**
+   * The instances whose views the new window shows: each sends its tree now, and again when its
+   * records change. `cards` names those a card draws, with their facts; `facts` are those of the
+   * others and their children, `catalog` what `addOffer` puts, `keys` each action's key by `tool.action`.
+   */
+  | { type: "show"; instances: string[]; cards: Record<string, { title: string; fields: { name: string; default: unknown }[] }>; held: Record<string, string[]>; facts?: Record<string, Facts>; catalog?: unknown[]; keys?: Record<string, string | null> }
+  /** An action on an element of a shown view, by its key: `press` and `drag` with a pointer, `drop` with files, `commit` with text or `null`, or one it names with a number. */
+  | { type: "act"; instance: string; key: string; action: string; value?: unknown };
 
 /** What bindings of an instance read: the window tells this Bun at once only what they read. */
 type Reads = { state: string[] | null; children: boolean; watches: string[] | null };
@@ -224,13 +231,14 @@ async function load() {
     try {
       const module = await import(join(folder, file));
       if (file === GENERIC_CARD) {
-        if (typeof module.card !== "function") throw new Error("it exports no `card`, a `GenericCard`");
+        if (typeof module.card !== "function") throw new Error("it exports no `card`, a `Card`");
         genericCard = module.card;
       }
     } catch (error) {
       // The tools it defined before it failed are its tools too.
       errors.push({ file, message: String(error) });
     }
+    if (file === GENERIC_CARD) await loadCards(errors);
     for (const [name, spec] of sdk.host.tools) {
       if (before.has(name)) {
         continue;
@@ -244,6 +252,22 @@ async function load() {
     }
   }
   say({ type: "loaded", tools, errors });
+}
+
+/** Loads the project's cards of built-in tools, `ui/blocks/cards/<tool>.tsx`, beside the generic card. */
+async function loadCards(errors: Array<{ file: string; message: string }>) {
+  const names = existsSync(join(folder, CARDS)) ? readdirSync(join(folder, CARDS)).filter((name) => name.endsWith(".tsx")) : [];
+  for (const name of names) {
+    const file = `${CARDS}/${name}`;
+    say({ type: "loading", file });
+    try {
+      const module = await import(join(folder, file));
+      if (typeof module.card !== "function") throw new Error("it exports no `card`, a `Card`");
+      toolCards.set(name.slice(0, -".tsx".length), module.card);
+    } catch (error) {
+      errors.push({ file, message: String(error) });
+    }
+  }
 }
 
 /**
@@ -689,7 +713,7 @@ function drawNext(instance: string) {
   const record = recordOf(instance);
   const spec = sdk.host.tools.get(record?.tool ?? "");
   const card = fieldCards[instance];
-  // The runtime says which instances the generic card draws: it and Bun read one list.
+  // The runtime says which instances a card draws: it and Bun read one list.
   if (next && record && card) {
     // Without a generic card that loaded, the runtime says why in its problems.
     if (genericCard) drawCard(instance, record, card);
@@ -700,7 +724,7 @@ function drawNext(instance: string) {
     say({ type: "tree", instance, none: true });
     return;
   }
-  const self = { name: instance.slice(instance.lastIndexOf("/") + 1), state: filledState(spec, record), children: childrenOf(instance) };
+  const self = { name: nameOf(instance), state: filledState(spec, record), children: seenChildren(instance), facts: factsOf(instance, record.tool) };
   runs(spec.name, "view");
   try {
     // Its handlers get what `tick` gets.
@@ -711,26 +735,46 @@ function drawNext(instance: string) {
   }
 }
 
+const nameOf = (instance: string) => instance.slice(instance.lastIndexOf("/") + 1);
+/** What the window told of the shown instances besides their records. */
+let known: { facts: Record<string, Facts>; catalog: unknown[]; keys: Record<string, string | null> } = { facts: {}, catalog: [], keys: {} };
+/** The facts of `id` as the window told them, or its title alone. */
+const factsOf = (id: string, tool: string): Facts => known.facts[id] ?? fieldCards[id] ?? { title: sdk.host.tools.get(tool)?.title ?? nameOf(id), fields: [] };
+/** The children of `instance` as its view gets them: with their facts. */
+const seenChildren = (instance: string) => childrenOf(instance).map((child) => ({ ...child, facts: factsOf(`${instance}/${child.name}`, child.tool) }));
+/** The key the action `name` of `tool` has now: as the window told, else its first own key. */
+const shortcutOf = (tool: string) => (name: string) => known.keys[`${tool}.${name}`] ?? sdk.host.tools.get(tool)?.actions?.[name]?.keys?.[0] ?? null;
+
 /** The cards of the shown instances whose tools may have no view, and the project's view of such a card. */
 let fieldCards: Extract<Request, { type: "show" }>["cards"] = {};
 let genericCard: unknown;
-/** Whether the generic card draws `instance`: its file runs that code, and is blamed for it. */
-const carded = (instance: string) => fieldCards[instance] !== undefined;
+/** The project's cards of built-in tools, by tool name, from `ui/blocks/cards/<tool>.tsx`. */
+const toolCards = new Map<string, unknown>();
+/** The file of the card that draws `instance` (its file runs that code, and is blamed for it), or `undefined` when no card does. */
+const cardFile = (instance: string) => {
+  if (fieldCards[instance] === undefined) return undefined;
+  const tool = recordOf(instance)?.tool ?? "";
+  return toolCards.has(tool) ? `${CARDS}/${tool}.tsx` : GENERIC_CARD;
+};
 /** The numbers a lane moves of each shown instance, by name as `held` takes it. */
 let heldFields: Record<string, string[]> = {};
 const heldIn = (instance: string) => (name: string) => heldFields[instance]?.includes(name) ?? false;
 /** As `GENERIC_CARD` of the runtime names it, which loads it with the tools. */
 const GENERIC_CARD = "ui/blocks/generic-card.tsx";
+const CARDS = "ui/blocks/cards";
 
-/** The card of an instance whose tool has no view, drawn by the project's generic card from the fields of its record. */
+/** The card of an instance whose tool has no view: the project's card of its tool, else the generic card. */
 function drawCard(instance: string, record: Entry, card: (typeof fieldCards)[string]) {
   const defaults = Object.fromEntries(card.fields.map((field) => [field.name, field.default]));
-  const self = { name: instance.slice(instance.lastIndexOf("/") + 1), state: { ...defaults, ...(record.state as object) }, card };
+  const state = frozen({ ...defaults, ...(record.state as object) });
+  const self = { name: nameOf(instance), state, children: [], facts: factsOf(instance, record.tool) };
   const key = `${instance} card`;
   if (!memories.has(key)) memories.set(key, {});
-  runs(GENERIC_CARD, "card");
+  // A card gets what a tool's view gets.
+  const context = { ...performer(instance), state, children: [], memory: memories.get(key), clock: clockFor(instance), time: now, update: updater(instance, defaults), held: heldIn(instance), select: selector(instance), addOffer: offerAdder(instance), openWindow: (path: string) => say({ type: "open_window", instance, path }), catalog: known.catalog, shortcut: () => null, ...askers(instance) };
+  runs(cardFile(instance)!, "card");
   try {
-    say({ type: "tree", instance, tree: next!.host.run(instance, genericCard, self, { update: updater(instance, defaults), memory: memories.get(key), held: heldIn(instance) }) });
+    say({ type: "tree", instance, tree: next!.host.run(instance, toolCards.get(record.tool) ?? genericCard, self, context) });
   } catch (error) {
     say({ type: "tree", instance, error: String(error) });
   }
@@ -757,7 +801,7 @@ let acting: string | undefined;
 
 /** An action on a shown view; it runs again after, also when nothing changed, as its memory may have. */
 function act({ instance, key, action, value }: Extract<Request, { type: "act" }>) {
-  runs(carded(instance) ? GENERIC_CARD : (recordOf(instance)?.tool ?? ""), `${action} on ${key}`);
+  runs(cardFile(instance) ?? recordOf(instance)?.tool ?? "", `${action} on ${key}`);
   let error: string | undefined;
   acting = instance;
   try {
@@ -1057,6 +1101,8 @@ function updater(instance: string, defaults?: Record<string, unknown>) {
       },
     });
     change(part);
+    const [before, after] = children as [OwnedChild[]?, unknown?];
+    next?.host.refuseHeld(heldFields[instance] ?? [], { state, children: before }, { state: part.state, children: after as object });
     const changes = changesOf(instance, [state, part.state], children);
     if (changes.length === 0) {
       return;
@@ -1109,6 +1155,8 @@ function doers(instance: string, spec: Spec) {
     select: selector(instance),
     addOffer: offerAdder(instance),
     openWindow: (path: string) => say({ type: "open_window", instance, path }),
+    catalog: known.catalog,
+    shortcut: shortcutOf(spec.name),
     now: sdk.now as Context<State>["now"],
     ...askers(instance),
     ...performer(instance),
@@ -1554,12 +1602,15 @@ function handle(request: Request) {
       declare(request);
       break;
     case "show": {
-      // A view whose card or held numbers changed, as when a lane came, draws again.
+      const sent = { facts: request.facts ?? {}, catalog: request.catalog ?? [], keys: request.keys ?? {} };
+      // A view whose card or held numbers changed, as when a lane came, draws again; every one when facts, the catalog or the keys did.
+      const all = JSON.stringify(sent) !== JSON.stringify(known);
       const changed = request.instances.filter(
-        (id) => shown.has(id) && (JSON.stringify(fieldCards[id]) !== JSON.stringify(request.cards[id]) || JSON.stringify(heldFields[id]) !== JSON.stringify(request.held[id])),
+        (id) => shown.has(id) && (all || JSON.stringify(fieldCards[id]) !== JSON.stringify(request.cards[id]) || JSON.stringify(heldFields[id]) !== JSON.stringify(request.held[id])),
       );
       fieldCards = request.cards;
       heldFields = request.held;
+      known = sent;
       show(request.instances);
       changed.forEach(drawNext);
       break;

@@ -1,4 +1,4 @@
-import { h, type GenericCard } from "../../sdk";
+import { h, type Card, type FieldInfo } from "../../sdk";
 import { control as bound } from "../field";
 import theme from "../../theme.json";
 import { Cell } from "../cell";
@@ -7,8 +7,6 @@ import { Segmented } from "../segmented";
 import { Select } from "../select";
 import { Toggle } from "../toggle";
 import { DeviceCard } from "./device-card";
-
-type Field = Parameters<GenericCard>[0]["card"]["fields"][number];
 
 /** How many controls a card shows until it is expanded, and the most options side by side. */
 const [FEW, SIDE_BY_SIDE] = [4, 3];
@@ -20,9 +18,9 @@ const RANK = { number: 0, switch: 1, choice: 2 };
  * a switch for a yes or no, a choice of options: the first few of its record shown, the rest
  * behind More.
  */
-export const card: GenericCard = ({ state, card: { title, fields } }, { update, memory, held }) => {
-  const set = (field: Field, value: unknown) => update(`Change ${field.label}`, (draft) => void (draft.state[field.name] = value));
-  const control = (field: Field) => {
+export const card: Card = ({ state, facts: { title, fields } }, { update, memory, held }) => {
+  const set = (field: FieldInfo, value: unknown) => update(`Change ${field.label}`, (draft) => void (draft.state[field.name] = value));
+  const control = (field: FieldInfo) => {
     const label = `${title} ${field.label}`;
     switch (field.kind) {
       case "number": {
@@ -41,7 +39,7 @@ export const card: GenericCard = ({ state, card: { title, fields } }, { update, 
     }
   };
   // The tool's order decides what shows first; its kind only where it sits.
-  const laid = (some: Field[]) => [...some].sort((a, b) => RANK[a.kind] - RANK[b.kind]).map(control);
+  const laid = (some: FieldInfo[]) => [...some].sort((a, b) => RANK[a.kind] - RANK[b.kind]).map(control);
   return (
     <DeviceCard id="card" title={title} cells={laid(fields.slice(0, FEW))} more={laid(fields.slice(FEW))} expanded={memory.expanded === true} onExpand={() => (memory.expanded = memory.expanded !== true)} />
   );

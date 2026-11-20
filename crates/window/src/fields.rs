@@ -8,7 +8,7 @@ use sound_core::{InstanceId, RecordSchema};
 
 use crate::app::State;
 
-/// The card of `id`: `{ title, fields }`, as `GenericCard` of `sdk/view.ts` types it. None for
+/// The card of `id`: `{ title, fields }`, as `Facts` of `sdk/view.ts` types it. None for
 /// an instance whose tool has no schema.
 pub(crate) fn card_of(state: &State, id: &InstanceId) -> Option<Value> {
     let tool = state.project.tool_of(id)?;

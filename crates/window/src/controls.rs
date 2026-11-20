@@ -129,7 +129,7 @@ impl Found {
                 });
                 return;
             }
-            Node::Text(_) | Node::Shapes(_) => return,
+            Node::Text(_) | Node::Shapes(_) | Node::Icon(_) => return,
         };
         let pressed = b.press.then(|| "press".to_string());
         let drag = b.drag.is_some().then(|| "drag".to_string());

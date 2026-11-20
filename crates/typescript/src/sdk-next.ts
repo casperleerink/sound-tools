@@ -36,10 +36,9 @@ export type {
   OwnedChild, OwnNotes, Parent, Part, Performer, ProjectTool, SendTo, StateOfTool, Take, Takes,
   TakingTool, Tick, ToolName, ToolSpec
 } from "./sdk/tools";
-// the clock, keys and menus
+// the clock and keys
 export type {
-  ActionKey, Clock, KeyName, MenuItem, MenuOptions, Modifiers, MovedNumber, Offer, Offers,
-  PlainKey, Section, TempoMap
+  ActionKey, Clock, KeyName, Modifiers, PlainKey, Section, TempoMap
 } from "./sdk/clock";
 // live values: what moves every frame without running a view
 export {
@@ -53,8 +52,9 @@ export {
   act, apply, find, Fragment, h, live, memo, press, render
 } from "./sdk/view";
 export type {
-  Actions, BoxProps, Child, ChildProps, Color, ColorToken, Drawn, GenericCard, Lines, Moved, Node, Op,
-  Radius, Rects, Role, Self, Shadow, ShapesProps, Space, TextProps, TextStyle, Tree
+  Actions, BoxProps, Card, Child, ChildProps, Color, ColorToken, Drag, Drawn, Dropped, Facts, Feeds,
+  FieldInfo, FieldProps, IconProps, Lines, Node, Offer, Op, Plane, Pointer, Radius, Rects, Role,
+  Self, Shadow, ShapesProps, Space, TextProps, TextStyle, Tree
 } from "./sdk/view";
 // what the runtime calls
 export {

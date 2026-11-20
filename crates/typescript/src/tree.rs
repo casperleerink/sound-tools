@@ -1600,10 +1600,28 @@ impl<'de> Visitor<'de> for NumVisitor {
     }
 
     fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Num, A::Error> {
-        Ok(Num::Live(Box::new(Live::deserialize(
-            MapAccessDeserializer::new(map),
-        )?)))
+        let mut live = serde_json::Value::deserialize(MapAccessDeserializer::new(map))?;
+        fed_as_before(&mut live);
+        let live = Live::deserialize(live).map_err(A::Error::custom)?;
+        Ok(Num::Live(Box::new(live)))
     }
+}
+
+/// `live.feed` of `sdk/view.ts` as the values the window had before feeds: `peak` of a path, or
+/// of the device itself, and `sounding.<pitch>`.
+fn fed_as_before(live: &mut serde_json::Value) {
+    if live["op"] != "feed" {
+        return;
+    }
+    let path = (live.get("path").and_then(serde_json::Value::as_str)).map(str::to_string);
+    let name = live["name"].as_str().unwrap_or_default();
+    let pitch = (name.strip_prefix("sounding.")).and_then(|pitch| pitch.parse::<u8>().ok());
+    *live = match (name, path, pitch) {
+        ("peak", Some(path), _) => serde_json::json!({ "op": "peak", "name": path }),
+        ("peak", None, _) => serde_json::json!({ "op": "device_peak" }),
+        (_, child, Some(pitch)) => serde_json::json!({ "op": "sounding", "pitch": pitch, "child": child }),
+        _ => return,
+    };
 }
 
 impl Num {

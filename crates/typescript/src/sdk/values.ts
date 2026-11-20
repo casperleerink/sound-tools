@@ -11,6 +11,8 @@ export type LiveNode =
   | { op: "space"; key: string; part: "left" | "top" | "right" | "bottom" | "pointX" | "pointY" }
   | { op: "hover"; key: string }
   | { op: "sounding"; pitch: number; child?: string }
+  | { op: "feed"; name: string; path?: string }
+  | { op: "plane"; key: string; part: "left" | "right" | "top" | "bottom" | "zoom" }
   | { op: "touched"; name: string }
   | { op: "plus" | "minus" | "times" | "over" | "mod" | "pow" | "min" | "max" | "lt" | "gt" | "le" | "ge" | "eq" | "ne" | "snap"; a: Num; b: Num }
   | { op: "negate" | "abs" | "floor" | "round" | "sin" | "cos" | "decibels"; x: Num }

@@ -1,5 +1,6 @@
 // For the host.
 
+import type { MenuItem, MenuOptions, MovedNumber, Offers } from "./clock";
 import { Fields, Inputs, ValuesOf } from "./fields";
 import { Now, Press, Turn, View } from "./live";
 import { CardRoot, Child, forget, homeInControls, insert, Made, makeNode, materialize, nodes, Op, send, UiNode } from "./nodes";
@@ -15,6 +16,21 @@ export interface ViewContext<State, I extends Inputs, M> {
   memory: Memory<M>;
   /** The sources of live values: what a view shows moving without drawing again. */
   now: Now<State, I>;
+  /**
+   * Opens a menu of `items` after a press: under the div, button or card title pressed, as a
+   * select's list, or where the pointer is after a right press or a press of a space. Answers
+   * the place of the item the composer picked, or `null` when they picked none.
+   */
+  openMenu(items: readonly MenuItem[], options?: MenuOptions): Promise<number | null>;
+  /** What the window offers to put in a child: devices that take `"notes"` and play them, or take `"audio"` and change it. Built-in devices, plugins and the tools of the project. With `at`, a child's path, `here` says which of them is there. */
+  offers(takes: "notes" | "audio", options?: { at?: string }): Promise<Offers>;
+  /** What a lane or a cable can move of the child at `path`, such as `"bass/filter"`: each number's name and range. */
+  numbers(path: string): Promise<MovedNumber[]>;
+  /**
+   * The last value of each number `output` of its sound, and of its children's as `<child>.<name>`.
+   * A binding that read one runs again as it moves.
+   */
+  outputs: Record<string, number>;
 }
 
 /** What the components of a card read while it is made. */
