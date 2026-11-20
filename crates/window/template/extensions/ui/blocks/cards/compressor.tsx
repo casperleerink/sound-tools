@@ -44,7 +44,7 @@ export const card: Card<"compressor", { expanded: boolean }> = (self, ctx) => {
   const lookahead = field.choice("lookahead_ms", "Lookahead");
   return (
     <DeviceCard id="card" title={field.title} display={<Display><DynamicsCurve levels={LEVELS} handles={handles} /></Display>}
-      cells={[<Knob {...threshold} />, <Knob {...ratio} />, <Knob {...field.number("attack_ms", "Attack")} />, <Knob {...field.number("release_ms", "Release")} />]}
+      cells={[<Knob {...threshold} />, <Knob {...ratio} said={`${Math.round(ratio.value * 10) / 10}:1`} />, <Knob {...field.number("attack_ms", "Attack")} />, <Knob {...field.number("release_ms", "Release")} />]}
       more={[
         <Knob {...field.number("knee_db", "Knee")} />,
         <Knob {...field.number("mix", "Mix")} unit="percent" />,

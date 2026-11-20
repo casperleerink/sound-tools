@@ -3,7 +3,8 @@ import { noteCommand, noteKey, pitchName, STRENGTHS, SWINGS, type NoteCommand } 
 import { BEAT, placeOf } from "../../../song/time";
 import { MenuList, type Item } from "../../menu";
 import { EmptyState } from "../empty-state";
-import { barsOf, BEFORE, END, MOVE, PITCH, playheadOf, SHORTEST, signatureOf, START, ZOOM, type Roll } from "./roll-view";
+import { barsOf, BEFORE, END, MOVE, PITCH, playing, SHORTEST, signatureOf, START, ZOOM, type Roll } from "./roll-view";
+import { Playhead } from "../time";
 
 /** The fewest points between two lines of the grid: closer, they do not show. How many ticks wide the ends of a note are that resize it. */
 const [ROOM, HANDLE] = [6, 90];
@@ -20,7 +21,7 @@ export const RollPlane = ({ roll }: { roll: Roll }) => {
   const [left, upper] = [marquee.x.plus(marquee.dx.min(0)), marquee.y.plus(marquee.dy.min(0))];
   const inRows = (p: Pointer) => ({ ...p, y: p.y + top });
   // Held at the clip's ends, so a playhead outside the clip moves no roll.
-  const follow = playheadOf(roll).at.max(0).min(roll.length);
+  const follow = playing(roll).at.max(0).min(roll.length);
   return (
     <box grow={1} h="full">
       <box key={key} label="Notes" w="full" h="full" clip plane={{ x: roll.across, y: PITCH, zoom: ZOOM, follow }} drag={{ x: true, y: true }}
@@ -32,7 +33,7 @@ export const RollPlane = ({ roll }: { roll: Roll }) => {
           )),
         )}
         <box place={[left, upper, marquee.dx.abs(), marquee.dy.abs()]} radius="sm" fill="focus/15" border="focus" opacity={marquee.active} inert />
-        <Playhead roll={roll} />
+        <Playhead plane={key} {...playing(roll)} />
         <MenuList id="note-menu" label="Note menu" items={noteItems(roll)} open="menu" w={220} />
       </box>
       {state.notes.length === 0 && (
@@ -104,11 +105,6 @@ function noteParts(roll: Roll, note: Frozen<Note>, index: number) {
   );
 }
 
-/** Where the piece plays, while it plays inside the clip. */
-const Playhead = ({ roll }: { roll: Roll }) => {
-  const { at, inside } = playheadOf(roll);
-  return <box place={[at, 64 - roll.top]} w={1} h={128 * PITCH} fill="text" opacity={inside} inert />;
-};
 
 /** The note menu: what to do with the chosen notes, or with all while none is, with the keys that do the same. */
 export function noteItems(roll: Roll): Item[] {

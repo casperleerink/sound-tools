@@ -1,6 +1,7 @@
 import { h, live, memo, type Color } from "../../../sdk";
 import { noteKey, pitchName } from "../../../song/notes";
-import { barsOf, LANE, MOVE, playheadOf, signatureOf, START, VELOCITY, type Roll } from "./roll-view";
+import { barsOf, LANE, MOVE, playing, signatureOf, START, VELOCITY, type Roll } from "./roll-view";
+import { Playhead } from "../time";
 
 /** How many dots draw the line a drag across the lane draws. */
 const DOTS = 24;
@@ -18,7 +19,6 @@ const TALL = 2 * LANE;
 export const VelocityLane = ({ roll }: { roll: Roll }) => {
   const key = `${roll.key}-velocity`;
   const line = live.drag(key);
-  const { at, inside } = playheadOf(roll);
   return (
     <box key={key} label="Velocity lane" grow={1} h={LANE - 1} clip plane={{ x: roll.key, y: RANGE }} drag={{ x: true, y: true }} onDragEnd={(p) => roll.edits.drawVelocities(p)}>
       {barsOf(roll.state.notes).map(([bar, notes]) =>
@@ -30,7 +30,7 @@ export const VelocityLane = ({ roll }: { roll: Roll }) => {
       {Array.from({ length: DOTS }, (_, dot) => (
         <box place={[line.x.plus(line.dx.times(dot / (DOTS - 1))), line.y.plus(line.dy.times(dot / (DOTS - 1)))]} w={3} h={3} radius="full" fill="text" opacity={line.active} inert />
       ))}
-      <box place={[at, 59]} w={1} h={1000} fill="text" opacity={inside} inert />
+      <Playhead plane={key} {...playing(roll)} />
     </box>
   );
 };

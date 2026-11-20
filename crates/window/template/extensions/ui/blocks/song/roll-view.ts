@@ -81,11 +81,11 @@ export function barsOf(notes: readonly Frozen<Note>[]) {
 export const signatureOf = (roll: Roll, notes: readonly { note: Frozen<Note>; index: number }[]) =>
   notes.map(({ note, index }) => `${index}=${noteKey(note)}${roll.chosen.has(noteKey(note)) ? "*" : ""}`).join(",");
 
-/** 1 while the playhead is inside the clip, and where it is in the clip's ticks: a looping clip's round. */
-export function playheadOf(roll: Roll) {
+/** Where the playhead is in the clip's ticks, a looping clip's round, and 1 while it is inside the clip: a `Playhead`'s `at` and `opacity`. */
+export function playing(roll: Roll) {
   const { start } = roll.state;
   const into = live.playhead.minus(start);
   return roll.state.loop
-    ? { at: into.max(0).mod(roll.length), inside: live.playhead.ge(start) }
-    : { at: into, inside: live.playhead.ge(start).times(live.playhead.lt(start + roll.length)) };
+    ? { at: into.max(0).mod(roll.length), opacity: live.playhead.ge(start) }
+    : { at: into, opacity: live.playhead.ge(start).times(live.playhead.lt(start + roll.length)) };
 }

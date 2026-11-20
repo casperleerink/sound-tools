@@ -51,7 +51,7 @@ export const card: Card<"modulation", { expanded: boolean }> = (self, ctx) => {
         <Knob {...field.number("feedback", "Feedback")} unit="percent" />,
         <Knob {...field.number("mix", "Mix")} unit="percent" />,
       ]}
-      more={[<Knob {...spread} unit="percent" />]}
+      more={[<Knob {...spread} said={`${Math.round(spread.value * 180)}°`} />]}
       expanded={expanded} onExpand={() => (ctx.memory.expanded = !expanded)} />
   );
 };

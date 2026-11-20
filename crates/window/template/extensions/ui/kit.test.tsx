@@ -3,7 +3,9 @@ import { act, find, h, live, press, render, type Card, type FieldInfo } from "..
 import { Choice } from "./choice";
 import { decibelTicks, Display, FREQUENCY_TICKS } from "./display";
 import { binder } from "./field";
+import { Clip } from "./blocks/time";
 import { Handle } from "./handle";
+import { Knob } from "./knob";
 import { Pad } from "./pad";
 import { Readout } from "./readout";
 import { Waveform } from "./waveform";
@@ -105,4 +107,27 @@ test("a readout says a live value under its name, and a pad takes a dropped file
   act("Kick", "drop", { audio: ["snare.wav"] });
   expect(dropped).toEqual(["snare.wav"]);
   expect(JSON.stringify(find("Kick"))).toContain("triangle-alert");
+});
+
+test("a knob says words for its value at rest; a disabled one takes no change", () => {
+  const knob = (disabled: boolean) => (() => <Knob id="ratio" label="Ratio" value={4} min={1} max={100} said="4:1" disabled={disabled} onChange={() => {}} />) as Card;
+  render(knob(false), { name: "k", state: {}, children: [] });
+  expect(JSON.stringify(find("Ratio"))).toContain('"text":"4:1"');
+  expect(() => act("Ratio", "set", 8)).not.toThrow();
+  render(knob(true), { name: "k", state: {}, children: [] });
+  expect(find("Ratio")).toMatchObject({ role: "slider", value: "4:1" });
+  expect(() => act("Ratio", "set", 8)).toThrow("has no set");
+});
+
+test("a clip lands on its snap when dragged, and the arrows move it a step within its bounds", () => {
+  const moved: number[] = [];
+  render((() => (
+    <box key="time" label="Time" w={400} h={64} plane={{ x: 0.1, y: 64 }}>
+      <Clip id="clip" label="Clip Verse" place={[480, 0, 960, 1]} drag={{ x: [-480, null], snap: [240, 1] }} onMove={(p) => moved.push(p.dx)} />
+    </box>
+  )) as Card, { name: "t", state: {}, children: [] });
+  act("Clip Verse", "drag", { dx: 130 });
+  act("Clip Verse", "increment", 1);
+  act("Clip Verse", "decrement", 10);
+  expect(moved).toEqual([240, 240, -480]);
 });

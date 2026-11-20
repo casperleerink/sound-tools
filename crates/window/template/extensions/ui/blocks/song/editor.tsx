@@ -12,7 +12,8 @@ import { ExpressionLane } from "./expression";
 import { PianoKeys } from "./keys";
 import { Readout } from "./readout";
 import { noteItems, RollPlane } from "./roll";
-import { HEADER, LANE, playheadOf, rollOf, type Roll } from "./roll-view";
+import { HEADER, LANE, playing, rollOf, type Roll } from "./roll-view";
+import { Playhead } from "../time";
 import { VelocityLane } from "./velocity";
 
 /** The clip `clip`, `row/name`, whose notes it edits; it fills the height the page gives it. */
@@ -71,7 +72,6 @@ const Name = ({ roll }: { roll: Roll }) => {
 const Ruler = ({ roll }: { roll: Roll }) => {
   const { key, bars, state, page } = roll;
   const snap = page.song.memory.snap;
-  const { at, inside } = playheadOf(roll);
   return (
     <box key={`${key}-ruler`} label="Bars of the clip" grow={1} h={HEADER} clip plane={{ x: key }} onPress={(p) => page.song.clock.jump(state.start + nearestOf(p.x, snap))}>
       {memo(`ruler-${key}`, [roll.runs, state.start, roll.end], () => {
@@ -92,7 +92,7 @@ const Ruler = ({ roll }: { roll: Roll }) => {
           </box>
         );
       })}
-      <box place={[at, HEADER / 2]} w={1} h={HEADER} fill="text" opacity={inside} inert />
+      <Playhead plane={`${key}-ruler`} {...playing(roll)} />
     </box>
   );
 };

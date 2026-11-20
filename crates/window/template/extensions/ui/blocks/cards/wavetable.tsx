@@ -144,7 +144,8 @@ export const card: Card<"wavetable", { expanded: boolean; lfo: number; page: num
     const top = (1 - LEVEL[1]) / (LEVEL[0] - LEVEL[1]);
     const bottom = -LEVEL[1] / (LEVEL[0] - LEVEL[1]);
     const lfoState = state[lfo] as { sync: boolean };
-    const mono = (state.voicing as { mode: string }).mode === "mono";
+    const mono = state.voicing.mode === "mono";
+    const glide = number("voicing.glide_seconds", "Glide", "");
     const initial = defaultStates.wavetable as State;
     const page = (name: (typeof PAGES)[number], cells: Node[]): Section => ({ name, cells, changed: differs(name, state, initial) });
     return [
@@ -153,7 +154,7 @@ export const card: Card<"wavetable", { expanded: boolean; lfo: number; page: num
         ...stacked([
           [<Knob {...number("sub.gain", "Sub", "")} unit="percent" />, <Cell text="Octave"><Choice {...choice("sub.octave", "Octave", "Sub")} /></Cell>],
           [<Knob {...number("unison.voices", "Unison", "")} step={1} />, <Knob {...number("unison.amount", "Spread", "Unison")} unit="percent" />],
-          [<Cell><Toggle id="voicing.mode" label={`${field.title} Mono`} text="Mono" on={mono} onToggle={() => field.change(`Turn mono ${mono ? "off" : "on"}`, { "voicing.mode": mono ? "poly" : "mono" })} /></Cell>, <Knob {...number("voicing.glide_seconds", "Glide", "")} unit="seconds" />],
+          [<Cell><Toggle id="voicing.mode" label={`${field.title} Mono`} text="Mono" on={mono} onToggle={() => field.change(`Turn mono ${mono ? "off" : "on"}`, { "voicing.mode": mono ? "poly" : "mono" })} /></Cell>, <Knob {...glide} unit="seconds" said={glide.value === 0 ? "Off" : undefined} />],
           // Mono plays one voice, so its number does nothing then.
           ...(mono ? [] : [[<Knob {...number("voicing.polyphony", "Voices", "")} step={1} />] as [Node]]),
         ]),

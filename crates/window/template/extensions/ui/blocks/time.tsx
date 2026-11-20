@@ -44,8 +44,8 @@ export const Grid = ({ plane, end, tall, beat = 960, bar = 4 * beat, bars = ever
 const TALLEST = 4000;
 
 /** A line down all the plane `plane` shows, where `at` is across: the playhead when left out. Last inside the plane, over what is placed. */
-export const Playhead = ({ plane, at = live.playhead, color = "text" }: { plane: string; at?: Num; color?: Color }) => (
-  <box place={[at, live.plane(plane).top, 0, 0]} inset={[0, 0, -1, -TALLEST]} fill={color} inert />
+export const Playhead = ({ plane, at = live.playhead, opacity, color = "text" }: { plane: string; at?: Num; opacity?: Num; color?: Color }) => (
+  <box place={[at, live.plane(plane).top, 0, 0]} inset={[0, 0, -1, -TALLEST]} fill={color} opacity={opacity} inert />
 );
 
 type ClipProps = {
