@@ -22,6 +22,9 @@ impl State {
         action: &str,
         value: Option<Value>,
     ) -> Result<()> {
+        if action != "commit" {
+            self.fields.get_mut().pressed = Some(format!("{}{key}", self.prefix_of(instance)));
+        }
         let tools = (self.tools.as_mut()).context("the project has no code to run this")?;
         tools
             .act(instance, key, action, value)
@@ -167,29 +170,6 @@ impl State {
             self.toggle_overlay(&key, within.map(|within| within.opener.as_str()));
         }
         self.act_on_view(&press.instance, &press.element, action, value)
-    }
-
-    /// What the field `key` says now: `value` while nobody types in it, all of it chosen, so
-    /// what is typed takes its place.
-    pub(crate) fn typed(&self, key: &str, value: &str) -> rune::TextEdit {
-        let mut fields = self.fields.borrow_mut();
-        let (edit, from) = (fields.entry(key.to_string()))
-            .or_insert_with(|| (rune::TextEdit::new(value), value.to_string()));
-        if !edit.focused {
-            if from != value || edit.text != value {
-                (*edit, *from) = (rune::TextEdit::new(value), value.to_string());
-            }
-            (edit.anchor, edit.focus) = (0, edit.text.len());
-        }
-        edit.clone()
-    }
-
-    /// The field `key`, which Rune edits.
-    pub(crate) fn typing(&mut self, key: &str, value: &str) -> &mut rune::TextEdit {
-        let fields = self.fields.get_mut();
-        let entry = (fields.entry(key.to_string()))
-            .or_insert_with(|| (rune::TextEdit::new(value), value.to_string()));
-        &mut entry.0
     }
 
     pub(super) fn play_or_stop(&mut self) {

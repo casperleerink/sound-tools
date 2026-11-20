@@ -22,6 +22,7 @@ mod semantics;
 mod shapes;
 
 pub(crate) use build::{bound, code_failed, enterable, view};
+pub(crate) use field::{Fields, follow_fields};
 pub(crate) use gesture::Gesture;
 pub(crate) use icon::{Icons, report_missing};
 pub(crate) use overlay::overlays;
@@ -287,6 +288,8 @@ pub(crate) struct FieldNode {
     w: Option<f32>,
     align: Option<String>,
     placeholder: Option<String>,
+    #[serde(default)]
+    pub(crate) focus: bool,
 }
 
 #[derive(Deserialize)]

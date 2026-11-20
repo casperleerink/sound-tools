@@ -36,6 +36,8 @@ type Memory = {
   shape: Shape;
   values: Record<string, number>;
   name: string;
+  clip: string;
+  renaming: boolean;
   expanded: boolean;
   chosen: boolean;
   steps: Step[][];
@@ -58,6 +60,8 @@ export const gallery = tool({
     shape: "low",
     values: { note: 60, deep: 0, cutoff: 2000, resonance: 0.3, pan: -0.25, drive: 0.6, mix: 0.75, fader: -6, slider: 0.4 },
     name: "Bass",
+    clip: "Verse",
+    renaming: false,
     expanded: false,
     chosen: true,
     steps: [pattern([0, 4, 8, 12]), pattern([4, 12]), pattern([0, 2, 4, 6, 8, 10, 12, 14])],
@@ -134,7 +138,10 @@ export const gallery = tool({
             </Section>
             <Section title="Text and marks">
               <col gap={3}>
-                <TextField id="name" label="Track name" value={memory.name} onCommit={(name) => (memory.name = name)} />
+                <TextField id="name" label="Track name" value={memory.name} onCommit={(name) => name !== null && (memory.name = name)} />
+                {memory.renaming
+                  ? <TextField id="rename" label="Rename the clip" value={memory.clip} focus onCommit={(name) => { memory.renaming = false; if (name !== null) memory.clip = name; }} />
+                  : <row key="clip" label="Clip" role="button" w={160} h={28} px={2} align="center" radius="lg" hover="fill" onPress={() => (memory.renaming = true)}><text style="body" color="text">{memory.clip}</text></row>}
                 <row gap={2} align="center">
                   <Kbd keys="⌘K" />
                   <Dot color="focus" />

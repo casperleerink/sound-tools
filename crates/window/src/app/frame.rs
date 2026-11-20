@@ -186,6 +186,7 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
             changed = true;
         }
     }
+    changed |= tree::follow_fields(state);
     let dt = (seconds - state.last).max(0.0);
     state.last = seconds;
     let moving = state.lives.update(state, dt);

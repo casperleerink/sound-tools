@@ -99,7 +99,7 @@ pub(crate) struct State {
     /// What `--main` shows in place of the project's main instance.
     main: Option<InstanceId>,
     /// What the text fields say, by key, and the value each was made from.
-    fields: RefCell<HashMap<String, (rune::TextEdit, String)>>,
+    pub(crate) fields: RefCell<tree::Fields>,
     waker: Arc<Mutex<Option<rune::Waker>>>,
     /// The steps of `--act` and the seconds of `--play`, for the first frame of a run without a window.
     first: Option<(Vec<Step>, Option<f64>)>,

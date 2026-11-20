@@ -5,6 +5,10 @@ use rune::{KeyEvent, Tx};
 use super::State;
 
 pub(crate) fn on_key(state: &mut State, key: &KeyEvent, _: &mut Tx) -> bool {
+    // What a field passes on is typing, never a shortcut.
+    if state.typing_now() {
+        return false;
+    }
     let done = if key.is_command('z') {
         match key.mods.shift {
             true => state.redo(),

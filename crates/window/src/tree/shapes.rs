@@ -59,7 +59,12 @@ pub(super) fn drawing(scope: &Scope, d: &ShapesNode) -> El {
     if let Some(key) = &d.key {
         e = e.key(scope.key(key));
     }
-    scope.placed(e, d.at.as_ref(), (Some(&d.w), Some(&d.h)), d.opacity.as_ref())
+    scope.placed(
+        e,
+        d.at.as_ref(),
+        (Some(&d.w), Some(&d.h)),
+        d.opacity.as_ref(),
+    )
 }
 
 /// The area a run of a line closes: itself when it ends where it starts, else down to `bottom`
