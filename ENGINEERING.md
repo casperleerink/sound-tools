@@ -9,22 +9,15 @@ Rules are traps to avoid, not general advice. Add a rule only when it is non-obv
 - Correctness and clarity first. Optimize only the audio path or measured hot spots.
 - Comments and docs: see [AGENTS.md](AGENTS.md), "Docs and comments".
 - No `unwrap()` or panicking indexing outside tests. Propagate with `?`.
-- Never discard errors with `let _ =`. Use `?`, `.log_err()` or an explicit `match`. Errors from background work must reach the UI.
+- Never discard errors with `let _ =`. Use `?`, an `error:` line on stderr (the log keeps it) or an explicit `match`. Errors from background work must reach the window.
 - Full-word variable names.
-- Before an `async move`, shadow clones inside a block:
-  ```rust
-  executor.spawn({
-      let state = state.clone();
-      async move { state.update(); }
-  });
-  ```
-- Main thread: small record writes are fine there. Work whose size or time the user controls (assets, plugin state, folder listings, downloads, processes) goes to `cx.background_spawn`; its result and errors come back with `this.update`. Code inside `cx.spawn` still runs on the main thread.
+- Main thread: small record writes are fine there. Work whose size or time the user controls (assets, plugin state, folder listings, downloads, processes) goes to a thread of its own, which sends its result or error through a channel and wakes the window; the next frame reads it.
 - Audio thread: nothing from "What may not happen on the audio thread" below.
 - Check a crate's current version and changelog before using it from memory: agents write for older APIs.
-- A record field read with `deserialize_with` needs `#[schemars(with = ...)]` naming the type it really reads, or its `sdk.ts` type is wrong.
+- A record field read with `deserialize_with` needs `#[schemars(with = ...)]` naming the type it really reads, or its type in `sdk/` is wrong.
 - Every dependency is declared once in `[workspace.dependencies]`. Every crate uses the workspace lints.
 - Before writing DSP math in an extension, look in `sound_dsp`: extensions kept copying it. A helper a second crate needs moves there, not into a copy.
-- Extensions depend on the SDK and on small shared contract crates, never on each other. `tooling/workspace-rules` fails the tests if one does. This keeps the build wide and parallel.
+- Extensions depend on the core, `sound_dsp` and small shared crates, never on each other. `tooling/workspace-rules` fails the tests if one does. This keeps the build wide and parallel.
 - Warnings fail CI only (`.cargo/ci-config.toml`), never a local build: a warning in agent-written code must not break a composer's build.
 - Never vary `rustflags` or environment variables between builds. Any change rebuilds everything. CI's `RTSAN_ENABLE=1` is the one exception.
 
@@ -36,7 +29,7 @@ The engine is in `crates/core`. It follows what Pure Data, Elementary and simila
 
 | Thread | Owns | May |
 | --- | --- | --- |
-| Main, the "control side" in engine code | Views, project, graph, compiler, tempo map, plugin handles | Allocate, lock, small I/O. Compiles schedules and builds processors. |
+| Main, the "control side" in engine code | Window, project, graph, compiler, tempo map, plugin handles | Allocate, lock, small I/O. Compiles schedules and builds processors. |
 | Audio (device callback) | Live processors, current schedule, buffers | Only preallocated work. |
 
 The engine is a value, not global state. The device callback, offline rendering and tests all call the same `Engine::process_block`. Pd needed years to add multiple instances because it started with globals.
@@ -81,8 +74,7 @@ How the engine keeps to that:
 
 - DSP, graph, clock and project state tests are plain `#[test]`. Offline rendering through `process_block` makes audio testable: render frames, then assert on samples or snapshot a summary with `insta`.
 - A test that changes a file tells the code, as the watcher does: `Project::apply_outside_changes`, or `Opened::save_code` for tools. A busy Mac drops file events for minutes, so only CI runs the tests that start the system's watcher.
-- Property tests (`proptest`) cover the graph compiler, the clock round trips, transport events over random tempo maps and buffer sizes, and state application.
-- Window behaviour is tested by key and label on an offline engine run by hand (`crates/window`). The tests check the project, the undo history and the files after every gesture.
+- Property tests (`proptest`) cover the graph compiler, the clock, transport events and state application.
 - Recording is tested with a simulated input device and output timing. No test needs real hardware.
 - A test that runs tools of the project needs Bun and fails without it (`tooling/fetch-bun.sh`), so no test passes by skipping. It waits for Bun's answers, never for a fixed time.
 - A file under `tests/` with helper functions starts with `#![allow(clippy::unwrap_used)]`, because `allow-unwrap-in-tests` covers only `#[test]` functions.
@@ -90,14 +82,25 @@ How the engine keeps to that:
 
 CI runs the commands of [README.md](README.md), "Checks", side by side, with the realtime sanitizer on for the macOS tests. A pull request runs only lint, the Linux tests and clippy on Windows, to stay fast; main runs everything, and a release needs main green on its commit. Add Miri for new unsafe code.
 
-To try Linux from a Mac: an `ubuntu:24.04` Docker container with the README packages, `CARGO_TARGET_DIR` on a volume, run as a normal user (root can write into the read-only folders some tests make). For the window add `xvfb` and `mesa-vulkan-drivers` and a null sound card. Set `CARGO_BUILD_JOBS=4` on Docker Desktop's default memory.
+To try Linux from a Mac: an `ubuntu:24.04` Docker container with the README packages, `CARGO_TARGET_DIR` on a volume, run as a normal user (root can write into the read-only folders some tests make). Set `CARGO_BUILD_JOBS=4` on Docker Desktop's default memory.
 
 To check Windows from a Mac: `cargo install cargo-xwin`, `brew install llvm`, `rustup target add x86_64-pc-windows-msvc`, then `cargo xwin clippy --target x86_64-pc-windows-msvc --workspace --all-targets` with `/opt/homebrew/opt/llvm/bin` on the `PATH`. It catches compile errors in minutes; only the Windows CI job on main runs the tests.
+
+### Seeing the window without one
+
+With these, `sound-tools <project>` runs on the offline engine, silent, on every OS (no folder: the start screen):
+
+- `--snap out.png` draws it. Look at the picture after any change to the looks, against [DESIGN.md](DESIGN.md).
+- `--tree out.json`: every control (key, label, role, value, actions), planes, feeds, problems.
+- `--act steps.json` runs actions on controls by label or key, in the folder itself; the rest use a copy. `--script steps.json` plays timed pointer, wheel and key events.
+- `--play <seconds>` plays first; `--main <instance>` shows another one (`gallery`: every component); `--size <w>x<h>`; `--scene <name>`: the agent sidebar in one of its states.
+
+In a project's `extensions/`, `bun check -p .` and `bun test` check its tools; a test in `crates/window` runs both on a new project. Speed: the budget tests in `crates/window`, and [tooling/perf](tooling/perf/README.md) on a release build. After a change to the SDK, `tools.md` or the template, `tooling/agent-eval/eval.py` has an agent build a tool and others check it through the app; it costs API money.
 
 ## Reference repos
 
 Clone them next to this repo and read them before designing something they already solved.
 
-- [Zed](https://github.com/zed-industries/zed): how a large Rust app is built. Its `Cargo.toml` profiles and lints, `.rules`, `clippy.toml`, `tooling/xtask/src/workspace.rs` (dependency rules).
+- [Rune](https://github.com/anomalyco/rune): the window's toolkit, at the rev the root `Cargo.toml` pins.
 - [Pure Data](https://github.com/pure-data/pure-data): the classic audio graph. `src/d_ugen.c` (graph sort, buffers), `src/m_sched.c` (scheduler, clocks), `src/g_canvas.c` (rebuilding the graph), `src/d_delay.c` (feedback delay). Also what not to copy: globals, silently dropped cycles, sort-dependent delays.
 - [Elementary](https://github.com/elemaudio/elementary): compiled schedules swapped into a realtime runtime. `runtime/elem/Runtime.h` (schedule swap, garbage collection), `runtime/elem/GraphRenderSequence.h`, `runtime/elem/builtins/Feedback.h`. Also what not to copy: dropping a schedule when its queue is full, freeing on the audio thread, crossfading the whole output on every edit.
