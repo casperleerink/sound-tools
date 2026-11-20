@@ -180,3 +180,27 @@ fn an_export_that_fails_says_why_in_the_corner() {
         Some("The export failed: the disk is full")
     );
 }
+
+#[test]
+fn the_project_menu_opens_the_dialog_on_the_piece_or_on_the_selection() {
+    let (_scratch, mut window) = exporting();
+    let pick = |window: &mut rune::Runtime<State>, entry: &str| {
+        act(
+            &mut window.state,
+            json!({ "key": "project-menu", "action": "press" }),
+        );
+        press(window, entry);
+        let shown = chosen(&window.state);
+        press(window, "Cancel");
+        shown
+    };
+    assert_eq!(
+        pick(&mut window, "Export audio…"),
+        ["WAV", "48 kHz", "32-bit float", "As it plays"]
+    );
+    let span = (sound_core::Ticks(0), sound_core::Ticks(1920));
+    let song = sound_core::InstanceId::new("song").unwrap();
+    window.state.session.select(Some(song), Some(span));
+    assert!(pick(&mut window, "Export audio…").contains(&"Whole piece".to_string()));
+    assert!(pick(&mut window, "Export selection…").contains(&"Selection".to_string()));
+}
