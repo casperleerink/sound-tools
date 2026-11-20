@@ -1130,3 +1130,31 @@ fn a_key_a_tool_took_comes_up_to_it_after_the_focus_left_its_view() {
     redraw(&mut window);
     assert_eq!(did(&window.state, "holder"), "b↓ b↑");
 }
+
+/// Two elements of one key in a view: a press of one would reach the other.
+const TWINS: &str = r#"import { h, tool } from "./sdk";
+export const twins = tool({
+  name: "twins", title: "Twins", when: "Never", doc: "Two boxes of one key.", state: {},
+  view: () => <col><box key="same" label="First" w={20} h={20} onPress={() => {}} /><box key="same" label="Second" w={20} h={20} onPress={() => {}} /></col>,
+});
+"#;
+
+/// A key used twice in a view is a problem that names the key and says the fix.
+#[test]
+#[ignore = "missing: the window does not report a key used twice (win-sweep, crates/window/src/tree)"]
+fn a_key_used_twice_in_a_view_is_a_problem_that_says_the_fix() {
+    let files = [
+        ("extensions/twins.tsx", TWINS),
+        ("state/twins.json", r#"{"tool": "twins", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "twins");
+    redraw(&mut window);
+    window.state.settle();
+    let problems = problems(&window.state);
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.contains("twins.tsx") && problem.contains("\"same\"")),
+        "{problems:?}"
+    );
+}
