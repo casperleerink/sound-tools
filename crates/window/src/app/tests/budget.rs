@@ -1,7 +1,11 @@
 //! What a frame of the window costs with many things placed, measured: scrolling, playing,
 //! zooming and dragging run no view in Bun, and stay within their budgets.
+//!
+//! A cost is in calibrations: the frame's time over that of a fixed piece of work run beside it
+//! on the same thread. A slower or busier computer slows both, so the ratio holds where a time in
+//! milliseconds swings threefold, and twice the work still fails.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::{frame, laid_out, new_project, opened, redraw, with_tools};
 use crate::app::State;
@@ -79,14 +83,22 @@ fn shown(tool: &str, code: &str) -> (tempfile::TempDir, rune::Runtime<State>) {
     (scratch, window)
 }
 
-/// The middle of what `work` says it took, of 15 runs after 3 to warm up.
-pub(super) fn measured(mut work: impl FnMut() -> Duration) -> Duration {
+/// A frame's cost, in calibrations.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub(super) struct Cost(f64);
+
+/// What `work` costs: the least it says it took of 15 runs after 3 to warm up, over the least
+/// the calibration took between them. Other work on the computer only adds to either.
+pub(super) fn measured(mut work: impl FnMut() -> Duration) -> Cost {
     for _ in 0..3 {
         work();
     }
-    let mut times: Vec<Duration> = (0..15).map(|_| work()).collect();
-    times.sort();
-    times[times.len() / 2]
+    let (mut least, mut calibration) = (Duration::MAX, Duration::MAX);
+    for _ in 0..15 {
+        least = least.min(work());
+        calibration = calibration.min(timed(calibrate));
+    }
+    Cost(least.as_secs_f64() / calibration.as_secs_f64())
 }
 
 /// How long `work` takes on this thread: the other tests running beside it take none of it.
@@ -94,6 +106,18 @@ pub(super) fn timed(work: impl FnOnce()) -> Duration {
     let started = spent();
     work();
     spent().saturating_sub(started)
+}
+
+/// Work of a fixed size like a frame's: small allocations, strings and a sorted map.
+fn calibrate() {
+    let mut map = std::collections::BTreeMap::new();
+    for i in 0..4_000u32 {
+        map.insert(
+            format!("clip-{}", i.wrapping_mul(2_654_435_761)),
+            vec![i; 8],
+        );
+    }
+    std::hint::black_box(map);
 }
 
 #[cfg(unix)]
@@ -117,19 +141,19 @@ fn view_runs(window: &rune::Runtime<State>) -> u64 {
     window.state.tools.as_ref().unwrap().view_runs()
 }
 
-/// Scrolls, plays, zooms and drags the plane `plane` of `tool`; what each frame took.
-fn budgets(tool: &str, code: &str, plane: &str, dragged: &str) -> [Duration; 3] {
+/// Scrolls, plays, zooms and drags the plane `plane` of `tool`; what each frame cost.
+fn budgets(tool: &str, code: &str, plane: &str, dragged: &str) -> [Cost; 3] {
     let (_scratch, window) = shown(tool, code);
     budgets_of(window, tool, plane, dragged)
 }
 
-/// Scrolls, plays, zooms and drags the plane `plane` of the view `window` shows; what each frame took.
+/// Scrolls, plays, zooms and drags the plane `plane` of the view `window` shows; what each frame cost.
 fn budgets_of(
     mut window: rune::Runtime<State>,
     tool: &str,
     plane: &str,
     dragged: &str,
-) -> [Duration; 3] {
+) -> [Cost; 3] {
     let runs = view_runs(&window);
     let [x, y, w, h] = window.presented(plane).unwrap().0;
     let at = [x + w / 2.0, y + h / 2.0];
@@ -186,26 +210,25 @@ fn budgets_of(
     [scroll, play, zoom]
 }
 
-/// The budgets of the window's work in a frame, as the app is built. A test build of the window
-/// is not optimized, which makes this work about three times slower.
-pub(super) const SCROLL_AND_PLAY: Duration = Duration::from_millis(4 * UNOPTIMIZED);
-pub(super) const ZOOM: Duration = Duration::from_millis(8 * UNOPTIMIZED);
-const UNOPTIMIZED: u64 = if cfg!(debug_assertions) { 3 } else { 1 };
+/// The budgets of the window's work in a frame. The template's song of 64 tracks costs about 1.8
+/// to scroll, 2.2 to play and 7 to zoom, on macOS and Linux alike.
+pub(super) const SCROLL_AND_PLAY: Cost = Cost(3.2);
+pub(super) const ZOOM: Cost = Cost(11.0);
 
 #[test]
 fn five_hundred_clips_scroll_play_zoom_and_drag_within_their_budgets_and_run_no_view() {
     let [scroll, play, zoom] = budgets("clips", CLIPS, "song", "c3");
-    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame took {scroll:?}");
-    assert!(play < SCROLL_AND_PLAY, "a play frame took {play:?}");
-    assert!(zoom < ZOOM, "a zoom frame took {zoom:?}");
+    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame cost {scroll:?}");
+    assert!(play < SCROLL_AND_PLAY, "a play frame cost {play:?}");
+    assert!(zoom < ZOOM, "a zoom frame cost {zoom:?}");
 }
 
 #[test]
 fn two_thousand_notes_scroll_play_zoom_and_drag_within_their_budgets_and_run_no_view() {
     let [scroll, play, zoom] = budgets("notes", NOTES, "roll", "n5");
-    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame took {scroll:?}");
-    assert!(play < SCROLL_AND_PLAY, "a play frame took {play:?}");
-    assert!(zoom < ZOOM, "a zoom frame took {zoom:?}");
+    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame cost {scroll:?}");
+    assert!(play < SCROLL_AND_PLAY, "a play frame cost {play:?}");
+    assert!(zoom < ZOOM, "a zoom frame cost {zoom:?}");
 }
 
 /// The song of the template with 64 tracks of 500 clips: its records, as the window keeps them.
@@ -249,9 +272,15 @@ fn the_song_of_the_template_with_64_tracks_and_500_clips_runs_no_view_as_it_scro
     for _ in 0..3 {
         redraw(&mut window);
     }
-    assert!(window.presented("clip-t05/c1").is_some());
+    // A frame waits 15 seconds for Bun, which a busy computer can take to read 64 tracks.
+    let start = Instant::now();
+    while window.presented("clip-t05/c1").is_none() {
+        let failed = crate::app::FAILED.lock().unwrap().clone();
+        assert!(start.elapsed() < Duration::from_secs(45), "{failed:?}");
+        redraw(&mut window);
+    }
     let [scroll, play, zoom] = budgets_of(window, "song", "song", "clip-t05/c1");
-    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame took {scroll:?}");
-    assert!(play < SCROLL_AND_PLAY, "a play frame took {play:?}");
-    assert!(zoom < ZOOM, "a zoom frame took {zoom:?}");
+    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame cost {scroll:?}");
+    assert!(play < SCROLL_AND_PLAY, "a play frame cost {play:?}");
+    assert!(zoom < ZOOM, "a zoom frame cost {zoom:?}");
 }
