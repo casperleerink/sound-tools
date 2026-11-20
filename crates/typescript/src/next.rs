@@ -214,6 +214,9 @@ pub struct Tools {
     tools: Vec<Rc<ToolInfo>>,
     problems: Vec<Problem>,
     watch_problem: Option<Problem>,
+    /// Whether the system's watcher hears `extensions/`. It watches anew at every start, so a
+    /// folder made since is watched too.
+    watched: bool,
     _watcher: Option<RecommendedWatcher>,
     changes: mpsc::Receiver<()>,
     /// When the folder last changed, while a restart waits for it to be quiet.
@@ -297,6 +300,7 @@ impl Tools {
             tools: tools.into_iter().map(Rc::new).collect(),
             problems,
             watch_problem,
+            watched,
             _watcher: watcher,
             changes,
             changed_at: None,
@@ -830,6 +834,11 @@ impl Tools {
         if let Some((_, again)) = &mut self.starting {
             *again = true;
             return;
+        }
+        if self.watched {
+            let (send, changes) = mpsc::channel();
+            let (watcher, problem) = watching(&self.folder, send, self.waker.clone());
+            (self._watcher, self.watch_problem, self.changes) = (watcher, problem, changes);
         }
         let old = self.bun.take();
         self.performer_gone(project);
