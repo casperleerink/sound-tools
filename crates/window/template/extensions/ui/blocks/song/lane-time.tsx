@@ -43,7 +43,7 @@ export const LaneTime = ({ page, row }: { page: Page; row: LaneRow }) => {
   const open = song.memory.point?.track === row.track.name && song.memory.point.lane === row.lane;
   const chosen = open ? song.memory.point!.ticks : [];
   const runs = song.clock.tempo_map.time_signatures;
-  return memo(`lane-time-${lane.id}`, [row.top, row.height, end, lane.mover?.tool, JSON.stringify(lane.mover?.state), song.memory.snap, open, chosen.join(), lane.colour, row.target, JSON.stringify(runs)], () => {
+  return memo(`lane-time-${lane.id}`, [row.top, row.height, end, lane.mover?.tool, lane.mover?.state, song.memory.snap, open, chosen.join(), lane.colour, row.target, runs], () => {
     const key = `lane-${lane.id}`;
     const at = placesOf(row);
     const marquee = live.drag(key);

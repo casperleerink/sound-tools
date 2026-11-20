@@ -98,7 +98,7 @@ export const chosenTrack = (memory: Memory) =>
   trackBelow(memory) ?? (memory.selected[0] === undefined ? null : rowOfKey(memory.selected[0])) ?? (memory.below?.kind === "mixer" ? memory.track : null);
 
 /** What every block of the page gets: the song, its edits, and its rows worked out once a run. */
-function laidOut(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song: Song) {
+export function pageOf(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song: Song) {
   const strips = ordered(self.children.filter(isStrip), self.state.order);
   const tracks = strips.filter(isRow);
   const returns = strips.filter((each) => each.tool === "bus");
@@ -119,16 +119,8 @@ function laidOut(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song: Song)
   };
 }
 
-const pages = new WeakMap<object, Page>();
-/** The page of a song: one object, of the newest run, so a handler a memo kept from an earlier run reads the song as it is now. */
-export function pageOf(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song: Song): Page {
-  const page = laidOut(self, song);
-  const kept = pages.get(song.memory);
-  if (!kept) pages.set(song.memory, page);
-  return kept ? Object.assign(kept, page) : page;
-}
 /** What every block of the song's page gets. */
-export type Page = ReturnType<typeof laidOut>;
+export type Page = ReturnType<typeof pageOf>;
 
 /** What a device is called, as the window offers it: a plugin by the name it was offered under (`format:id`), else its tool in words. */
 export function deviceName(catalog: readonly Offer[], { tool, state }: { tool: unknown; state: unknown }): string {

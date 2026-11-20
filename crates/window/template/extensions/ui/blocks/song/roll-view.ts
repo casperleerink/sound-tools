@@ -56,8 +56,7 @@ export function rollOf(page: Page, clip: string) {
     colour: colourOf(track),
     chosen: new Set(song.memory.notes),
     edits: page.edits.notes(clip),
-    /** The time signatures as text, which a memo compares. */
-    runs: JSON.stringify(runs),
+    runs,
     /** The lines of the bars of the song from before the clip to past it, in its ticks, and their numbers. */
     bars: barStarts(runs, state.start + length + PAST).flatMap((tick, index) => (tick >= state.start - BEFORE ? [{ tick: tick - state.start, bar: index + 1 }] : [])),
     hear: (pitch: number) => song.play(pitch, { child: track.name as `audio-${string}`, seconds: 0.3 }),

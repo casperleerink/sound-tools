@@ -33,7 +33,7 @@ export const Mixer = ({ page }: MixerProps) => {
   const column = (each: Each | undefined) => {
     const name = each?.name ?? "master";
     const chosen = page.song.memory.track === name;
-    const deps = [fader, chosen, each && titleOf(each), each && colourOf(each), each && muted(each), JSON.stringify(each ? sends(each) : []), JSON.stringify(each ? each.children.find((child) => child.name === "mix")?.state : page.self.children.find((child) => child.name === "master")?.state),
+    const deps = [fader, chosen, each && titleOf(each), each && colourOf(each), each && muted(each), each ? sends(each) : [], each ? each.children.find((child) => child.name === "mix")?.state : page.self.children.find((child) => child.name === "master")?.state,
       page.song.state.solo.includes(name), page.song.memory.armed.includes(name), page.song.held(`${name}/mix.gain_db`), page.song.held(`${name}/mix.pan`), sent.map((back) => page.song.held(`${name}/send-${back.name}.gain_db`)).join(), clearsOf(`meter-${name}`), sent.length];
     return memo(`mixer-${name}`, deps, () => <Column page={page} each={each} sent={sent} fader={fader} />);
   };

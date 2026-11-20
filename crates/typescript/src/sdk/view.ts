@@ -350,15 +350,22 @@ type Handlers = {
   onCommit?: (text: string | null) => void;
   actions?: Actions;
 };
-type Scope = { handlers: Map<string, Handlers>; memos: string[] };
-type Entry = Scope & { deps: unknown[]; v: number; node: Node };
+/** What one part of a view declared: its handlers by key, and the memos it calls. `memo` is the memo it is, none at the root. */
+type Scope = { handlers: Map<string, Handlers>; memos: string[]; memo?: string };
+/**
+ * A memo's part: its deps and node as last built, and `build` of the newest run that called it,
+ * with that run's number. Its `handlers` are of the run `bound`.
+ */
+type Entry = Scope & { deps: unknown[]; v: number; node: Node; build: () => Node; run: number; bound: number; parent?: string };
 /** What a view of one instance keeps between its runs. */
-type Instance = { cache: Map<string, Entry>; root: Scope; last: Node; builds: number };
+type Instance = { cache: Map<string, Entry>; root: Scope; last: Node; builds: number; runs: number };
 
 const instances = new Map<string, Instance>();
 let scope: Scope = { handlers: new Map(), memos: [] };
 let current: Instance | undefined;
 let fresh: Record<string, { v: number; node: Node }> = {};
+/** While a kept part is built again only for its handlers: a memo inside builds nothing. */
+let rebinding = false;
 
 const flat = (c: Child, out: Node[] = []): Node[] => {
   if (Array.isArray(c)) for (const each of c) flat(each, out);
@@ -388,21 +395,60 @@ export function Fragment({ children }: { children?: Child }): Node {
   return { t: "box", children: flat(children) };
 }
 
-/** Builds `build` again only when one of `deps` changed (by `Object.is`); else the window keeps what it has. `key` is unique in the view. */
+/**
+ * Builds `build` again only when one of `deps` changed; else the window keeps what it has. Deps
+ * compare as data: lists and plain objects by what they hold, anything else (a function, a `Live`)
+ * by identity. A kept part's handlers are those of the newest run. `key` is unique in the view.
+ */
 export function memo(key: string, deps: unknown[], build: () => Node): Node {
   const at = current;
   if (!at) return build();
-  scope.memos.push(key);
   const old = at.cache.get(key);
-  if (old && old.deps.length === deps.length && old.deps.every((d, i) => Object.is(d, deps[i]))) return { t: "memo", key };
+  if (rebinding) {
+    if (old) Object.assign(old, { build, run: at.runs });
+    return { t: "memo", key };
+  }
+  scope.memos.push(key);
+  if (old && old.deps.length === deps.length && old.deps.every((d, i) => same(d, deps[i]))) {
+    Object.assign(old, { build, run: at.runs, parent: scope.memo });
+    return { t: "memo", key };
+  }
   const outer = scope;
-  scope = { handlers: new Map(), memos: [] };
+  scope = { handlers: new Map(), memos: [], memo: key };
   const node = build();
-  const entry = { ...scope, deps, v: ++at.builds, node };
+  const entry = { ...scope, deps, v: ++at.builds, node, build, run: at.runs, bound: at.runs, parent: outer.memo };
   scope = outer;
   at.cache.set(key, entry);
   fresh[key] = { v: entry.v, node };
   return { t: "memo", key };
+}
+
+/** Whether two deps are the same: data by what it holds, anything else by identity. */
+function same(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((each, i) => same(each, b[i]));
+  if (Array.isArray(b) || !plain(a) || !plain(b)) return false;
+  const [x, y] = [a as Record<string, unknown>, b as Record<string, unknown>];
+  const keys = Object.keys(x);
+  return keys.length === Object.keys(y).length && keys.every((k) => Object.hasOwn(y, k) && same(x[k], y[k]));
+}
+const plain = (value: object) => [Object.prototype, null].includes(Object.getPrototypeOf(value));
+
+/** The handlers of the kept part `key` as the newest run makes them: built again from its parent down, the window's node untouched. */
+function rebind(at: Instance, key: string): Entry | undefined {
+  const entry = at.cache.get(key);
+  if (!entry || entry.bound === at.runs) return entry;
+  if (entry.run !== at.runs && (entry.parent === undefined || !rebind(at, entry.parent))) return entry;
+  const [outer, was] = [scope, current];
+  [scope, current, rebinding] = [{ handlers: new Map(), memos: [], memo: key }, at, true];
+  try {
+    entry.build();
+    Object.assign(entry, { handlers: scope.handlers, bound: at.runs });
+  } finally {
+    [scope, current, rebinding] = [outer, was, false];
+  }
+  return entry;
 }
 
 /** A change to records in a test: the path to a value, and the value. */
@@ -415,7 +461,7 @@ type Draw = (self: Drawn<unknown>, ctx: Context<any>) => Node;
 function instanceOf(id: string): Instance {
   let known = instances.get(id);
   if (!known) {
-    known = { cache: new Map(), root: { handlers: new Map(), memos: [] }, last: { t: "box", children: [] }, builds: 0 };
+    known = { cache: new Map(), root: { handlers: new Map(), memos: [] }, last: { t: "box", children: [] }, builds: 0, runs: 0 };
     instances.set(id, known);
   }
   return known;
@@ -423,6 +469,7 @@ function instanceOf(id: string): Instance {
 
 function run(id: string, draw: Draw, self: Drawn<unknown>, ctx: Context<any>): Tree {
   const at = instanceOf(id);
+  at.runs++;
   current = at;
   fresh = {};
   scope = at.root = { handlers: new Map(), memos: [] };
@@ -443,7 +490,11 @@ function run(id: string, draw: Draw, self: Drawn<unknown>, ctx: Context<any>): T
   return { root: at.last, memos: fresh, drop };
 }
 
-const handlersOf = (at: Instance, key: string) => at.root.handlers.get(key) ?? [...at.cache.values()].find((e) => e.handlers.has(key))?.handlers.get(key);
+const handlersOf = (at: Instance, key: string) => {
+  if (at.root.handlers.has(key)) return at.root.handlers.get(key);
+  const holder = [...at.cache.entries()].find(([, entry]) => entry.handlers.has(key))?.[0];
+  return holder === undefined ? undefined : rebind(at, holder)?.handlers.get(key);
+};
 const pointer = (p: Partial<Pointer> = {}): Pointer => ({ x: 0, y: 0, dx: 0, dy: 0, clicks: 1, right: false, shift: false, alt: false, cmd: false, ...p });
 
 /** Runs an action of `key`: `press`, `drag`, `drop`, `enter` and `commit` its handlers, else one of its `actions`. Throws when it has none. */

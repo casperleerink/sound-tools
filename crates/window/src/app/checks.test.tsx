@@ -14,22 +14,33 @@ const counter = tool({
 });
 const self = { name: "counter", state: { count: 0 }, children: [] } as never;
 
-/** A counter whose buttons a memo keeps from its first run: one reads the records through `ctx`, one through that run's `self`. */
+/** How often the part of `kept` was built. */
+let builds = 0;
+/** A counter whose buttons a memo keeps while its deps hold the same data, made new each run. */
 const kept = tool({
   name: "kept", title: "Kept", when: "Never", doc: "Counts.", state: { count: number({ min: 0, max: 100, default: 0 }) }, sound: () => input,
-  view: (self, ctx) => memo("buttons", [], () => (
+  view: (self, ctx) => memo("buttons", [{ step: [1] }, "same"], () => (builds++,
     <row>
-      <box key="add" label="Add" onPress={() => ctx.update("Add", (draft) => void (draft.state.count = ctx.state.count + 1))} />
-      <box key="old" label="Old" onPress={() => ctx.update("Add", (draft) => void (draft.state.count = self.state.count + 1))} />
+      <box key="add" label="Add" onPress={() => ctx.update("Add", (draft) => void (draft.state.count = self.state.count + 1))} />
+      {memo("inner", [], () => <box key="deep" label="Deep" onPress={() => ctx.update("Add", (draft) => void (draft.state.count = self.state.count + 10))} />)}
+      <box key="late" label="Late" onPress={() => { ctx.update("Add", (draft) => void draft.state.count++); ctx.update("Add", (draft) => void (draft.state.count = self.state.count + 1)); }} />
     </row>
   )),
 });
 
-test("a handler a memo kept reads the newest records through ctx, and fails reading self of its run once they changed", () => {
+test("a memo keeps its part while its deps hold the same data, and its handlers read the newest run", () => {
+  builds = 0;
   render(kept, { name: "kept", state: { count: 0 }, children: [] });
   press("add");
   expect(press("add")).toEqual([[["state", "count"], 2]]);
-  expect(() => press("old")).toThrow("ctx.state");
+  expect(press("deep")).toEqual([[["state", "count"], 12]]);
+  // Four runs: built for the window once, and once more for the handlers of the newest run.
+  expect(builds).toBe(3);
+});
+
+test("a handler that reads self after its own update fails: that is ctx.state", () => {
+  render(kept, { name: "kept", state: { count: 0 }, children: [] });
+  expect(() => press("late")).toThrow("ctx.state");
 });
 
 test("two writes to one field in one change add up", () => {

@@ -39,36 +39,31 @@ export const Timeline = ({ page }: TimelineProps) => {
   // The clip a hint offers to start with: the first instrument track, while the song has no clip.
   const hinted = tracks.some((each) => each.children.some((child) => child.tool === "timeline")) ? undefined : tracks.find((each) => each.tool === "track")?.name;
   const bounds = boundsOf(page, chosen);
-  // What the tempo changes and time signatures are, as text: a memo compares it, not the object a run makes.
-  const tempo = JSON.stringify(song.clock.tempo_map);
   return (
     <col grow={1} h="full">
       <row grow={1} w="full">
         <box w={GUTTER} h="full" />
         <box key={PLANE} label="Timeline" grow={1} h="full" plane={{ x: ACROSS, y: ROW, zoom: ZOOM, follow: live.playhead }} drag={{ x: true, y: true }}
           onPress={(p) => {
-            const { rows, tracks, edits } = page;
             const row = rows.find((each) => p.y >= each.top && p.y < each.top + each.height);
             if (p.right) return;
-            if (p.clicks === 2 && row?.kind === "track") edits.clips.add({ x: p.x, y: tracks.indexOf(row.track) });
-            else edits.clips.clear();
+            if (p.clicks === 2 && row?.kind === "track") page.edits.clips.add({ x: p.x, y: tracks.indexOf(row.track) });
+            else page.edits.clips.clear();
           }}
           onDragEnd={(p) => {
-            const { rows, tracks, edits } = page;
             const [from, to] = [trackY(rows, tracks, p.y), trackY(rows, tracks, p.y + p.dy)];
-            edits.clips.marquee({ ...p, y: from, dy: to - from });
+            page.edits.clips.marquee({ ...p, y: from, dy: to - from });
           }}
           onDrop={(d) => {
-            const { rows, tracks, edits } = page;
             const at = { x: d.x, y: trackAt(rows, tracks, d.y) };
-            if (d.parts.length > 0) edits.clips.dropNotes(d.parts, at);
-            if (d.audio.length > 0) edits.clips.dropAudio(d.audio, at);
+            if (d.parts.length > 0) page.edits.clips.dropNotes(d.parts, at);
+            if (d.audio.length > 0) page.edits.clips.dropAudio(d.audio, at);
           }}>
           <box place={[0, 0, end, height + 1]} />
           <Shades page={page} id="timeline" tall={height} />
-          <Grid runs={song.clock.tempo_map.time_signatures} tempo={tempo} end={end} height={height} />
+          <Grid runs={song.clock.tempo_map.time_signatures} end={end} height={height} />
           {rows.map((row) =>
-            row.kind === "track" ? <TrackTime page={page} row={row} tempo={tempo} chosen={chosen} bounds={bounds} hint={hinted === row.track.name ? "Double-click to add a clip" : row.track.tool === "tape" ? "Drop an audio file here" : ""} /> : null,
+            row.kind === "track" ? <TrackTime page={page} row={row} chosen={chosen} bounds={bounds} hint={hinted === row.track.name ? "Double-click to add a clip" : row.track.tool === "tape" ? "Drop an audio file here" : ""} /> : null,
           )}
           {laneGroups(rows).map((lanes) => <LaneTimes page={page} rows={lanes} />)}
           <box place={[marquee.x.min(marquee.x.plus(marquee.dx)), marquee.y.min(marquee.y.plus(marquee.dy)), marquee.dx.abs(), marquee.dy.abs()]} radius="sm" fill="fill" border="border-strong" opacity={marquee.active} />
@@ -128,8 +123,8 @@ function itemMenu(page: Page, key: string, region: boolean): Item[] {
 }
 
 /** The grid: a line at each bar, fewer as the song zooms out, and at each beat zoomed in; the window thins them, the view runs for none of it. */
-const Grid = ({ runs, tempo, end, height }: { runs: Runs; tempo: string; end: number; height: number }) =>
-  memo("grid", [tempo, end, height], () => {
+const Grid = ({ runs, end, height }: { runs: Runs; end: number; height: number }) =>
+  memo("grid", [runs, end, height], () => {
     const view = live.plane(PLANE);
     const bars = barStarts(runs, end);
     // Bars an odd multiple of 2^k apart show while they are at least 24 points apart.
@@ -163,7 +158,7 @@ function beatTicks(runs: Runs, bars: readonly number[]) {
  * The clips or the regions of one track on its row: one memo, so an edit of a clip draws its row
  * again and no other. The chosen move, copy and resize as one.
  */
-const TrackTime = ({ page, row, tempo: tempoKey, chosen, bounds, hint }: { page: Page; row: Row; tempo: string; chosen: ReadonlySet<string>; bounds: Bounds; hint: string }) => {
+const TrackTime = ({ page, row, chosen, bounds, hint }: { page: Page; row: Row; chosen: ReadonlySet<string>; bounds: Bounds; hint: string }) => {
   const { song } = page;
   const { memory } = song;
   const track = row.track;
@@ -176,7 +171,7 @@ const TrackTime = ({ page, row, tempo: tempoKey, chosen, bounds, hint }: { page:
   const keys = ["cut_clips", "copy_clips", "duplicate_clips", "delete_clips"].map((action) => song.shortcut(action)).join(" ");
   const quiet = memory.recording !== null || track.children.some((child) => child.tool === "timeline" || child.tool === "region");
   const naming = memory.renamingClip !== null && rowOfKey(memory.renamingClip) === track.name ? memory.renamingClip : null;
-  return memo(`time-${track.name}`, [track.children, colour, tempoKey, row.top, here.join(" "), here.length > 0 ? JSON.stringify(bounds) : null, here.length > 0 ? chosen.size : 0, memory.snap, dim, under, keys, quiet ? "" : hint, naming], () => (
+  return memo(`time-${track.name}`, [track.children, colour, tempo, row.top, here, here.length > 0 ? bounds : null, here.length > 0 ? chosen.size : 0, memory.snap, dim, under, keys, quiet ? "" : hint, naming], () => (
     <box>
       <box place={[0, row.top, page.end, 1]} border="border" borderSides={[0, 0, 1, 0]} />
       {!quiet && hint !== "" && (
@@ -254,10 +249,9 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
         drag={drag}
         onPress={(p) => page.edits.clips.press(key, p)}
         onDragEnd={(p) => {
-          const { song, rows, tracks, edits } = page;
-          if (!song.memory.selected.includes(key)) edits.clips.choose([key]);
-          const row = tracks.findIndex((each) => each.name === track.name);
-          edits.clips.move({ dx: p.dx, dy: trackAt(rows, tracks, top + p.dy + 0.5) - row, alt: p.alt });
+          const { rows, tracks, edits } = page;
+          if (!memory.selected.includes(key)) edits.clips.choose([key]);
+          edits.clips.move({ dx: p.dx, dy: trackAt(rows, tracks, top + p.dy + 0.5) - tracks.indexOf(track), alt: p.alt });
         }}>
         {notes.length > 0 && <Miniature itemKey={key} chosen={chosen} notes={notes} x={moved.dx.plus(start)} y={y} length={length} titled={name !== ""} colour={colour} />}
         {memory.renamingClip === key ? (

@@ -71,7 +71,7 @@ export function laneItems(page: Page, row: LaneRow): Item[] {
 const LaneHead = ({ page, row }: { page: Page; row: LaneRow }) => {
   const lane = laneOf(row);
   const { mover } = lane;
-  return memo(`lane-head-${lane.id}`, [row.top, row.height, row.target, row.track.tool, lane.title, mover?.tool, JSON.stringify(mover?.state)], () => {
+  return memo(`lane-head-${lane.id}`, [row.top, row.height, row.target, row.track.tool, lane.title, mover?.tool, mover?.state], () => {
     const items = laneItems(page, row);
     const cut = short(lane.name);
     return (
@@ -126,7 +126,7 @@ const MoverControls = ({ page, row }: { page: Page; row: LaneRow }) => {
 const AddLane = ({ page, row }: { page: Page; row: Extract<Row, { kind: "add-lane" }> }) => {
   const offered = movablesOf(row.track);
   const title = titleOf(row.track);
-  return memo(`add-lane-${row.track.name}`, [row.top, row.height, title, JSON.stringify(offered)], () => {
+  return memo(`add-lane-${row.track.name}`, [row.top, row.height, title, offered], () => {
     const groups = [...new Set(offered.map((each) => each.group))];
     return (
       <row place={[0, row.top, HEAD - 1, row.height]} px={2} align="center" border="border" borderSides={[0, 0, 1, 0]}>
