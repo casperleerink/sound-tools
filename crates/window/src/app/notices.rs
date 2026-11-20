@@ -11,6 +11,8 @@ const INSET: f32 = 24.0;
 /// A notice is as wide as its words up to this; longer words wrap to three lines at most.
 const WIDTH: f32 = 400.0;
 const DISMISS: &str = "Dismiss";
+const DOT: f32 = 6.0;
+const GAP: f32 = 8.0;
 
 /// How a notice reads: what went wrong, or work that runs.
 #[derive(Clone, Copy)]
@@ -103,7 +105,7 @@ impl Notice<'_> {
         let dot = el()
             .h(20.0)
             .items_center()
-            .child(el().size(6.0, 6.0).radius(3.0).fill(theme.color(dot)))
+            .child(el().size(DOT, DOT).radius(DOT / 2.0).fill(theme.color(dot)))
             .a11y_hidden();
         let words = text(self.words.to_string())
             .font(body)
@@ -158,7 +160,7 @@ impl Notice<'_> {
             .label(self.words.to_string())
             .max_w(WIDTH)
             .items_start()
-            .gap(8.0)
+            .gap(GAP)
             .py(5.0)
             .pl(12.0)
             .pr(if self.dismiss { 4.0 } else { 12.0 })

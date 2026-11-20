@@ -106,6 +106,11 @@ pub struct Edit {
 }
 
 impl Edit {
+    /// Names the point it becomes, such as with the name code gave the update that ends a drag.
+    pub fn set_label(&mut self, label: &str) {
+        label.clone_into(&mut self.label);
+    }
+
     /// It published nothing yet.
     pub(super) fn is_empty(&self) -> bool {
         self.records.is_empty() && self.project_file.is_none()

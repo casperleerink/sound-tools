@@ -22,7 +22,7 @@ fn shown_texts(state: &State) -> Vec<String> {
 }
 
 /// The DAW of a new project, open as a run without a window opens it.
-fn opened(folder: &Path) -> State {
+pub(super) fn opened(folder: &Path) -> State {
     let mut state = State::open(Options {
         folder: folder.to_path_buf(),
         headless: true,
@@ -43,7 +43,7 @@ fn build(state: &State) {
     }
 }
 
-fn new_project() -> tempfile::TempDir {
+pub(super) fn new_project() -> tempfile::TempDir {
     let scratch = tempfile::tempdir().unwrap();
     runtime::templates::write(&scratch.path().join("song"), &TEMPLATE).unwrap();
     scratch
@@ -1771,7 +1771,7 @@ fn lane(scratch: &tempfile::TempDir, target: &str, value: f64) {
 }
 
 /// A new project whose first track's lane plays 8 kHz into its synth's cutoff, saved at 500.
-fn automated_cutoff() -> tempfile::TempDir {
+pub(super) fn automated_cutoff() -> tempfile::TempDir {
     let scratch = new_project();
     lane(&scratch, "synth.cutoff_hz", 8000.0);
     let synth = json!({ "tool": "instrument.synth", "state": { "cutoff_hz": 500 } });
@@ -2106,3 +2106,4 @@ fn a_held_control_s_accessibility_value_follows_its_lane() {
 }
 
 mod frame;
+mod transport;

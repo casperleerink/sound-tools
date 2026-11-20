@@ -15,6 +15,8 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
             (false, true) => state.undo_keeping_version(),
             (false, false) => state.undo(),
         }
+    } else if key.is_command('k') {
+        super::transport::Act::Keys.run(state, None)
     } else if matches!(&key.key, rune::Key::Text(space) if space == " ") && !key.mods.cmd {
         state.play_or_pause();
         Ok(())

@@ -26,6 +26,7 @@ mod headless;
 mod keys;
 mod notices;
 mod panel;
+mod plays;
 mod problems;
 mod transport;
 
@@ -117,6 +118,8 @@ pub(crate) struct State {
     /// The list of the files that are not live is open.
     problems_open: bool,
     pub(crate) transport: transport::Transport,
+    /// The drag that plays numbers into the session's gesture now.
+    pub(crate) plays: Option<plays::Playing>,
 }
 
 impl State {
@@ -227,6 +230,7 @@ impl State {
             ),
             problems_open: false,
             transport: transport::Transport::new(output),
+            plays: None,
             last: 0.0,
             _copy: copy,
         })

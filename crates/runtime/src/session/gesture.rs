@@ -127,6 +127,14 @@ impl Session {
         }
     }
 
+    /// [`Self::finish`] with the step named `label`, the name code gave the update that ends it.
+    pub fn finish_as(&mut self, drag: Drag, label: &str) {
+        if let (true, Some((_, edit))) = (self.owns(&drag), &mut self.gesture) {
+            edit.set_label(label);
+        }
+        self.finish(drag);
+    }
+
     /// Escape: ends `drag` and puts back the state from before it.
     pub fn cancel(&mut self, drag: Drag) {
         if !self.owns(&drag) {

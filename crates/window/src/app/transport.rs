@@ -153,7 +153,7 @@ impl State {
             .edit(|project| project.commit(TEMPO_STEP, tempo_changed(project, at, bpm)));
     }
 
-    fn drag_tempo(&mut self, d: &rune::Drag, fine: bool) {
+    fn drag_tempo(&mut self, d: &rune::Drag, tx: &mut Tx) {
         match d.phase {
             rune::Phase::Down => {
                 let (at, bpm) = self.tempo_now();
@@ -170,6 +170,7 @@ impl State {
                 let Some(dragging) = &mut self.transport.dragging else {
                     return;
                 };
+                let fine = tx.mods().shift;
                 let per = POINTS_PER_BPM * if fine { 10.0 } else { 1.0 };
                 dragging.bpm -= f64::from(d.dy - dragging.dy) / per;
                 dragging.bpm = dragging.bpm.clamp(SLOWEST, FASTEST);
@@ -190,7 +191,7 @@ impl State {
                 }
                 // A click that did not move types the tempo.
                 if !dragging.moved && !d.cancelled() {
-                    self.transport.typing = Some(Typed::Tempo);
+                    self.type_into(Typed::Tempo, tx);
                 }
             }
         }
@@ -234,6 +235,12 @@ impl State {
         if let Some(tx) = tx {
             tx.focus(typed.readout(), true);
         }
+    }
+
+    /// The field of `typed` takes the place of its readout, and the keys.
+    fn type_into(&mut self, typed: Typed, tx: &mut Tx) {
+        self.transport.typing = Some(typed);
+        tx.focus(typed.key(), true);
     }
 
     fn toggle(&mut self, act: Act) {
@@ -540,9 +547,11 @@ fn tempo(state: &State) -> El {
         .focusable(true)
         .cursor(Cursor::ResizeRow)
         .on_drag(|s: &mut State, d: &mut rune::Drag, tx: &mut Tx| {
-            s.drag_tempo(d, tx.mods().shift);
+            s.drag_tempo(d, tx);
         })
-        .on_key(|s: &mut State, key: &KeyEvent, _: &mut Tx| type_on_enter(s, key, Typed::Tempo))
+        .on_key(|s: &mut State, key: &KeyEvent, tx: &mut Tx| {
+            type_on_enter(s, key, Typed::Tempo, tx)
+        })
 }
 
 /// The time signature at the playhead: a click or Enter types it.
@@ -562,18 +571,20 @@ fn signature(state: &State) -> El {
     .help("Time signature: click to type, such as 3/4")
     .focusable(true)
     .cursor(Cursor::Text)
-    .on_press(|s: &mut State| {
-        s.transport.typing = Some(Typed::Signature);
+    .on_press_tx(|s: &mut State, tx: &mut Tx| {
+        s.type_into(Typed::Signature, tx);
         s.handled();
     })
-    .on_key(|s: &mut State, key: &KeyEvent, _: &mut Tx| type_on_enter(s, key, Typed::Signature))
+    .on_key(|s: &mut State, key: &KeyEvent, tx: &mut Tx| {
+        type_on_enter(s, key, Typed::Signature, tx)
+    })
 }
 
-fn type_on_enter(state: &mut State, key: &KeyEvent, typed: Typed) -> bool {
+fn type_on_enter(state: &mut State, key: &KeyEvent, typed: Typed, tx: &mut Tx) -> bool {
     if key.key != Key::Enter {
         return false;
     }
-    state.transport.typing = Some(typed);
+    state.type_into(typed, tx);
     state.handled();
     true
 }
@@ -611,7 +622,6 @@ fn typed_or(state: &State, typed: Typed, readout: El) -> El {
         .color(colour)
         .caret(colour, theme.color("focus/40"))
         .w(w)
-        .autofocus()
         .on_edit(rune::edit_access(move |s: &mut State| s.typing(key, "")))
         .on_submit(move |s: &mut State, tx: &mut Tx| {
             s.typed_in(typed, Some(tx));
