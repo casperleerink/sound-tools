@@ -209,7 +209,8 @@ def measure(program, project, name, events, runs):
     script.write_text(json.dumps(events))
     rows = []
     for _ in range(runs):
-        text, (cpu, mb), total = run(program, project, "--script", script, "--snap", script.with_suffix(".png"))
+        # Frames at the pace of a window: unpaced, they outrun the GPU, whose queue then grows.
+        text, (cpu, mb), total = run(program, project, "--script", script, "--realtime", "--snap", script.with_suffix(".png"))
         found, first = FRAMES.search(text), FIRST.search(text)
         if not found or not first:
             raise SystemExit(f"{name}: no frame times in\n{text}")
@@ -231,7 +232,7 @@ def played(program, project, seconds, runs):
 
 def show(report, against):
     columns = ["frames", "first ms", "p50 ms", "p95 ms", "cpu s", "MB", "with Bun MB"]
-    print(f"\nHeadless, {SECONDS:.0f} s of frames at 60 fps, median of {report['runs']} runs, load average "
+    print(f"\nHeadless, {SECONDS:.0f} s of frames at 60 fps as a window paces them, median of {report['runs']} runs, load average "
           f"{report['load']:.0f}. Frame ms: Rune's wall time of a frame's work (poll, view, layout, encode); "
           "first: the first frame, which waits for Bun's views. cpu s and MB: the sound-tools process, MB its "
           "peak footprint; with Bun MB: that and Bun's peak.\n")
