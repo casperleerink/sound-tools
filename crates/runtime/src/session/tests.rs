@@ -21,6 +21,7 @@ struct Opened {
     session: Session,
     engine: Engine,
     plugins: Plugins,
+    #[cfg_attr(not(unix), expect(dead_code, reason = "only the render tests read it"))]
     woken: mpsc::Receiver<()>,
     _folder: tempfile::TempDir,
 }
@@ -574,6 +575,7 @@ fn a_render_runs_in_its_own_process_and_says_how_far_it_is() {
 }
 
 /// Polls each time the render wakes the session, until it ends.
+#[cfg(unix)]
 fn wait_for_render(opened: &mut Opened) -> anyhow::Result<super::Rendered> {
     loop {
         opened.woken.recv().unwrap();
