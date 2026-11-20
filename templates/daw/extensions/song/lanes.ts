@@ -125,7 +125,7 @@ function itemNumbers(field: FieldInfo, value: unknown, path: string): Known[] {
 const numberIn = (state: unknown, path: string): unknown => path.split(".").reduce<unknown>((at, step) => (at as Record<string, unknown> | undefined)?.[step], state);
 
 /**
- * What a new lane of `row` can move, a group a device: the track's volume and pan, its
+ * What a new lane of `row` can move, a group a device by its title: the track's volume and pan, its
  * instrument's numbers, then each effect's in the chain's order; those a lane moves already left
  * out.
  */
@@ -149,7 +149,7 @@ export function movablesOf(row: Child): Movable[] {
       const value = typeof held === "number" ? held : (known.default ?? laneValue(travelOf(row, target), 0.5));
       // An item of a list counts from 1, a key of a map is as it is: `bands.0.gain_db` is `Bands 1 gain`.
       const parts = number.split(".").map((part, at, all) => (/^\d+$/.test(part) && Array.isArray(numberIn(device.state, all.slice(0, at).join("."))) ? String(Number(part) + 1) : part));
-      return { target, text: parameters(device as Device).get(number) ?? words(parts.join(" ")), group: words(device.name), value };
+      return { target, text: parameters(device as Device).get(number) ?? words(parts.join(" ")), group: (device as Device).facts?.title ?? words(device.name), value };
     }),
   );
   const taken = new Set(row.state.automation.map((each) => each.target));
