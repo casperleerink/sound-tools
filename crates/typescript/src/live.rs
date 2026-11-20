@@ -200,8 +200,8 @@ impl<'de> Visitor<'de> for NumVisitor {
     }
 }
 
-/// `live.feed` of `sdk/view.ts` as the values the window had before feeds: `peak` of a path, or
-/// of the device itself, and `sounding.<pitch>`.
+/// `live.feed` of `sdk/view.ts` as the values the window had before feeds: `peak` (and of one
+/// channel) of a path, or of the device itself, and `sounding.<pitch>`.
 fn fed_as_before(live: &mut serde_json::Value) {
     if live["op"] != "feed" {
         return;
@@ -212,6 +212,13 @@ fn fed_as_before(live: &mut serde_json::Value) {
     *live = match (name, path, pitch) {
         ("peak", Some(path), _) => serde_json::json!({ "op": "peak", "name": path }),
         ("peak", None, _) => serde_json::json!({ "op": "device_peak" }),
+        ("peak_left" | "peak_right", path, _) => {
+            let channel = u8::from(name == "peak_right");
+            match path {
+                Some(path) => serde_json::json!({ "op": "peak", "name": path, "channel": channel }),
+                None => serde_json::json!({ "op": "device_peak", "channel": channel }),
+            }
+        }
         (_, child, Some(pitch)) => {
             serde_json::json!({ "op": "sounding", "pitch": pitch, "child": child })
         }

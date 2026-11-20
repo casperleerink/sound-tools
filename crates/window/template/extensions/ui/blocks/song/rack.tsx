@@ -1,32 +1,27 @@
 import { h, type Offer, type Pointer } from "../../../sdk";
 import { chainOf, chosenEffect, TAPS } from "../../../song/effects";
-import { colourOf, isRow, itemAt, mixOf, rowOfKey, sendsOf, titleOf, words } from "../../../song/model";
-import { HEAD, volumeOf, type Page, type Strip } from "../../../song/view";
+import { colourOf, isRow, itemAt, rowOfKey, sendsOf, titleOf, words } from "../../../song/model";
+import { HEAD, sendOf, type Page, type Strip as Channel } from "../../../song/view";
 import theme from "../../../theme.json";
 import { Button } from "../../button";
 import { Dot } from "../../dot";
-import { control } from "../../field";
-import { Fader, MAX_DB, MIN_DB } from "../../fader";
 import { keysOf } from "../../kbd";
 import { Knob } from "../../knob";
-import { Meter } from "../../meter";
 import { Picker, type PickGroup } from "../../picker";
 import { Segmented } from "../../segmented";
 import { Select } from "../../select";
-import { Slider } from "../../slider";
+import { SHORTEST_FADER, STRIP, Strip } from "../../strip";
 import { Toggle } from "../../toggle";
 import { Tooltip } from "../../tooltip";
-import { TypeIn } from "../../type-in";
-import { shown } from "../../value";
 import { CARD_HEIGHT, Frame, HEADER } from "../device-card";
 import { RegionCard } from "./region-card";
 
 /** The track or return `name`, or `"master"`, whose panel it is; it fills the height the page gives it. */
 export type RackProps = { page: Page; name: string };
 
-const [FADER, CELL] = [112, theme.size.cell];
-/** A send's row, its name, its slider and its amount, and how many rows show before they scroll. */
-const [SEND, SEND_NAME, SEND_SLIDER, SEND_AMOUNT, SENDS] = [32, 56, 64, 48, 5];
+const [FADER, CELL] = [SHORTEST_FADER, theme.size.cell];
+/** A send's row, its name and its amount, and how many rows show before they scroll. */
+const [SEND, SEND_NAME, SEND_AMOUNT, SENDS] = [32, 64, 52, 5];
 /** The tools that take a sidechain: the rack offers what keys them. */
 const KEYED = new Set(["compressor", "gate", "vocoder"]);
 /** The channels of the input an audio track records, each alone and then the pair. */
@@ -71,7 +66,7 @@ const offered = (catalog: readonly Offer[], takes: Offer["takes"], here: string 
 };
 
 /** The instrument and the effects of a track, an audio track or a return, and Add effect. */
-const Devices = ({ page, each }: { page: Page; each: Strip }) => {
+const Devices = ({ page, each }: { page: Page; each: Channel }) => {
   const { song, edits } = page;
   const name = each.name;
   const effects = edits.effects(name);
@@ -178,16 +173,15 @@ const Limiter = ({ page }: { page: Page }) => {
   );
 };
 
-/** The column at the left: the mark, name and close of what the panel is of, its fader and meter, its pan, and an audio track's input or a return's Pre fader. */
-const Side = ({ page, name, each }: { page: Page; name: string; each: Strip | undefined }) => {
+/** The column at the left: the mark, name and close of what the panel is of, its strip, and an audio track's input or a return's Pre fader. */
+const Side = ({ page, name, each }: { page: Page; name: string; each: Channel | undefined }) => {
   const { song, edits } = page;
   const title = each ? titleOf(each) : "Master";
-  const pan = each ? mixOf(each)?.state.pan : undefined;
   const rec = each?.tool === "tape" ? each.children.find((child) => child.name === "rec") : undefined;
   const channels = rec?.tool === "recorder" ? rec.state.channels.join() : "";
   return (
-    <col key={`strip-${name}`} w={HEAD} h="full" pad={3} gap={2} border="border" borderSides={[0, 1, 0, 0]}>
-      <row w="full" gap={2} align="center">
+    <col key={`side-${name}`} w={HEAD} h="full" px={3} py={2} gap={1} border="border" borderSides={[0, 1, 0, 0]}>
+      <row w="full" h={HEADER} gap={2} align="center">
         {each ? <Dot color={colourOf(each)} /> : <box w={8} h={8} radius="full" border="text-secondary" />}
         <text style="heading" color="text" truncate>{title}</text>
         <row grow={1} justify="end">
@@ -195,52 +189,35 @@ const Side = ({ page, name, each }: { page: Page; name: string; each: Strip | un
         </row>
       </row>
       <row gap={2} align="start">
-        <Fader {...volumeOf(page, name)} id={`fader-${name}`} label={`Volume ${title}`} height={FADER} />
-        <Meter id={`meter-${name}`} label={`Level ${title}`} path={name === "master" ? "master" : `${name}/mix`} w={4} h={FADER} />
-        {each && (
-          <col gap={2} align="center">
-            <Knob {...control(song.held, `${name}/mix.pan`, { min: -1, max: 1, unit: "pan", default: 0 }, pan ?? 0, (to) => edits.tracks.pan(name, to))} id={`pan-${name}`} label={`Pan ${title}`} text="Pan" bipolar />
-            {each.tool === "tape" && (
-              <Select id={`input-${name}`} label={`Input of ${title}`} options={INPUTS.map(({ text }, at) => ({ value: at, text }))} w={CELL + 8}
-                value={Math.max(INPUTS.findIndex((input) => input.channels.join() === channels), 0)} onChange={(at) => edits.tracks.input(name, INPUTS[at]!.channels)} />
-            )}
-            {each.tool === "bus" && (
-              <Toggle id={`pre-fader-${name}`} label={`Pre fader ${title}`} text="Pre fader" on={"pre_fader" in each.state && each.state.pre_fader} tip="The sends into this return take the sound before the tracks' faders" onToggle={() => edits.tracks.preFader(name)} />
-            )}
-          </col>
+        <Strip page={page} name={name} height={FADER} />
+        {each?.tool === "tape" && (
+          <Select id={`input-${name}`} label={`Input of ${title}`} options={INPUTS.map(({ text }, at) => ({ value: at, text }))} w={HEAD - STRIP - 32}
+            value={Math.max(INPUTS.findIndex((input) => input.channels.join() === channels), 0)} onChange={(at) => edits.tracks.input(name, INPUTS[at]!.channels)} />
+        )}
+        {each?.tool === "bus" && (
+          <Toggle id={`pre-fader-${name}`} label={`Pre fader ${title}`} text="Pre" on={"pre_fader" in each.state && each.state.pre_fader} tip="The sends into this return take the sound before the tracks' faders" onToggle={() => edits.tracks.preFader(name)} />
         )}
       </row>
     </col>
   );
 };
 
-/** A track's sends: a row for each return, its name, a slider and what it sends, which a click types. Five show, then they scroll. */
-const Sends = ({ page, each, sends }: { page: Page; each: Strip; sends: readonly string[] }) => {
-  const { song, edits } = page;
-  return (
-    <col key={`sends-${each.name}`} h="full" px={4} border="border" borderSides={[0, 0, 0, 1]}>
-      <row h={HEADER + 8} align="center"><text style="heading" color="text">Sends</text></row>
-      <col key="sends" maxH={SENDS * SEND} scroll="y">
-        {sends.map((send) => {
-          const back = send.slice("send-".length);
-          const target = page.returns.find((one) => one.name === back);
-          const title = target ? titleOf(target) : back;
-          const fader = each.children.find((child) => child.name === send);
-          const gain = fader?.tool === "fader" ? fader.state.gain_db : "-inf";
-          const db = gain === "-inf" ? MIN_DB : gain;
-          const set = (to: number) => edits.tracks.send(each.name, back, to <= MIN_DB ? "-inf" : to);
-          const bound = control(song.held, `${each.name}/${send}.gain_db`, { min: MIN_DB, max: MAX_DB, unit: "db", default: 0 }, db, set);
-          return (
-            <row h={SEND} gap={2} align="center">
-              <text style="label" color="text-secondary" w={SEND_NAME} truncate>{title}</text>
-              <Slider {...bound} id={`send-${each.name}-${back}`} label={`Send to ${title}`} w={SEND_SLIDER} />
-              <TypeIn id={`send-${each.name}-${back}`} label={`Send to ${title}`} value={db} unit="db" range={{ min: MIN_DB, max: MAX_DB, step: 0.1 }} w={SEND_AMOUNT} h={24} onChange={set}>
-                <text style="number" color="text" w={SEND_AMOUNT} align="end">{gain === "-inf" ? "−inf" : shown(db, "db")}</text>
-              </TypeIn>
-            </row>
-          );
-        })}
-      </col>
+/** A track's sends: a row for each return, a small dial, its name and what it sends, which a click types. Five show, then they scroll. */
+const Sends = ({ page, each, sends }: { page: Page; each: Channel; sends: readonly string[] }) => (
+  <col key={`sends-${each.name}`} h="full" px={4} py={2} border="border" borderSides={[0, 0, 0, 1]}>
+    <row h={HEADER} align="center"><text style="heading" color="text">Sends</text></row>
+    <col key="sends" maxH={SENDS * SEND} scroll="y">
+      {sends.map((send) => {
+        const back = send.slice("send-".length);
+        const target = page.returns.find((one) => one.name === back);
+        const title = target ? titleOf(target) : back;
+        return (
+          <row h={SEND} gap={2} align="center">
+            <Knob {...sendOf(page, each.name, back)} id={`send-${each.name}-${back}`} label={`Send to ${title}`} small={{ w: SEND_AMOUNT, beside: true }} />
+            <text style="label" color="text-secondary" w={SEND_NAME} truncate>{title}</text>
+          </row>
+        );
+      })}
     </col>
-  );
-};
+  </col>
+);

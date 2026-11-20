@@ -23,8 +23,8 @@ type Path = readonly (string | number)[];
 /** A control in its place: how many columns it takes, and where it sits among the others. */
 type Placed = { span: number; rank: number; node: Node };
 
-/** How many cells show until the card is expanded (three columns of two), and the most options side by side. */
-const [FEW, SIDE_BY_SIDE] = [6, 3];
+/** How many cells show until the card is expanded (three columns of two); the most options side by side, and their letters, that fit two columns. */
+const [FEW, SIDE_BY_SIDE, LETTERS] = [6, 3, 14];
 /** Knobs and switches two to a column, then choices, two columns wide. */
 const RANK = { number: 0, switch: 1, choice: 2 };
 
@@ -64,7 +64,7 @@ export const card: Card = ({ state, facts }, { update, memory, held }) => {
       case "choice": {
         const value = (at(path) as string | number | undefined) ?? field.default;
         const choose = (to: string | number) => set(path, label, to);
-        const few = field.options.length <= SIDE_BY_SIDE && field.options.every((option) => option.text.length <= 8);
+        const few = field.options.length <= SIDE_BY_SIDE && field.options.reduce((sum, option) => sum + option.text.length, 0) <= LETTERS;
         const node = few
           ? <Cell text={field.label} span={2}><Segmented id={id} label={named} options={field.options} value={value} onChange={choose} /></Cell>
           : <Cell text={field.label} span={2}><Select id={id} label={named} options={field.options} value={value} w={2 * theme.size.cell - 8} search={field.options.length > 8} onChange={choose} /></Cell>;
