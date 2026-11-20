@@ -99,7 +99,7 @@ const Ruler = ({ roll }: { roll: Roll }) => {
 };
 
 /** The points a beat needs to say its number in the ruler. */
-const BEAT_ROOM = 48;
+const BEAT_ROOM = 80;
 
 /** Larger or smaller, the note menu, and close. */
 const Buttons = ({ roll }: { roll: Roll }) => {
