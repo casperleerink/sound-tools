@@ -61,7 +61,7 @@ const offered = (catalog: readonly Offer[], takes: Offer["takes"], here: string 
   for (const offer of catalog.filter((each) => each.takes === takes)) groups.set(offer.group, [...(groups.get(offer.group) ?? []), offer]);
   return [...groups].map(([heading, offers]) => ({
     heading,
-    items: offers.map((offer) => ({ key: offer.key, text: offer.name, detail: offer.detail, icon: offer.icon, checked: offer.key === here, disabled: offer.unavailable, onPress: () => pick(offer.key) })),
+    items: offers.map((offer) => ({ key: offer.key, text: offer.name, detail: offer.detail, icon: offer.icon, ...(here === null ? {} : { checked: offer.key === here }), disabled: offer.unavailable, onPress: () => pick(offer.key) })),
   }));
 };
 
@@ -175,7 +175,7 @@ const Side = ({ page, name, each }: { page: Page; name: string; each: Channel | 
   const rec = each?.tool === "tape" ? each.children.find((child) => child.name === "rec") : undefined;
   const channels = rec?.tool === "recorder" ? rec.state.channels.join() : "";
   return (
-    <col key={`side-${name}`} w={HEAD} h="full" px={2} py={2} gap={1} border="border" borderSides={[0, 1, 0, 0]}>
+    <col key={`side-${name}`} w={HEAD} h="full" px={3} py={2} gap={1} border="border" borderSides={[0, 1, 0, 0]}>
       <row w="full" h={HEADER} gap={2} align="center">
         {each ? <Dot color={colourOf(each)} /> : <box w={8} h={8} radius="full" border="text-secondary" />}
         <text style="heading" color="text" truncate>{title}</text>
@@ -186,7 +186,7 @@ const Side = ({ page, name, each }: { page: Page; name: string; each: Channel | 
       <row gap={2} align="start">
         <Strip page={page} name={name} height={FADER} />
         {each?.tool === "tape" && (
-          <Select id={`input-${name}`} label={`Input of ${title}`} options={INPUTS.map(({ text }, at) => ({ value: at, text }))} w={HEAD - STRIP - 24}
+          <Select id={`input-${name}`} label={`Input of ${title}`} options={INPUTS.map(({ text }, at) => ({ value: at, text }))} w={HEAD - STRIP - 32}
             value={Math.max(INPUTS.findIndex((input) => input.channels.join() === channels), 0)} onChange={(at) => edits.tracks.input(name, INPUTS[at]!.channels)} />
         )}
         {each?.tool === "bus" && (
