@@ -389,3 +389,30 @@ fn the_app_is_replaced_where_it_runs_from() {
         .collect();
     assert_eq!(left, ["Sound Tools.app"]);
 }
+
+/// A newer release a started check finds wakes the owner, whose poll then says it is ready.
+#[cfg(unix)]
+#[test]
+fn a_started_check_wakes_once_an_update_is_ready() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    let archive = tarball(root, FAILING_SCRIPT);
+    publish(&root.join("served"), "v0.2.0", &archive);
+    let place = Place::Installer {
+        program: root.join("program"),
+    };
+    let (woke, woken) = std::sync::mpsc::channel();
+    let waker: Waker = Arc::new(move || woke.send(()).unwrap());
+    let update = Update::of(Some(updater(root, "linux", "x86_64", place)), waker);
+    woken.recv_timeout(Duration::from_secs(60)).unwrap();
+    let ready = update.poll().unwrap();
+    assert_eq!((ready.message(), ready.button()), ("Sound Tools 0.2.0 is ready".to_string(), "Restart"));
+}
+
+/// A build of no release, such as one a developer runs, never checks.
+#[test]
+fn a_dev_build_never_checks() {
+    let support = tempfile::tempdir().unwrap();
+    let update = Update::start(support.path(), Arc::new(|| panic!("a dev build checked")));
+    assert_eq!(update.poll(), None);
+}

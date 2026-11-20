@@ -15,7 +15,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use midi::{ComputerKeys, Keyboard};
-use sound_core::{InstanceId, Project, ProjectEvent, StreamTiming};
+use plugin_host::Plugins;
+use sound_core::{InstanceId, OutputStream, Project, ProjectEvent, StreamTiming};
 use sound_typescript::next::Take;
 
 pub use audio::{OpenInput, OpenedInput, system_input};
@@ -177,6 +178,16 @@ impl Drop for Input {
             live::print_midi_report(keyboard.latency(), keyboard.lost());
         }
     }
+}
+
+/// What the services of the app have to tell the composer since the last call: a lost output
+/// device, and a plugin bundle the scan could not read, which it finds on a thread of its own.
+pub fn service_notices(output: Option<&OutputStream>, plugins: &Plugins) -> Vec<String> {
+    let lost = (output.into_iter()).flat_map(|output| output.take_errors());
+    let scan = plugins.take_notices().into_iter();
+    (lost.map(|error| error.to_string()))
+        .chain(scan.map(|notice| format!("plugin scan: {notice}")))
+        .collect()
 }
 
 /// Drops `value` on a thread of its own: closing a device can take a while, and never stops
