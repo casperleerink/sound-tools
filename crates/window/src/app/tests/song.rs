@@ -57,6 +57,22 @@ fn a_clip_dragged_lands_on_the_snap_as_one_undo_step() {
     assert_eq!(start(&window.state, "t00/bass"), before);
 }
 
+/// What Export selection exports follows every edit of the chosen: a move, and its undo.
+#[test]
+fn the_span_of_the_chosen_follows_a_move_and_its_undo() {
+    let (_scratch, mut window) = song();
+    let [x, y, ..] = rect(&window, "clip-t00/bass");
+    drag(&mut window, (x + 20.0, y + 20.0), (61.0, 0.0));
+    let span = |window: &rune::Runtime<State>| {
+        let (from, to) = window.state.session.selected_span().unwrap();
+        (from.0, to.0)
+    };
+    assert_eq!(span(&window), (2400, 2400 + 15360));
+    act(&mut window.state, json!({ "action": "undo" }));
+    redraw(&mut window);
+    assert_eq!(span(&window), (0, 15360));
+}
+
 #[test]
 fn a_drag_over_empty_space_chooses_the_clips_it_covers_and_delete_removes_them() {
     let (_scratch, mut window) = song();

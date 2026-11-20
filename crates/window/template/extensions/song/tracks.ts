@@ -131,9 +131,8 @@ export const trackEdits = (song: Song) => {
       if (name === null || at < 0) return false;
       const next = Math.min(Math.max(at + by, 0), names.length - 1);
       if (!move) {
+        choose(song, [], names[next]!);
         memory.below = { kind: "track", name: names[next]! };
-        memory.track = names[next]!;
-        song.select(names[next]!);
       } else if (next !== at) {
         names.splice(at, 1);
         names.splice(next, 0, name);

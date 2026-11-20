@@ -913,6 +913,27 @@ fn a_part_a_memo_kept_keeps_its_live_values() {
     assert_eq!(state.lives.bindings(), bindings);
 }
 
+/// A counter whose button a memo keeps from its first run.
+const KEPT: &str = r#"import { h, input, memo, number, tool } from "./sdk";
+export const kept = tool({
+  name: "kept", title: "Kept", when: "Never", doc: "Counts.", state: { count: number({ min: 0, max: 100, integer: true, default: 0 }) },
+  sound: () => input,
+  view: (_, ctx) => memo("add", [], () => <box key="add" label="Add" onPress={() => ctx.update("Add", (draft) => void (draft.state.count = ctx.state.count + 1))} />),
+});
+"#;
+
+#[test]
+fn a_handler_a_memo_kept_reads_the_newest_records() {
+    let (_scratch, folder) = with_tools(&[("kept", KEPT)]);
+    let mut state = opened(&folder);
+    build(&state);
+    for _ in 0..2 {
+        act(&mut state, json!({ "label": "Add", "action": "press" }));
+    }
+    let count = record(&state, "song/t00/chain/kept.json")["state"]["count"].clone();
+    assert_eq!(count, 2);
+}
+
 /// A beep whose view's buttons play it and the piece, as its control loop could.
 const LAUNCHER: &str = r#"import { h, number, sine, tool } from "./sdk";
 export const launcher = tool({

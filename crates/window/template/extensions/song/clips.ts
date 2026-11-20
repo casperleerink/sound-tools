@@ -45,12 +45,7 @@ export function choose(song: Song, keys: readonly string[], track: string | null
   memory.effect = null;
   const first = keys[0];
   memory.track = first === undefined ? track : rowOfKey(first);
-  const spans = keys.flatMap((key) => {
-    const start = itemAt(song.children, key)?.state.start;
-    return start === undefined ? [] : [{ from: start, to: start + lengthAt(song, key) }];
-  });
-  const span = spans.length === 0 ? undefined : { from: Math.min(...spans.map((each) => each.from)), to: Math.max(...spans.map((each) => each.to)) };
-  song.select(first ?? track, { span });
+  publish(song);
   // What shows below follows: the panel to the track of the first, an open editor to it.
   const below = memory.below;
   if (first === undefined) return;
@@ -59,6 +54,25 @@ export function choose(song: Song, keys: readonly string[], track: string | null
     memory.below = itemAt(song.children, first)?.tool === "timeline" ? { kind: "editor", clip: first } : { kind: "track", name: rowOfKey(first) };
     memory.notes = [];
   }
+}
+
+/**
+ * Tells the window what the composer works on: the first chosen clip or region, else the track,
+ * and the bars of the chosen, which Export selection exports. Only when that changed: the view
+ * calls it on every run, so the bars follow every edit of the chosen.
+ */
+export function publish(song: Song) {
+  const { memory } = song;
+  const spans = memory.selected.flatMap((key) => {
+    const start = itemAt(song.children, key)?.state.start;
+    return start === undefined ? [] : [{ from: start, to: start + lengthAt(song, key) }];
+  });
+  const span = spans.length === 0 ? undefined : { from: Math.min(...spans.map((each) => each.from)), to: Math.max(...spans.map((each) => each.to)) };
+  const path = memory.selected[0] ?? memory.track;
+  const told = JSON.stringify([path, span]);
+  if (told === memory.published) return;
+  memory.published = told;
+  song.select(path, { span });
 }
 
 /**
@@ -361,7 +375,7 @@ export const clipEdits = (song: Song) => {
       } else if (command !== "copy") {
         song.update(command === "cut" ? "Cut clips" : "Remove clips", (draft) => removeTaken(draft, taken, () => command === "cut"));
         memory.selected = [];
-        song.select(null);
+        publish(song);
       }
       return true;
     },

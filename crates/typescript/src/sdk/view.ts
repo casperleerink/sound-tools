@@ -517,14 +517,23 @@ export function render(drawn: ProjectTool | Draw, given: unknown, { held = [], f
 }
 
 function redraw(at: Tested): Node {
-  run(TESTED, at.draw, at.self, contextOf(at));
+  run(TESTED, at.draw, viewed(at.self), contextOf(at));
   return instances.get(TESTED)!.last;
+}
+
+/** `self` for a run: a handler that reads its records once they changed, such as one a `memo` kept from this run, fails the test. */
+function viewed(self: Drawn<unknown>): Drawn<unknown> {
+  const read = <K extends "state" | "children">(name: K) => {
+    if (tested?.acting && tested.self[name] !== self[name]) throw new Error(`a handler read \`self.${name}\` of an earlier run of the view, which a memo kept or an update changed: read \`ctx.${name}\``);
+    return self[name];
+  };
+  return { ...self, get state() { return read("state"); }, get children() { return read("children"); } };
 }
 
 /** What code gets in a test: its records, `update` and `memory`; what it plays goes nowhere, and what it asks gets `answers`. */
 function contextOf(at: Tested): Context<any> {
-  // A handler a memo kept from an earlier run, or from an earlier `render`, changes what the last
-  // run shows, as in the window.
+  // A handler a memo kept from an earlier run, or from an earlier `render`, reads and changes what
+  // the last run shows, as in the window.
   const update = (_label: string, edit: (draft: never) => void) => {
     const at = tested!;
     const before = at.self;
@@ -540,7 +549,7 @@ function contextOf(at: Tested): Context<any> {
   const nothing = () => {};
   const clock = { playing: false, repeat: null, click: false, computerKeys: false, writeAutomation: false, tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] }, sections: [], tick: 0, bar: 1, beat: 1, bpm: 120, play: nothing, pause: nothing, stop: nothing, jump: nothing, setRepeat: nothing, setClick: nothing, setComputerKeys: nothing, setWriteAutomation: nothing, update: nothing } as unknown as Clock;
   return {
-    state: at.self.state, children: at.self.children, memory: at.memory, update, held: (name: string) => at.held.includes(name), clock, time: 0,
+    get state() { return tested!.self.state; }, get children() { return tested!.self.children; }, memory: at.memory, update, held: (name: string) => at.held.includes(name), clock, time: 0,
     send: nothing, play: nothing, select: nothing, addOffer: nothing, openWindow: nothing, catalog: [],
     shortcut: (name: string) => at.spec?.actions?.[name]?.keys?.[0] ?? null,
     openFile: async () => at.answers.openFile ?? null, confirm: async () => at.answers.confirm ?? false, render: async () => null, exportNotes: async () => false,

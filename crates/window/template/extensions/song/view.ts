@@ -97,17 +97,13 @@ export function trackY(rows: readonly Row[], tracks: readonly Track[], y: number
 export const chosenTrack = (memory: Memory) =>
   trackBelow(memory) ?? (memory.selected[0] === undefined ? null : rowOfKey(memory.selected[0])) ?? (memory.below?.kind === "mixer" ? memory.track : null);
 
-const pages = new WeakMap<object, Page>();
-/** The page of the view's last run: a handler a memo kept from an earlier run reads the song as it is now through it. */
-export const latest = (page: Page): Page => pages.get(page.song.memory) ?? page;
-
 /** What every block of the page gets: the song, its edits, and its rows worked out once a run. */
-export function pageOf(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song: Song) {
+function laidOut(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song: Song) {
   const strips = ordered(self.children.filter(isStrip), self.state.order);
   const tracks = strips.filter(isRow);
   const returns = strips.filter((each) => each.tool === "bus");
   const rows = rowsOf(tracks, song.memory);
-  const page = {
+  return {
     self,
     song,
     edits: editsOf(song),
@@ -122,11 +118,18 @@ export function pageOf(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song:
     // The range the ruler shows, not the clock's: a view that reads the clock runs again as it plays.
     end: endOf(tracks, song.memory.repeatRange),
   };
-  pages.set(song.memory, page);
-  return page;
+}
+
+const pages = new WeakMap<object, Page>();
+/** The page of a song: one object, of the newest run, so a handler a memo kept from an earlier run reads the song as it is now. */
+export function pageOf(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song: Song): Page {
+  const page = laidOut(self, song);
+  const kept = pages.get(song.memory);
+  if (!kept) pages.set(song.memory, page);
+  return kept ? Object.assign(kept, page) : page;
 }
 /** What every block of the song's page gets. */
-export type Page = ReturnType<typeof pageOf>;
+export type Page = ReturnType<typeof laidOut>;
 
 /** The volume of the fader of `name`, a track, a return or the master, as a Fader takes it: one undo step. */
 export function volumeOf({ self, song, edits }: Page, name: string): Bound {

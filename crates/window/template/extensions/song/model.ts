@@ -28,6 +28,8 @@ export type Memory = {
   below: Below;
   /** The track the keyboard plays and records on, and the one a key for "the track" means beside the mixer. */
   track: string | null;
+  /** What the window was last told the composer works on, as `publish` says it. */
+  published: string | null;
   /** The tracks whose recorder has its input open. */
   armed: string[];
   /** The tick a recording started at, while it records. */
@@ -71,7 +73,7 @@ export type Memory = {
 export const EDITOR = 352;
 
 export const memory = (): Memory => ({
-  selected: [], below: null, track: null, armed: [], recording: null, clipboard: null, renaming: null, renamingClip: null, renamingSection: null, menu: null,
+  selected: [], below: null, track: null, published: null, armed: [], recording: null, clipboard: null, renaming: null, renamingClip: null, renamingSection: null, menu: null,
   mark: null, point: null, effect: null, lanes: [], tempoLane: false, returnsOpen: false, repeatRange: null, snap: SNAP, editor: EDITOR, editorLarge: false, opened: false,
   notes: [], lane: "velocity", length: BEAT / 2, copied: null, strength: 1, swing: 0, humanized: 0,
 });

@@ -3,7 +3,7 @@ import { lengthAt, lengthOf } from "../../../song/clips";
 import { colourOf, itemAt, muted, rowOfKey, titleOf, words } from "../../../song/model";
 import { cannotRender } from "../../../song/tracks";
 import { barStarts, beatRuns, type Runs } from "../../../song/time";
-import { ACROSS, GUTTER, laneGroups, latest, PLANE, ROW, trackAt, trackY, ZOOM, type Page, type Row, type Track } from "../../../song/view";
+import { ACROSS, GUTTER, laneGroups, PLANE, ROW, trackAt, trackY, ZOOM, type Page, type Row, type Track } from "../../../song/view";
 import { Button } from "../../button";
 import { keysOf } from "../../kbd";
 import { MenuList, type Item } from "../../menu";
@@ -32,7 +32,6 @@ export const Timeline = ({ page }: TimelineProps) => {
   const { song, rows, tracks, end, height, low } = page;
   const view = live.plane(PLANE);
   const marquee = live.drag(PLANE);
-  const now = () => latest(page);
   const chosen = new Set(song.memory.selected);
   // The clip a hint offers to start with: the first instrument track, while the song has no clip.
   const hinted = tracks.some((each) => each.children.some((child) => child.tool === "timeline")) ? undefined : tracks.find((each) => each.tool === "track")?.name;
@@ -45,19 +44,19 @@ export const Timeline = ({ page }: TimelineProps) => {
         <box w={GUTTER} h="full" />
         <box key={PLANE} label="Timeline" grow={1} h="full" plane={{ x: ACROSS, y: ROW, zoom: ZOOM }} drag={{ x: true, y: true }}
           onPress={(p) => {
-            const { rows, tracks, edits } = now();
+            const { rows, tracks, edits } = page;
             const row = rows.find((each) => p.y >= each.top && p.y < each.top + each.height);
             if (p.right) return;
             if (p.clicks === 2 && row?.kind === "track") edits.clips.add({ x: p.x, y: tracks.indexOf(row.track) });
             else edits.clips.clear();
           }}
           onDragEnd={(p) => {
-            const { rows, tracks, edits } = now();
+            const { rows, tracks, edits } = page;
             const [from, to] = [trackY(rows, tracks, p.y), trackY(rows, tracks, p.y + p.dy)];
             edits.clips.marquee({ ...p, y: from, dy: to - from });
           }}
           onDrop={(d) => {
-            const { rows, tracks, edits } = now();
+            const { rows, tracks, edits } = page;
             const at = { x: d.x, y: trackAt(rows, tracks, d.y) };
             if (d.parts.length > 0) edits.clips.dropNotes(d.parts, at);
             if (d.audio.length > 0) edits.clips.dropAudio(d.audio, at);
@@ -73,7 +72,7 @@ export const Timeline = ({ page }: TimelineProps) => {
         </box>
       </row>
       <ClipName page={page} />
-      <box key="timeline-foot" label="Under the tracks" w="full" h={low} border="border" borderSides={[1, 0, 0, 0]} onPress={() => now().edits.clips.clear()} />
+      <box key="timeline-foot" label="Under the tracks" w="full" h={low} border="border" borderSides={[1, 0, 0, 0]} onPress={() => page.edits.clips.clear()} />
       {tracks.length === 0 && <EmptySong page={page} />}
       <box inset={[GUTTER, 0, 0, 0]} clip inert>
         <box key="playhead" inset={[0, 0, null, 0]} w={1} fill="text" at={[live.playhead.minus(view.left).times(view.zoom.times(ACROSS)), 0]} />
@@ -94,23 +93,21 @@ type Bounds = ReturnType<typeof boundsOf>;
 /** What a right press on empty space offers: the keys of the clips that need no clip under the pointer. */
 const emptyMenu = (page: Page): Item[] => {
   const { song } = page;
-  const now = () => latest(page).edits.clips;
   return [
-    { text: "Add a clip at the playhead", icon: "plus", keys: keysOf(song.shortcut("add_clip")), onPress: () => void now().addAtPlayhead() },
-    { text: "Paste", icon: "copy", keys: keysOf(song.shortcut("paste_clips")), ...(song.memory.clipboard ? {} : { disabled: "Nothing is copied" }), onPress: () => void now().paste() },
-    { text: "Choose all clips", keys: keysOf(song.shortcut("select_all_clips")), onPress: () => now().all() },
+    { text: "Add a clip at the playhead", icon: "plus", keys: keysOf(song.shortcut("add_clip")), onPress: () => void page.edits.clips.addAtPlayhead() },
+    { text: "Paste", icon: "copy", keys: keysOf(song.shortcut("paste_clips")), ...(song.memory.clipboard ? {} : { disabled: "Nothing is copied" }), onPress: () => void page.edits.clips.paste() },
+    { text: "Choose all clips", keys: keysOf(song.shortcut("select_all_clips")), onPress: () => page.edits.clips.all() },
   ];
 };
 
 /** The menu of a clip or a region, which works on all the chosen: the keys of each, and what only a menu does. */
 function itemMenu(page: Page, key: string, region: boolean): Item[] {
   const { song } = page;
-  const now = () => latest(page);
-  const command = (text: string, command: "cut" | "copy" | "duplicate" | "delete", action: string, icon: Item["icon"]): Item => ({ text, icon, keys: keysOf(song.shortcut(action)), onPress: () => void now().edits.clips.command(command) });
+  const command = (text: string, command: "cut" | "copy" | "duplicate" | "delete", action: string, icon: Item["icon"]): Item => ({ text, icon, keys: keysOf(song.shortcut(action)), onPress: () => void page.edits.clips.command(command) });
   const track = rowOfKey(key);
   const owner = page.tracks.find((each) => each.name === track);
   const why = cannotRender(owner);
-  const ofTrack = () => now().song.memory.selected.filter((each) => rowOfKey(each) === track);
+  const ofTrack = () => page.song.memory.selected.filter((each) => rowOfKey(each) === track);
   const clip = itemAt(song.children, key);
   return [
     command("Cut", "cut", "cut_clips", undefined),
@@ -119,10 +116,10 @@ function itemMenu(page: Page, key: string, region: boolean): Item[] {
     ...(region
       ? []
       : [
-          { text: "Rename", icon: "pencil", onPress: () => (now().song.memory.renamingClip = key) } satisfies Item,
-          { text: "Export notes…", onPress: () => void now().song.exportNotes(key, { name: (clip?.tool === "timeline" && clip.state.title) || (owner ? titleOf(owner) : track) }) } satisfies Item,
+          { text: "Rename", icon: "pencil", onPress: () => (page.song.memory.renamingClip = key) } satisfies Item,
+          { text: "Export notes…", onPress: () => void page.song.exportNotes(key, { name: (clip?.tool === "timeline" && clip.state.title) || (owner ? titleOf(owner) : track) }) } satisfies Item,
         ]),
-    ...[true, false].map((tail): Item => ({ text: tail ? "Render to audio track" : "Render without the tail", icon: "audio-lines", ...(why === undefined ? {} : { disabled: why }), onPress: () => void now().edits.tracks.render(track, ofTrack(), tail) })),
+    ...[true, false].map((tail): Item => ({ text: tail ? "Render to audio track" : "Render without the tail", icon: "audio-lines", ...(why === undefined ? {} : { disabled: why }), onPress: () => void page.edits.tracks.render(track, ofTrack(), tail) })),
     { ...command("Delete", "delete", "delete_clips", "trash-2"), danger: true },
   ];
 }
@@ -224,7 +221,6 @@ type ItemProps = {
  */
 const Item = ({ page, track, itemKey: key, name, region, start, length, notes, top, under, chosen, bounds, colour, dim }: ItemProps) => {
   const { memory } = page.song;
-  const now = () => latest(page);
   const moved = live.drag(chosen ? MOVE : `clip-${key}`);
   const [end, begin] = [live.drag(RESIZE), live.drag(RESIZE_START)];
   const resizes = chosen && !region;
@@ -248,9 +244,9 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
       {chosen && under > 0 && <box place={[x, moved.dy.plus(top + 1), width, under]} fill="selected" />}
       <box key={`clip-${key}`} label={words} role="button" checked={chosen} place={[x, y, width, (ROW - 2 * INSET) / ROW]} radius="md" fill="fill" border={chosen ? "text" : "border-strong"} opacity={dim} clip
         drag={drag}
-        onPress={(p) => now().edits.clips.press(key, p)}
+        onPress={(p) => page.edits.clips.press(key, p)}
         onDragEnd={(p) => {
-          const { song, rows, tracks, edits } = now();
+          const { song, rows, tracks, edits } = page;
           if (!song.memory.selected.includes(key)) edits.clips.choose([key]);
           const row = tracks.findIndex((each) => each.name === track.name);
           edits.clips.move({ dx: p.dx, dy: trackAt(rows, tracks, top + p.dy + 0.5) - row, alt: p.alt });
@@ -263,9 +259,9 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
         {resizes && (
           <box>
             <box key={`clip-end-${key}`} label={`End of ${words}`} place={[x.plus(width).minus(edge), y, edge, (ROW - 2 * INSET) / ROW]}
-              drag={{ x: [-(length - (memory.snap || 240)), 1e9], snap: [step, 1], from: [start + length, top], id: RESIZE }} onDragEnd={(p) => now().edits.clips.resizeEnd(p)} />
+              drag={{ x: [-(length - (memory.snap || 240)), 1e9], snap: [step, 1], from: [start + length, top], id: RESIZE }} onDragEnd={(p) => page.edits.clips.resizeEnd(p)} />
             <box key={`clip-start-${key}`} label={`Start of ${words}`} place={[x, y, edge, (ROW - 2 * INSET) / ROW]}
-              drag={{ x: [-start, length - (memory.snap || 240)], snap: [step, 1], from: [start, top], id: RESIZE_START }} onDragEnd={(p) => now().edits.clips.resizeStart(p)} />
+              drag={{ x: [-start, length - (memory.snap || 240)], snap: [step, 1], from: [start, top], id: RESIZE_START }} onDragEnd={(p) => page.edits.clips.resizeStart(p)} />
           </box>
         )}
         <MenuList id={`menu-${key}`} label={`Menu of ${words}`} items={itemMenu(page, key, region)} open="menu" w={260} />
@@ -289,7 +285,7 @@ const ClipName = ({ page }: { page: Page }) => {
   return (
     <box at={[x, view.top.negate().plus(row.top).times(ROW).plus(INSET + 4)]}>
       <TextField id={`clip-name-${key}`} label={`Name of Clip ${title || wordsOf(key)}`} value={title} focus size="sm" w={140}
-        onCommit={(text) => (text === null ? (latest(page).song.memory.renamingClip = null) : latest(page).edits.clips.rename(key, text))} />
+        onCommit={(text) => (text === null ? (page.song.memory.renamingClip = null) : page.edits.clips.rename(key, text))} />
     </box>
   );
 };
@@ -323,8 +319,8 @@ const EmptySong = ({ page }: { page: Page }) => (
   <box inset={[0, 0, 0, 0]}>
     <EmptyState title="An empty song" text="Add a track to play or record, or ask the agent for one.">
       <row gap={2}>
-        <Button id="empty-instrument" label="Add an instrument track" text="Instrument track" icon="plus" onPress={() => latest(page).edits.tracks.add("instrument")} />
-        <Button id="empty-audio" label="Add an audio track" text="Audio track" icon="plus" onPress={() => latest(page).edits.tracks.add("audio")} />
+        <Button id="empty-instrument" label="Add an instrument track" text="Instrument track" icon="plus" onPress={() => page.edits.tracks.add("instrument")} />
+        <Button id="empty-audio" label="Add an audio track" text="Audio track" icon="plus" onPress={() => page.edits.tracks.add("audio")} />
       </row>
     </EmptyState>
   </box>

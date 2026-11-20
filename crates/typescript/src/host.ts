@@ -640,6 +640,7 @@ function forget(id: string) {
 }
 
 function hear({ records, gone, edits: heard }: Extract<Request, { type: "records" }>) {
+  recordsChanged += 1;
   for (const { id, tool, state } of records) {
     if (told.get(id)?.tool !== tool) forget(id);
     told.set(id, { tool, state });
@@ -751,12 +752,13 @@ const CARDS = "ui/blocks/cards";
 /** The card of an instance whose tool has no view: the project's card of its tool, else the generic card. */
 function drawCard(instance: string, record: Entry, card: (typeof fieldCards)[string]) {
   const defaults = Object.fromEntries(card.fields.map((field) => [field.name, field.default]));
-  const state = frozen({ ...defaults, ...(record.state as object) });
-  const self = { name: nameOf(instance), state, children: [], facts: factsOf(instance, record.tool) };
+  const fill = (entry: Entry) => frozen({ ...defaults, ...(entry.state as object) });
+  const self = { name: nameOf(instance), state: fill(record), children: [], facts: factsOf(instance, record.tool) };
   const key = `${instance} card`;
   if (!memories.has(key)) memories.set(key, {});
   // A card gets what a tool's view gets.
-  const context = { ...performer(instance), state, children: [], memory: memories.get(key), clock: clockFor(instance), time: now, update: updater(instance, defaults), held: heldIn(instance), select: selector(instance), addOffer: offerAdder(instance), openWindow: (path: string) => say({ type: "open_window", instance, path }), catalog: known.catalog, shortcut: () => null, ...askers(instance) };
+  const context = { ...performer(instance), memory: memories.get(key), clock: clockFor(instance), time: now, update: updater(instance, defaults), held: heldIn(instance), select: selector(instance), addOffer: offerAdder(instance), openWindow: (path: string) => say({ type: "open_window", instance, path }), shortcut: () => null, ...askers(instance) };
+  Object.defineProperties(context, { ...newest(instance, fill, record), children: { enumerable: true, value: [] } });
   runs(cardFile(instance)!, "card");
   try {
     say({ type: "tree", instance, tree: next!.host.run(instance, toolCards.get(record.tool) ?? genericCard, self, context) });
@@ -1096,12 +1098,17 @@ function updater(instance: string, defaults?: Record<string, unknown>) {
     // Before it counts: a value JSON cannot hold, such as a cycle, throws here.
     const line = JSON.stringify({ type: "edit", instance, label, changes: wired, ...(acting === instance ? { gesture: true } : {}) }) + "\n";
     edits += 1;
+    recordsChanged += 1;
     unheard.push({ number: edits, changes });
     writeSync(1, line);
   };
 }
 
-/** What `tick`, an action, `onKey` and `onNotes` of an instance get: the record as it is now, and its memory. */
+/**
+ * What a view, `tick`, an action, `onKey` and `onNotes` of an instance get: its records as they
+ * are when read, also by a handler a `memo` kept from an earlier run and after an `update`, and
+ * its memory.
+ */
 function contextOf<Extra extends object>(
   instance: string,
   spec: Spec,
@@ -1114,12 +1121,25 @@ function contextOf<Extra extends object>(
     time,
     ...doers(instance, spec),
   };
-  // Made when code reads them: a tick of a parent of a thousand takes that does not costs nothing for them.
-  let children: OwnedChild[] | undefined;
-  return Object.defineProperties(context, {
-    state: { enumerable: true, value: filledState(spec, record) },
-    children: { enumerable: true, get: () => (children ??= childrenOf(instance)) },
-  }) as typeof context & { state: State; children: OwnedChild[] };
+  return Object.defineProperties(context, newest(instance, (entry) => filledState(spec, entry), record)) as typeof context & { state: State; children: OwnedChild[]; catalog: unknown[] };
+}
+
+/** How many times the records code reads changed: the runtime told some, or code sent an edit. */
+let recordsChanged = 0;
+
+/**
+ * `state` and `children` of `instance` as they are when read, made again only after the records
+ * changed: children only when read, so code of a parent of a thousand takes that does not costs
+ * nothing for them. `record` while the instance is gone.
+ */
+function newest(instance: string, fill: (entry: Entry) => unknown, record: Entry): PropertyDescriptorMap {
+  let state: [number, unknown] | undefined;
+  let children: [number, OwnedChild[]] | undefined;
+  return {
+    catalog: { enumerable: true, get: () => known.catalog },
+    state: { enumerable: true, get: () => (state?.[0] === recordsChanged ? state : (state = [recordsChanged, fill(recordOf(instance) ?? record)]))[1] },
+    children: { enumerable: true, get: () => (children?.[0] === recordsChanged ? children : (children = [recordsChanged, childrenOf(instance)]))[1] },
+  };
 }
 
 /** What every piece of code of an instance can do, in a view or in `tick`, an action, `onKey`, `onNotes` and `onTake`. */
@@ -1132,7 +1152,6 @@ function doers(instance: string, spec: Spec) {
     select: selector(instance),
     addOffer: offerAdder(instance),
     openWindow: (path: string) => say({ type: "open_window", instance, path }),
-    catalog: known.catalog,
     shortcut: shortcutOf(spec.name),
     now: sdk.now as Context<State>["now"],
     ...askers(instance),
