@@ -19,6 +19,8 @@ export type Tick = { at: number; text?: string };
 export const FREQUENCY: Range = { min: 20, max: 20000, scale: "log" };
 /** The octaves above 20 Hz a response feed covers, for `units` across. */
 export const OCTAVES: [number, number] = [0, Math.log2(1000)];
+/** Where `value` is up a drawing whose top and bottom are `range`, 0 at the bottom, as `Curve` and `zero` take it. */
+export const heightOf = (value: number, [top, bottom]: [number, number]) => (value - bottom) / (top - bottom);
 /** 100, 1k and 10k across a display of {@link FREQUENCY}. */
 export const FREQUENCY_TICKS: Tick[] = [[100, "100"], [1000, "1k"], [10000, "10k"]].map(([hz, text]) => ({ at: positionOf(hz as number, FREQUENCY), text: text as string }));
 /** A line every `step` dB inside `range` [bottom, top] up a display, each with its number; 0 is left to the zero line. */
