@@ -119,6 +119,11 @@ fn a_folder_of_other_files_is_refused_in_plain_words() {
     std::fs::write(papers.join("tax.pdf"), "").unwrap();
     let mut window = window(&scratch.path().join("support"));
     chord(&mut window, 'o');
+    let (kind, options) = window.file_dialog().unwrap();
+    assert_eq!(
+        (kind, options.title.as_str()),
+        (rune::FileDialogKind::Folder, "Open a project")
+    );
     window.resolve_file_dialog(Some(papers.clone())).unwrap();
     window.frame(0.1);
     assert_eq!(opened(&window), None);

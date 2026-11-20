@@ -174,3 +174,47 @@ fn a_field_of_a_dialog_keeps_the_apps_keys_but_quit() {
     redraw(&mut window);
     assert!(matches!(window.shell_request, Some(rune::Shell::Quit)));
 }
+
+#[test]
+fn a_project_with_a_tool_but_no_view_says_there_is_nothing_to_show() {
+    let scratch = tempfile::tempdir().unwrap();
+    let folder = scratch.path().join("sketch");
+    let bare = (runtime::TEMPLATES.iter()).find(|template| template.name == "Bare");
+    runtime::templates::write(&folder, bare.unwrap()).unwrap();
+    let amp = r#"import { input, tool } from "./sdk";
+export const amp = tool({ name: "amp", title: "Amp", when: "Never", doc: "A gain.", state: {}, sound: () => input });
+"#;
+    std::fs::create_dir_all(folder.join("extensions")).unwrap();
+    std::fs::write(folder.join("extensions/amp.tsx"), amp).unwrap();
+    std::fs::create_dir_all(folder.join("state")).unwrap();
+    let record = json!({ "tool": "amp", "state": {} }).to_string();
+    std::fs::write(folder.join("state/amp.json"), record).unwrap();
+    let mut window = laid_out(opened(&folder));
+    redraw(&mut window);
+    assert!(window.state.main().is_none());
+    let texts: Vec<String> = (window.elements().into_iter())
+        .filter_map(|element| element.text)
+        .collect();
+    assert!(
+        texts.iter().any(|text| text == "Nothing to show"),
+        "{texts:?}"
+    );
+    assert!(
+        chrome_controls(&window.state)
+            .iter()
+            .any(|control| control.label == "Play"),
+        "it has something to play"
+    );
+}
+
+#[test]
+fn cmd_q_quits() {
+    let scratch = new_project();
+    let mut window = laid_out(kept(&scratch));
+    window.key(rune::KeyEvent {
+        key: rune::Key::Command('q'),
+        mods: MAIN_MODIFIER,
+    });
+    redraw(&mut window);
+    assert!(matches!(window.shell_request, Some(rune::Shell::Quit)));
+}

@@ -645,6 +645,8 @@ fn a_turn_shows_the_problems_it_left() {
     harness.receive([AgentEvent::TurnStarted]);
     harness.write_outside("state/bass.json", "{", Duration::ZERO);
     harness.receive([completed()]);
+    // Nothing of them goes to the agent by itself: its docs tell it to read `problems.txt`.
+    assert_eq!(sent(&commands), []);
     let Some(Below::Problems { line, lines, fix }) = harness.turn(1).below else {
         panic!("no problems show");
     };
@@ -1102,4 +1104,50 @@ fn a_picture_that_cannot_be_read_says_so_and_attaches_nothing() {
     assert!(harness.chat.attachments().is_empty());
     let said = harness.entries();
     assert!(said.contains("Score.png could not be read"), "{said}");
+}
+
+/// While the saved thread still loads no message goes, and what is said meanwhile stays,
+/// after the thread.
+#[test]
+fn no_message_goes_while_the_thread_loads_and_what_is_said_meanwhile_stays_after_it() {
+    let mut harness = Harness::new();
+    harness.begin(MESSAGE);
+    harness.receive([AgentEvent::TurnStarted, completed()]);
+    harness.wait_until(|harness| !harness.chat.is_saving());
+    let Harness {
+        chat,
+        project,
+        programs,
+        folder,
+        machine,
+        ..
+    } = harness;
+    drop((chat, project));
+    // As the app opens it, the thread not read yet.
+    let (control, _engine) = Engine::new(EngineConfig::new(48_000, 1));
+    let mut project = Project::open(folder.path(), registry(), control).unwrap();
+    let (waker, woken) = testing::waker();
+    let agents = Agents::with_programs(
+        programs,
+        AgentSettings::new(None, waker.clone()),
+        waker.clone(),
+    );
+    let threads = machine.path().join("agent/threads");
+    let mut chat = Chat::new(agents, &project, Some(threads), waker);
+    let (thread, commands) = Thread::without_agent(None);
+    chat.connect(thread);
+    assert!(!chat.send("Make it louder", &mut project));
+    chat.conversation.notice("Said meanwhile".to_string());
+    loop {
+        chat.poll(&mut project);
+        if !chat.is_loading() {
+            break;
+        }
+        testing::wait(&woken);
+    }
+    let shown = format!("{:?}", chat.conversation().entries());
+    let (message, notice) = (shown.find(MESSAGE), shown.find("Said meanwhile"));
+    assert!(message.is_some() && message < notice, "{shown}");
+    assert!(chat.send("Make it louder", &mut project));
+    assert_eq!(sent_message(&commands).text, "Make it louder");
 }
