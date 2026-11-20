@@ -42,6 +42,8 @@ pub struct Session {
     selected: Option<InstanceId>,
     span: Option<(Ticks, Ticks)>,
     recording: bool,
+    /// A paint is held: what it painted so far is no step yet.
+    painting: bool,
     render: Option<render::Running>,
 }
 
@@ -114,6 +116,7 @@ impl Session {
             selected: None,
             span: None,
             recording: false,
+            painting: false,
             render: None,
         };
         match click {
@@ -227,19 +230,24 @@ impl Session {
         self.go_elsewhere(|project| project.merge(start, keep_mine))
     }
 
-    /// Writes other files over the folder, unless a drag is open, whose next move would write
-    /// over them, or a take records, which would land in a project that is gone.
+    /// Writes other files over the folder, unless a drag or a paint is open, whose next move
+    /// would write over them, or a take records, which would land in a project that is gone.
     fn go_elsewhere<R>(
         &mut self,
         operation: impl FnOnce(&mut Project) -> Result<R, ProjectError>,
     ) -> bool {
-        let waits = match (self.gesture.is_some(), self.recording) {
+        let waits = match (self.gesture.is_some() || self.painting, self.recording) {
             (true, _) => "Let go of the drag first.",
             (false, true) => "Stop recording first.",
             (false, false) => return self.edit(operation).is_some(),
         };
         self.set_notice(Source::Edit, waits.to_string());
         false
+    }
+
+    /// Whether a paint is held, which undo waits for as for a drag.
+    pub fn set_painting(&mut self, painting: bool) {
+        self.painting = painting;
     }
 
     /// Whether a take records now, which undo waits for.

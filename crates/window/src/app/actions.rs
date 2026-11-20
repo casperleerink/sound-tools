@@ -125,6 +125,7 @@ impl State {
     /// and what it enters until let go: one step of undo.
     pub(crate) fn paint(&mut self, instance: &InstanceId, key: &str) {
         self.painting = Some((instance.clone(), BTreeSet::from([key.to_string()])));
+        self.session.set_painting(true);
         if let Some(tools) = &mut self.tools {
             (self.session).background(|project| tools.hold(project, true));
         }
@@ -169,6 +170,7 @@ impl State {
 
     pub(crate) fn painted(&mut self, cancelled: bool) {
         self.painting = None;
+        self.session.set_painting(false);
         if let Some(tools) = &mut self.tools {
             (self.session).background(|project| match cancelled {
                 true => tools.cancel_hold(project),
