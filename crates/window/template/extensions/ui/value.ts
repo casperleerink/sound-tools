@@ -83,19 +83,17 @@ export const liveValueAt = (at: Live, range: Range): Live => {
 };
 
 /** {@link liveValueAt} as a readout shows it: a fader at its bottom says -inf, as a release there sets. */
-export const liveShownAt = (at: Live, range: Range): Live => {
+export const liveShownAt = (at: Live, range: Range): Live =>
   // The window shows a number as 32-bit, which 1e60 is past: -inf. 0 times 1e30 stays 0.
-  if (range.scale === "fader") return liveValueAt(at, range).minus(at.le(0).times(1e30).times(1e30));
-  if (range.scale === "log" || range.step) return liveValueAt(at, range);
-  // On a 100,000th of the range, so 0 of -48 to 24 dB, which 32 bits leave at 0.0000014, reads 0.
-  const grain = (range.max - range.min) / 1e5;
-  return liveValueAt(at, range).over(grain).round().times(grain);
-};
+  range.scale === "fader" ? liveValueAt(at, range).minus(at.le(0).times(1e30).times(1e30)) : liveValueAt(at, range);
 
-/** Three significant digits, no zeros at the end, and a minus sign: as the window shows a number. */
+/**
+ * Three significant digits, two decimals at most, no zeros at the end, and a minus sign: as the
+ * window shows a number, so 0 that 32 bits leave at 0.0000014 reads 0.
+ */
 const short = (value: number): string => {
   if (value === 0) return "0";
-  const decimals = Math.max(0, 2 - Math.floor(Math.log10(Math.abs(value))));
+  const decimals = Math.min(2, Math.max(0, 2 - Math.floor(Math.log10(Math.abs(value)))));
   return String(Number(value.toFixed(decimals))).replace("-", "−");
 };
 

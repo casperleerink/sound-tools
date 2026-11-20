@@ -43,3 +43,7 @@ test("a fader's volume goes to silence at its foot, in tenths of a dB, and reads
   expect([valueAt(0, VOLUME), valueAt(travelled(-12.3, VOLUME), VOLUME), valueAt(1, VOLUME), fitted(9, VOLUME)]).toEqual([-Infinity, -12.3, 6, 6]);
   expect([shown(-Infinity, "db"), typedValue("-inf", "db"), typedOver("−inf dB", -Infinity, VOLUME, "db")]).toEqual(["−inf dB", -Infinity, undefined]);
 });
+
+test("a readout shows two decimals at most, as the window does: a hair from 0 dB reads 0 dB", () => {
+  expect([shown(1.43e-6, "db"), shown(-1.43e-6, "db"), shown(0.123, "db"), shown(12.26, "db"), shown(-4.5, "db")]).toEqual(["0 dB", "0 dB", "0.12 dB", "12.3 dB", "−4.5 dB"]);
+});
