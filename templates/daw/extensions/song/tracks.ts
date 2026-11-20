@@ -7,6 +7,7 @@ import { lfo } from "../lfo";
 import { tape } from "../tape";
 import { freeName, track } from "../track";
 import { choose, copyOf, lengthAt } from "./clips";
+import { dropLanesOf } from "./lanes";
 import { isRow, isStrip, itemAt, PALETTE, rowOfKey, rowsOf, titleOf, type Child, type Draft, type Song } from "./model";
 
 /** A fader for each return of the song, silent, as a new track sends into them. */
@@ -23,6 +24,28 @@ export function addInstrumentTrack(draft: Draft, title: string, clips: { name: s
       { name: "synth", tool: "instrument.synth", state: {} },
       { name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }, { name: "rec", tool: "recorder", state: {} },
       ...sendsInto(draft), ...clips.map((clip) => ({ ...clip, tool: "timeline" as const })),
+    ],
+  });
+  draft.state.order = [...rows, name];
+  return name;
+}
+
+/** The first free name of an audio track: `audio-1`, then `audio-2`. */
+const audioName = (names: readonly string[]) => {
+  let number = 1;
+  while (names.includes(`audio-${number}`)) number++;
+  return `audio-${number}` as const;
+};
+
+/** Adds an audio track called `title` after the others, with `regions` on it, in the next colour: its name. */
+export function addAudioTrack(draft: Draft, title: string, regions: { name: string; state: StateOfTool<"region"> }[] = []): string {
+  const rows = rowsOf(draft.children, draft.state.order).map((each) => each.name);
+  const name = audioName(draft.children.map((child) => child.name));
+  draft.children.push({
+    name, tool: tape, state: { colour: PALETTE[rows.length % PALETTE.length]!.colour, title },
+    children: [
+      { name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} },
+      ...sendsInto(draft), ...regions.map((region) => ({ ...region, tool: "region" as const })),
     ],
   });
   draft.state.order = [...rows, name];
@@ -66,13 +89,6 @@ export function cannotRender(each: Child | undefined): string | undefined {
 }
 
 /** What a view and the keys do to the tracks of the song: each change one undo step. */
-/** The first free name of an audio track: `audio-1`, then `audio-2`. */
-const audioName = (names: readonly string[]) => {
-  let number = 1;
-  while (names.includes(`audio-${number}`)) number++;
-  return `audio-${number}` as const;
-};
-
 export const trackEdits = (song: Song) => {
   const { memory, update } = song;
   const rows = () => rowsOf(song.children, song.state.order);
@@ -85,16 +101,12 @@ export const trackEdits = (song: Song) => {
     /** Adds a track of `kind` after the others; a new return gets a silent send from every track, and the returns open. */
     add(kind: TrackKind) {
       const names = song.children.map((child) => child.name);
-      const colour = PALETTE[rows().length % PALETTE.length]!.colour;
       const returns = song.children.filter((child) => child.tool === "bus").length;
       update(kind === "instrument" ? "Add a track" : kind === "audio" ? "Add an audio track" : "Add a return", (draft) => {
         if (kind === "instrument") {
           addInstrumentTrack(draft, `Track ${rows().filter((each) => each.tool === "track").length + 1}`);
         } else if (kind === "audio") {
-          const name = audioName(names);
-          const audio = rows().filter((each) => each.tool === "tape").length + 1;
-          draft.children.push({ name, tool: tape, state: { colour, title: `Audio ${audio}` }, children: [{ name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }, ...sendsInto(draft)] });
-          draft.state.order = [...rows().map((each) => each.name), name];
+          addAudioTrack(draft, `Audio ${rows().filter((each) => each.tool === "tape").length + 1}`);
         } else {
           const name = [..."abcdefghijklmnopqrstuvwxyz"].map((letter) => `ret-${letter}` as const).find((each) => !names.includes(each)) ?? (freeName(names, "ret-z") as `ret-${string}`);
           draft.children.push({ name, tool: bus, state: { title: `Return ${returns + 1}`, colour: PALETTE[(returns + 3) % PALETTE.length]!.colour }, children: [{ name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }] });
@@ -159,7 +171,7 @@ export const trackEdits = (song: Song) => {
     toggleMixer() {
       memory.below = memory.below?.kind === "mixer" ? null : { kind: "mixer" };
     },
-    /** Deletes the track, audio track or return `name`, with the sends into it, its solo, its sidechains and what chose it. */
+    /** Deletes the track, audio track or return `name`, with the sends into it and their lanes, its solo, its sidechains and what chose it. */
     remove(name: string) {
       update("Delete a track", (draft) => {
         draft.state.order = draft.state.order.filter((each) => each !== name);
@@ -169,6 +181,7 @@ export const trackEdits = (song: Song) => {
           if (each.tool !== "track" && each.tool !== "tape") continue;
           const at = each.children.findIndex((child) => child.name === `send-${name}`);
           if (at >= 0) each.children.splice(at, 1);
+          dropLanesOf(each, `send-${name}`);
         }
         const at = draft.children.findIndex((child) => child.name === name);
         if (at >= 0) draft.children.splice(at, 1);
@@ -264,13 +277,14 @@ export const trackEdits = (song: Song) => {
       const chosen = strip(memory.track ?? "");
       if (memory.armed.length === 0 && chosen?.tool === "tape" && all.includes(chosen.name)) edits.arm(chosen.name);
       const notes = notesTrackOf(song.children, song.state.order, memory.track);
-      memory.recording = song.clock.tick;
+      memory.recording = song.clock.playing ? "rolling" : "starting";
       for (const name of new Set([...memory.armed, ...(notes ? [notes] : [])])) if (all.includes(name)) record(name, true);
       song.clock.play();
     },
-    /** A pause or a stop ends the recording: what the song's control loop checks. */
+    /** A pause or a stop ends the recording, once the song played: what the song's control loop checks. */
     stopped() {
-      if (!song.clock.playing && memory.recording !== null) edits.record();
+      if (memory.recording === "starting" && song.clock.playing) memory.recording = "rolling";
+      else if (memory.recording === "rolling" && !song.clock.playing) edits.record();
     },
     /**
      * Renders the clips and regions `keys` of the track `name`, from the first to the last, after

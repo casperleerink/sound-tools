@@ -699,6 +699,46 @@ mod tests {
         assert!(folder.join("sdk/my-helper.ts").is_file());
     }
 
+    /// Code of an older Sound Tools as people write imports: comments, line breaks, single
+    /// quotes and renamed parts, of the SDK and of what it no longer has.
+    const OLD_PAGE: &str = r#"import {
+  h, number, // the pitch
+  Knob /* gone */,
+  Page as Screen,
+  sine as wave,
+  tool // makes it
+} from './sdk';
+export const old = tool({
+  name: "old", title: "Old", when: "Never", doc: "A tone.",
+  state: { hz: number({ min: 20, max: 2000, default: 220 }) },
+  sound: ({ hz }) => wave(hz).times(0.2),
+  view: () => <Screen><Knob field="hz" /></Screen>,
+});
+"#;
+
+    #[test]
+    fn a_file_of_an_older_sound_tools_loads_whatever_shape_its_imports_have() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir(project.path().join(FOLDER)).unwrap();
+        std::fs::write(project.path().join(FOLDER).join("old.tsx"), OLD_PAGE).unwrap();
+        let extensions = Extensions::load(project.path(), &BuiltIn::default(), false)
+            .unwrap()
+            .register(&mut Registry::new());
+        let messages: Vec<&str> = (extensions.problems.iter())
+            .map(|problem| problem.message.as_str())
+            .collect();
+        assert!(
+            matches!(&messages[..], [message] if message.ends_with(window::OLD_VIEWS)),
+            "{messages:?}"
+        );
+        assert!(
+            extensions
+                .tools
+                .iter()
+                .any(|tool| tool.name == "old" && tool.old_views)
+        );
+    }
+
     #[test]
     fn a_folder_with_no_tool_starts_no_bun_but_has_the_sdk() {
         let project = tempfile::tempdir().unwrap();

@@ -6,7 +6,7 @@ import { freeName, splitTarget } from "../track";
 import { emptied, laid, laneAt, lift, type AutomationPoint } from "./lanes";
 import { itemAt, itemsOf, nameFrom, rowOfKey, rowsOf, type Child, type Draft, type RowKind, type Song } from "./model";
 import { BAR, barAt, BEAT, cellOf, stepOf, ticksAcross } from "./time";
-import { addInstrumentTrack } from "./tracks";
+import { addAudioTrack, addInstrumentTrack } from "./tracks";
 
 type Clip = FilledStateOfTool<"timeline">;
 type Region = FilledStateOfTool<"region">;
@@ -244,13 +244,15 @@ export function putTaken({ children }: Draft, placed: Placed): string[] {
 }
 
 /**
- * Moves the clips and regions `keys` names by `dx` ticks and `dy` rows, each onto its own row
- * where that row holds the other kind, or copies them there, with the automation under them,
- * as one undo step. The keys of where they are after.
+ * Moves the clips and regions `keys` names by `ticks` and `dy` rows, the earliest stopping at
+ * tick 0, each onto its own row where that row holds the other kind, or copies them there, with
+ * the automation under them, as one undo step. The keys of where they are after.
  */
-export function moveItems(song: Song, keys: readonly string[], dx: number, dy: number, copy: boolean): string[] {
+export function moveItems(song: Song, keys: readonly string[], ticks: number, dy: number, copy: boolean): string[] {
   const rows = rowsOf(song.children, song.state.order);
   const taken = take(song, rows, keys);
+  const dx = Math.max(ticks, -Math.min(...taken.map((each) => each.item.state.start)));
+  if (dx === 0 && dy === 0 && !copy) return [...keys];
   const rowOf = new Map(taken.map((each) => [each, itemsOf(rows[each.row + dy] ?? { tool: "" }) === each.item.tool && rows[each.row + dy] ? each.row + dy : each.row]));
   // A volume and a pan go along to any track, a lane of a device only on its own.
   const goes = (each: Taken, target: string) => target.startsWith("mix.") || rows[rowOf.get(each) ?? -1]?.name === each.track;
@@ -354,9 +356,10 @@ export const clipEdits = (song: Song) => {
     resizeEnd(p: Pick<Pointer, "dx">) {
       editClips(song, "Resize clips", memory.selected, (clip) => endMoved(clip, Math.max(lengthOf(clip) + Math.round(p.dx), stepOf(memory.snap))));
     },
-    /** A drag of the start of the chosen clips: their notes stay where they are in the song. */
+    /** A drag of the start of the chosen clips: their notes stay where they are in the song, and the earliest stops at tick 0. */
     resizeStart(p: Pick<Pointer, "dx">) {
-      editClips(song, "Resize clips", memory.selected, (clip) => startMoved(clip, Math.round(p.dx), stepOf(memory.snap)));
+      const dx = Math.max(Math.round(p.dx), -Math.min(...memory.selected.map((key) => itemAt(song.children, key)?.state.start ?? 0)));
+      editClips(song, "Resize clips", memory.selected, (clip) => startMoved(clip, dx, stepOf(memory.snap)));
     },
     /** A drag over empty space from `x`, `y` (rows): what it covers is chosen; shift or cmd adds it. */
     marquee(p: Pick<Pointer, "x" | "y" | "dx" | "dy" | "shift" | "cmd">) {
@@ -409,9 +412,7 @@ export const clipEdits = (song: Song) => {
     /** Moves the chosen by a step of the snap in time, the earliest stopping at tick 0. */
     nudge(by: -1 | 1): boolean {
       if (memory.selected.length === 0) return false;
-      const starts = memory.selected.map((key) => itemAt(song.children, key)?.state.start ?? 0);
-      const dx = Math.max(by * stepOf(memory.snap), -Math.min(...starts));
-      if (dx !== 0) choose(song, moveItems(song, memory.selected, dx, 0, false));
+      choose(song, moveItems(song, memory.selected, by * stepOf(memory.snap), 0, false));
       return true;
     },
     /** Moves the chosen to the nearest rows above or below where every one lands on a row of its own kind. */
@@ -446,16 +447,19 @@ export const clipEdits = (song: Song) => {
       memory.renamingClip = null;
       editClips(song, "Rename a clip", [key], (clip) => (clip.title = title.trim()));
     },
-    /** Audio files dropped at `x` on row `y`: regions on that audio track, else the first, at the nearest beat. */
+    /** Audio files dropped at `x` on row `y`, at the nearest beat: regions on that audio track, else the first; with none, each on a new audio track named after it. */
     dropAudio(audio: readonly string[], p: Pick<Pointer, "x" | "y">) {
+      if (audio.length === 0) return;
       const all = rows();
       const owner = all[Math.floor(p.y)]?.tool === "tape" ? all[Math.floor(p.y)] : all.find((row) => row.tool === "tape");
-      if (!owner || audio.length === 0) return;
       const start = Math.max(Math.round(p.x / BEAT) * BEAT, 0);
       const added: string[] = [];
-      song.update("Add audio", ({ children }) => {
-        const tape = children.find((child) => child.name === owner.name);
-        if (tape?.tool !== "tape") return;
+      song.update("Add audio", (draft) => {
+        const tape = draft.children.find((child) => child.name === owner?.name);
+        if (tape?.tool !== "tape") {
+          for (const file of audio) added.push(`${addAudioTrack(draft, file.replace(/^.*\//, "").replace(/\.[^.]*$/, ""), [{ name: "region", state: { asset: file, start } }])}/region`);
+          return;
+        }
         for (const file of audio) {
           const name = freeName(tape.children.map((child) => child.name), "region");
           tape.children.push({ name, tool: "region", state: { asset: file, start } });

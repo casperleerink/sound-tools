@@ -49,18 +49,20 @@ Bun.plugin({
       if (!path.startsWith(`${realFolder}/`) || path.startsWith(join(realFolder, "sdk"))) return { contents: text, loader };
       // A name with no value: a type, which Bun leaves out unless the code uses it as a value, or gone.
       const empty: string[] = [];
-      const kept = text.replace(/import\s*\{([^}]*)\}\s*from\s*"((?:\.\.?\/)+sdk)"/g, (_, list: string, from: string) => {
-        const known = list.split(",").map((part) => part.trim()).filter((part) => {
+      const kept = text.replace(/import\s*\{([^}]*)\}\s*from\s*(["'])((?:\.\.?\/)+sdk)\2/g, (whole: string, list: string, quote: string, from: string) => {
+        const parts = list.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, "").split(",").map((part) => part.trim());
+        const known = parts.filter((part) => {
           const [name, local = name] = part.split(/\s+as\s+/);
           if (part === "" || part.startsWith("type ") || name! in sdk) return part !== "";
           empty.push(local!);
           if (!sdkNames.has(name!)) oldViews.add(path);
           return false;
         });
-        return `import { ${known.join(", ")} } from "${from}";`;
+        // On as many lines as it was, so an error names the line of the file.
+        return `import { ${known.join(", ")} } from ${quote}${from}${quote};${"\n".repeat(whole.split("\n").length - 1)}`;
       });
       if (empty.length === 0) return { contents: text, loader };
-      return { contents: `const ${empty.map((name) => `${name}: any = undefined`).join(", ")};\n${kept}`, loader };
+      return { contents: `const ${empty.map((name) => `${name}: any = undefined`).join(", ")}; ${kept}`, loader };
     });
   },
 });

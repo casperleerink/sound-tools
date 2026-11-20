@@ -51,6 +51,13 @@ test("a track is coloured, and deleted with the sends into it, its solo, its sid
   expect(f.steps).toEqual(["Colour a track", "Delete a track"]);
 });
 
+test("a return deleted takes the lanes of the sends into it with it", () => {
+  const send = { name: "send-ret-a", tool: "fader", state: { gain_db: 0 } };
+  const f = fakeSong({ state: { order: ["t00"] }, children: [trackOf("t00", [send, laneOf("lane-send", [{ tick: 0, value: 0 }])], [{ lane: "lane-send", target: "send-ret-a.gain_db" }]), back("ret-a")] });
+  editsOf(f.song).tracks.remove("ret-a");
+  expect([names(f, "t00"), named(f, "t00").state.automation]).toEqual([["mix"], []]);
+});
+
 test("delete asks first, and Cancel keeps the track", async () => {
   const kept = fakeSong({ children: [trackOf("t00")] }, { answers: { confirm: false } });
   await editsOf(kept.song).tracks.askToRemove("t00");
@@ -96,11 +103,24 @@ test("arm opens the recorder's input, and R records every armed track and the ke
     [{ child: "audio-1/rec", number: "record" }, 1],
     [{ child: "t00/rec", number: "record" }, 1],
   ]);
-  expect(f.clock.playing).toBe(true);
+  expect(f.clock.asked).toBe(true);
+  f.clock.playing = true;
+  tracks.stopped();
   f.clock.playing = false;
   tracks.stopped();
   expect(f.memory.recording).toBe(null);
   expect(f.sent.slice(3)).toEqual([[{ child: "t00/rec", number: "record" }, 0], [{ child: "audio-1/rec", number: "record" }, 0]]);
+});
+
+test("R on a stopped song records on while the engine has not yet said it plays", () => {
+  const rec = { name: "rec", tool: "recorder", state: { channels: [] } };
+  const f = fakeSong({ state: { order: ["t00"] }, children: [trackOf("t00", [rec])] });
+  const { tracks } = editsOf(f.song);
+  tracks.record();
+  tracks.stopped();
+  tracks.stopped();
+  expect(f.memory.recording).not.toBe(null);
+  expect(f.sent).toEqual([[{ child: "t00/rec", number: "record" }, 1]]);
 });
 
 test("R with nothing armed and an audio track chosen arms it", () => {
@@ -174,7 +194,7 @@ test("an effect turns off and on, and goes with its sidechain", () => {
   expect(order(f).off).toEqual(["comp"]);
   effects.remove("comp");
   expect([order(f).order, order(f).off, f.self.state.sidechains]).toEqual([[], [], []]);
-  expect(f.steps).toEqual(["Turn an effect off", "Remove an effect", "Remove an effect"]);
+  expect(f.steps).toEqual(["Turn an effect off", "Remove an effect"]);
 });
 
 test("a sidechain from its own track keys before its effects, from another after them, and Off takes it away", () => {
@@ -187,6 +207,26 @@ test("a sidechain from its own track keys before its effects, from another after
   effects.tap("comp", "post_fader");
   expect(f.self.state.sidechains).toEqual([{ effect: "t00/chain/comp", from: "t01", tap: "post_fader" }]);
   expect(f.steps).toEqual(["Turn on sidechain", "Turn off sidechain", "Turn on sidechain", "Change sidechain tap"]);
+});
+
+/** Track 1 with `chain` holding an EQ and a compressor, a lane on the EQ, an LFO on the compressor and a lane on its volume. */
+const automated = () => {
+  const f = chained(["eq", "comp"]);
+  const t00 = named(f, "t00");
+  t00.children.push(laneOf("lane-eq", [{ tick: 0, value: 0 }]), { name: "lfo-comp", tool: "lfo", state: {}, children: [] }, laneOf("lane-vol", [{ tick: 0, value: 0 }]));
+  t00.state.automation = [{ lane: "lane-eq", target: "chain/eq.bands[0].gain_db" }, { lane: "lfo-comp", target: "chain/comp.ratio" }, { lane: "lane-vol", target: "mix.gain_db" }];
+  return f;
+};
+
+test("an effect removed or replaced takes the lanes of its numbers with it, in the same step", () => {
+  const f = automated();
+  const effects = editsOf(f.song).effects("t00");
+  effects.remove("eq");
+  expect(named(f, "t00").state.automation.map(({ lane }: { lane: string }) => lane)).toEqual(["lfo-comp", "lane-vol"]);
+  expect(names(f, "t00")).toEqual(["mix", "chain", "lfo-comp", "lane-vol"]);
+  effects.replace("delay", "comp");
+  expect(names(f, "t00")).toEqual(["mix", "chain", "lane-vol"]);
+  expect(f.steps).toEqual(["Remove an effect", "Change an effect"]);
 });
 
 test("an instrument picked takes the place of the synth", () => {

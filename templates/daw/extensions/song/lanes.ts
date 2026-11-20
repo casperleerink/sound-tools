@@ -173,6 +173,19 @@ const rowIn = (draft: Draft, name: string) => {
   return owner?.tool === "track" || owner?.tool === "tape" ? owner : undefined;
 };
 
+/** The automation of `row` that moves the numbers of its child `path`, such as `chain/eq` or `send-ret-a`, or of what that child holds. */
+export const lanesInto = <A extends { target: string }>(row: { state: { automation: readonly A[] } }, path: string) =>
+  row.state.automation.filter(({ target }) => `${splitTarget(target)[0]}/`.startsWith(`${path}/`));
+/** Takes `lanesInto(row, path)` out of `row`, with the lanes, LFOs and envelopes that moved nothing else. */
+export function dropLanesOf(row: NonNullable<ReturnType<typeof rowIn>>, path: string) {
+  const gone = lanesInto(row, path);
+  row.state.automation = row.state.automation.filter((each) => !gone.includes(each));
+  for (const { lane } of gone) {
+    const at = row.children.findIndex((child) => child.name === lane);
+    if (at >= 0 && !row.state.automation.some((each) => each.lane === lane)) row.children.splice(at, 1);
+  }
+}
+
 /** Changes the points of the lane `lane` of `track` as one undo step `label`, sorted, one a tick; with none left, the lane goes. */
 export const editPoints = ({ update }: Pick<Song, "update">, label: string, track: string, lane: string, change: (points: AutomationPoint[]) => AutomationPoint[]) =>
   update(label, (draft) => {
