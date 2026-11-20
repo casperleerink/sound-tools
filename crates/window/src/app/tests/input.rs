@@ -405,3 +405,32 @@ fn recording_pictures() {
         .run();
     assert!(png.exists());
 }
+
+/// A take of sound on a track of notes is a problem that says where sound records.
+#[test]
+fn a_take_of_sound_on_a_track_of_notes_is_a_problem() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    let rec = folder.join("state/song/t00/rec.json");
+    std::fs::write(&rec, r#"{"tool": "recorder", "state": {"channels": [0]}}"#).unwrap();
+    let mut window = window_of(&folder);
+    let microphone = Microphone::default();
+    let waker = Arc::new(|| {});
+    window.state.incoming.live = (window.state.session)
+        .background(|project| Input::new(project, microphone.devices(), waker));
+    press(&mut window, "r");
+    until(&mut window, "the take", |state| state.session.recording());
+    let start = Instant::now();
+    while start.elapsed() < PATIENCE && window.state.session.status().frames < 24_000 {
+        microphone.write_until(window.state.session.status().frames + 2_048);
+        redraw(&mut window);
+    }
+    press(&mut window, "space");
+    until(&mut window, "the take refused", |state| {
+        microphone.write_until(state.session.status().frames + 2_048);
+        let problems = state.project().problems();
+        problems
+            .iter()
+            .any(|problem| problem.message.contains("record sound on an audio track"))
+    });
+}
