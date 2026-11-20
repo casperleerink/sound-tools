@@ -7,6 +7,7 @@ use sound_typescript::next::Drawn;
 use crate::app::State;
 
 use super::build::build;
+use super::field::searched;
 use super::semantics::delegates_enter;
 use super::{Along, BoxNode, Edge, Node, Opens, Overlay, Scope, Within};
 
@@ -97,6 +98,7 @@ fn overlays_in(scope: &Scope, node: &Node, owner: Option<&str>, layer: &mut Vec<
                 let close = opener.clone();
                 layer.push(
                     build(&inside, child)
+                        .children(searched(&inside, o))
                         .anchored(&opener, side, align, spec.gap)
                         .modal(true, move |s: &mut State| s.close_overlay(&close))
                         .focus_return(owner.unwrap_or(&opener)),

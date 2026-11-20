@@ -106,7 +106,7 @@ export const gallery = tool({
             <Section title="Choices">
               <Grid>
                 <Segmented id="wave" label="Waveform" options={WAVES} value={memory.wave} onChange={(wave) => (memory.wave = wave)} />
-                <Select id="shape" label="Filter" options={SHAPES} value={memory.shape} onChange={(shape) => (memory.shape = shape)} />
+                <Select id="shape" label="Filter" options={SHAPES} value={memory.shape} search onChange={(shape) => (memory.shape = shape)} />
               </Grid>
               <Grid>
                 <Menu id="menu" label="Track menu" items={[{ text: "Rename", icon: "pencil", onPress: () => {}, keys: "⏎" }, { text: "Duplicate", icon: "copy", onPress: () => {}, keys: "⌘D" }, { text: "Delete", icon: "trash-2", onPress: () => {}, danger: true }]} />

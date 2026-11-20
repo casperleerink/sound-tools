@@ -191,3 +191,65 @@ fn keys_typed_in_a_field_are_typing_never_a_shortcut() {
     assert_eq!(name(&window.state), "B C");
     assert!(!window.state.playing);
 }
+
+/// A list to pick a wave from, with a search line.
+const WAVES: &str = r#"import { h, input, text, tool } from "./sdk";
+const WAVES = ["Saw", "Square", "Sine"];
+export const waves = tool({
+  name: "waves", title: "Waves", when: "Never", doc: "Waves.", state: { wave: text({ default: "" }) }, sound: () => input,
+  view: (self, { update }) => (
+    <box key="wave" label="Wave" w={80} h={24} fill="fill">
+      <col overlay={{ open: "press" }} role="listbox" group w={120} fill="raised">
+        <field key="search" label="Search waves" value="" focus w={120} onCommit={() => {}} />
+        {WAVES.map((wave) => <row key={wave.toLowerCase()} label={wave} role="option" w={120} h={24} onPress={() => update("Wave", (draft) => void (draft.state.wave = wave))} />)}
+      </col>
+    </box>
+  ),
+});
+"#;
+
+fn wave(state: &State) -> Value {
+    let id = InstanceId::new("song/t00/chain/waves").unwrap();
+    serde_json::from_str::<Value>(&state.project.state_json(&id).unwrap()).unwrap()["wave"].clone()
+}
+
+#[test]
+fn a_search_line_in_a_list_shows_the_items_it_names_without_running_the_view() {
+    let (_scratch, folder) = with_tools(&[("waves", WAVES)]);
+    let mut window = laid_out(opened(&folder));
+    let at = |name: &str| format!("t00/chain/waves:{name}");
+    click(&mut window, &at("wave"));
+    redraw(&mut window);
+    assert_eq!(focused(&window), Some(at("search")));
+    let runs = window.state.tools.as_ref().unwrap().view_runs();
+    // Rune's own frames alone, as the window draws while the composer types.
+    for letter in ["S", "Q"] {
+        window.key(rune::KeyEvent {
+            key: rune::Key::Text(letter.into()),
+            mods: rune::Mods::default(),
+        });
+        window.frame(1.0 / 60.0);
+    }
+    assert!(window.find(&at("square")).is_some());
+    assert!(window.find(&at("saw")).is_none() && window.find(&at("sine")).is_none());
+    assert_eq!(window.state.tools.as_ref().unwrap().view_runs(), runs);
+    key(&mut window, rune::Key::Down);
+    assert_eq!(focused(&window), Some(at("square")));
+    assert!(window.find(&at("saw")).is_none());
+    key(&mut window, rune::Key::Enter);
+    assert_eq!(wave(&window.state), "Square");
+    assert!(window.state.open.is_empty());
+
+    click(&mut window, &at("wave"));
+    redraw(&mut window);
+    assert!(window.find(&at("saw")).is_some());
+    type_in(&mut window, "zz");
+    assert!(window.find(&at("wave-nothing")).is_some());
+    for _ in 0..2 {
+        key(&mut window, rune::Key::Backspace);
+    }
+    type_in(&mut window, "si");
+    key(&mut window, rune::Key::Enter);
+    assert_eq!(wave(&window.state), "Sine");
+    assert!(window.state.open.is_empty());
+}

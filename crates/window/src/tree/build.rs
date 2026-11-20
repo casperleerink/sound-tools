@@ -12,7 +12,7 @@ use sound_typescript::next::Drawn;
 use crate::app::State;
 use crate::lives::{Lives, Shown, Shows};
 
-use super::field::typed;
+use super::field::{kept, typed};
 use super::gesture::Gesture;
 use super::semantics::{delegates_enter, semantics};
 use super::shapes::drawing;
@@ -314,7 +314,7 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
         within: scope.within.clone(),
         ..*scope
     };
-    let shown = (b.children.iter()).filter(|child| !is_overlay(child));
+    let shown = (b.children.iter()).filter(|child| !is_overlay(child) && kept(scope, child));
     e.children(shown.map(|child| build(&inside, child)))
 }
 

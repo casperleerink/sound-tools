@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use rune::{Align, El, Key, KeyEvent, TextEdit, Tx};
+use rune::{Align, El, Key, KeyEvent, TextEdit, Tx, text};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sound_core::InstanceId;
@@ -12,7 +12,7 @@ use sound_typescript::next::{Drawn, Tools};
 use crate::app::State;
 
 use super::semantics::Press;
-use super::{FieldNode, Memos, Node, Opens, Scope, Within};
+use super::{BoxNode, FieldNode, Memos, Node, Opens, Scope, Within};
 
 /// The fields shown, by key in the window.
 #[derive(Default)]
@@ -26,6 +26,9 @@ pub(crate) struct Fields {
     /// The key of the element the composer pressed last: where the keys go back to from a field
     /// that took them as it appeared.
     pub(crate) pressed: Option<String>,
+    /// The items an open menu or list shows as its search field filters them, by the key of
+    /// what opened it: what the arrows go to and Enter picks.
+    found_items: HashMap<String, Vec<(String, Press)>>,
 }
 
 struct Typed {
@@ -39,6 +42,14 @@ struct Typed {
 }
 
 impl Typed {
+    /// It is the search field of a menu or list: what it says only filters its items.
+    fn searches(&self) -> bool {
+        self.press
+            .within
+            .as_ref()
+            .is_some_and(|within| within.picks)
+    }
+
     fn new(value: &str, press: Press) -> Self {
         let mut edit = TextEdit::new(value);
         (edit.anchor, edit.focus) = (0, edit.text.len());
@@ -83,19 +94,116 @@ pub(super) fn typed(scope: &Scope, f: &FieldNode) -> El {
         Some("end") => e = e.align(Align::End),
         _ => {}
     }
+    let searched = (scope.within.as_ref())
+        .filter(|within| within.picks)
+        .map(|within| within.opener.clone());
     let (typing, value) = (key.clone(), f.value.clone());
-    let submitted = key.clone();
+    let (submitted, picked) = (key.clone(), searched.clone());
     e.on_edit(rune::edit_access(move |s: &mut State| {
         s.typing(&typing, &value, &press)
     }))
-    .on_submit(move |s: &mut State, tx: &mut Tx| s.done_typing(&submitted, true, tx))
-    .on_input_key(move |s: &mut State, pressed: &KeyEvent, tx: &mut Tx| {
-        let left = pressed.key == Key::Escape;
-        if left {
-            s.done_typing(&key, false, tx);
-        }
-        left
+    .on_submit(move |s: &mut State, tx: &mut Tx| match &picked {
+        Some(opener) => s.pick_found(opener, 0),
+        None => s.done_typing(&submitted, true, tx),
     })
+    .on_input_key(move |s: &mut State, pressed: &KeyEvent, tx: &mut Tx| {
+        match (&pressed.key, &searched) {
+            (Key::Escape, _) => s.done_typing(&key, false, tx),
+            (Key::Down | Key::Up, Some(opener)) => {
+                let fields = s.fields.get_mut();
+                let items = fields.found_items.get(opener).into_iter().flatten();
+                let mut keys = items.map(|(key, _)| key);
+                let to = match pressed.key == Key::Down {
+                    true => keys.next(),
+                    false => keys.last(),
+                };
+                if let Some(to) = to {
+                    tx.focus(to, true);
+                }
+            }
+            _ => return false,
+        }
+        true
+    })
+}
+
+/// Whether `node`, in the open overlay of `scope`, shows: an item of a menu or list shows only
+/// while its label has what the overlay's search field says.
+pub(super) fn kept(scope: &Scope, node: &Node) -> bool {
+    match (
+        scope.within.as_ref().filter(|within| within.picks),
+        item(node),
+    ) {
+        (Some(within), Some((_, label))) => {
+            (scope.state.search_of(&within.opener)).is_none_or(|search| has(label, &search))
+        }
+        _ => true,
+    }
+}
+
+fn has(label: &str, search: &str) -> bool {
+    label.to_lowercase().contains(search)
+}
+
+/// An item of a menu or list: a box a press picks, with its label.
+fn item(node: &Node) -> Option<(&BoxNode, &str)> {
+    match node {
+        Node::Row(b) | Node::Col(b) | Node::Plain(b) if b.press && b.overlay.is_none() => {
+            Some((b, b.label.as_deref()?))
+        }
+        _ => None,
+    }
+}
+
+/// Keeps the items the open `overlay` of `scope` shows as its search filters them, and says so
+/// in words when none does.
+pub(super) fn searched(scope: &Scope, overlay: &BoxNode) -> Option<El> {
+    let within = scope.within.as_ref().filter(|within| within.picks)?;
+    let search = scope.state.search_of(&within.opener);
+    let mut items = Vec::new();
+    items_in(overlay, &mut items);
+    let found: Vec<(String, Press)> = (items.into_iter())
+        .filter(|(_, label)| search.as_deref().is_none_or(|search| has(label, search)))
+        .filter_map(|(b, _)| {
+            let element = b.key.clone()?;
+            let press = Press {
+                instance: scope.instance.clone(),
+                element: element.clone(),
+                pressed: true,
+                opens: b.overlay_of(Opens::Press).is_some(),
+                within: Some(within.clone()),
+            };
+            Some((scope.key(&element), press))
+        })
+        .collect();
+    let none = found.is_empty();
+    let mut fields = scope.state.fields.borrow_mut();
+    fields.found_items.insert(within.opener.clone(), found);
+    let search = search.filter(|_| none)?;
+    let theme = &scope.state.theme;
+    Some(
+        text(format!("Nothing matches “{search}”."))
+            .key(format!("{}-nothing", within.opener))
+            .font(theme.text("label"))
+            .color(theme.color("text-muted"))
+            .wrap()
+            .padding(theme.space(2)),
+    )
+}
+
+/// The items inside `b`, not in an overlay of its own.
+fn items_in<'a>(b: &'a BoxNode, items: &mut Vec<(&'a BoxNode, &'a str)>) {
+    for child in &b.children {
+        match (item(child), child) {
+            (Some(found), _) => items.push(found),
+            (None, Node::Row(inner) | Node::Col(inner) | Node::Plain(inner))
+                if inner.overlay.is_none() =>
+            {
+                items_in(inner, items);
+            }
+            _ => {}
+        }
+    }
 }
 
 impl State {
@@ -107,7 +215,7 @@ impl State {
             .or_insert_with(|| Typed::new(value, press.clone()));
         typed.press = press.clone();
         // One the keys just left keeps what it says until it is committed.
-        let idle = !typed.edit.focused && !typed.had_keys;
+        let idle = !typed.edit.focused && !typed.had_keys && !typed.searches();
         if idle && (typed.from != value || typed.edit.text != value) {
             *typed = Typed::new(value, press.clone());
         }
@@ -120,6 +228,26 @@ impl State {
         let typed = (fields.by_key.entry(key.to_string()))
             .or_insert_with(|| Typed::new(value, press.clone()));
         &mut typed.edit
+    }
+
+    /// What the search field of the open menu or list that `opener` opened says, in lower case,
+    /// when it says something.
+    fn search_of(&self, opener: &str) -> Option<String> {
+        let fields = self.fields.borrow();
+        let mut searches = fields.by_key.values().filter(|typed| {
+            (typed.press.within.as_ref())
+                .is_some_and(|within| within.picks && within.opener == opener)
+        });
+        let search = searches.next()?.edit.text.trim().to_lowercase();
+        (!search.is_empty()).then_some(search)
+    }
+
+    /// Picks the item at `at` that the open menu or list `opener` opened shows now.
+    fn pick_found(&mut self, opener: &str, at: usize) {
+        let found = self.fields.get_mut().found_items.get(opener);
+        if let Some((_, press)) = found.and_then(|items| items.get(at)).cloned() {
+            self.press(&press, "press", None);
+        }
     }
 
     /// Whether a field has the keys: none of them is a shortcut then.
@@ -154,7 +282,7 @@ impl State {
 pub(crate) fn follow_fields(state: &mut State) -> bool {
     let left: Vec<(Press, String)> = (state.fields.get_mut().by_key.values_mut())
         .filter_map(|typed| {
-            let left = typed.had_keys && !typed.edit.focused;
+            let left = typed.had_keys && !typed.edit.focused && !typed.searches();
             typed.had_keys = typed.edit.focused;
             left.then(|| (typed.press.clone(), typed.edit.text.clone()))
         })
@@ -186,6 +314,7 @@ pub(crate) fn follow_fields(state: &mut State) -> bool {
     for key in gone {
         if let Some(typed) = fields.by_key.remove(&key)
             && typed.had_keys
+            && !typed.searches()
         {
             commits.push((typed.press, typed.edit.text.clone()));
         }
