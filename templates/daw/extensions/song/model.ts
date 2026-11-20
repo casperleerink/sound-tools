@@ -52,7 +52,7 @@ export type Memory = {
   rulerMenu: { x: number; mark: Mark | null };
   /** The range the ruler shows to repeat while the piece does not repeat, none until the composer made one. */
   repeatRange: { from: number; to: number } | null;
-  /** The grid of drags, nudges and new clips in ticks: 0 is off. */
+  /** The grid of drags, nudges and new clips in ticks, one of `SNAPS`: 0 is off; `BAR` and `BEAT` are the bar and the beat of each time signature. */
   snap: number;
   /** How tall the note editor is, in points, and whether it takes all the window but one track. */
   editor: number;

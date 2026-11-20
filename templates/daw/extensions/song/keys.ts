@@ -7,7 +7,7 @@ import { chosenEffect } from "./effects";
 import { itemsIn, spanOf } from "./clips";
 import { itemAt, rowOfKey, type Song } from "./model";
 import { noteCommand, openClip, type NoteCommand } from "./notes";
-import { BAR, stepOf } from "./time";
+import { BAR } from "./time";
 import { PLANE } from "./view";
 
 /** How far up or down an arrow moves a chosen point: a hundredth of its lane's travel. */
@@ -73,8 +73,8 @@ export const actions: Record<string, Action<Song>> = {
     editsOf(song).marks.remove(song.memory.mark);
   }),
   delete_point: on(["backspace", "delete"], "Remove the chosen automation points", (song) => editsOf(song).lanes.removeChosen()),
-  point_left: on(["left"], "Move the chosen automation points earlier", (song) => editsOf(song).lanes.nudge(-stepOf(song.memory.snap), 0)),
-  point_right: on(["right"], "Move the chosen automation points later", (song) => editsOf(song).lanes.nudge(stepOf(song.memory.snap), 0)),
+  point_left: on(["left"], "Move the chosen automation points earlier", (song) => editsOf(song).lanes.nudge(-1, 0)),
+  point_right: on(["right"], "Move the chosen automation points later", (song) => editsOf(song).lanes.nudge(1, 0)),
   point_up: on(["up"], "Move the chosen automation points up", (song) => editsOf(song).lanes.nudge(0, -POINT_STEP)),
   point_down: on(["down"], "Move the chosen automation points down", (song) => editsOf(song).lanes.nudge(0, POINT_STEP)),
   point_up_more: on(["shift-up"], "Move the chosen automation points up more", (song) => editsOf(song).lanes.nudge(0, -10 * POINT_STEP)),

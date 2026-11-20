@@ -2,7 +2,7 @@ import { h, hearsNotes, live, Live, memo, type Color } from "../../../sdk";
 import { lengthAt, lengthOf } from "../../../song/clips";
 import { colourOf, itemAt, muted, rowOfKey, titleOf, words } from "../../../song/model";
 import { cannotRender } from "../../../song/tracks";
-import { BAR, barStarts, beatRuns, placeOf, type Runs } from "../../../song/time";
+import { BAR, barStarts, beatRuns, dragGrid, placeOf, stepAt, type Runs } from "../../../song/time";
 import { GUTTER, laneGroups, PLANE, ROW, TIME, trackAt, trackY, type Page, type Row, type Track } from "../../../song/view";
 import { Button } from "../../button";
 import { MenuList, type Item } from "../../menu";
@@ -207,13 +207,13 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
   const [end, begin] = [live.drag(RESIZE), live.drag(RESIZE_START)];
   // A region trims while it is chosen alone, and shows its handles.
   const resizes = chosen && (!region || page.song.memory.selected.length === 1);
-  const trims = region && trimsOf(page, key, region, start, length, memory.snap || 1);
+  const runs = page.song.clock.tempo_map.time_signatures;
+  const shortest = stepAt(runs, start, memory.snap);
+  const trims = region && trimsOf(page, key, region, start, length, memory.snap > 0 ? shortest : 1);
   const x = resizes ? moved.dx.plus(begin.dx).plus(start) : moved.dx.plus(start);
   const width = resizes ? end.dx.minus(begin.dx).plus(length) : Live.of(length);
   const y = moved.dy.plus(top);
-  const step = memory.snap || 1;
-  const called = region ? `Audio clip ${words(name)}` : name ? `Clip ${name}` : `Clip at ${placeOf(page.song.clock.tempo_map.time_signatures, start).slice(0, 2).join(".")} on ${titleOf(track)}`;
-  const shortest = memory.snap || 240;
+  const called = region ? `Audio clip ${words(name)}` : name ? `Clip ${name}` : `Clip at ${placeOf(runs, start).slice(0, 2).join(".")} on ${titleOf(track)}`;
   return (
     <box>
       {chosen && <box place={[start, top, length, 1]} inset={[0, INSET, 0, INSET]} radius="md" fill="fill" border="border-strong" opacity={moved.alt.times(moved.active).times(dim)} />}
@@ -222,8 +222,7 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
         drag={{
           x: [-(chosen ? bounds.start : start), null],
           y: chosen ? [bounds.up, bounds.down] : [-top, page.rows.findLast((each) => each.kind === "track")!.top - top],
-          snap: [step, 1],
-          from: [start, top],
+          ...dragGrid(runs, start, memory.snap, [1, top]),
           ...(chosen ? { id: MOVE } : {}),
         }}
         onPress={(p) => page.edits.clips.press(key, p)}
@@ -245,9 +244,9 @@ const Item = ({ page, track, itemKey: key, name, region, start, length, notes, t
         {dim < 1 && !muted(track) && <Tooltip text={UNPLAYED} />}
         {resizes && [
           <box key={`clip-end-${key}`} label={`End of ${called}`} inset={[null, 0, 0, 0]} w={EDGE}
-            drag={{ x: trims ? trims.end.x : [-(length - shortest), null], snap: [step, 1], from: [start + length, top], id: RESIZE }} onDragEnd={trims ? trims.end.onDragEnd : (p) => page.edits.clips.resizeEnd(p)} />,
+            drag={{ x: trims ? trims.end.x : [-(length - shortest), null], ...dragGrid(runs, start + length, memory.snap, [1, top]), id: RESIZE }} onDragEnd={trims ? trims.end.onDragEnd : (p) => page.edits.clips.resizeEnd(p)} />,
           <box key={`clip-start-${key}`} label={`Start of ${called}`} inset={[0, 0, null, 0]} w={EDGE}
-            drag={{ x: trims ? trims.start.x : [-start, length - shortest], snap: [step, 1], from: [start, top], id: RESIZE_START }} onDragEnd={trims ? trims.start.onDragEnd : (p) => page.edits.clips.resizeStart(p)} />,
+            drag={{ x: trims ? trims.start.x : [-start, length - shortest], ...dragGrid(runs, start, memory.snap, [1, top]), id: RESIZE_START }} onDragEnd={trims ? trims.start.onDragEnd : (p) => page.edits.clips.resizeStart(p)} />,
         ]}
       </Clip>
       {region && resizes && <RegionHandles page={page} itemKey={key} region={region} words={called} x={x} y={y} width={width} />}

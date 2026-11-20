@@ -1,5 +1,6 @@
 import { h, live, type Color } from "../../../sdk";
 import { controllerName, LANE_NAMES, pointsOf, type NoteLane } from "../../../song/notes";
+import { dragGrid } from "../../../song/time";
 import { LANE, playing, type Roll } from "./roll-view";
 import { Playhead } from "../time";
 
@@ -18,6 +19,7 @@ export const ExpressionLane = ({ roll, lane }: { roll: Roll; lane: PointLane }) 
   const points = pointsOf(roll.state, lane);
   const snap = roll.page.song.memory.snap;
   const heights = points.map((point) => down(point.value));
+
   const path = points.length === 0 ? [] : [0, heights[0]!, ...points.flatMap((point, at) => [point.at, heights[at]!]), roll.end, heights.at(-1)!];
   const segments = path.flatMap((_, at) => (at % 2 === 0 && at + 3 < path.length ? path.slice(at, at + 4) : []));
   return (
@@ -29,7 +31,7 @@ export const ExpressionLane = ({ roll, lane }: { roll: Roll; lane: PointLane }) 
         const drag = live.drag(`point-${index}`);
         return (
           <box key={`point-${index}`} label={`Point ${index + 1} of ${name}`} role="button" value={point.value} place={[drag.dx.plus(point.at), drag.dy.plus(heights[index]!)]} w={10} h={10} radius="full" fill="text" border={roll.colour}
-            drag={{ x: true, y: [-heights[index]!, 1 - heights[index]!], snap: [snap, 0], from: [point.at, heights[index]!] }}
+            drag={{ x: true, y: [-heights[index]!, 1 - heights[index]!], ...dragGrid(roll.runs, roll.state.start + point.at, snap, [0, heights[index]!]) }}
             onPress={(p) => p.alt && roll.edits.removePoint(lane, point.at)} onDragEnd={(p) => roll.edits.movePoint(lane, point.at, p)} />
         );
       })}

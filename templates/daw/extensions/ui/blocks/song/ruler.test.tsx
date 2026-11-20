@@ -53,6 +53,18 @@ test("the repeat's bar turns the repeat off and on, and its ends land on beats, 
   expect(f.steps).toEqual([]);
 });
 
+test("after a bar of 7/8, the repeat's end and a tempo change dragged land on the beats of the 4/4 bar after it", () => {
+  const piece = { tempo_map: { time_signatures: [{ signature: "7/8", bars: 1 }, { signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }, { tick: 4.5 * BEAT, bpm: 90 }] } };
+  const f = fakeSong({ children: [] }, { piece });
+  f.memory.snap = BEAT;
+  f.clock.setRepeat({ from: 3.5 * BEAT, to: 5.5 * BEAT });
+  ruler(f);
+  act("End of the repeat", "drag", { dx: 1000 });
+  expect(f.clock.repeat).toEqual({ from: 3.5 * BEAT, to: 6.5 * BEAT });
+  act("Tempo change at bar 2", "drag", { dx: 1000 });
+  expect(f.piece.tempo_map.tempo_changes.map((change) => change.tick)).toEqual([0, 5.5 * BEAT]);
+});
+
 test("the snap's list sets the grid that drags, nudges and new clips land on", () => {
   const f = fakeSong({ children: [] });
   ruler(f);

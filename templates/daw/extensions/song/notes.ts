@@ -6,7 +6,7 @@
 import { humanize, legato, quantize, type FilledStateOfTool, type Frozen, type Note, type Pointer } from "../sdk";
 import { editClips, lengthOf } from "./clips";
 import { itemAt, rowOfKey, type Song } from "./model";
-import { BEAT, cellOf, stepOf } from "./time";
+import { BEAT, cellOf, stepped } from "./time";
 
 type Clip = FilledStateOfTool<"timeline">;
 /** A lane under the notes: the velocities, the pedal, an expression lane, or a MIDI controller by number. */
@@ -88,7 +88,7 @@ export function operate(song: Song, key: string, operation: Operation) {
   change(song, key, OPERATIONS[operation], (notes, chosen) => {
     const places = chosen.size > 0 ? [...chosen] : notes.map((_, index) => index);
     const picked = places.map((index) => notes[index]!);
-    const done = operation === "quantize" ? quantize(picked, { grid: stepOf(memory.snap), strength: memory.strength, swing: memory.swing })
+    const done = operation === "quantize" ? quantize(picked, { grid: memory.snap || BEAT / 4, strength: memory.strength, swing: memory.swing })
       : operation === "humanize" ? humanize(picked, { seed, ...HUMANIZE }) : legato(picked);
     const next = [...notes];
     places.forEach((index, at) => (next[index] = { ...done[at]!, start: Math.min(done[at]!.start, last) }));
@@ -116,6 +116,14 @@ const clipAt = (song: Pick<Song, "children">, key: string) => {
   const clip = itemAt(song.children, key);
   return clip?.tool === "timeline" ? clip.state : undefined;
 };
+/** The song's grid in the ticks of a clip that starts at `start`: the cell `x` is in, and `x` moved `by` lines. */
+const gridIn = ({ clock, memory }: Pick<Song, "clock" | "memory">, start: number) => {
+  const runs = clock.tempo_map.time_signatures;
+  return {
+    cell: (x: number) => Math.max(cellOf(runs, start + x, memory.snap) - start, 0),
+    step: (x: number, by: number) => stepped(runs, start + x, memory.snap, by) - start,
+  };
+};
 
 /**
  * Does `command` to the notes of the open clip; whether there was something to do: all but
@@ -139,7 +147,7 @@ export function noteCommand(song: Song, command: NoteCommand): boolean {
     memory.notes = clip.notes.map(noteKey);
   } else if (command === "add") {
     const last = picked().reduce<Frozen<Note> | undefined>((latest, note) => (latest && latest.start + latest.length >= note.start + note.length ? latest : note), undefined);
-    const start = last ? last.start + last.length : inside ? cellOf(playhead - clip.start, memory.snap) : 0;
+    const start = last ? last.start + last.length : inside ? gridIn(song, clip.start).cell(playhead - clip.start) : 0;
     if (start >= lengthOf(clip)) return false;
     const note = { start, length: memory.length, pitch: last?.pitch ?? 60, velocity: 100 };
     change(song, key, "Add a note", (notes) => ({ notes: [...notes, note], chosen: new Set([notes.length]) }));
@@ -165,14 +173,17 @@ export function noteCommand(song: Song, command: NoteCommand): boolean {
     const { span } = spanOf(picked());
     change(song, key, "Duplicate notes", (notes, all) => moved(notes, all, span, 0, true, Infinity));
   } else if (command === "shorter" || command === "longer") {
-    const by = (command === "longer" ? 1 : -1) * stepOf(memory.snap);
-    change(song, key, "Resize notes", (notes, all) => ({ notes: notes.map((note, index) => (all.has(index) ? { ...note, length: Math.max(note.length + by, SHORTEST) } : note)), chosen: all }));
+    const { step } = gridIn(song, clip.start);
+    const by = command === "longer" ? 1 : -1;
+    change(song, key, "Resize notes", (notes, all) => ({ notes: notes.map((note, index) => (all.has(index) ? { ...note, length: Math.max(step(note.start + note.length, by) - note.start, SHORTEST) } : note)), chosen: all }));
   } else if (command === "louder" || command === "softer") {
     const by = command === "louder" ? VELOCITY_STEP : -VELOCITY_STEP;
     change(song, key, "Change velocity", (notes, all) => ({ notes: notes.map((note, index) => (all.has(index) ? { ...note, velocity: clamp(note.velocity + by, 1, 127) } : note)), chosen: all }));
   } else {
     const [steps, pitches] = NOTE_MOVES[command];
-    change(song, key, "Move notes", (notes, all, end) => moved(notes, all, steps * stepOf(memory.snap), pitches, false, end));
+    const { start } = spanOf(picked());
+    const ticks = steps === 0 ? 0 : gridIn(song, clip.start).step(start, steps) - start;
+    change(song, key, "Move notes", (notes, all, end) => moved(notes, all, ticks, pitches, false, end));
   }
   return true;
 }
@@ -192,7 +203,7 @@ export function pitchOf(text: string): number | null {
 const WHOLE = 4 * BEAT;
 /** The note a length is said in, as the 16 of 3/16: the snap's (a quarter for a bar, a sixteenth for none), or the first finer one it is whole in, down to 1/64. */
 export const noteValueOf = (length: number, snap: number) => {
-  const coarsest = WHOLE / Math.min(stepOf(snap), BEAT);
+  const coarsest = WHOLE / Math.min(snap || BEAT / 4, BEAT);
   return [4, 8, 16, 32, 64].find((value) => value >= coarsest && length % (WHOLE / value) === 0) ?? 64;
 };
 /** A length as the editor says it: `3/16`. */
@@ -240,6 +251,7 @@ export const noteEdits = (song: Song, key: string) => {
   /** The earliest chosen note, which the head says. */
   const said = () => notes().filter((note) => memory.notes.includes(noteKey(note))).reduce<Frozen<Note> | undefined>((first, note) => (!first || note.start < first.start ? note : first), undefined);
   const hear = (pitch: number) => song.play(pitch, { child: rowOfKey(key) as `audio-${string}`, seconds: 0.3 });
+  const grid = () => gridIn(song, clipAt(song, key)?.start ?? 0);
   return {
     /** A press on a note: it sounds; shift or cmd adds it or takes it out; a right press chooses it for the menu; a plain press chooses it alone. */
     press(note: Frozen<Note>, p: Pick<Pointer, "shift" | "cmd" | "right">) {
@@ -259,7 +271,7 @@ export const noteEdits = (song: Song, key: string) => {
     /** A press where no note is: a double click adds one on the snap, as long as the last, and sounds it; a plain press lets go of the chosen. */
     pressEmpty(p: Pick<Pointer, "x" | "y" | "clicks" | "shift" | "cmd">) {
       if (p.clicks === 2) {
-        const note = { start: cellOf(p.x, memory.snap), length: memory.length, pitch: clamp(127 - Math.floor(p.y), 0, 127), velocity: 100 };
+        const note = { start: grid().cell(p.x), length: memory.length, pitch: clamp(127 - Math.floor(p.y), 0, 127), velocity: 100 };
         hear(note.pitch);
         edit("Add a note", (list) => ({ notes: [...list, note], chosen: new Set([list.length]) }));
       } else if (!p.shift && !p.cmd) memory.notes = [];
@@ -340,7 +352,7 @@ export const noteEdits = (song: Song, key: string) => {
     },
     /** A double click on an expression lane: a point on the snap. */
     addPoint(lane: PointLane, p: Pick<Pointer, "x" | "y">) {
-      editClips(song, "Add a point", [key], (clip) => setPoints(clip, lane, [...pointsOf(clip, lane), { at: cellOf(p.x, memory.snap), value: valueDown(lane, p.y) }]));
+      editClips(song, "Add a point", [key], (clip) => setPoints(clip, lane, [...pointsOf(clip, lane), { at: grid().cell(p.x), value: valueDown(lane, p.y) }]));
     },
     /** A drag of the point at `at` of an expression lane, on the snap. */
     movePoint(lane: PointLane, at: number, p: Pick<Pointer, "dx" | "dy">) {

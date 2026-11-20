@@ -184,3 +184,17 @@ test("the starts of notes dragged past 0 stop there together", () => {
   f.edits.resizeStart({ dx: -BEAT });
   expect(f.notes().map((each) => each.start)).toEqual([0, BEAT / 2]);
 });
+
+test("in a clip that starts off the grid, a double click, N and the arrow keys land on the song's grid", () => {
+  const f = fakeSong({ children: [trackOf("t00", [clipOf("c00", 1000, BAR, [])])] }, { tick: 1300 });
+  f.memory.below = { kind: "editor", clip: "t00/c00" };
+  const notes = () => (f.self.children[0] as any).children[1].state.notes as ReturnType<typeof note>[];
+  editsOf(f.song).notes("t00/c00").pressEmpty({ x: 300, y: 127 - 64, clicks: 2, shift: false, cmd: false });
+  expect(notes().map((each) => 1000 + each.start)).toEqual([1200]);
+  f.memory.notes = [];
+  noteCommand(f.song, "add");
+  expect(notes().map((each) => 1000 + each.start)).toEqual([1200, 1200]);
+  f.memory.snap = BEAT;
+  noteCommand(f.song, "right");
+  expect(notes().map((each) => 1000 + each.start)).toEqual([1200, 2160]);
+});

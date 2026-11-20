@@ -73,7 +73,7 @@ const Ruler = ({ roll }: { roll: Roll }) => {
   const { key, bars, state, page } = roll;
   const snap = page.song.memory.snap;
   return (
-    <box key={`${key}-ruler`} label="Bars of the clip" grow={1} h={HEADER} clip plane={{ x: key }} onPress={(p) => page.song.clock.jump(state.start + nearestOf(p.x, snap))}>
+    <box key={`${key}-ruler`} label="Bars of the clip" grow={1} h={HEADER} clip plane={{ x: key }} onPress={(p) => page.song.clock.jump(nearestOf(roll.runs, state.start + p.x, snap))}>
       {memo(`ruler-${key}`, [roll.runs, state.start, roll.end], () => {
         // A beat says its number once the zoom leaves it room for one.
         const beats = live.plane(key).zoom.ge(BEAT_ROOM / BEAT);

@@ -217,3 +217,37 @@ test("clips dragged past tick 0 stop there together, and so do their starts", ()
   clips.resizeStart({ dx: -BAR });
   expect(starts(f.self, "t00")).toEqual([0, 2 * BAR - BEAT]);
 });
+
+/** Two bars of 4/4, then 3/4: bars start at 0, 4, 8, 11 and 14 beats. */
+const threeAfterFour = { tempo_map: { time_signatures: [{ signature: "4/4", bars: 2 }, { signature: "3/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] } };
+/** A bar of 7/8, then 4/4: bars start at 3.5 and 7.5 beats. */
+const fourAfterSeven = { tempo_map: { time_signatures: [{ signature: "7/8", bars: 1 }, { signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] } };
+
+test("a Bar snap after a time signature change adds and nudges on the bar lines of the song", () => {
+  const f = fakeSong({ children: [trackOf("t00")] }, { piece: threeAfterFour });
+  f.memory.snap = BAR;
+  const { clips } = editsOf(f.song);
+  clips.add({ x: 11 * BEAT + 100, y: 0.5 });
+  expect(items(f.self, "t00")[0]!.state).toMatchObject({ start: 11 * BEAT, length: 3 * BEAT });
+  clips.nudge(1);
+  expect(starts(f.self, "t00")).toEqual([14 * BEAT]);
+  clips.nudge(-1);
+  clips.nudge(-1);
+  expect(starts(f.self, "t00")).toEqual([8 * BEAT]);
+});
+
+test("a Beat snap after a bar of 7/8 lands on the beats of the 4/4 bar after it", () => {
+  const f = fakeSong({ children: [trackOf("t00")] }, { piece: fourAfterSeven });
+  f.memory.snap = BEAT;
+  const { clips } = editsOf(f.song);
+  clips.add({ x: 4.5 * BEAT + 100, y: 0.5 });
+  expect(items(f.self, "t00")[0]!.state.start).toBe(4.5 * BEAT);
+  clips.nudge(1);
+  expect(starts(f.self, "t00")).toEqual([5.5 * BEAT]);
+});
+
+test("audio dropped on a song in 7/8 lands at the nearest beat, an eighth", () => {
+  const f = fakeSong({ state: { order: ["audio-1"] }, children: [tapeOf("audio-1")] }, { piece: fourAfterSeven });
+  editsOf(f.song).clips.dropAudio(["kick.wav"], { x: 1.5 * BEAT + 100, y: 0.5 });
+  expect(items(f.self, "audio-1")[0]!.state.start).toBe(1.5 * BEAT);
+});

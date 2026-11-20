@@ -114,3 +114,17 @@ test("every other part of the song is shaded from the second, the bars before th
   expect(shadedParts([{ bar: 5, name: "Verse" }, { bar: 9, name: "Chorus" }, { bar: 13, name: "Bridge" }], runs, 64 * BAR)).toEqual([[4 * BAR, 8 * BAR], [12 * BAR, 64 * BAR]]);
   expect(shadedParts([{ bar: 1, name: "Intro" }, { bar: 3, name: "Verse" }], runs, 16 * BAR)).toEqual([[2 * BAR, 16 * BAR]]);
 });
+
+test("after a bar of 7/8, L, a drag on the ruler and a press on it keep to the beats of the song", () => {
+  const piece = { tempo_map: { time_signatures: [{ signature: "7/8", bars: 1 }, { signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] } };
+  const f = fakeSong({ children: [trackOf("t00", [clipOf("c00", 3.5 * BEAT, BAR)])] }, { piece });
+  f.memory.snap = BEAT;
+  const { marks } = editsOf(f.song);
+  f.memory.selected = ["t00/c00"];
+  marks.repeatChosen();
+  expect(f.clock.repeat).toEqual({ from: 3.5 * BEAT, to: 7.5 * BEAT });
+  marks.loop({ x: 3.5 * BEAT + 100, dx: 2 * BEAT - 200 });
+  expect(f.clock.repeat).toEqual({ from: 3.5 * BEAT, to: 5.5 * BEAT });
+  marks.press({ x: 4.5 * BEAT - 100, clicks: 1 });
+  expect(f.clock.tick).toBe(4.5 * BEAT);
+});

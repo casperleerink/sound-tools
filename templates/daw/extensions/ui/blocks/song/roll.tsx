@@ -1,6 +1,6 @@
 import { h, live, memo, type Color, type Frozen, type Note, type Pointer } from "../../../sdk";
 import { noteCommand, noteKey, pitchName, STRENGTHS, SWINGS, type NoteCommand } from "../../../song/notes";
-import { BEAT, placeOf } from "../../../song/time";
+import { BEAT, dragGrid, placeOf } from "../../../song/time";
 import { MenuList, type Item } from "../../menu";
 import { EmptyState } from "../empty-state";
 import { barsOf, BEFORE, END, MOVE, PITCH, playing, SHORTEST, signatureOf, START, ZOOM, type Roll } from "./roll-view";
@@ -28,7 +28,7 @@ export const RollPlane = ({ roll }: { roll: Roll }) => {
         onPress={(p) => !p.right && edits.pressEmpty(inRows(p))} onDragEnd={(p) => edits.marquee(inRows(p))}>
         <Grid roll={roll} />
         {barsOf(state.notes).map(([bar, notes]) =>
-          memo(`notes-${key}-${bar}`, [signatureOf(roll, notes), top, roll.across, roll.colour, roll.page.song.memory.snap, roll.runs], () => (
+          memo(`notes-${key}-${bar}`, [signatureOf(roll, notes), top, roll.across, roll.colour, roll.page.song.memory.snap, roll.runs, roll.state.start], () => (
             <box>{notes.map(({ note, index }) => noteParts(roll, note, index))}</box>
           )),
         )}
@@ -81,6 +81,7 @@ function noteParts(roll: Roll, note: Frozen<Note>, index: number) {
   const snap = page.song.memory.snap;
   const key = `note-${index}`;
   const row = 127 - note.pitch - top;
+  const gridOf = (tick: number) => dragGrid(roll.runs, roll.state.start + tick, snap, [1, row]);
   const [move, front, back] = [live.drag(chosen ? MOVE : key), live.drag(START), live.drag(END)];
   const press = (p: Pointer) => (p.clicks === 2 ? edits.remove(note) : edits.press(note, p));
   const name = `${pitchName(note.pitch)} at ${placeOf(page.song.clock.tempo_map.time_signatures, roll.state.start + note.start).join(".")}`;
@@ -91,13 +92,13 @@ function noteParts(roll: Roll, note: Frozen<Note>, index: number) {
   const handle = Math.min(HANDLE, note.length / 3);
   const end = (side: "start" | "end") => (
     <box key={`${key}-${side}`} label={`${side === "start" ? "Start" : "End"} of note ${name}`} place={[side === "start" ? x : x.plus(length).minus(handle), y, handle, 1]}
-      drag={{ x: true, snap: [snap, 1], from: [side === "start" ? note.start : note.start + note.length, row], id: side === "start" ? START : END }}
+      drag={{ x: true, ...gridOf(side === "start" ? note.start : note.start + note.length), id: side === "start" ? START : END }}
       onPress={press} onDragEnd={(p) => (side === "start" ? edits.resizeStart(p) : edits.resize(p))} />
   );
   return (
     <box key={key} label={`Note ${name}`} role="button" value={chosen}
       place={[x, y, length, (PITCH - 1) / PITCH]} radius="sm"
-      fill={chosen ? "text" : (`${colour}/${shade}` as Color)} border={colour} drag={{ x: true, y: true, snap: [snap, 1], from: [note.start, row], id: chosen ? MOVE : key }}
+      fill={chosen ? "text" : (`${colour}/${shade}` as Color)} border={colour} drag={{ x: true, y: true, ...gridOf(note.start), id: chosen ? MOVE : key }}
       onPress={press} onDragEnd={(p) => (!chosen && edits.choose(note), edits.move(p))}>
       {chosen && end("start")}
       {chosen && end("end")}

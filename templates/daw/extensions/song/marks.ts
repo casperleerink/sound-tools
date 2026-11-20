@@ -5,7 +5,7 @@
 import type { Pointer, Section, TempoMap } from "../sdk";
 import { lengthAt } from "./clips";
 import { itemAt, repeatOf, type Mark, type Song } from "./model";
-import { barNear, barStarts, BEAT, nearestOf, tickOfBar, type Runs } from "./time";
+import { barNear, barStarts, BEAT, cellOf, linesAround, nearestOf, tickOfBar, type Runs } from "./time";
 
 /** What the marks are read from: the clock, or a test's copy of `project.json`. */
 type Piece = { tempo_map: { time_signatures: Runs; tempo_changes: readonly { tick: number; bpm: number }[] }; sections: readonly Section[] };
@@ -122,7 +122,7 @@ export const markEdits = (song: Song) => {
     },
     /** T: a tempo change at the playhead; while it plays, on the snap. */
     addTempoAtPlayhead() {
-      tempoAt(clock.playing ? nearestOf(clock.tick, memory.snap) : Math.round(clock.tick));
+      tempoAt(clock.playing ? nearestOf(runs(), clock.tick, memory.snap) : Math.round(clock.tick));
     },
     /** Removes a mark as one undo step with its own words. */
     remove(mark: Mark) {
@@ -145,7 +145,7 @@ export const markEdits = (song: Song) => {
     press(p: Pick<Pointer, "x" | "clicks">) {
       memory.mark = null;
       if (p.clicks === 2) edits.addSection(p.x);
-      else clock.jump(nearestOf(p.x, memory.snap));
+      else clock.jump(nearestOf(runs(), p.x, memory.snap));
     },
     /** A press on a mark: chosen and played from; a double click on a section names it. */
     pressMark(mark: Mark, p: Pick<Pointer, "clicks">) {
@@ -158,7 +158,7 @@ export const markEdits = (song: Song) => {
      * section on the nearest bar line, each `null` where one is already; and the mark there to remove.
      */
     menuAt(x: number, mark?: Mark) {
-      const [tick, { bar, tick: line }] = [nearestOf(x, memory.snap), barNear(runs(), x)];
+      const [tick, { bar, tick: line }] = [nearestOf(runs(), x, memory.snap), barNear(runs(), x)];
       const section = clock.sections.find((each) => each.bar === bar);
       const signature = bar > 1 && changeBars(runs()).includes(bar);
       const tempo = clock.tempo_map.tempo_changes.find((each) => each.tick > 0 && (each.tick === tick || each.tick === line));
@@ -222,14 +222,15 @@ export const markEdits = (song: Song) => {
       if (spans.length === 0) {
         return edits.toggleRepeat();
       }
-      const from = Math.floor(Math.min(...spans.map((each) => each.from)) / BEAT) * BEAT;
-      const to = Math.ceil(Math.max(...spans.map((each) => each.to)) / BEAT) * BEAT;
-      repeat({ from, to: Math.max(to, from + BEAT) }, true);
+      const from = cellOf(runs(), Math.min(...spans.map((each) => each.from)), BEAT);
+      const last = Math.max(...spans.map((each) => each.to));
+      const [before, after] = linesAround(runs(), last, BEAT);
+      repeat({ from, to: before === last && last > from ? last : after }, true);
       return true;
     },
     /** A drag across the ruler from `x`: it repeats that range, on beats. */
     loop(p: Pick<Pointer, "x" | "dx">) {
-      const [from, to] = [Math.max(Math.round(Math.min(p.x, p.x + p.dx) / BEAT) * BEAT, 0), Math.round(Math.max(p.x, p.x + p.dx) / BEAT) * BEAT];
+      const [from, to] = [nearestOf(runs(), Math.min(p.x, p.x + p.dx), BEAT), nearestOf(runs(), Math.max(p.x, p.x + p.dx), BEAT)];
       if (to > from) repeat({ from, to }, true);
     },
     /** A click on the repeat's bar: it repeats, or plays on and keeps its range. */
@@ -245,7 +246,8 @@ export const markEdits = (song: Song) => {
       if (!range) return;
       const { from, to } = range;
       const moved = Math.max(from + p.dx, 0) - from;
-      const [start, end] = part === "move" ? [from + moved, to + moved] : part === "start" ? [Math.min(Math.max(from + p.dx, 0), to - BEAT), to] : [from, Math.max(to + p.dx, from + BEAT)];
+      const [start, end] = part === "move" ? [from + moved, to + moved]
+        : part === "start" ? [Math.min(Math.max(from + p.dx, 0), linesAround(runs(), to - 1, BEAT)[0]), to] : [from, Math.max(to + p.dx, linesAround(runs(), from, BEAT)[1])];
       repeat({ from: start, to: end }, on);
     },
   };

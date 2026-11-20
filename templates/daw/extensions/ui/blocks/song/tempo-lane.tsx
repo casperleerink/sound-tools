@@ -1,6 +1,6 @@
 import { h, live, memo, type Color } from "../../../sdk";
 import type { Mark } from "../../../song/model";
-import { barNear, nearestOf } from "../../../song/time";
+import { barNear, dragGrid, nearestOf } from "../../../song/time";
 import { GUTTER, HEAD, PLANE, TEMPO, type Page } from "../../../song/view";
 import { Shades } from "./shades";
 import { bpmText, pointed, TimeMenu } from "./time-menu";
@@ -34,7 +34,7 @@ export const TempoLane = ({ page }: { page: Page }) => {
       </row>
       <box w={GUTTER} />
       <box key="tempo-changes" label="Tempo lane" grow={1} h="full" plane={{ x: PLANE }}
-        onPress={(p) => (p.right ? pointed(page, p.x) : p.clicks === 2 ? edits.marks.addTempo(nearestOf(p.x, memory.snap)) : edits.marks.press({ x: p.x, clicks: 1 }))}>
+        onPress={(p) => (p.right ? pointed(page, p.x) : p.clicks === 2 ? edits.marks.addTempo(nearestOf(clock.tempo_map.time_signatures, p.x, memory.snap)) : edits.marks.press({ x: p.x, clicks: 1 }))}>
         <Shades page={page} id="tempo" tall={tall} />
         {memo("tempo-line", [changes, end, memory.mark], () => (
           <box>
@@ -71,7 +71,7 @@ export const TempoLane = ({ page }: { page: Page }) => {
           const set = (by: number) => edits.marks.moveMark(mark, 0, change.bpm + by);
           return (
             <box key={key} label={first ? "Tempo at the start" : `Tempo at bar ${bar}`} role="slider" value={change.bpm} hoverGroup place={[moved.dx.plus(change.tick), moved.dy.plus(yOf(change.bpm))]} w={15} h={15}
-              drag={first ? { y: true } : { x: [1 - change.tick, null], y: true, snap: memory.snap > 0 ? [memory.snap, 0] : undefined, from: memory.snap > 0 ? [change.tick, 0] : undefined }}
+              drag={first ? { y: true } : { x: [1 - change.tick, null], y: true, ...dragGrid(clock.tempo_map.time_signatures, change.tick, memory.snap) }}
               onPress={(p) => (p.right ? pointed(page, p.x, first ? null : mark) : first ? edits.marks.press({ x: 0, clicks: 1 }) : p.alt ? edits.marks.remove(mark) : edits.marks.pressMark(mark, p))}
               onDragEnd={(p) => edits.marks.moveMark(mark, first ? 0 : p.dx, p.dy === 0 ? undefined : Math.round(change.bpm - p.dy * perPoint))}
               actions={{ increment: set, decrement: (by) => set(-by) }}>

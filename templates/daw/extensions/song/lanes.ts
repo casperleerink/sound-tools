@@ -6,7 +6,7 @@ import { ENVELOPE, envelope, lfo } from "../lfo";
 import { freeName, splitTarget, type Mover } from "../track";
 import { isRow, mixOf, nameFrom, words, type Child, type Draft, type Song } from "./model";
 import { positionOf, SILENT_DB, valueAt, valueOf, VOLUME } from "../ui/value";
-import { nearestOf } from "./time";
+import { nearestOf, stepped } from "./time";
 
 export type AutomationPoint = FilledStateOfTool<"lane">["points"][number];
 type Scale = FilledStateOfTool<"lane">["scale"];
@@ -307,7 +307,7 @@ export const laneEdits = (song: Song) => {
     },
     /** A double click on a lane: a point there, on the snap unless cmd is held, chosen. */
     addPoint(track: string, lane: string, p: Pick<Pointer, "x" | "y" | "cmd">) {
-      const tick = p.cmd ? Math.max(Math.round(p.x), 0) : nearestOf(p.x, memory.snap);
+      const tick = p.cmd ? Math.max(Math.round(p.x), 0) : nearestOf(song.clock.tempo_map.time_signatures, p.x, memory.snap);
       editPoints(song, "Add a point", track, lane, (all) => [...all, { tick, value: laneValue(travel(track, lane), 1 - p.y) }]);
       choose(track, lane, [tick]);
       return tick;
@@ -324,10 +324,12 @@ export const laneEdits = (song: Song) => {
       const chosen = chosenIn(track, lane);
       shift(track, lane, chosen.includes(tick) ? chosen : [tick], p.dx, p.dy);
     },
-    /** The chosen points moved by `dx` ticks and `dy` of the travel, by the keys: false while none is chosen. */
-    nudge(dx: number, dy: number) {
+    /** The chosen points moved by `steps` of the snap and `dy` of the travel, by the keys: false while none is chosen. */
+    nudge(steps: number, dy: number) {
       const point = memory.point;
-      return point !== null && shift(point.track, point.lane, point.ticks, dx, dy);
+      if (point === null) return false;
+      const earliest = Math.min(...point.ticks);
+      return shift(point.track, point.lane, point.ticks, steps === 0 ? 0 : stepped(song.clock.tempo_map.time_signatures, earliest, memory.snap, steps) - earliest, dy);
     },
     /** A drag over a lane: the points it covers are chosen, with those chosen already when shift is held. */
     choosePoints(track: string, lane: string, p: Pick<Pointer, "x" | "dx" | "shift">) {

@@ -1,6 +1,6 @@
 import { h, live, Live, memo, type Color, type Live as LiveValue, type Num, type Pointer } from "../../../sdk";
 import { laneValue, roomOf, type AutomationPoint, type Travel } from "../../../song/lanes";
-import { placeOf } from "../../../song/time";
+import { dragGrid, placeOf } from "../../../song/time";
 import { PLANE, ROW, type Page } from "../../../song/view";
 import { MenuList } from "../../menu";
 import { Tooltip } from "../../tooltip";
@@ -89,6 +89,7 @@ const Points = ({ page, row, points, open, chosen, say }: { page: Page; row: Lan
   const { travel, colour, unit, id } = laneOf(row);
   const at = placesOf(row);
   const snap = page.song.memory.snap;
+  const runs = page.song.clock.tempo_map.time_signatures;
   const lanes = page.edits.lanes;
   const [track, name] = [row.track.name, row.lane];
   const downs = points.filter((point) => chosen.includes(point.tick)).map((point) => downOf(point.value, travel));
@@ -129,7 +130,7 @@ const Points = ({ page, row, points, open, chosen, say }: { page: Page; row: Lan
         return (
           <box key={key} label={`Point at ${say(point.tick)}, ${value}`} role="button" value={isChosen}
             place={[moved.dx.plus(point.tick), moved.dy.plus(at.y(down))]} w={MARK} h={MARK} radius="full" fill={isChosen ? "text" : colour} border="background" hover="text/40"
-            drag={{ x: [earliest, latest], y: [fine(-top * at.tall), fine((1 - bottom) * at.tall)], snap: snap > 0 ? [snap, 0] : undefined, ...(together && isChosen ? { id: `points-${id}` } : {}) }}
+            drag={{ x: [earliest, latest], y: [fine(-top * at.tall), fine((1 - bottom) * at.tall)], ...dragGrid(runs, point.tick, snap), ...(together && isChosen ? { id: `points-${id}` } : {}) }}
             onPress={(p) => lanes.pressPoint(track, name, point.tick, p)} onDragEnd={(p) => lanes.movePoint(track, name, point.tick, at.inLane(p))}>
             {isChosen ? (
               <row at={[MARK, -24]} h={22} pad={[2, 0]} align="center" radius="md" fill="raised" border="border-strong" inert>

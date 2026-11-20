@@ -99,7 +99,7 @@ export function barNear(runs: Runs, tick: number): { bar: number; tick: number }
   return { bar: index + 1, tick: lines[index] ?? 0 };
 }
 
-/** The grids of the snap in the corner, as the arrangement's menu: `ticks` 0 is off. */
+/** The grids of the snap in the corner, as the arrangement's menu: `ticks` 0 is off; "Bar" and "Beat" follow the time signature (`stepAt`). */
 export const SNAPS = [
   { label: "Off", ticks: 0 },
   { label: "Bar", ticks: BAR },
@@ -111,12 +111,48 @@ export const SNAPS = [
 /** What the snap is when the song opens: sixteenths. */
 export const SNAP = BEAT / 4;
 
+/**
+ * How far apart the lines of the grid `snap` are in the bar `tick` is in, a sixteenth while it is
+ * off. Each bar counts its lines from its own line: "Bar" is the bar, "Beat" the beat of its time signature.
+ */
+export function stepAt(runs: Runs, tick: number, snap: number): number {
+  const { start, end } = barAt(runs, Math.max(tick, 0));
+  if (snap === BAR) return end - start;
+  if (snap === BEAT) return beatRuns(runs).findLast((run) => run.from <= start)?.ticks ?? BEAT;
+  return snap > 0 ? snap : BEAT / 4;
+}
+/** The line of the grid `snap` at or before `tick`, and the next one: a bar's last cell ends at the next bar's line. */
+export function linesAround(runs: Runs, tick: number, snap: number): [number, number] {
+  const { start, end } = barAt(runs, Math.max(tick, 0));
+  const step = stepAt(runs, start, snap);
+  const before = start + Math.floor((Math.max(tick, 0) - start) / step) * step;
+  return [before, Math.min(before + step, end)];
+}
 /** The start of the cell of the grid `snap` that `tick` is in, or the tick while it is off: where a double click adds. */
-export const cellOf = (tick: number, snap: number) => Math.max(snap > 0 ? Math.floor(Math.round(tick) / snap) * snap : Math.round(tick), 0);
+export const cellOf = (runs: Runs, tick: number, snap: number) => (snap > 0 ? linesAround(runs, Math.round(tick), snap)[0] : Math.max(Math.round(tick), 0));
 /** The line of the grid `snap` nearest `tick`, or the tick while it is off: where a click plays from. */
-export const nearestOf = (tick: number, snap: number) => Math.max(snap > 0 ? Math.round(tick / snap) * snap : Math.round(tick), 0);
-/** What a nudge moves by: the snap, a sixteenth while it is off. */
-export const stepOf = (snap: number) => snap || BEAT / 4;
+export function nearestOf(runs: Runs, tick: number, snap: number): number {
+  if (!(snap > 0)) return Math.max(Math.round(tick), 0);
+  const [before, after] = linesAround(runs, tick, snap);
+  return after - tick <= tick - before ? after : before;
+}
+/** `tick` moved `by` lines of the grid `snap`, as far off the grid as it was; a sixteenth a step while it is off: what a nudge does. */
+export function stepped(runs: Runs, tick: number, snap: number, by: number): number {
+  if (!(snap > 0)) return tick + by * stepAt(runs, tick, snap);
+  let line = nearestOf(runs, tick, snap);
+  const off = tick - line;
+  // Before tick 0 the grid goes on as the first bar's, so a caller can stop a group there.
+  for (let left = Math.abs(by); left > 0; left--) line = by > 0 ? linesAround(runs, line, snap)[1] : line > 0 ? linesAround(runs, line - 1, snap)[0] : line - stepAt(runs, 0, snap);
+  return line + off;
+}
+/**
+ * The `snap` and `from` of a drag of what is at `tick`, and at `y` on steps of `down`, so it lands
+ * on the lines of the grid `snap` of its bar's time signature. A drag's grid is even, so across a
+ * time signature change it keeps these steps.
+ */
+export function dragGrid(runs: Runs, tick: number, snap: number, [down, y] = [0, 0]): { snap: [number, number]; from: [number, number] } {
+  return { snap: [snap > 0 ? stepAt(runs, tick, snap) : 0, down], from: [tick - barAt(runs, Math.max(tick, 0)).start, y] };
+}
 
 /** The bar, the beat and the sixteenth, from 1, of `tick` of the song: `[6, 2, 1]`. */
 export function placeOf(runs: Runs, tick: number): [bar: number, beat: number, sixteenth: number] {

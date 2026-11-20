@@ -5,7 +5,7 @@ import type { Dropped, FilledStateOfTool, Frozen, Pointer } from "../sdk";
 import { freeName, splitTarget } from "../track";
 import { emptied, laid, laneAt, lift, type AutomationPoint } from "./lanes";
 import { itemAt, itemsOf, nameFrom, rowOfKey, rowsOf, type Child, type Draft, type RowKind, type Song } from "./model";
-import { BAR, barAt, BEAT, cellOf, stepOf, ticksAcross } from "./time";
+import { BAR, barAt, BEAT, cellOf, nearestOf, stepAt, stepped, ticksAcross } from "./time";
 import { addAudioTrack, addInstrumentTrack } from "./tracks";
 
 type Clip = FilledStateOfTool<"timeline">;
@@ -300,6 +300,7 @@ export const clipEdits = (song: Song) => {
   const { memory } = song;
   const rows = () => rowsOf(song.children, song.state.order);
   const tick = () => Math.round(song.clock.tick);
+  const runs = () => song.clock.tempo_map.time_signatures;
   return {
     choose: (keys: readonly string[], track?: string | null) => choose(song, keys, track),
     /** A press on empty space: nothing is chosen. */
@@ -333,8 +334,8 @@ export const clipEdits = (song: Song) => {
     add(p: Pick<Pointer, "x" | "y">) {
       const row = rows()[Math.floor(p.y)];
       if (row?.tool !== "track") return choose(song, []);
-      const start = cellOf(p.x, memory.snap);
-      const { start: from, end } = barAt(song.clock.tempo_map.time_signatures, start);
+      const start = cellOf(runs(), p.x, memory.snap);
+      const { start: from, end } = barAt(runs(), start);
       const added = addClip(song, row.name, start, end - from || BAR);
       if (added) choose(song, [added]);
     },
@@ -342,8 +343,8 @@ export const clipEdits = (song: Song) => {
     addAtPlayhead(): boolean {
       const name = memory.selected[0] === undefined ? memory.track : rowOfKey(memory.selected[0]);
       if (name === null || song.children.find((child) => child.name === name)?.tool !== "track") return false;
-      const start = cellOf(tick(), memory.snap);
-      const { start: from, end } = barAt(song.clock.tempo_map.time_signatures, start);
+      const start = cellOf(runs(), tick(), memory.snap);
+      const { start: from, end } = barAt(runs(), start);
       const added = addClip(song, name, start, end - from || BAR);
       if (added) choose(song, [added]);
       return true;
@@ -354,12 +355,12 @@ export const clipEdits = (song: Song) => {
     },
     /** A drag of the end of the chosen clips: shorter cuts what starts past it, at least a step of the snap. */
     resizeEnd(p: Pick<Pointer, "dx">) {
-      editClips(song, "Resize clips", memory.selected, (clip) => endMoved(clip, Math.max(lengthOf(clip) + Math.round(p.dx), stepOf(memory.snap))));
+      editClips(song, "Resize clips", memory.selected, (clip) => endMoved(clip, Math.max(lengthOf(clip) + Math.round(p.dx), stepAt(runs(), clip.start, memory.snap))));
     },
     /** A drag of the start of the chosen clips: their notes stay where they are in the song, and the earliest stops at tick 0. */
     resizeStart(p: Pick<Pointer, "dx">) {
       const dx = Math.max(Math.round(p.dx), -Math.min(...memory.selected.map((key) => itemAt(song.children, key)?.state.start ?? 0)));
-      editClips(song, "Resize clips", memory.selected, (clip) => startMoved(clip, dx, stepOf(memory.snap)));
+      editClips(song, "Resize clips", memory.selected, (clip) => startMoved(clip, dx, stepAt(runs(), clip.start, memory.snap)));
     },
     /** A drag over empty space from `x`, `y` (rows): what it covers is chosen; shift or cmd adds it. */
     marquee(p: Pick<Pointer, "x" | "y" | "dx" | "dy" | "shift" | "cmd">) {
@@ -412,7 +413,8 @@ export const clipEdits = (song: Song) => {
     /** Moves the chosen by a step of the snap in time, the earliest stopping at tick 0. */
     nudge(by: -1 | 1): boolean {
       if (memory.selected.length === 0) return false;
-      choose(song, moveItems(song, memory.selected, by * stepOf(memory.snap), 0, false));
+      const earliest = Math.min(...memory.selected.map((key) => itemAt(song.children, key)?.state.start ?? 0));
+      choose(song, moveItems(song, memory.selected, stepped(runs(), earliest, memory.snap, by) - earliest, 0, false));
       return true;
     },
     /** Moves the chosen to the nearest rows above or below where every one lands on a row of its own kind. */
@@ -452,7 +454,7 @@ export const clipEdits = (song: Song) => {
       if (audio.length === 0) return;
       const all = rows();
       const owner = all[Math.floor(p.y)]?.tool === "tape" ? all[Math.floor(p.y)] : all.find((row) => row.tool === "tape");
-      const start = Math.max(Math.round(p.x / BEAT) * BEAT, 0);
+      const start = nearestOf(runs(), p.x, BEAT);
       const added: string[] = [];
       song.update("Add audio", (draft) => {
         const tape = draft.children.find((child) => child.name === owner?.name);
@@ -472,7 +474,7 @@ export const clipEdits = (song: Song) => {
     dropNotes(parts: Parts, p: Pick<Pointer, "x" | "y">) {
       if (parts.length === 0) return;
       const row = rows()[Math.floor(p.y)];
-      const start = cellOf(p.x, memory.snap);
+      const start = cellOf(runs(), p.x, memory.snap);
       let added: string[] = [];
       song.update("Import notes", (draft) => {
         const owner = draft.children.find((child) => child.name === row?.name);
