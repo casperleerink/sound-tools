@@ -8,6 +8,8 @@ mod apply;
 mod assets;
 mod binding;
 mod editing;
+pub mod facts;
+pub mod feeds;
 mod fields;
 mod file;
 mod generated;

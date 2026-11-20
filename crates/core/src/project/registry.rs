@@ -10,6 +10,8 @@ use schemars::JsonSchema;
 
 use super::Project;
 use super::binding::{BehaviourContext, BehaviourError};
+use super::facts::{FactsContext, RegisteredFacts};
+use super::feeds::{ErasedPlay, FeedContext, FeedValue, RegisteredFeed, Shows};
 use super::instance::{Instance, InstanceId, JsonState, Record, State, is_valid_name};
 use crate::clock::Ticks;
 use crate::parameter::{Parameter, ParameterInfo};
@@ -195,6 +197,29 @@ pub struct Registry {
     agent_docs: Vec<RegisteredDoc>,
     /// See [`Self::keep_out_of_history`].
     kept_out_of_history: Vec<&'static str>,
+    /// Feeds and facts by tool name, kept apart from the tools so a tool of the project defined
+    /// again keeps them.
+    pub(crate) shown: BTreeMap<&'static str, Shown>,
+    /// See [`Self::every_instance_feed`].
+    pub(crate) every_instance: Vec<RegisteredFeed>,
+}
+
+/// What a tool registered for its views: feeds, facts, and how lanes play into its record.
+#[derive(Default)]
+pub(crate) struct Shown {
+    pub feeds: Vec<RegisteredFeed>,
+    pub facts: Option<RegisteredFacts>,
+    pub play: Option<ErasedPlay>,
+    /// Its card, made once from the schema it registered.
+    pub card: std::cell::OnceCell<Arc<super::facts::Card>>,
+}
+
+impl Shown {
+    /// A feed of a name it has already replaces that one.
+    pub(crate) fn add_feed(&mut self, feed: RegisteredFeed) {
+        self.feeds.retain(|kept| kept.name != feed.name);
+        self.feeds.push(feed);
+    }
 }
 
 impl Default for Registry {
@@ -209,7 +234,39 @@ impl Registry {
             tools: BTreeMap::new(),
             agent_docs: vec![RegisteredDoc::of(None, super::generated::PROJECT_FILE_DOC)],
             kept_out_of_history: Vec::new(),
+            shown: BTreeMap::new(),
+            every_instance: super::feeds::every_instance(),
         }
+    }
+
+    /// A feed every instance has, whatever its tool, such as the keys down on its sound. A
+    /// tool's own feed of that name comes first.
+    pub fn every_instance_feed<T: FeedValue>(
+        &mut self,
+        name: &'static str,
+        doc: &'static str,
+        read: impl Fn(&FeedContext<'_>) -> T + 'static,
+    ) {
+        self.every_instance.retain(|kept| kept.name != name);
+        self.every_instance.push(RegisteredFeed {
+            name,
+            doc,
+            kind: T::KIND,
+            read: Box::new(move |_, context| Some(read(context).into_feed())),
+        });
+    }
+
+    /// Feeds and facts of the tool of `S` where no [`ToolRegistration`] is at hand: a tool whose
+    /// records are JSON, such as the region. Its records are read as `S`.
+    pub fn shows<S: State>(&mut self) -> Shows<'_, S> {
+        Shows {
+            shown: self.shown.entry(S::TOOL).or_default(),
+            state: PhantomData,
+        }
+    }
+
+    pub(crate) fn shown(&self, tool: &str) -> Option<&Shown> {
+        self.shown.get(tool)
     }
 
     /// Files and folders at the top of `extensions/` that the runtime writes itself, such as
@@ -243,6 +300,7 @@ impl Registry {
         });
         Ok(ToolRegistration {
             definition,
+            shown: self.shown.entry(S::TOOL).or_default(),
             state: PhantomData,
         })
     }
@@ -414,6 +472,7 @@ impl Registry {
 /// Attaches the optional capabilities of a tool that was just registered.
 pub struct ToolRegistration<'a, S> {
     definition: &'a mut ToolDefinition,
+    shown: &'a mut Shown,
     state: PhantomData<fn(S)>,
 }
 
@@ -442,6 +501,37 @@ impl<S: State> ToolRegistration<'_, S> {
         S: JsonSchema,
     {
         self.definition.schema = Some(ToolSchema::of(numbers));
+        let setters = (numbers.iter())
+            .map(|number| (number.field, number.set))
+            .collect();
+        self.shown.play = Some(super::feeds::player::<S>(setters));
+        self
+    }
+
+    /// A feed of its instances named `name`: what `read` gives each frame a view shows it, from
+    /// the record as it plays (lanes over it) and the engine's readings. A number (`f32`) or a
+    /// list (`Vec<f32>`). `doc` is one line that says its units, once.
+    ///
+    /// It runs on the thread that draws, at most once a frame per shown binding, never on the
+    /// audio thread: call the code the sound uses, so what is drawn is what plays.
+    pub fn feed<T: FeedValue>(
+        self,
+        name: &'static str,
+        doc: &'static str,
+        read: impl Fn(&S, &FeedContext<'_>) -> T + 'static,
+    ) -> Self {
+        self.shown.add_feed(super::feeds::erase(name, doc, read));
+        self
+    }
+
+    /// What its view knows of an instance that is no record and rarely changes, such as whether
+    /// its file is missing: a struct whose fields join `title` and `fields` of every instance.
+    /// A change runs the view again.
+    pub fn facts<F: serde::Serialize + JsonSchema>(
+        self,
+        facts: impl Fn(&S, &FactsContext<'_>) -> F + 'static,
+    ) -> Self {
+        self.shown.facts = Some(super::facts::erase(facts));
         self
     }
 

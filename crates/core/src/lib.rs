@@ -66,8 +66,8 @@ pub use project::{
     JsonToolDoc, Line, NO_PROBLEMS, OUTSIDE_POINT_WINDOW, OutputEndpoint, PROBLEMS_FILE, Place,
     Point, PointId, PortReference, Problem, Project, ProjectError, ProjectEvent, ProjectFile,
     RUN_LONGEST, RUN_QUIET, RecordSchema, RecordStamp, Registry, RegistryError, SavedConnection,
-    SavedDestination, SavedSource, State, StorageError, ToolRegistration, ToolSchema, parse_state,
-    ranges, type_doc, unit_of,
+    SavedDestination, SavedSource, State, StorageError, ToolRegistration, ToolSchema, facts, feeds,
+    parse_state, ranges, type_doc, unit_of,
 };
 pub use scope::Scope;
 pub use sections::{Section, SectionError, SectionName, Sections};
