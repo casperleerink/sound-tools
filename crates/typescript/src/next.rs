@@ -1319,10 +1319,22 @@ impl Tools {
         let Some(child) = child else {
             return Ok(instance.clone());
         };
-        InstanceId::new(&format!("{instance}/{child}"))
+        let played = InstanceId::new(&format!("{instance}/{child}"))
             .ok()
-            .filter(|id| id.is_inside(instance) && project.tool_of(id).is_some())
-            .ok_or_else(|| "is not one it owns".to_string())
+            .filter(|id| id.is_inside(instance) && project.tool_of(id).is_some());
+        played.ok_or_else(|| {
+            let children: Vec<&str> = (project.instances())
+                .filter(|(id, _)| id.parent().as_ref() == Some(instance))
+                .map(|(id, _)| id.name())
+                .collect();
+            match children.is_empty() {
+                true => format!("{instance} does not own: it owns none"),
+                false => format!(
+                    "{instance} does not own: its children are {}",
+                    children.join(", ")
+                ),
+            }
+        })
     }
 
     /// Plays a key of `instance`, or lets go of one, as the keyboard would: on its own voices,
