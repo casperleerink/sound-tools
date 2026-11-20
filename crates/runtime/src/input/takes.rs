@@ -475,7 +475,7 @@ impl Input {
                         audio.started = takes;
                     }
                 }
-                RecorderReport::Failed { recorder, error, .. } => {
+                RecorderReport::Failed { recorder, error } => {
                     self.happened.push(Happened::Notice(format!(
                         "The take of {recorder} stopped: {error}. What was recorded before is kept."
                     )));

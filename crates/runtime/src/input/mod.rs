@@ -8,7 +8,7 @@ mod audio;
 mod import;
 mod live;
 mod other_apps;
-pub mod recorder;
+mod recorder;
 mod takes;
 
 use std::collections::BTreeSet;
