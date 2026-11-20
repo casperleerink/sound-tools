@@ -1,7 +1,7 @@
 //! How far a provider is set up, and what the Agents section of Settings shows of it: the
 //! download, the ways in and the steps of a sign-in, and the account; for Pi, each of its
 //! services. [`Section`] is plain data in the composer's words, so a view draws it with no
-//! rules of its own and a gallery shows every state with no process.
+//! rules of its own and `--scene` shows every state with no process.
 
 use crate::agents::Program;
 use crate::{

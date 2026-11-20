@@ -101,8 +101,6 @@ pub(crate) async fn within<T>(limit: Duration, work: impl Future<Output = T>) ->
     .await
 }
 
-// clippy.toml forbids this timer for the tests of a toolkit's executor; none runs here.
-#[allow(clippy::disallowed_methods)]
 pub(crate) async fn sleep(duration: Duration) {
     smol::Timer::after(duration).await;
 }

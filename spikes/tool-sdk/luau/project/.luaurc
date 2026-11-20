@@ -1,4 +1,0 @@
-{
-  "languageMode": "strict",
-  "aliases": { "rune": "./types/rune", "app": "./types/app" }
-}

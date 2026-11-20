@@ -1,6 +1,6 @@
 # Design
 
-The design principles of the Sound Tools UI and its use. Colours and sizes are the tokens of `theme.json`; `crates/window/template/extensions/gallery.tsx` shows every component. Mockups drawn for review are in `docs/mockups/`.
+The design principles of the Sound Tools UI and its use. Colours and sizes are the tokens of `theme.json`; `templates/daw/extensions/gallery.tsx` shows every component. Mockups drawn for review are in `docs/mockups/`.
 
 ## Principles
 

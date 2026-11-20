@@ -1,4 +1,0 @@
-# Rune's own toolchain at the pinned rev; the repo's 1.98.1 is too old for it.
-[toolchain]
-channel = "1.99.1"
-profile = "minimal"

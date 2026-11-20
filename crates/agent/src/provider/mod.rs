@@ -214,8 +214,8 @@ pub enum SignedIn {
 }
 
 impl Service {
-    /// A service with no program, for the gallery and the snapshots: `in_browser` is the
-    /// label of its sign-in in the browser, and every one takes a key.
+    /// A service with no program, for `--scene` pictures and tests: `in_browser` is the label
+    /// of its sign-in in the browser, and every one takes a key.
     pub fn example(name: &str, in_browser: Option<&str>, signed_in: Option<SignedIn>) -> Self {
         let id = name.to_lowercase().replace(' ', "-");
         let choice = |label: &str, with_key| SignInChoice {
@@ -267,7 +267,7 @@ enum Way {
 }
 
 impl SignInChoice {
-    /// Claude Code's ways in, for the gallery and the snapshots.
+    /// Claude Code's ways in.
     pub fn claude() -> Vec<Self> {
         claude_choices()
     }
