@@ -1650,6 +1650,26 @@ fn enter_on_a_fader_types_its_value_and_the_keys_stay_with_it() {
     assert_ne!(focused(&window).as_deref(), Some("fader-t00-value"));
 }
 
+/// The old rule of a value line: a click on it types a value, as Enter on its control does.
+#[test]
+fn a_click_on_a_value_line_types_a_value() {
+    let scratch = new_project();
+    let mut window = laid_out(opened(&scratch.path().join("song")));
+    redraw(&mut window);
+    let (x, y) = window.find("fader-t00-value").unwrap();
+    window.pointer_down(x, y);
+    window.pointer_up(x, y);
+    redraw(&mut window);
+    redraw(&mut window);
+    assert_eq!(window.state.open, ["fader-t00-value"]);
+    for typed in ["-", "6"] {
+        key(&mut window, rune::Key::Text(typed.into()));
+    }
+    key(&mut window, rune::Key::Enter);
+    let gain = record(&window.state, "song/t00/mix.json")["state"]["gain_db"].clone();
+    assert_eq!(gain, -6.0);
+}
+
 /// A generic card whose `body` draws for every device without a view.
 fn with_card(body: &str) -> (tempfile::TempDir, State) {
     let scratch = new_project();
