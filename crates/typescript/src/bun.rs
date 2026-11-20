@@ -137,8 +137,8 @@ pub(crate) enum Request<'a> {
     /// again when a record of it or inside it changes.
     Show {
         instances: Vec<&'a InstanceId>,
-        /// The card of each shown instance whose tool has no view: what `GenericCard` of
-        /// `sdk/view.ts` gets.
+        /// The card of each shown instance whose tool has no view: its `Facts` in
+        /// `sdk/view.ts`.
         cards: &'a BTreeMap<InstanceId, Value>,
         /// The numbers a lane moves of each shown instance, as its `held` names them.
         held: &'a BTreeMap<InstanceId, Vec<String>>,

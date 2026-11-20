@@ -1,6 +1,6 @@
 // Tools
 
-import { ActionKey, AppKey, Clock, KeyName, MenuItem, MenuOptions, Modifiers, MovedNumber, Offers, PLAIN_KEYS, PlainKey, SHIFTED_KEYS, SYMBOL_KEYS } from "./clock";
+import { ActionKey, AppKey, Clock, KeyName, Modifiers, PLAIN_KEYS, PlainKey, SHIFTED_KEYS, SYMBOL_KEYS } from "./clock";
 import { BangInput, Fields, InputNames, Inputs, NumberField, Outputs, SoundOf, StateOf, ValuesOf } from "./fields";
 // The runtime writes the old window's `host.ts` or the new one's, so these change with the window.
 import type { ToolView, ViewContext } from "./host";
@@ -514,29 +514,14 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
    */
   select(path: string | null, options?: { span?: { from: number; to: number } }): void;
   /**
-   * Opens a menu of `items` after a press: under the div, button or card title pressed, as a
-   * select's list, or where the pointer is after a right press or a press of a space. Answers
-   * the place of the item the composer picked, or `null` when they picked none.
-   */
-  openMenu(items: readonly MenuItem[], options?: MenuOptions): Promise<number | null>;
-  /**
    * Asks the composer `message` with the system's question, its buttons `confirm` and Cancel,
    * such as before what a stray key should not do: whether they said `confirm`.
    */
   confirm(question: { message: string; detail?: string; confirm: string }): Promise<boolean>;
-  /** What the window offers to put in a child: devices that take `"notes"` and play them, or take `"audio"` and change it. Built-in devices, plugins and the tools of the project. With `at`, a child's path, `here` says which of them is there. */
-  offers(takes: "notes" | "audio", options?: { at?: string }): Promise<Offers>;
-  /** What a lane or a cable can move of the child at `path`, such as `"bass/filter"`: each number's name and range. */
-  numbers(path: string): Promise<MovedNumber[]>;
   /** Puts the device of the offer `key` at the child `path`, at its defaults and in place of what is there, as one undo step `label`. */
   addOffer(key: string, path: string, label: string): void;
   /** Opens the window of its own of the child at `path`, such as a plugin's, or brings it forward. A child with none is a problem in `problems.txt`. */
   openWindow(path: string): void;
-  /**
-   * The last value of each number `output` of its sound, and of its children's as `<child>.<name>`.
-   * A binding that read one runs again as it moves.
-   */
-  outputs: Record<string, number>;
   /** The clock of the sound, in seconds: where it is now. Play `at` a little after it. */
   time: number;
   /** Where the piece plays, its tempo and its sections, and what plays, stops and moves it. */

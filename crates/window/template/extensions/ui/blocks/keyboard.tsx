@@ -14,7 +14,7 @@ export const Keyboard = ({ id, low, high, path, onPlay }: { id: string; low: num
   const whites = pitches.filter((pitch) => !black(pitch));
   const key = (pitch: number, x: number, w: number, tall: number, fill: "fill-strong" | "well") => (
     <box key={`${id}-${pitch}`} label={nameOf(pitch)} role="button" at={[x, 0]} w={w} h={tall} radius="sm" fill={fill} hover="fill" border="background" clip onPress={() => onPlay(pitch)}>
-      <box at={[0, 0]} w={w} h={tall} fill="sound/50" opacity={live.sounding(pitch, path)} inert />
+      <box at={[0, 0]} w={w} h={tall} fill="sound/50" opacity={live.feed(`sounding.${pitch}`, path)} inert />
       {pitch % 12 === 0 && <text at={[4, tall - 18]} style="label" color="text-secondary">{nameOf(pitch)}</text>}
     </box>
   );

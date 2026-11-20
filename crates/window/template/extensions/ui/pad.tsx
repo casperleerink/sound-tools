@@ -7,7 +7,7 @@ import theme from "../theme.json";
  */
 export const Pad = ({ id, label, text, pitch, path, chosen = false, w = theme.size.cell, h: tall = theme.size.cell, onPress }: { id: string; label: string; text?: string; pitch: number; path?: string; chosen?: boolean; w?: number; h?: number; onPress: () => void }) => (
   <box key={id} label={label} role="button" w={w} h={tall} radius="md" fill={chosen ? "selected" : "fill"} hover="fill" clip onPress={onPress}>
-    <box at={[0, 0]} w={w} h={tall} fill="sound/24" opacity={live.sounding(pitch, path)} inert />
+    <box at={[0, 0]} w={w} h={tall} fill="sound/24" opacity={live.feed(`sounding.${pitch}`, path)} inert />
     <text at={[8, 6]} style="label" color={chosen ? "text" : "text-secondary"}>{text ?? label}</text>
   </box>
 );

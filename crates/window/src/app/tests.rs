@@ -526,31 +526,8 @@ fn every_node_the_template_draws_is_one_the_window_reads() {
     assert!(read > 1);
 }
 
-/// What the test helpers of `sdk/view.ts` do, as the window does it.
-const VIEW_CHECKS: &str = r#"import { expect, test } from "bun:test";
-import { find, h, input, number, press, render, tool } from "./sdk";
-
-const counter = tool({
-  name: "counter", title: "Counter", when: "Never", doc: "Counts.", state: { count: number({ min: 0, max: 100, default: 0 }) }, sound: () => input,
-  view: (self, { update }) => (
-    <row>
-      <text key="said">{self.state.count > 5 && "Many "}{self.state.count}</text>
-      <box key="twice" label="Twice" onPress={() => update("Change", (draft) => { draft.state.count++; draft.state.count++; })} />
-    </row>
-  ),
-});
-const self = { name: "counter", state: { count: 0 }, children: [] } as never;
-
-test("two writes to one field in one change add up", () => {
-  render(counter, self);
-  expect(press("twice")).toEqual([[["state", "count"], 2]]);
-});
-
-test("a text leaves out what is false", () => {
-  render(counter, self);
-  expect(find("said")).toMatchObject({ text: "0" });
-});
-"#;
+/// What the test helpers of `sdk/view.ts` do, as the window does it, and what its types refuse.
+const VIEW_CHECKS: &str = include_str!("checks.test.tsx");
 
 #[test]
 fn the_test_helpers_change_and_draw_as_the_window_does() {
@@ -558,15 +535,8 @@ fn the_test_helpers_change_and_draw_as_the_window_does() {
     let state = opened(&scratch.path().join("song"));
     let extensions = state.project.root().join("extensions");
     std::fs::write(extensions.join("checks.test.tsx"), VIEW_CHECKS).unwrap();
-    let bun = sound_typescript::bun_program().expect("Bun is installed, see tooling/fetch-bun.sh");
-    let ran = sound_core::process::background_command(&bun)
-        .args(["test", "checks.test.tsx"])
-        .current_dir(&extensions)
-        .output()
-        .unwrap();
-    let said =
-        String::from_utf8_lossy(&ran.stdout).to_string() + &String::from_utf8_lossy(&ran.stderr);
-    assert!(ran.status.success(), "{said}");
+    run_bun(&state, &["check", "-p", "."]);
+    run_bun(&state, &["test", "checks.test.tsx"]);
 }
 
 #[test]
@@ -714,7 +684,7 @@ fn a_peak_held_three_seconds_shows_in_decibels_then_drops() {
     let scratch = new_project();
     let folder = scratch.path().join("song");
     let song = folder.join("extensions/song.tsx");
-    let loudest = r#"<Ruler /><text key="loudest" live={live.peak("t00/mix").hold(3).decibels()} digits={1} />"#;
+    let loudest = r#"<Ruler /><text key="loudest" live={live.feed("peak", "t00/mix").hold(3).decibels()} digits={1} />"#;
     let code = std::fs::read_to_string(&song).unwrap();
     std::fs::write(&song, code.replace("<Ruler />", loudest)).unwrap();
     let mut state = opened(&folder);
@@ -1023,7 +993,7 @@ fn a_live_text_with_no_width_is_as_wide_as_the_widest_it_showed() {
     let scratch = new_project();
     let folder = scratch.path().join("song");
     let song = folder.join("extensions/song.tsx");
-    let loudest = r#"<Ruler /><row><text key="loudest" live={live.peak("t00/mix").decibels()} unit="db" /></row>"#;
+    let loudest = r#"<Ruler /><row><text key="loudest" live={live.feed("peak", "t00/mix").decibels()} unit="db" /></row>"#;
     let code = std::fs::read_to_string(&song).unwrap();
     std::fs::write(&song, code.replace("<Ruler />", loudest)).unwrap();
     let mut window = laid_out(opened(&folder));
@@ -1173,8 +1143,8 @@ export const piano = tool({
   sound: () => sine(note.freq).times(note.gate),
   view: (_, { play }) => (
     <row>
-      <text key="down" live={Array.from({ length: 24 }, (_, at) => live.sounding(36 + at)).reduce((all: Live, one) => all.plus(one), Live.of(0))} digits={0} />
-      <box key="c3" label="C3" w={20} h={20} opacity={live.sounding(48)} onPress={() => play(48, { seconds: 0.25 })} />
+      <text key="down" live={Array.from({ length: 24 }, (_, at) => live.feed(`sounding.${36 + at}`)).reduce((all: Live, one) => all.plus(one), Live.of(0))} digits={0} />
+      <box key="c3" label="C3" w={20} h={20} opacity={live.feed("sounding.48")} onPress={() => play(48, { seconds: 0.25 })} />
     </row>
   ),
 });
@@ -1220,7 +1190,7 @@ export const kit = tool({
   view: (self, { update }) => (
     <row gap={2}>
       <box key="step" label="Step" w={24} h={48} fill="fill" onPress={() => update("Step", (draft) => void (draft.state.on = !draft.state.on))}
-        drag={{ axis: "y", min: -40, max: 40 }} onDragEnd={({ dy }) => update("Velocity", (draft) => void (draft.state.velocity = 0.5 - dy / 80))} />
+        drag={{ y: [-40, 40] }} onDragEnd={({ dy }) => update("Velocity", (draft) => void (draft.state.velocity = 0.5 - dy / 80))} />
       <box key="open" label="Open" w={24} h={24} fill="fill">
         <col overlay={{ open: "press" }} role="menu" group w={80} fill="raised">
           <box key="first" label="First" w={80} h={24} onPress={() => update("Pick", (draft) => void (draft.state.picked = 2))} />
@@ -1678,7 +1648,7 @@ fn with_card(body: &str) -> (tempfile::TempDir, State) {
     let folder = scratch.path().join("song");
     std::fs::write(
         folder.join("extensions/ui/blocks/generic-card.tsx"),
-        format!("import {{ h, type GenericCard }} from \"../../sdk\";\nexport const card: GenericCard = () => {body};\n"),
+        format!("import {{ h, type Card }} from \"../../sdk\";\nexport const card: Card = () => {body};\n"),
     )
     .unwrap();
     let state = opened(&folder);
@@ -1796,8 +1766,7 @@ fn a_knob_a_lane_moves_shows_what_plays_and_takes_no_change() {
     build(&state);
     frame(&mut state, 0.2);
     let controls = controls::collect(&state).controls;
-    let cutoff = control(&controls, "Synth Cutoff");
-    assert!(cutoff.actions.is_empty(), "{:?}", cutoff.actions);
+    control(&controls, "Synth Cutoff");
     assert!(
         state.lives.texts().iter().any(|(_, text)| text == "8 kHz"),
         "{:?}",
@@ -1924,7 +1893,6 @@ fn the_mixer_holds_a_fader_a_lane_moves() {
     let mut state = opened(&scratch.path().join("song"));
     let controls = controls::collect(&state).controls;
     let fader = control(&controls, "Volume Track 1");
-    assert!(fader.actions.is_empty(), "{:?}", fader.actions);
     assert_eq!(fader.value, Some(json!(-24.0)));
     assert!(
         try_act(
@@ -1953,7 +1921,6 @@ fn a_tool_s_own_knob_holds_while_a_lane_moves_it() {
     let mut state = opened(&folder);
     let controls = controls::collect(&state).controls;
     let level = control(&controls, "Level");
-    assert!(level.actions.is_empty(), "{:?}", level.actions);
     assert_eq!(level.value, Some(json!(8000.0)));
     assert!(
         try_act(

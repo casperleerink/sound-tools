@@ -29,6 +29,8 @@ pub(crate) enum Node {
     Text(TextNode),
     Shapes(ShapesNode),
     Field(FieldNode),
+    /// Not drawn yet, so it takes no room.
+    Icon(serde::de::IgnoredAny),
     Child {
         path: String,
     },
@@ -130,6 +132,8 @@ pub(crate) struct Overlay {
 pub(crate) enum Opens {
     Press,
     Hover,
+    /// A right press opens it: not honoured yet, so it stays shut.
+    Menu,
 }
 
 #[derive(Deserialize, Clone, Copy, Default)]
@@ -189,11 +193,44 @@ impl TextNode {
 }
 
 #[derive(Deserialize, Clone, Copy)]
-#[cfg_attr(test, serde(deny_unknown_fields))]
+#[serde(try_from = "DragAxes")]
 pub(crate) struct DragSpec {
     axis: Axis,
     min: f32,
     max: f32,
+}
+
+/// `drag` of `sdk/view.ts` as this window honours it yet: along `y`, else `x`, in its bounds.
+#[derive(Deserialize)]
+#[cfg_attr(test, serde(deny_unknown_fields))]
+struct DragAxes {
+    x: Option<Bound>,
+    y: Option<Bound>,
+}
+
+/// `true` (anywhere), or the least and most of the move.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Bound {
+    Within([f32; 2]),
+    Free(serde::de::IgnoredAny),
+}
+
+impl TryFrom<DragAxes> for DragSpec {
+    type Error = &'static str;
+
+    fn try_from(DragAxes { x, y }: DragAxes) -> Result<Self, Self::Error> {
+        let (axis, along) = match (y, x) {
+            (Some(y), _) => (Axis::Y, y),
+            (None, Some(x)) => (Axis::X, x),
+            (None, None) => return Err("a drag moves along x or y"),
+        };
+        let [min, max] = match along {
+            Bound::Within(bounds) => bounds,
+            Bound::Free(_) => [f32::NEG_INFINITY, f32::INFINITY],
+        };
+        Ok(Self { axis, min, max })
+    }
 }
 
 impl DragSpec {
@@ -399,7 +436,7 @@ pub(crate) fn enterable(node: &Node, memos: &Memos, keys: &mut Vec<String>) {
                 enterable(&inner, memos, keys);
             }
         }
-        Node::Text(_) | Node::Shapes(_) | Node::Field(_) | Node::Child { .. } => {}
+        Node::Text(_) | Node::Shapes(_) | Node::Field(_) | Node::Icon(_) | Node::Child { .. } => {}
     }
 }
 
@@ -437,7 +474,7 @@ fn walk(node: &Node, memos: &Memos, bind: &mut impl FnMut(Shows)) {
             }
             return;
         }
-        Node::Child { .. } | Node::Field(_) => return,
+        Node::Child { .. } | Node::Field(_) | Node::Icon(_) => return,
     };
     live.into_iter().for_each(bind);
 }
@@ -492,6 +529,7 @@ fn build(scope: &Scope, node: &Node) -> El {
         Node::Text(t) => label(scope, t),
         Node::Shapes(shapes) => drawing(scope, shapes),
         Node::Field(field) => typed(scope, field),
+        Node::Icon(_) => el(),
         Node::Child { path } => match scope.instance.child(path) {
             Ok(child) => match scope.state.drawn(&child) {
                 _ if scope.state.code_failed(&child) => code_failed(scope.state, &child),
@@ -948,7 +986,7 @@ fn overlays_in(scope: &Scope, node: &Node, owner: Option<&str>, layer: &mut Vec<
                 );
                 overlays_in(&inside, child, None, layer);
             }
-            Opens::Press => {}
+            Opens::Press | Opens::Menu => {}
             Opens::Hover => layer.push(
                 el().anchored(&opener, side, align, spec.gap)
                     .hover_group_shared(opener)

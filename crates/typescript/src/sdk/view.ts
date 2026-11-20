@@ -3,10 +3,10 @@
 // checks a test runs.
 
 import type theme from "../theme.json";
-import type { Fields, Inputs, Unit, ValuesOf } from "./fields";
-import { registry } from "./tools";
-import type { Clock } from "./clock";
-import type { ChildTools, Context, FilledStateOfTool, OwnedChild, ProjectTool } from "./tools";
+import type { Clock, Offer as Offered } from "./clock";
+import type { Fields, Inputs, Note, Unit, ValuesOf } from "./fields";
+import type { Tools } from "./records";
+import { registry, type ChildTools, type Context, type FilledStateOfTool, type OwnedChild, type ProjectTool, type ToolSpec } from "./tools";
 import { Live, splitPath, type Num } from "./values";
 
 // Design tokens: every name comes from theme.json, so a misspelled one is a type error.
@@ -22,8 +22,20 @@ export type Radius = keyof Theme["radius"];
 export type Shadow = keyof Theme["shadow"];
 
 /**
+ * What tools publish for `live.feed`, by name: a number, or a list for the `points` or `rects` of
+ * a `shapes`. Rust will write this beside `records.ts` from the feeds it registers; until then a
+ * new feed is named here.
+ */
+export interface Feeds {
+  /** The loudest sample since the last frame, 0 to 1 and above when it clips. */
+  peak: number;
+  /** 1 while the key (60 is middle C) sounds: what a clip, a key or code plays. */
+  [sounding: `sounding.${number}`]: number;
+}
+
+/**
  * Where live values start: numbers the window works out every frame without running the view.
- * Make more with `Live`'s methods, such as `live.peak("t01/mix").hold(3).decibels()`.
+ * Make more with `Live`'s methods, such as `live.feed("peak", "t01/mix").hold(3).decibels()`.
  */
 export const live = {
   /** Where the piece plays, in ticks: 960 a quarter note. */
@@ -32,16 +44,62 @@ export const live = {
   playing: new Live({ op: "playing" }),
   /** Seconds since the window opened. */
   elapsed: new Live({ op: "elapsed" }),
-  /** The loudest sample since the last frame, 0 to 1 and above when it clips, of the instance at `path` inside this one, such as `"t01/mix"`. */
-  peak: (path: string): Live => new Live({ op: "peak", name: path }),
-  /** 1 while the key `pitch` (60 is middle C) is down on this tool's sound, or on that of the tool of the project at `path` inside it: what a clip, a key or its code plays. For a key that lights: `opacity={live.sounding(60)}`. */
-  sounding: (pitch: number, path?: string): Live => new Live({ op: "sounding", pitch, ...(path === undefined ? {} : { child: path }) }),
-  /** A number field of the record as it plays (what a lane plays into it, else the record), or of an instance inside as `"t01/mix.gain_db"`. */
+  /** The tempo where the piece plays, in beats a minute. */
+  bpm: new Live({ op: "bpm" }),
+  /** A number field of the record as it plays (what a lane or a drag's `plays` puts in it, else the record), or of an instance inside as `"t01/mix.gain_db"`. */
   field: (name: string): Live => new Live({ op: "value", ...splitPath(name), fraction: false }),
-  /** How far the element `key` of this view is dragged now, in points within its `drag` bounds, and 1 while it is: 0 once its record took the drag. */
-  drag: (key: string) => ({ dx: dragPart(key, "dx"), dy: dragPart(key, "dy"), active: dragPart(key, "active") }),
+  /** What the instance at `path` inside this one publishes as `name`, or this one when left out: `live.feed("peak", "t01/mix")`, `live.feed("sounding.60")`. */
+  feed: (name: keyof Feeds & string, path = ""): Live => new Live({ op: "feed", name, ...(path === "" ? {} : { path }) }),
+  /** What the plane `key` of this view shows now, in its units, and how far it is zoomed: 1 as it opened. */
+  plane: (key: string) => ({ left: planePart(key, "left"), right: planePart(key, "right"), top: planePart(key, "top"), bottom: planePart(key, "bottom"), zoom: planePart(key, "zoom") }),
+  /** The drag `id` (an element's key, or its `drag.id`) now, in its units: how far it moved, where it began (`x`, `y`), 1 while it is and while Alt is held; 0 once its record took it. */
+  drag: (id: string) => ({ dx: dragPart(id, "dx"), dy: dragPart(id, "dy"), x: dragPart(id, "startX"), y: dragPart(id, "startY"), active: dragPart(id, "active"), alt: dragPart(id, "alt") }),
 };
-const dragPart = (id: string, part: "dx" | "dy" | "active") => new Live({ op: "drag", id, part });
+const dragPart = (id: string, part: "dx" | "dy" | "startX" | "startY" | "active" | "alt") => new Live({ op: "drag", id, part });
+const planePart = (key: string, part: "left" | "right" | "top" | "bottom" | "zoom") => new Live({ op: "plane", key, part });
+
+/**
+ * A press or the end of a drag: where it began and how far it went (0 for a press), in the units
+ * of the plane around it, else points in the element.
+ */
+export type Pointer = {
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+  /** 2 on the second press of a double click. */
+  clicks: number;
+  /** The right button, the menu key or Shift-F10. */
+  right: boolean;
+  shift: boolean;
+  alt: boolean;
+  cmd: boolean;
+  /** At a drag's end: the key of the keyed element of this view under the pointer. */
+  over?: string;
+};
+/** Files dropped from the system: audio already copied into `assets/audio/` (its names there), MIDI read as parts. */
+export type Dropped = { x: number; y: number; audio: string[]; parts: { name: string; notes: Note[] }[] };
+
+/** One axis of a plane: points per unit (it scrolls over what is placed in it); a range it shows, stretched to the box (where it opens, if it zooms); or the key of a plane it moves with. */
+type Axis = number | [from: number, to: number] | string;
+/** A box with units of its own: `place` puts things in it. The window scrolls it (wheel, Shift-wheel) and zooms it across (pinch, Cmd-wheel, about the pointer) within `zoom`. */
+export type Plane = { x?: Axis; y?: Axis; zoom?: [min: number, max: number] };
+/** In units of the plane around it, at any depth: `[x, y]` a mark, its `w` and `h` points centred on it; `[x, y, w, h]` a box. */
+type Place = [x: Num, y: Num] | [x: Num, y: Num, w: Num, h: Num];
+
+/** Where a drag may go along an axis: anywhere, or the least and most of the move, in units. */
+type Along = true | [min: number, max: number];
+/** A drag along one axis or both. */
+export type Drag = ({ x: Along; y?: Along } | { x?: Along; y: Along }) & {
+  /** Grid steps in units: `from` lands on the grid. Cmd held skips it. */
+  snap?: [x: number, y: number];
+  /** The point that snaps. Left out: the `place` of the element, or of the placed one around it. */
+  from?: [x: number, y: number];
+  /** What `live.drag(id)` follows. Give the chosen things one id and they move as one. Left out: its key. */
+  id?: string;
+  /** Numbers of the record (by path, as `live.field` takes them) that play these values while it is held, unsaved: the sound follows the hand. */
+  plays?: Record<string, Live>;
+};
 
 /** What an element is, for an agent and a screen reader. */
 export type Role =
@@ -53,13 +111,12 @@ export type Role =
  * (a double click, Backspace).
  */
 export type Actions = { [name: string]: (value: number) => void };
-export type Moved = { dx: number; dy: number };
-/** What an action takes: a number, a typed text, or how far a drag moved. */
-type Value = number | string | Moved;
+/** What an action takes: a number, a typed text (`null` when it was left), or a press, a drag or a drop. */
+type Value = number | string | null | Partial<Pointer> | Partial<Dropped>;
 
 /** An element a pointer or an agent uses: its `key` is unique in the view, its `label` says what it is. */
 type Interactive =
-  | { onPress?: never; actions?: never; drag?: never; onDragEnd?: never; onEnter?: never }
+  | { onPress?: never; actions?: never; drag?: never; onDragEnd?: never; onEnter?: never; onDrop?: never }
   | {
       key: string;
       /** What it is called, such as "Mute Track 2": an agent acts on it by this name. */
@@ -69,16 +126,15 @@ type Interactive =
       checked?: boolean;
       /** What it shows, such as -6 for a fader in dB, or what plays while a lane moves it. */
       value?: number | string | Live;
-      onPress?: () => void;
+      onPress?: (p: Pointer) => void;
       actions?: Actions;
-      /**
-       * A drag along `axis`, within [min, max] points: `live.drag(key)` follows it every frame, such as a thumb's `at`, and `onDragEnd` hears
-       * where it stopped. A press that went past a few points is a drag and never also presses.
-       */
-      drag?: { axis: "x" | "y"; min: number; max: number };
-      onDragEnd?: (moved: Moved) => void;
+      /** `live.drag(key)` follows it every frame and `onDragEnd` hears where it stopped. A press that went past a few points is a drag and never also presses. */
+      drag?: Drag;
+      onDragEnd?: (p: Pointer) => void;
       /** A paint: while a press that began on an element with `onEnter` is held, once for it and once for each other one the pointer enters, such as the cells of a grid. All it changes is one step of undo. */
       onEnter?: () => void;
+      /** Files dropped on it from the system. Its `hover` look shows while they are over it. */
+      onDrop?: (d: Dropped) => void;
     };
 
 /** Points, or its parent's. A live `w` or `h` places it at `at` (0, 0 when left out), out of the flow, and needs the other in points. */
@@ -98,6 +154,10 @@ export type BoxProps = Interactive & Size & {
   justify?: "center" | "between" | "end";
   /** Placed at [left, top] points in its parent, out of the flow. */
   at?: [Num, Num];
+  /** Placed in the plane around it, out of the flow. Outside a plane it is a problem. */
+  place?: Place;
+  /** Gives it units of its own, which `place` inside it uses. */
+  plane?: Plane;
   /** Pinned to its parent's edges: [left, top, right, bottom] points, `null` for free. */
   inset?: [number | null, number | null, number | null, number | null];
   /** The most points tall it grows; past it, what does not fit is cut, or scrolls with `scroll`. */
@@ -121,9 +181,10 @@ export type BoxProps = Interactive & Size & {
    * list to pick from, a tip. `"press"`: a press on its parent or Enter opens and closes it, and a
    * press outside or Escape closes it, as does a press inside when its `role` is `menu` or
    * `listbox`. `"hover"`: shown while the pointer is on its parent or the keys are, letting presses
-   * through. `gap` is in points; a negative one lays it over its parent.
+   * through. `"menu"`: a right press, the menu key or Shift-F10 on its parent, or on anything
+   * inside, opens it at the pointer. `gap` is in points; a negative one lays it over its parent.
    */
-  overlay?: { open: "press" | "hover"; side?: "top" | "bottom" | "left" | "right"; align?: "start" | "center" | "end"; gap?: number };
+  overlay?: { open: "press" | "hover" | "menu"; side?: "top" | "bottom" | "left" | "right"; align?: "start" | "center" | "end"; gap?: number };
   border?: Color;
   /** [top, right, bottom, left] points of `border`; all sides 1 when left out. */
   borderSides?: [number, number, number, number];
@@ -145,69 +206,87 @@ export type TextProps = TextLook &
     | { live: Num; unit: Unit | "position" | "time"; digits?: never; children?: never }
     | { live: Num; digits?: number; unit?: never; children?: never }
   );
-/** Line segments, `points` four numbers each (x1 y1 x2 y2), all `width` points wide. Segments end to end draw as one line. */
-export type Lines = { color: Color; width: number; points: number[] };
-/** Filled rectangles, `rects` four numbers each (x y w h). */
-export type Rects = { color: Color; rects: number[] };
+/** Line segments, `points` four numbers each (x1 y1 x2 y2), or a list feed the window draws as it changes. Segments end to end draw as one line; `fill` closes it and fills it, or under an open line the area below. */
+export type Lines = { color: Color; width: number; points: number[] | Live; fill?: Color };
+/** Filled rectangles, `rects` four numbers each (x y w h), or a list feed. */
+export type Rects = { color: Color; rects: number[] | Live };
 /**
- * `units` [across, down]: the points are in units of your own, stretched to `w` × `h`; widths stay in points.
- * `trim` [from, to], 0 to 1: only that part of its lines' length draws, end to end in their order, such as the arc of a knob.
+ * Its points are in `units` [across, down] when given, stretched to `w` × `h`; else in the units
+ * of the plane when placed; else points. Widths stay in points. `trim` [from, to], 0 to 1: only
+ * that part of its lines' length draws, end to end in their order, such as the arc of a knob.
  */
-export type ShapesProps = { key?: string; at?: [Num, Num]; w: number; h: number; units?: [number, number]; lines?: Lines[]; rects?: Rects[]; opacity?: Num; trim?: [Num, Num] };
-/** One line of text the composer types, such as a name or a value: Enter gives `onCommit` what it says; Escape or a press elsewhere leaves it. */
+export type ShapesProps = { key?: string; at?: [Num, Num]; units?: [number, number]; lines?: Lines[]; rects?: Rects[]; opacity?: Num; trim?: [Num, Num] } & (
+  | { w: Num; h: Num; place?: [x: Num, y: Num] }
+  | { place: [x: Num, y: Num, w: Num, h: Num]; w?: never; h?: never }
+);
+/** One line of text the composer types, such as a name or a value: Enter or a press elsewhere gives `onCommit` what it says, Escape gives it `null`. Inside a `menu` or `listbox` overlay, what it says picks the items shown by their labels. */
 export type FieldProps = {
   key: string;
   label: string;
   /** What it says while nobody types. */
   value: string;
-  onCommit: (text: string) => void;
+  onCommit: (text: string | null) => void;
+  /** Takes the keys when it appears, its text chosen. */
+  focus?: true;
   style?: TextStyle;
   color?: Color;
   w?: number;
   align?: "center" | "end";
   placeholder?: string;
 };
+/** `extensions/ui/icons/<name>.svg` of the project, `size` points square (16 when left out), tinted `color`. */
+export type IconProps = { name: string; size?: number; color?: Color };
 /** The card of a child at `path` inside this tool, such as `t00/synth`: its own view, or one control per field. */
 export type ChildProps = { path: string };
 
 export type Node =
-  | ({ t: "row" | "col" | "box"; press?: true; enter?: true; actions?: string[]; children: Node[] } & Omit<BoxProps, "children" | "onPress" | "onDragEnd" | "onEnter" | "actions">)
+  | ({ t: "row" | "col" | "box"; press?: true; enter?: true; drop?: true; actions?: string[]; children: Node[] } & Omit<BoxProps, "children" | "onPress" | "onDragEnd" | "onEnter" | "onDrop" | "actions">)
   | ({ t: "text"; text: string } & TextLook & { live?: Num; unit?: Unit | "position" | "time"; digits?: number })
   | ({ t: "shapes" } & ShapesProps)
   | ({ t: "field" } & Omit<FieldProps, "onCommit">)
+  | ({ t: "icon" } & IconProps)
   | ({ t: "child" } & ChildProps)
   | { t: "memo"; key: string };
 export type Child = Node | string | number | null | undefined | false | Child[];
 
+/** A field of a record as a card shows it: a number with its range, a switch, or a choice of options. */
+export type FieldInfo = { name: string; label: string } & (
+  | { kind: "number"; min: number; max: number; log: boolean; integer: boolean; unit: Unit | null; default: number }
+  | { kind: "switch"; default: boolean }
+  | { kind: "choice"; options: { value: string | number; text: string }[]; default: string | number }
+);
+/** What built-in tools tell of an instance besides its title and fields. Rust will write this beside `records.ts`; until then a tool's facts are named here. */
+interface ToolFacts {
+  region: { seconds: number; missing: boolean };
+  recorder: { taking: { from: number } | null };
+}
+/** What the window knows of an instance of the tool `T` that no record holds and that rarely changes: its title, the fields of its record, and more of some tools. A change runs the view. */
+export type Facts<T = unknown> = { title: string; fields: FieldInfo[] } & (T extends keyof ToolFacts ? ToolFacts[T] : {});
+/** A child as a view gets it: with its facts. */
+type Seen<C> = C extends { tool: infer T } ? C & { facts: Facts<T> } : never;
+
 /** The tools of the children of `T`, as its `children` names them. */
 type KidsOf<T> = T extends ProjectTool<string, infer Entry> ? (Entry extends { children: infer K extends ChildTools } ? K : {}) : ChildTools;
 /** An instance of the tool `T` as its view gets it, for a test or a part of a view: its record, every field filled, and its children's. */
-export type Self<T> = Drawn<FilledStateOfTool<T>, KidsOf<T>>;
-/** An instance as its view gets it: its record, every field filled, and its children's. */
-export type Drawn<State, K extends ChildTools = ChildTools> = { name: string; state: State; children: OwnedChild<K>[] };
+export type Self<T> = Drawn<FilledStateOfTool<T>, KidsOf<T>, T>;
+/** An instance of the tool `T` as its view gets it: its record, every field filled, its children's, and its facts. */
+export type Drawn<State, K extends ChildTools = ChildTools, T = unknown> = { name: string; state: State; children: Seen<OwnedChild<K>>[]; facts: Facts<T> };
 /** A tool's `view`: what the window shows of an instance, run again whenever its records change. Its handlers use `ctx` as `tick` does: `update`, `send`, `play`, `clock`. */
 export type ToolView<S extends Fields, I extends Inputs, M, K extends ChildTools> = (self: Drawn<ValuesOf<S>, K>, ctx: Context<ValuesOf<S>, I, M, K>) => Node;
 
+type CardState<T> = T extends keyof Tools ? FilledStateOfTool<T> : Record<string, unknown>;
 /**
- * The view of the card of every device whose tool has none, such as a built-in one: the project
- * exports it as `card` from `ui/blocks/generic-card.tsx`. `fields` are those of its record, in
- * their order; its `update` changes the record.
+ * A card of a device without a view: `Card<"eq">` is the project's card of the built-in tool
+ * `eq`, exported as `card` from `ui/blocks/cards/eq.tsx`; `Card` is the generic card of the
+ * others, from `ui/blocks/generic-card.tsx`. It gets what a tool's view gets.
  */
-export type GenericCard = (
-  self: {
-    name: string;
-    state: Record<string, unknown>;
-    card: {
-      title: string;
-      fields: ({ name: string; label: string } & (
-        | { kind: "number"; min: number; max: number; log: boolean; integer: boolean; unit: Unit | null; default: number }
-        | { kind: "switch"; default: boolean }
-        | { kind: "choice"; options: { value: string | number; text: string }[]; default: string | number }
-      ))[];
-    };
-  },
-  ctx: { update: (label: string, change: (draft: { state: Record<string, unknown> }) => void) => void; memory: Record<string, unknown>; held: (name: string) => boolean },
+export type Card<T extends keyof Tools | undefined = undefined> = (
+  self: Drawn<CardState<T>, {}, T>,
+  ctx: Context<CardState<T>, Inputs, Record<string, unknown>, {}>,
 ) => Node;
+
+/** A device the window offers to put in a child, with what it takes: notes it plays, or sound it changes. */
+export type Offer = Offered & { takes: "notes" | "audio" };
 
 /** What all code of an instance gets of the view. */
 export interface ViewContext<_State, _I extends Inputs, M> {
@@ -216,12 +295,14 @@ export interface ViewContext<_State, _I extends Inputs, M> {
   /**
    * Whether a lane moves the number `name` now, of the record or of an instance inside it as
    * `"t01/mix.gain_db"`: its control shows `live.field(name)`, what plays, and is not the
-   * composer's to change. The view runs again when a lane comes or goes.
+   * composer's to change: an `update` of it is refused. The view runs again when a lane comes or goes.
    */
   held(name: string): boolean;
+  /** The devices the window offers to put in a child: built-in ones, plugins and the tools of the project. `addOffer` puts one. */
+  catalog: readonly Offer[];
+  /** The key the action `name` of its tool has now, such as `"cmd-r"`, or `null` while it has none. */
+  shortcut(name: string): string | null;
 }
-
-type Draw = (self: Drawn<unknown>, ctx: Context<any>) => Node;
 
 // JSX through `h`: a file imports `h` from here.
 
@@ -235,6 +316,7 @@ export declare namespace h {
       text: TextProps;
       shapes: ShapesProps;
       field: FieldProps;
+      icon: IconProps;
       child: ChildProps;
     }
     interface ElementChildrenAttribute {
@@ -243,7 +325,14 @@ export declare namespace h {
   }
 }
 
-type Handlers = { onPress?: () => void; onDragEnd?: (moved: Moved) => void; onEnter?: () => void; onCommit?: (text: string) => void; actions?: Actions };
+type Handlers = {
+  onPress?: (p: Pointer) => void;
+  onDragEnd?: (p: Pointer) => void;
+  onEnter?: () => void;
+  onDrop?: (d: Dropped) => void;
+  onCommit?: (text: string | null) => void;
+  actions?: Actions;
+};
 type Scope = { handlers: Map<string, Handlers>; memos: string[] };
 type Entry = Scope & { deps: unknown[]; v: number; node: Node };
 /** What a view of one instance keeps between its runs. */
@@ -263,16 +352,16 @@ const flat = (c: Child, out: Node[] = []): Node[] => {
 
 export function h(tag: keyof h.JSX.IntrinsicElements | ((props: any) => Node), props: Record<string, any> | null, ...children: Child[]): Node {
   if (typeof tag === "function") return tag({ ...props, children: children.length === 1 ? children[0] : children });
-  const { onPress, onDragEnd, onEnter, onCommit, actions, ...rest } = props ?? {};
-  if (onPress || onDragEnd || onEnter || onCommit || actions) scope.handlers.set(rest.key, { onPress, onDragEnd, onEnter, onCommit, actions });
+  const { onPress, onDragEnd, onEnter, onDrop, onCommit, actions, ...rest } = props ?? {};
+  if (onPress || onDragEnd || onEnter || onDrop || onCommit || actions) scope.handlers.set(rest.key, { onPress, onDragEnd, onEnter, onDrop, onCommit, actions });
   if (tag === "text") return { t: "text", ...rest, text: words(children as TextChild) } as Node;
-  if (tag === "shapes" || tag === "child" || tag === "field") return { t: tag, ...rest } as Node;
+  if (tag === "shapes" || tag === "child" || tag === "field" || tag === "icon") return { t: tag, ...rest } as Node;
   const named = actions ? { actions: Object.keys(actions) } : {};
   const kids = flat(children);
   const opens = kids.flatMap((kid) => ("overlay" in kid && kid.overlay ? [kid.overlay.open] : []));
   if (opens.length > 0 && (rest.key === undefined || rest.label === undefined)) throw new Error("what an overlay is in opens it: give it a key and a label");
-  if (new Set(opens).size < opens.length) throw new Error(`${rest.key} has two overlays that open alike: one opens on a press, one on hover`);
-  return { t: tag, ...rest, ...(onPress ? { press: true } : {}), ...(onEnter ? { enter: true } : {}), ...named, children: kids } as Node;
+  if (new Set(opens).size < opens.length) throw new Error(`${rest.key} has two overlays that open alike: one each of press, hover and menu`);
+  return { t: tag, ...rest, ...(onPress ? { press: true } : {}), ...(onEnter ? { enter: true } : {}), ...(onDrop ? { drop: true } : {}), ...named, children: kids } as Node;
 }
 
 /** The text of a text's children: without `false`, `null` and `undefined`, as elements leave them out. */
@@ -303,6 +392,8 @@ export function memo(key: string, deps: unknown[], build: () => Node): Node {
 export type Op = [path: (string | number)[], value: unknown];
 /** The tree of one run of a view, the memos it built again, and those it no longer uses. */
 export type Tree = { root: Node; memos: Record<string, { v: number; node: Node }>; drop: string[] };
+
+type Draw = (self: Drawn<unknown>, ctx: Context<any>) => Node;
 
 function instanceOf(id: string): Instance {
   let known = instances.get(id);
@@ -336,18 +427,37 @@ function run(id: string, draw: Draw, self: Drawn<unknown>, ctx: Context<any>): T
 }
 
 const handlersOf = (at: Instance, key: string) => at.root.handlers.get(key) ?? [...at.cache.values()].find((e) => e.handlers.has(key))?.handlers.get(key);
+const pointer = (p: Partial<Pointer> = {}): Pointer => ({ x: 0, y: 0, dx: 0, dy: 0, clicks: 1, right: false, shift: false, alt: false, cmd: false, ...p });
 
-/** Runs an action of `key`: `press` is its `onPress`, `drag` its `onDragEnd`, `enter` its `onEnter`, `commit` its `onCommit`. Throws when it has none. */
+/** Runs an action of `key`: `press`, `drag`, `drop`, `enter` and `commit` its handlers, else one of its `actions`. Throws when it has none. */
 function perform(at: Instance | undefined, key: string, action: string, value: Value | undefined) {
   const handlers = at && handlersOf(at, key);
-  if (action === "press" && handlers?.onPress) return handlers.onPress();
-  if (action === "drag" && handlers?.onDragEnd) return handlers.onDragEnd(value as Moved);
+  if (action === "press" && handlers?.onPress) return handlers.onPress(pointer(value as Partial<Pointer>));
+  if (action === "drag" && handlers?.onDragEnd) return handlers.onDragEnd(pointer(value as Partial<Pointer>));
+  if (action === "drop" && handlers?.onDrop) return handlers.onDrop({ x: 0, y: 0, audio: [], parts: [], ...(value as Partial<Dropped>) });
   if (action === "enter" && handlers?.onEnter) return handlers.onEnter();
-  if (action === "commit" && handlers?.onCommit) return handlers.onCommit(String(value ?? ""));
+  if (action === "commit" && handlers?.onCommit) return handlers.onCommit(value === null ? null : String(value ?? ""));
   const named = handlers?.actions?.[action];
   if (!named) throw new Error(`${key} has no ${action}`);
   if (action === "set" && typeof value !== "number") throw new Error("set takes a number");
-  named((typeof value === "number" ? value : 1));
+  named(typeof value === "number" ? value : 1);
+}
+
+/** What an `update` sees of a record: its state and, when it read them, its children. */
+type Part = { state?: unknown; children?: readonly { name: string }[] };
+/** The number at `path` of `part`, as `held` names it: `cutoff_hz`, `pads.36.volume_db`, `t01/mix.gain_db`. */
+function numberAt(part: Part, path: string): unknown {
+  const { child, name } = splitPath(path);
+  let at: any = part;
+  for (const step of child?.split("/") ?? []) at = at?.children?.find((each: { name: string }) => each.name === step);
+  at = at?.state;
+  for (const step of name.split(/[.[\]]+/).filter(Boolean)) at = at?.[step];
+  return at;
+}
+/** Throws when a change from `before` to `after` moves a number a lane plays: it is not the code's to change. */
+function refuseHeld(held: readonly string[], before: Part, after: Part) {
+  const moved = held.find((name) => !Object.is(numberAt(before, name), numberAt(after, name)));
+  if (moved !== undefined) throw new Error(`a lane plays ${moved}, so it takes no change`);
 }
 
 /** What the host runs. Not for tools. */
@@ -356,69 +466,197 @@ export const host = {
   /** Runs `action` of `key` in the view of `id`; throws why it could not. */
   perform: (id: string, key: string, action: string, value?: Value) => perform(instances.get(id), key, action, value),
   forget: (id: string) => instances.delete(id),
+  refuseHeld,
 };
 
 // For tests: one view at a time, with no window.
 
 const TESTED = "test";
-let tested: { tool: ProjectTool; self: Drawn<unknown>; changes: Op[]; memory: unknown; held: string[] } | undefined;
+/** What a test answers when a handler asks: `confirm`, and the file `openFile` chose. */
+type Answers = { confirm?: boolean; openFile?: string | null };
+type Options<F> = { held?: string[]; facts?: Partial<F>; answers?: Answers };
+/** `self` as a test gives it: its facts come from `render`, and a child's are its own to give. */
+type Given<S> = S extends { children: readonly (infer C)[] }
+  ? Omit<S, "facts" | "children"> & { children: readonly (C extends { facts: infer F } ? Omit<C, "facts"> & { facts?: Partial<F> } : never)[] }
+  : S;
+type Tested = {
+  draw: Draw;
+  spec?: ToolSpec<Fields, Inputs, unknown>;
+  self: Drawn<unknown>;
+  memory: unknown;
+  held: readonly string[];
+  answers: Answers;
+  /** The changes of the last `act`, also those after an `await` in it. */
+  ops: Op[];
+  acting: boolean;
+  /** The key of the element whose `menu` overlay is open. */
+  menu?: string;
+};
+let tested: Tested | undefined;
 
-/** Runs the view of `tool` on `self` as the window does, and keeps it for `find`, `press` and `act`; `held` names the numbers a lane moves. Its memory lasts while the tool is the same. */
-export function render<T extends ProjectTool>(tool: T, self: Self<T>, { held = [] }: { held?: string[] } = {}): Node {
-  const spec = registry.tools.get(String(tool));
-  if (!spec?.view) throw new Error(`${String(tool)} has no view`);
-  const memory = tested?.tool === tool ? tested.memory : (spec.memory?.() ?? {});
-  if (tested?.tool !== tool) instances.delete(TESTED);
-  tested = { tool, self: self as Drawn<unknown>, changes: [], memory, held };
-  // A handler a memo kept from an earlier run changes what the last run shows, as in the window.
-  // Its draft is a copy of the records with its earlier changes, as the host's is.
-  const update = (_label: string, edit: (draft: never) => void) => {
-    if (!tested) return;
-    const before = apply(tested.self, tested.changes);
-    const draft = structuredClone(before);
-    edit(draft as never);
-    tested.changes.push(...diff(before, draft));
-  };
-  run(TESTED, spec.view as unknown as Draw, tested.self, quiet(tested.self, memory, update, held));
+/**
+ * Runs the view of a tool, or a `Card`, on `self` as the window does, and keeps it for `find`,
+ * `press` and `act`. `held` names the numbers a lane moves; `facts` are its own, a child's are in
+ * `self`; `answers` are what `confirm` and `openFile` get. Its memory lasts while it is the same.
+ */
+export function render<T extends ProjectTool>(tool: T, self: Given<Self<T>>, options?: Options<Facts<T>>): Node;
+export function render<C extends (self: any, ctx: any) => Node>(card: C, self: Given<Parameters<C>[0]>, options?: Options<Parameters<C>[0]["facts"]>): Node;
+export function render(drawn: ProjectTool | Draw, given: unknown, { held = [], facts, answers = {} }: Options<Facts> = {}): Node {
+  const spec = typeof drawn === "function" ? undefined : registry.tools.get(String(drawn));
+  const draw = (typeof drawn === "function" ? drawn : spec?.view) as Draw | undefined;
+  if (!draw) throw new Error(`${String(drawn)} has no view`);
+  const same = tested?.draw === draw;
+  if (!same) instances.delete(TESTED);
+  const memory = same ? tested!.memory : (spec?.memory?.() ?? {});
+  const { name, children } = given as { name: string; children: readonly { name: string; facts?: object }[] };
+  const seen = children.map((child) => ({ ...child, facts: { title: child.name, fields: [], ...child.facts } }));
+  const self = { ...(given as object), children: seen, facts: { title: spec?.title ?? name, fields: [], ...facts } } as unknown as Drawn<unknown>;
+  tested = { draw, spec, self, memory, held, answers, ops: [], acting: false };
+  return redraw(tested);
+}
+
+function redraw(at: Tested): Node {
+  run(TESTED, at.draw, at.self, contextOf(at));
   return instances.get(TESTED)!.last;
 }
 
-/** What code gets in a test: its records and `update`; what it plays and asks goes nowhere. */
-function quiet(self: Drawn<unknown>, memory: unknown, update: Context<unknown>["update"], held: string[]): Context<any> {
+/** What code gets in a test: its records, `update` and `memory`; what it plays goes nowhere, and what it asks gets `answers`. */
+function contextOf(at: Tested): Context<any> {
+  // A handler a memo kept from an earlier run, or from an earlier `render`, changes what the last
+  // run shows, as in the window.
+  const update = (_label: string, edit: (draft: never) => void) => {
+    const at = tested!;
+    const before = at.self;
+    const draft = structuredClone(before);
+    edit(draft as never);
+    refuseHeld(at.held, before, draft);
+    const ops = diff(before, draft);
+    at.ops.push(...ops);
+    at.self = apply(before, ops);
+    // After an `await`, as the window does.
+    if (!at.acting) redraw(at);
+  };
   const nothing = () => {};
   const clock = { playing: false, repeat: null, click: false, computerKeys: false, writeAutomation: false, tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] }, sections: [], tick: 0, bar: 1, beat: 1, bpm: 120, play: nothing, pause: nothing, stop: nothing, jump: nothing, setRepeat: nothing, setClick: nothing, setComputerKeys: nothing, setWriteAutomation: nothing, update: nothing } as unknown as Clock;
-  const asked = async () => null;
-  return { state: self.state, children: self.children, memory, update, held: (name: string) => held.includes(name), clock, time: 0, outputs: {}, send: nothing, play: nothing, select: nothing, addOffer: nothing, openWindow: nothing, openFile: asked, render: asked, openMenu: asked, exportNotes: async () => false, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [] } as unknown as Context<any>;
+  return {
+    state: at.self.state, children: at.self.children, memory: at.memory, update, held: (name: string) => at.held.includes(name), clock, time: 0,
+    send: nothing, play: nothing, select: nothing, addOffer: nothing, openWindow: nothing, catalog: [],
+    shortcut: (name: string) => at.spec?.actions?.[name]?.keys?.[0] ?? null,
+    openFile: async () => at.answers.openFile ?? null, confirm: async () => at.answers.confirm ?? false, render: async () => null, exportNotes: async () => false,
+  } as unknown as Context<any>;
 }
 
-/** Presses `key` as a pointer does; the changes it asked for. The view runs again, as in the window. */
-export function press(key: string): Op[] {
-  return act(key, "press");
+/** Presses `key` as a pointer does, at `p` in its units: a right press opens its `menu`. The changes it asked for. */
+export function press(key: string, p?: Partial<Pointer>): Op[] {
+  return act(key, "press", p);
 }
 
-/** Runs the action of the element with this key or label, as an agent does; the changes it asked for. */
-export function act(keyOrLabel: string, action: string, value?: Value): Op[] {
-  if (!tested) throw new Error("render a view first");
-  const at = instances.get(TESTED);
-  const found = find(keyOrLabel);
+/**
+ * Runs an action of the element with this key or label as the window does: a press, a drag (in
+ * its bounds and on its grid), a drop, a commit of a field's text, or one of its `actions`. Or
+ * one of the tool's own actions, `act("song.record")`. The changes it asked for; the view runs again.
+ */
+export function act(keyOrLabel: string, action: "press" | "drag", p?: Partial<Pointer>): Op[];
+export function act(keyOrLabel: string, action: "drop", d?: Partial<Dropped>): Op[];
+export function act(keyOrLabel: string, action: "commit", text: string | null): Op[];
+export function act(keyOrLabel: string, action: string, value?: number): Op[];
+export function act(toolAction: `${string}.${string}`): Op[];
+export function act(target: string, action?: string, value?: Value): Op[] {
+  const at = tested;
+  if (!at) throw new Error("render a view first");
+  at.ops = [];
+  at.acting = true;
+  try {
+    if (action === undefined) runAction(at, target);
+    else actOn(at, target, action, value);
+  } finally {
+    at.acting = false;
+  }
+  redraw(at);
+  return at.ops;
+}
+
+function runAction(at: Tested, id: string) {
+  const [tool, name] = [id.slice(0, id.indexOf(".")), id.slice(id.indexOf(".") + 1)];
+  if (at.spec?.name !== tool) throw new Error(`render ${tool} first to run ${id}`);
+  const action = at.spec.actions?.[name];
+  if (!action) throw new Error(`${tool} has no action ${name}`);
+  void action.run(contextOf(at) as never);
+}
+
+function actOn(at: Tested, keyOrLabel: string, action: string, value: Value | undefined) {
+  const path = pathTo(keyOrLabel);
+  const found = path?.at(-1);
   const key = found && "key" in found ? found.key : undefined;
-  if (key === undefined) throw new Error(`no ${keyOrLabel}`);
-  perform(at, key, action, value);
-  const { tool, self, changes, held } = tested;
-  render(tool, apply(self, changes) as Self<ProjectTool>, { held });
-  return changes;
+  if (!path || key === undefined) throw new Error(`no ${keyOrLabel}`);
+  const view = instances.get(TESTED);
+  const p = value as Partial<Pointer> | undefined;
+  if (p?.over !== undefined && !pathTo(p.over)) throw new Error(`${p.over} is no key of the view`);
+  const menu = [...path].reverse().find((node) => menuIn(node) !== undefined);
+  if (action === "press" && p?.right && menu && "key" in menu) {
+    at.menu = menu.key;
+    if (!(view && handlersOf(view, key)?.onPress)) return;
+  }
+  const picked = path.find((node) => "overlay" in node && node.overlay?.open === "menu" && (node.role === "menu" || node.role === "listbox"));
+  perform(view, key, action, action === "drag" ? moved(path, p) : value);
+  if (action === "press" && picked) at.menu = undefined;
 }
 
-/** The element with this key or label in the last run, with memos filled in. */
+/** The `menu` overlay among the children of `node`. */
+const menuIn = (node: Node) => ("children" in node && Array.isArray(node.children) ? node.children.find((kid) => "overlay" in kid && kid.overlay?.open === "menu") : undefined);
+
+/** A drag by `p` of the element at the end of `path` as the window ends it: on its grid unless Cmd is held, then in its bounds. */
+function moved(path: Node[], p: Partial<Pointer> = {}): Partial<Pointer> {
+  const node = path.at(-1)!;
+  const drag = "drag" in node ? node.drag : undefined;
+  if (!drag) throw new Error(`${"key" in node ? node.key : "it"} has no drag`);
+  const place = [...path].reverse().flatMap((each) => ("place" in each && each.place ? [each.place] : []))[0];
+  const from = (axis: 0 | 1) => {
+    const at = drag.from?.[axis] ?? place?.[axis];
+    if (at === undefined) throw new Error("a drag that snaps needs a `from`, or a `place` around it");
+    return rest(at);
+  };
+  const snapped = (d: number, axis: 0 | 1) => {
+    const step = drag.snap?.[axis];
+    return !step || p.cmd ? d : Math.round((from(axis) + d) / step) * step - from(axis);
+  };
+  const bounded = (d: number, along: Along | undefined) => (along === undefined ? 0 : along === true ? d : Math.min(Math.max(d, Math.min(...along)), Math.max(...along)));
+  return { ...p, dx: bounded(snapped(p.dx ?? 0, 0), drag.x), dy: bounded(snapped(p.dy ?? 0, 1), drag.y) };
+}
+
+/** A live value while nothing moves: a drag at 0. One that reads what only the window knows throws. */
+function rest(value: Num): number {
+  if (typeof value === "number") return value;
+  const n = value.node;
+  const [a, b] = "a" in n ? [() => rest(n.a), () => rest(n.b)] : [() => 0, () => 0];
+  switch (n.op) {
+    case "plus": return a() + b();
+    case "minus": return a() - b();
+    case "times": return a() * b();
+    case "over": return a() / b();
+    case "min": return Math.min(a(), b());
+    case "max": return Math.max(a(), b());
+    case "negate": return -rest(n.x);
+    case "drag": if (n.part !== "startX" && n.part !== "startY") return 0;
+  }
+  throw new Error(`a test cannot tell where a ${n.op} is: give the drag a \`from\``);
+}
+
+/** The element with this key or label in the last run, with memos filled in. What a closed `menu` holds is not found. */
 export function find(keyOrLabel: string, node?: Node): Node | undefined {
-  const at = node ?? instances.get(TESTED)?.last;
-  const shown = at?.t === "memo" ? instances.get(TESTED)?.cache.get(at.key)?.node : at;
+  return pathTo(keyOrLabel, node)?.at(-1);
+}
+
+/** The elements from `node` to the one with this key or label, as `find` finds it. */
+function pathTo(keyOrLabel: string, node = instances.get(TESTED)?.last, opener?: string): Node[] | undefined {
+  const shown = node?.t === "memo" ? instances.get(TESTED)?.cache.get(node.key)?.node : node;
   if (!shown) return undefined;
-  if (("key" in shown && shown.key === keyOrLabel) || ("label" in shown && shown.label === keyOrLabel)) return shown;
+  if ("overlay" in shown && shown.overlay?.open === "menu" && opener !== tested?.menu) return undefined;
+  if (("key" in shown && shown.key === keyOrLabel) || ("label" in shown && shown.label === keyOrLabel)) return [shown];
   if ("children" in shown && Array.isArray(shown.children))
     for (const each of shown.children) {
-      const hit = find(keyOrLabel, each);
-      if (hit) return hit;
+      const hit = pathTo(keyOrLabel, each, "key" in shown ? shown.key : undefined);
+      if (hit) return [shown, ...hit];
     }
   return undefined;
 }
