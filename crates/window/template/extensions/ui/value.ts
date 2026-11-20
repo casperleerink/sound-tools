@@ -34,6 +34,9 @@ export const valueOf = (position: number, { min, max, scale }: Range): number =>
   return scale === "log" ? min * (max / min) ** position : min + position * (max - min);
 };
 
+/** `range` laid over a drawing so that a value is at `start` plus its place on `range` times `zone`, 0 to 1 across: the travel of a handle in part of a display. */
+export const stretched = (range: Range, start: number, zone: number): Range => ({ ...range, min: valueOf(-start / zone, range), max: valueOf((1 - start) / zone, range) });
+
 /** Where `value` is on the travel, 0 to 1. */
 export const travelled = (value: number, range: Range): number => clamp(positionOf(value, range));
 
