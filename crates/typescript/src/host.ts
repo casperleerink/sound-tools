@@ -3,7 +3,7 @@
 // message per line: the runtime tells on stdin, this says on stdout. What a tool logs goes to
 // stderr, so it cannot break a message.
 
-import { realpathSync, writeSync } from "node:fs";
+import { readFileSync, realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, NoteEvent, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
@@ -27,6 +27,44 @@ type Views = {
 /** What the window knows of an instance that no record holds, see `Facts` in `sdk/view.ts`. */
 type Facts = { title: string; fields: { name: string; default?: unknown }[] };
 const views: Views = await import(join(folder, "sdk/view.ts"));
+
+// Code of an older Sound Tools imports parts of its views that the SDK no longer has. Its files
+// load with those names empty, and its tools without their views: their sound plays, and a card
+// draws them, until an agent writes the views again.
+/** Every name the SDK exports, values and types. */
+const sdkNames = new Set(
+  [...readFileSync(join(folder, "sdk.ts"), "utf8").matchAll(/export (?:type )?\{([^}]*)\}/g)]
+    .flatMap(([, list]) => list!.split(","))
+    .map((name) => name.trim().split(/\s+as\s+/).pop()!)
+    .concat([...readFileSync(join(folder, "sdk/records.ts"), "utf8").matchAll(/export (?:declare )?(?:type|interface|const|function|enum) (\w+)/g)].map(([, name]) => name!)),
+);
+/** The files, by their real path, that import a name the SDK no longer has. */
+const oldViews = new Set<string>();
+const realFolder = realpathSync(folder);
+Bun.plugin({
+  setup(build) {
+    build.onLoad({ filter: /\.tsx?$/ }, ({ path }) => {
+      const text = readFileSync(path, "utf8");
+      const loader = path.endsWith(".tsx") ? "tsx" : "ts";
+      if (!path.startsWith(`${realFolder}/`) || path.startsWith(join(realFolder, "sdk"))) return { contents: text, loader };
+      // A name with no value: a type, which Bun leaves out unless the code uses it as a value, or gone.
+      const empty: string[] = [];
+      const kept = text.replace(/import\s*\{([^}]*)\}\s*from\s*"((?:\.\.?\/)+sdk)"/g, (_, list: string, from: string) => {
+        const known = list.split(",").map((part) => part.trim()).filter((part) => {
+          const [name, local = name] = part.split(/\s+as\s+/);
+          if (part === "" || part.startsWith("type ") || name! in sdk) return part !== "";
+          empty.push(local!);
+          if (!sdkNames.has(name!)) oldViews.add(path);
+          return false;
+        });
+        return `import { ${known.join(", ")} } from "${from}";`;
+      });
+      if (empty.length === 0) return { contents: text, loader };
+      return { contents: `const ${empty.map((name) => `${name}: any = undefined`).join(", ")};\n${kept}`, loader };
+    });
+  },
+});
+const isOld = (file: string) => oldViews.has(realpathSync(join(folder, file)));
 
 for (const name of ["log", "info", "debug", "warn"] as const) {
   console[name] = (...values: unknown[]) => console.error(...values);
@@ -229,6 +267,7 @@ async function load() {
         continue;
       }
       const defined = definedIn(name, file);
+      if (isOld(defined)) delete spec.view;
       const problems = problemsOf(spec);
       errors.push(...problems.map((problem) => ({ file: defined, message: `tool ${name}: ${problem}` })));
       if (problems.length === 0) {
@@ -266,6 +305,7 @@ function described(spec: Spec, file: string) {
       sound_inputs: inputs.filter(([, input]) => input.kind === "audio").map(([name]) => name),
       tick: spec.tick !== undefined,
       view: spec.view !== undefined,
+      old_views: isOld(file),
       keys: spec.onKey !== undefined,
       takes: spec.keys ?? null,
       global_keys: spec.globalKeys ?? [],

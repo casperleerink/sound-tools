@@ -73,6 +73,9 @@ fn is_card(file: &str) -> bool {
     file == GENERIC_CARD || file.starts_with(&format!("{CARDS}/"))
 }
 
+/// What a tool whose file was written for the views of an older Sound Tools says.
+pub const OLD_VIEWS: &str = "This was made for an older Sound Tools, whose views are gone. It plays as before; ask the agent to make its view again.";
+
 /// What a device shows whose card has a mistake.
 const MISTAKE: &str = "This device's card has a mistake, so it shows nothing until it is mended.";
 
@@ -1653,6 +1656,11 @@ impl Tools {
     /// Whether `tool` is a tool of the project that loaded.
     pub fn knows(&self, tool: &str) -> bool {
         find(&self.tools, tool).is_some()
+    }
+
+    /// Whether the file of `tool` was written for the views of an older Sound Tools.
+    pub fn old_views(&self, tool: &str) -> bool {
+        find(&self.tools, tool).is_some_and(|info| info.old_views)
     }
 
     /// Whether the tool `tool` draws a view of its own; without one, the generic card draws it.

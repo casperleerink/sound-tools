@@ -67,6 +67,9 @@ pub(crate) struct ToolInfo {
     pub tick: bool,
     /// It draws its own view; without one, its default view is a card, and it has no page.
     pub view: bool,
+    /// Its file was written for the views of an older Sound Tools, which it is without.
+    #[serde(default)]
+    pub old_views: bool,
     /// It hears the computer keyboard, `onKey`.
     pub keys: bool,
     /// The keys it takes, by name such as `delete` or `cmd-c`; every plain key when `None`.

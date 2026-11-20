@@ -1400,7 +1400,10 @@ export const cut = tool({
 fn older_daw(scratch: &tempfile::TempDir) -> PathBuf {
     let folder = scratch.path().join("song");
     let kept = folder.join(runtime::templates::KEPT);
-    for (file, ours) in [("song.tsx", "// older\n"), ("track.ts", "// older, then ours\n")] {
+    for (file, ours) in [
+        ("song.tsx", "// older\n"),
+        ("track.ts", "// older, then ours\n"),
+    ] {
         let path = format!("extensions/{file}");
         let older = std::fs::read_to_string(folder.join(&path)).unwrap() + "// older\n";
         std::fs::write(kept.join(&path), &older).unwrap();
@@ -1424,16 +1427,27 @@ fn a_newer_template_updates_untouched_code_and_the_agent_merges_the_rest() {
     let mut window = laid_out(state);
     redraw(&mut window);
     let daw = runtime::templates::named("DAW").unwrap();
-    let newest = |path: &str| (daw.files.iter()).find(|(each, _)| *each == path).unwrap().1;
+    let newest = |path: &str| {
+        (daw.files.iter())
+            .find(|(each, _)| *each == path)
+            .unwrap()
+            .1
+    };
     assert_ne!(song, newest("extensions/song.tsx"));
     let read = |path: &str| std::fs::read_to_string(folder.join(path)).unwrap();
     assert_eq!(read("extensions/song.tsx"), newest("extensions/song.tsx"));
     assert_eq!(read("extensions/track.ts"), track);
     let words = "A newer DAW template changes a file this project changed too.";
-    let labels = window.elements().into_iter().filter_map(|element| element.label);
+    let labels = window
+        .elements()
+        .into_iter()
+        .filter_map(|element| element.label);
     assert!(labels.into_iter().any(|label| label == words), "no notice");
 
-    act(&mut window.state, json!({ "label": "Merge with the agent", "action": "press" }));
+    act(
+        &mut window.state,
+        json!({ "label": "Merge with the agent", "action": "press" }),
+    );
     redraw(&mut window);
     let composer = (chrome_controls(&window.state).into_iter())
         .find(|control| control.key == "agent-composer")
@@ -1443,7 +1457,11 @@ fn a_newer_template_updates_untouched_code_and_the_agent_merges_the_rest() {
     assert!(composer.contains("- extensions/track.ts"), "{composer}");
     assert!(window.state.panel.open && window.state.panel.tab == Tab::Agent);
     let previous = folder.join(".template/previous/extensions/track.ts");
-    assert!(std::fs::read_to_string(previous).unwrap().ends_with("// older\n"));
+    assert!(
+        std::fs::read_to_string(previous)
+            .unwrap()
+            .ends_with("// older\n")
+    );
     assert_eq!(read("extensions/track.ts"), track);
     assert!(window.state.template_update.is_none());
 }
@@ -1455,11 +1473,65 @@ fn a_dismissed_template_notice_leaves_the_code_as_it_is() {
     let folder = older_daw(&scratch);
     let track = std::fs::read_to_string(folder.join("extensions/track.ts")).unwrap();
     let mut state = opened_in_place(&folder);
-    act(&mut state, json!({ "key": "notice-template-dismiss", "action": "press" }));
+    act(
+        &mut state,
+        json!({ "key": "notice-template-dismiss", "action": "press" }),
+    );
     assert!(state.template_update.is_none());
     drop(state);
-    assert_eq!(std::fs::read_to_string(folder.join("extensions/track.ts")).unwrap(), track);
+    assert_eq!(
+        std::fs::read_to_string(folder.join("extensions/track.ts")).unwrap(),
+        track
+    );
     assert!(opened_in_place(&folder).template_update.is_some());
+}
+
+/// A page of the GPUI app: its view imports parts the SDK no longer has.
+const OLD_PAGE: &str = r#"import { h, number, Page, Knob, sine, tool } from "./sdk";
+export const old = tool({
+  name: "old", title: "Old", when: "Never", doc: "A tone.",
+  state: { hz: number({ min: 20, max: 2000, default: 220 }) },
+  sound: ({ hz }) => sine(hz).times(0.2),
+  view: () => <Page><Knob field="hz" /></Page>,
+});
+"#;
+
+/// Code of an older Sound Tools loads without its views: the tool plays and gets a card, and
+/// the page says why in plain words.
+#[test]
+fn a_page_of_an_older_sound_tools_plays_and_says_its_view_is_gone() {
+    let scratch = tempfile::tempdir().unwrap();
+    let folder = scratch.path().join("old");
+    runtime::templates::write(&folder, runtime::templates::named("Bare").unwrap()).unwrap();
+    std::fs::write(folder.join("extensions/old.tsx"), OLD_PAGE).unwrap();
+    std::fs::create_dir_all(folder.join("state")).unwrap();
+    std::fs::write(
+        folder.join("state/old.json"),
+        r#"{"tool": "old", "state": {}}"#,
+    )
+    .unwrap();
+    let project = std::fs::read_to_string(folder.join("project.json")).unwrap();
+    let project = project.replace(
+        r#""connections": []"#,
+        r#""main": "old", "connections": []"#,
+    );
+    std::fs::write(folder.join("project.json"), project).unwrap();
+    let state = opened(&folder);
+    let old = InstanceId::new("old").unwrap();
+    assert_eq!(state.project().tool_of(&old), Some("old"));
+    assert!(state.tools.as_ref().unwrap().knows("old"), "its sound loads");
+    let problems = state.project().problems();
+    assert!(
+        problems.iter().any(|problem| problem
+            .message
+            .ends_with(sound_typescript::window::OLD_VIEWS)),
+        "{problems:?}"
+    );
+    let mut window = laid_out(state);
+    redraw(&mut window);
+    assert!(window.find("old-views").is_some());
+    // The plain card: a knob of its field.
+    control(&controls::collect(&window.state).controls, "Old Hz");
 }
 
 /// A transport of its own: its presses play, pause, stop and jump the clock, and its label

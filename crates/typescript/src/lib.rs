@@ -346,6 +346,9 @@ fn checked(loaded: Loaded, skipped: &Skipped, bun: &Arc<Bun>) -> (Vec<Sounds>, V
         if !failed.is_empty() {
             problems.push(info.problem(failed.join("; ")));
         }
+        if info.old_views {
+            problems.push(info.problem(window::OLD_VIEWS));
+        }
         tools.push(sounds);
     }
     (tools, problems)
