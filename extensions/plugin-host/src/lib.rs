@@ -260,7 +260,7 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 };
 
 pub fn register(registry: &mut Registry, plugins: Plugins) -> Result<(), RegistryError> {
-    let (shown, pin_plugins) = (plugins.clone(), plugins.clone());
+    let shown = plugins.clone();
     registry
         .tool::<PluginRecord>(EXTENSION)?
         .behaviour({
@@ -289,8 +289,8 @@ pub fn register(registry: &mut Registry, plugins: Plugins) -> Result<(), Registr
         .command("pin", move |record, context, parameter| {
             let id = context.instance;
             let parameter = u32::try_from(parameter? as i64).ok()?;
-            let parameters = pin_plugins.parameters(id)?;
-            let pin = pin_plugins.pin_now(id, parameters.get(&parameter)?);
+            let parameters = plugins.parameters(id)?;
+            let pin = plugins.pin_now(id, parameters.get(&parameter)?);
             let mut record = record.clone();
             let label = format!("Add {}", pin.name);
             record.parameters.insert(parameter, pin);
