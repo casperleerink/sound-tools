@@ -847,7 +847,8 @@ impl<'a> Rows<'a> {
         let title = match renaming {
             Some(renaming) => {
                 let back = Item::Card(card.line.start).key();
-                el().grow(1.0).min_w(0.0).child(
+                // As tall as the title it stands in for, so the card keeps its height.
+                el().grow(1.0).min_w(0.0).my(-4.0).child(
                     TextInput::new(&renaming.edit)
                         .label("Name")
                         .placeholder("Name")
