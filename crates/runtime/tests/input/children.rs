@@ -114,11 +114,11 @@ fn a_page_of_a_parent_plays_notes_on_two_children_and_the_controls_of_a_third() 
         !problems(opened).is_empty()
     });
     let trigger = problem("\"drop\", which has no bang input hat: its bang inputs are hit");
-    assert_eq!(problems(&opened), [trigger.clone()]);
+    assert_eq!(problems(&opened), std::slice::from_ref(&trigger));
     opened.press("conductor", "drum");
     // A file shows its newest problem.
     opened.until("the problem of the child", |opened| {
-        problems(opened) != [trigger.clone()]
+        problems(opened) != std::slice::from_ref(&trigger)
     });
     let child =
         problem("\"drum\", which conductor does not own: its children are drop, keys, synth");
