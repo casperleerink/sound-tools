@@ -28,11 +28,8 @@
 //!   quarter of the sample rate. The default ceiling of -1 dB leaves some room for it.
 //! - A change of the lookahead starts the delay again from silence, as a change of latency
 //!   moves the track in time anyway.
-//!
-//! [`view`] is the card of the limiter, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

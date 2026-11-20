@@ -26,11 +26,8 @@
 //!
 //! The detector hears the last 10 ms. Under 50 Hz that can fall between two peaks of the wave,
 //! so the gain follows the wave and adds harmonics. A longer release keeps deep bass cleaner.
-//!
-//! [`view`] is the card of the compressor, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

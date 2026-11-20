@@ -23,13 +23,10 @@
 //! ```
 //!
 //! The filter is the first built-in effect and the pattern the others follow: `Parameter`
-//! constants next to the state, a card in [`view`], and an agent doc whose table of fields the
+//! constants next to the state, and an agent doc whose table of fields the
 //! runtime writes from the schema of the state.
-//!
-//! [`view`] is the card of the filter, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

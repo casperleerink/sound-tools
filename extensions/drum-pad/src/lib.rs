@@ -11,24 +11,21 @@
 //!   "state": {"pads": {"36": {"decay_ms": 900.0}, "48": {"sample": "shaker.wav", "decay_ms": 900.0}}}
 //! }
 //! ```
-//!
-//! [`view`] is the card of the Drum pad, and the only module here that uses GPUI.
 
 mod kit;
 mod processor;
 mod sounds;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::de::Error as _;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sound_core::{
-    AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State, ranges,
+    AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, InstanceId, OutputEndpoint, Project,
+    ProjectError, Registry, RegistryError, Scale, State, ranges,
 };
 use sound_media::AudioAsset;
-use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Pitch};
+use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Pitch, Velocity};
 
 use processor::{DrumPad, DrumUpdate};
 pub use processor::{FADE_SECONDS, RAMP_SECONDS, VOICES, pad_gains};
@@ -38,6 +35,17 @@ pub use sounds::{
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "drum-pad";
+
+/// Plays pad `pad`, 0 to 15, of the Drum pad `id` now, as a click on it does. Not an edit:
+/// nothing is saved.
+pub fn hit(
+    project: &mut Project,
+    id: &InstanceId,
+    pad: usize,
+    velocity: Velocity,
+) -> Result<(), ProjectError> {
+    project.send::<DrumPad>(id, PROCESSOR, DrumUpdate::hit(pad, velocity))
+}
 
 /// How many pads there are: a 4 by 4 grid.
 pub const PADS: usize = 16;

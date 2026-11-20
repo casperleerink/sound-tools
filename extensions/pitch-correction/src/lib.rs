@@ -5,11 +5,8 @@
 //!
 //! The pitch comes from [`sound_media::analysis::PitchTracker`] and the shift from
 //! [`sound_media::Shifter`].
-//!
-//! [`view`] is the card of the pitch correction, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

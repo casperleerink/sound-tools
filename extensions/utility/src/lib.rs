@@ -25,11 +25,8 @@
 //! Known gap: turning bass mono on or off fades from the sound as it came to the sound through
 //! the crossover over 20 ms. The crossover turns the phase near its frequency, so for those
 //! 20 ms the bass there dips. It does not click.
-//!
-//! [`view`] is the card of the utility, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

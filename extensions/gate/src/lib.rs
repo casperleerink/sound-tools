@@ -6,11 +6,8 @@
 //!
 //! One device and not two: the shaper is two numbers on the level the gate hears already, so
 //! a device of its own would be a second crate, record, card and doc around them.
-//!
-//! [`view`] is the card of the gate, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

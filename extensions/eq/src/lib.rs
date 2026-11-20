@@ -21,11 +21,8 @@
 //! A band or a field left out is reset to the default of that band, not kept, so an agent
 //! writes the whole list. A list with fewer bands loads, so more bands later would not break a
 //! saved project.
-//!
-//! [`view`] is the card of the EQ, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::de::Error as _;
@@ -223,6 +220,9 @@ pub const OUTPUT_GAIN: Parameter = Parameter {
     set: |state, value| state.output_gain_db = value,
 };
 
+/// The numbers of the whole EQ, not of a band.
+const WHOLE: [&Parameter; 1] = [&OUTPUT_GAIN];
+
 /// The saved state. It is small and `Copy`, so it is also the update the processor gets. The
 /// memory of the bands is runtime state and is not saved, and neither is which band the card
 /// has selected.
@@ -230,7 +230,7 @@ pub const OUTPUT_GAIN: Parameter = Parameter {
 /// A field that a record leaves out takes its default, so `"state": {}` is the default EQ.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
-#[schemars(transform = ranges(&[&OUTPUT_GAIN]))]
+#[schemars(transform = ranges(&WHOLE))]
 pub struct EqState {
     /// Band 1 first, as the card numbers them. A list with fewer bands gives the rest their
     /// defaults.

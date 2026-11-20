@@ -5,11 +5,8 @@
 //!
 //! It works on the spectrum through [`sound_dsp::Stft`], the transform that `spectral` in a
 //! tool of the project uses too.
-//!
-//! [`view`] is the card of the vocoder, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

@@ -25,15 +25,12 @@
 //!
 //! With `"sfz": "cello/cello.sfz"` instead of `sample` it plays the SFZ file
 //! `assets/instruments/cello/cello.sfz` and the samples it names ([`sfz`], [`instrument`]).
-//!
-//! [`view`] is the card of the sampler, and the only module here that uses GPUI.
 
 mod catalog;
 pub mod instrument;
 pub mod library;
 mod processor;
 pub mod sfz;
-pub mod view;
 
 use std::sync::Arc;
 

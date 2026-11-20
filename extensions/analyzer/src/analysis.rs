@@ -5,15 +5,17 @@
 
 use std::ops::Range;
 
+use sound_core::ValueRange;
 use sound_media::analysis::{
     Momentary, Pitch, PitchSettings, PitchTracker, PowerSpectrum, WINDOW, lufs, nearest_note,
 };
-use sound_ui::components::curves::RESPONSE_ACROSS;
 
 /// Columns of the spectrum across the display, from 20 Hz to 20 kHz as a filter's response.
-pub(crate) const COLUMNS: usize = 96;
+pub const COLUMNS: usize = 96;
+/// Where a frequency is across the display: on a scale of ratios, as a filter's response.
+const RESPONSE_ACROSS: ValueRange = ValueRange::logarithmic(20., 20_000.);
 /// The bottom of the spectrum, in dB. Under it is silence.
-pub(crate) const FLOOR_DB: f32 = -90.0;
+pub const FLOOR_DB: f32 = -90.0;
 /// A column falls this fast once the sound in it is gone, so the spectrum moves calmly.
 const FALL_DB_PER_SECOND: f32 = 30.0;
 /// How long a note stays once the sound has none, so it does not blink between notes.
@@ -31,13 +33,13 @@ const SILENCE: [[f32; 2]; 1024] = [[0.0; 2]; 1024];
 
 /// What the card shows, besides the peaks.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Reading {
+pub struct Reading {
     /// The level of each column of the spectrum in dB, from [`FLOOR_DB`] up.
-    pub(crate) spectrum: [f32; COLUMNS],
+    pub spectrum: [f32; COLUMNS],
     /// The loudness of the last 400 ms, in LUFS. `None` for silence.
-    pub(crate) loudness: Option<f32>,
+    pub loudness: Option<f32>,
     /// The note the sound plays, a MIDI note number with its fraction: 69 is A4 at 440 Hz.
-    pub(crate) note: Option<f64>,
+    pub note: Option<f64>,
 }
 
 impl Default for Reading {
@@ -51,12 +53,12 @@ impl Default for Reading {
 }
 
 /// The name of the nearest note and how far off it a note is, in cents: `("A4", 3)`.
-pub(crate) fn tuning(note: f64) -> (String, i64) {
+pub fn tuning(note: f64) -> (String, i64) {
     let (nearest, cents) = nearest_note(note);
     (sound_notes::Pitch::nearest(nearest).name(), cents)
 }
 
-pub(crate) struct Analysis {
+pub struct Analysis {
     rate: f32,
     /// The last [`WINDOW`] frames of each channel, oldest first.
     history: [Vec<f32>; 2],
@@ -78,7 +80,7 @@ pub(crate) struct Analysis {
 }
 
 impl Analysis {
-    pub(crate) fn new(sample_rate: u32) -> Self {
+    pub fn new(sample_rate: u32) -> Self {
         let rate = f64::from(sample_rate);
         let bin_hz = rate / WINDOW as f64;
         let bins = WINDOW / 2 + 1;
@@ -108,12 +110,12 @@ impl Analysis {
         }
     }
 
-    pub(crate) fn reading(&self) -> &Reading {
+    pub fn reading(&self) -> &Reading {
         &self.reading
     }
 
     /// Hears the frames that came since the last call.
-    pub(crate) fn hear(&mut self, frames: &[[f32; 2]]) {
+    pub fn hear(&mut self, frames: &[[f32; 2]]) {
         if !frames.is_empty() {
             (self.waiting, self.silence) = (0.0, 0);
             self.take(frames);
@@ -159,7 +161,7 @@ impl Analysis {
 
     /// The spectrum and the note of the last frames heard, `seconds` after the last look.
     /// Whether that changed the reading.
-    pub(crate) fn look(&mut self, seconds: f32) -> bool {
+    pub fn look(&mut self, seconds: f32) -> bool {
         let before = self.reading.clone();
         if !self.heard {
             self.hear_silence(seconds);

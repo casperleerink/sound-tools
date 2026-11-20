@@ -31,11 +31,8 @@
 //!   than they held, as the damping filter lets go.
 //! - The power icon bypasses the slot with a hard switch, the same for every effect. The tail
 //!   stops at once, and on a loud tail it may click.
-//!
-//! [`view`] is the card of the reverb, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

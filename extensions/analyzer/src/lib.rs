@@ -16,13 +16,10 @@
 //! works out what it shows from the scope, off the audio thread, with the measuring code of
 //! `--analyze` ([`sound_media::analysis`]).
 //!
-//! [`view`] is the card of the analyzer, and the only module here that uses GPUI.
-//!
 //! [`Scope`]: sound_core::Scope
 
-mod analysis;
+pub mod analysis;
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

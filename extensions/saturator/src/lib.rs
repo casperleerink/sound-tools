@@ -15,11 +15,8 @@
 //! The level stays where it was as the drive goes up: the saturator turns its output down by
 //! what the drive adds to a sine at -12 dBFS. So the drive changes the colour of the sound and
 //! not how loud it is.
-//!
-//! [`view`] is the card of the saturator, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

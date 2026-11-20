@@ -18,11 +18,8 @@
 //!   }
 //! }
 //! ```
-//!
-//! [`view`] is the interface of the synth, and the only module here that uses GPUI.
 
 mod synth;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

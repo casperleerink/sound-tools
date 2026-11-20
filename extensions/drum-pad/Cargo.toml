@@ -8,7 +8,6 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-gpui.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -16,7 +15,6 @@ sound-core.workspace = true
 sound-dsp.workspace = true
 sound-media.workspace = true
 sound-notes.workspace = true
-sound-ui.workspace = true
 
 [dev-dependencies]
 hound.workspace = true
