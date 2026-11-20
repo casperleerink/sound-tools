@@ -1,5 +1,5 @@
-//! What moves every frame without a view running again: the live values of the views, a drag,
-//! and the time of the title row, each bound to a Rune live value. A view's live value is a
+//! What moves every frame without a view running again: the live values of the views and a
+//! drag, each bound to a Rune live value. A view's live value is a
 //! small expression (`sound_typescript::live`) worked out here, from the playhead, the time, the
 //! meters and the fields as they play. Kept while a tree that is shown binds it.
 
@@ -9,9 +9,7 @@ use std::rc::Rc;
 
 use rune::LiveText;
 use sound_core::{InstanceId, Ticks};
-use sound_typescript::live::{
-    DragPart, Ease, Eased, Leaves, Live, Num, Readout, TickReadout, number, text_of,
-};
+use sound_typescript::live::{DragPart, Ease, Eased, Leaves, Live, Num, Readout, number, text_of};
 use sound_typescript::next::Keys;
 
 use crate::app::State;
@@ -87,12 +85,10 @@ pub(crate) struct Lives {
     spoken: RefCell<HashMap<String, (InstanceId, Num, String)>>,
     /// The keys down on the sounds the views read, and the frame they were last read in.
     keys: RefCell<HashMap<InstanceId, (Option<u64>, Keys, u128)>>,
-    /// Where the piece plays, as the title row shows it.
-    pub(crate) time: LiveText,
 }
 
 impl Lives {
-    pub(crate) fn new(time: &str) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             bindings: RefCell::default(),
             eased: RefCell::default(),
@@ -107,7 +103,6 @@ impl Lives {
             held: RefCell::default(),
             spoken: RefCell::default(),
             keys: RefCell::default(),
-            time: LiveText::new(time.to_string()),
         }
     }
 
@@ -225,16 +220,13 @@ impl Lives {
     /// One frame `dt` seconds after the last. Whether a value still moves with no new sound,
     /// such as a meter that falls.
     pub(crate) fn update(&self, state: &State, dt: f64) -> bool {
-        let (project, playhead) = (&state.project, state.playhead);
+        let playhead = state.playhead;
         self.frame.set(self.frame.get() + 1);
         self.dt.set(dt);
         self.elapsed.set(self.elapsed.get() + dt);
         self.playhead.set(playhead.0 as f64);
         self.peaks.borrow_mut().clear();
         self.moving.set(false);
-        let position = Some(Readout::Tick(TickReadout::Position));
-        self.time
-            .set(text_of(playhead.0 as f64, position, Some(project.clock())));
         for binding in self.bindings.borrow().values() {
             self.show(state, binding);
         }
@@ -262,7 +254,7 @@ impl Lives {
     }
 
     fn show(&self, state: &State, binding: &Binding) {
-        let project = &state.project;
+        let project = state.project();
         let sources = Sources {
             lives: self,
             state,
@@ -336,7 +328,7 @@ impl Sources<'_> {
     /// The keys down on the sound of `id`, read once a frame.
     fn keys_down(&self, id: InstanceId) -> u128 {
         let frame = self.lives.frame.get();
-        let project = &self.state.project;
+        let project = self.state.project();
         let mut keys = self.lives.keys.borrow_mut();
         let (read, keys, down) = keys.entry(id.clone()).or_default();
         if *read != Some(frame) {
@@ -358,7 +350,7 @@ impl Sources<'_> {
         };
         let mut peaks = self.lives.peaks.borrow_mut();
         let taken = *peaks.entry(key).or_insert_with(|| {
-            (self.state.project.peaks(&id, name)).map_or([0.0; 2], |peaks| peaks.take())
+            (self.state.project().peaks(&id, name)).map_or([0.0; 2], |peaks| peaks.take())
         });
         f64::from(match channel {
             Some(0) => taken[0],
@@ -419,12 +411,12 @@ impl Leaves for Sources<'_> {
             Live::Playing => f64::from(u8::from(self.state.playing)),
             Live::Elapsed => self.lives.elapsed.get(),
             Live::Bpm => {
-                let tempo_map = self.state.project.clock().tempo_map();
+                let tempo_map = self.state.project().clock().tempo_map();
                 tempo_map.change_at(Ticks(playhead as u64)).bpm.bpm()
             }
             Live::Peak { name, channel } => self.peak(name, *channel),
             Live::Value { name, child, .. } => (self.state.tools.as_ref()).map_or(0.0, |tools| {
-                let project = &self.state.project;
+                let project = self.state.project();
                 let tick = Ticks(playhead as u64);
                 tools.field_now(project, self.instance, child.as_deref(), name, tick)
             }),

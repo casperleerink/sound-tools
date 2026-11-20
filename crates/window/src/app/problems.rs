@@ -20,7 +20,7 @@ static TRIANGLE_ALERT: Icon = Icon {
 impl State {
     /// How many files are not live: a file with two problems is one.
     pub(crate) fn files_not_live(&self) -> usize {
-        let problems = self.project.problems();
+        let problems = self.project().problems();
         let files: BTreeSet<&str> = problems
             .iter()
             .map(|problem| problem.path.as_str())
@@ -114,12 +114,12 @@ pub(super) fn list(state: &State) -> Option<El> {
                 .color(theme.color("text")),
         )
         .child(ask);
-    let problems = state.project.problems();
+    let problems = state.project().problems();
     let rows = problems.iter().map(|problem| {
         col()
             .py(6.0)
             .child(
-                text(sound_agent::file_name(&state.project, &problem.path))
+                text(sound_agent::file_name(state.project(), &problem.path))
                     .font(theme.text("label"))
                     .color(muted),
             )

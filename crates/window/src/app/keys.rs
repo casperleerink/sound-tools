@@ -10,19 +10,19 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     let done = if key.is_command('z') {
-        match key.mods.shift {
-            true => state.redo(),
-            false => state.undo(),
+        match (key.mods.shift, key.mods.alt) {
+            (true, _) => state.redo(),
+            (false, true) => state.undo_keeping_version(),
+            (false, false) => state.undo(),
         }
     } else if matches!(&key.key, rune::Key::Text(space) if space == " ") && !key.mods.cmd {
-        state.play_or_stop();
+        state.play_or_pause();
         Ok(())
     } else {
         return false;
     };
-    if let Err(error) = done {
-        state.notice = Some(error.to_string());
-    }
+    // What refused is the session's notice already.
+    done.ok();
     state.handled();
     true
 }

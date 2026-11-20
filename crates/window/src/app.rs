@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::{Context as _, Result};
 use plugin_host::{Plugins, ScanCache, ScanCommand};
+use runtime::session::Session;
 use serde_json::Value;
 use sound_core::{Engine, InstanceId, OutputDevice, OutputStream, Project, Ticks};
 use sound_typescript::next::{Drawn, Tools};
@@ -23,8 +24,10 @@ mod chrome;
 mod frame;
 mod headless;
 mod keys;
+mod notices;
 mod panel;
 mod problems;
+mod transport;
 
 use headless::copied;
 
@@ -67,8 +70,10 @@ enum Sound {
 
 pub(crate) struct State {
     pub(crate) name: String,
-    pub(crate) project: Project,
+    /// The project, and every rule of working on it: undo, drags, notices, the transport.
+    pub(crate) session: Session,
     sound: Sound,
+    /// The session's, for the engine a run without a window plays.
     plugins: Plugins,
     pub(crate) tools: Option<Tools>,
     pub(crate) theme: Theme,
@@ -83,8 +88,6 @@ pub(crate) struct State {
     looped: f64,
     /// How many Buns loaded when the design tokens were last read.
     theme_loads: u64,
-    /// What went wrong last, said in the corner.
-    notice: Option<String>,
     pub(crate) shown: BTreeSet<InstanceId>,
     /// The view a held press paints, and the keys of the elements it entered.
     painting: Option<(InstanceId, BTreeSet<String>)>,
@@ -113,6 +116,7 @@ pub(crate) struct State {
     pub(crate) panel: panel::LeftPanel,
     /// The list of the files that are not live is open.
     problems_open: bool,
+    pub(crate) transport: transport::Transport,
 }
 
 impl State {
@@ -178,28 +182,32 @@ impl State {
         if !headless {
             project.watch()?;
         }
-        let tools =
-            extensions.map(|extensions| Tools::start(extensions, &project, !headless, wake));
+        let tools = (extensions)
+            .map(|extensions| Tools::start(extensions, &project, !headless, wake.clone()));
+        let output = project.engine().output_peaks().clone();
+        let mut session = Session::new(project, plugins.clone(), wake);
         let (theme, theme_problem) = Theme::of(&folder);
+        if let Some(problem) = theme_problem {
+            session.report(problem);
+        }
         let theme_loads = tools.as_ref().map_or(0, Tools::loads);
         let schemas = (runtime::tool_schemas()?.into_iter())
             .map(|schema| (schema.tool, schema.schema))
             .collect();
         Ok(Self {
             name,
-            project,
+            session,
             sound,
             plugins,
             tools,
             theme,
             schemas,
-            lives: Lives::new("1.1"),
+            lives: Lives::new(),
             playing: false,
             playhead: Ticks(0),
             engine_time: 0.0,
             looped: 0.0,
             theme_loads,
-            notice: theme_problem,
             shown: BTreeSet::new(),
             painting: None,
             gesture: None,
@@ -218,9 +226,14 @@ impl State {
                     .map(|support| runtime::app::left_panel_file(&support)),
             ),
             problems_open: false,
+            transport: transport::Transport::new(output),
             last: 0.0,
             _copy: copy,
         })
+    }
+
+    pub(crate) fn project(&self) -> &Project {
+        self.session.project()
     }
 
     /// Whether the tool of `id` is one of the project's whose code did not load: no built-in
@@ -229,19 +242,19 @@ impl State {
         let Some(tools) = &self.tools else {
             return false;
         };
-        let problems = self.project.problems();
+        let problems = self.project().problems();
         let code = problems
             .iter()
             .any(|problem| problem.path.starts_with(sound_typescript::FOLDER));
         // A record whose tool did not load may not open at all.
-        let unknown = (self.project.tool_of(id))
+        let unknown = (self.project().tool_of(id))
             .is_none_or(|tool| !tools.knows(tool) && !self.schemas.contains_key(tool));
         code && unknown
     }
 
     /// The instance the window shows, as `project.json` names it now.
     pub(crate) fn main(&self) -> Option<&InstanceId> {
-        (self.main.as_ref()).or(self.project.project_file().main.as_ref())
+        (self.main.as_ref()).or(self.project().project_file().main.as_ref())
     }
 
     /// What the window shows of `id`, once Bun said.

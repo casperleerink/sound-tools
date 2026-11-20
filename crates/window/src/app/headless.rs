@@ -34,13 +34,16 @@ impl State {
         let mut buffer = vec![0.0_f32; 512 * channels];
         while frames > 0 {
             let size = frames.min(512);
-            for problem in runtime::render_block(
-                &mut self.project,
-                engine,
-                &self.plugins,
-                &mut buffer[..size * channels],
-            )? {
-                self.notice = Some(problem.to_string());
+            let rendered = self.session.background(|project| {
+                runtime::render_block(
+                    project,
+                    engine,
+                    &self.plugins,
+                    &mut buffer[..size * channels],
+                )
+            })?;
+            for problem in rendered {
+                self.session.report(problem);
             }
             frames -= size;
         }
@@ -58,7 +61,7 @@ impl State {
             self.bind_lanes()?;
         }
         if play.is_some() {
-            self.project.engine().play();
+            self.session.background(|project| project.engine().play());
         }
         Ok(())
     }
@@ -76,14 +79,7 @@ impl State {
             *played = before;
         }
         for _ in 0..2 {
-            self.project.poll()?;
-            let (problems, errors) = runtime::tick(&mut self.project, &self.plugins);
-            if let Some(problem) = problems.first() {
-                self.notice = Some(problem.to_string());
-            }
-            if let Some(error) = errors.first() {
-                self.notice = Some(error.to_string());
-            }
+            self.poll_session();
             self.settle();
         }
         Ok(())
@@ -93,7 +89,7 @@ impl State {
     pub(super) fn report(&self) -> Value {
         let controls = controls::collect(self).controls;
         let problems: Vec<String> = self
-            .project
+            .project()
             .problems()
             .iter()
             .map(|problem| format!("{}: {}", problem.path, problem.message))
@@ -106,13 +102,13 @@ impl State {
             "meters": self.lives.levels().into_iter().map(|(name, db)| (name, json!(db))).collect::<serde_json::Map<_, _>>(),
             "view_runs": self.tools.as_ref().map_or(0, Tools::view_runs),
             "problems": problems,
-            "notice": self.notice,
+            "notice": self.session.notice(),
         })
     }
 
     fn time(&self) -> String {
         let at = self
-            .project
+            .project()
             .clock()
             .tempo_map()
             .time_signatures()
