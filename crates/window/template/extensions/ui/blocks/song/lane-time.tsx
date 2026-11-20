@@ -63,9 +63,9 @@ export const LaneTime = ({ page, row }: { page: Page; row: LaneRow }) => {
         }}
         onDragEnd={(p) => (p.alt ? lanes.erase(track, name, p) : lanes.choosePoints(track, name, p))}>
         {points.length === 1 && (
-          <row place={[live.plane(PLANE).left.max(0), row.top, 1, row.height]} align="center" inert>
-            <text style="label" color="text-muted" w={420}>Double-click to add a point, drag over points to choose them</text>
-          </row>
+          <box place={[live.plane(PLANE).left.max(0), row.top, 1, row.height]} inert>
+            <text at={[8, 6]} style="label" color="text-muted" w={420}>Double-click to add a point, drag over points to choose them</text>
+          </box>
         )}
         {band ? <Band page={page} row={row} /> : <Points page={page} row={row} points={points} chosen={chosen} say={say} />}
         {!band && <box place={[from, row.top, marquee.dx.abs(), row.height]} fill={`${lane.colour}/15` as Color} border={`${lane.colour}/60` as Color} opacity={marquee.active.times(Live.of(1).minus(marquee.alt))} />}
@@ -122,7 +122,7 @@ const Points = ({ page, row, points, chosen, say }: { page: Page; row: LaneRow; 
             drag={{ x: [earliest, latest], y: [-top * at.tall, (1 - bottom) * at.tall], ...(snap > 0 ? { snap: [snap, 0] as [number, number] } : {}), ...(together ? { id: `points-${id}` } : {}) }}
             onPress={(p) => lanes.pressPoint(track, name, point.tick, p)} onDragEnd={(p) => lanes.movePoint(track, name, point.tick, at.inLane(p))}>
             {isChosen && (
-              <row at={[MARK + 2, -5]} h={22} px={2} align="center" radius="md" fill="raised" border="border-strong" inert>
+              <row at={[MARK, -24]} h={22} px={2} align="center" radius="md" fill="raised" border="border-strong" inert>
                 <Readout lane={laneOf(row)} down={moved.dy.over(at.tall).plus(down)} />
               </row>
             )}
@@ -136,8 +136,9 @@ const Points = ({ page, row, points, chosen, say }: { page: Page; row: LaneRow; 
 /** What a chosen point holds `down` its lane as it drags, in its unit: a lane holds no silence, its volume's bottom is -100 dB. */
 const Readout = ({ lane: { travel, unit }, down }: { lane: ReturnType<typeof laneOf>; down: LiveValue }) => {
   const played = liveValueAt(down.clamp(0, 1).negate().plus(1), travel);
-  const value = travel.scale === "fader" ? played.max(-100) : played;
-  return unit === undefined ? <text style="number" color="text" live={value} digits={2} /> : <text style="number" color="text" live={value} unit={unit} />;
+  // To a hundredth: a live value's numbers are 32-bit, and 0 dB would read -0.0000005 dB.
+  const value = (travel.scale === "fader" ? played.max(-100) : played).times(100).round().over(100);
+  return unit === undefined ? <text style="number" color="text" w={72} live={value} digits={2} /> : <text style="number" color="text" w={72} live={value} unit={unit} />;
 };
 
 /**
