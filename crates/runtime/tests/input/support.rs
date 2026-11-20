@@ -106,7 +106,13 @@ impl Opened {
         }
         let status = self.project.engine().poll().unwrap();
         let time = status.frames as f64 / f64::from(OFFLINE.sample_rate);
-        (self.tools).run_loops(&self.project, status.playing, status.playhead_tick, time, 0.016);
+        (self.tools).run_loops(
+            &self.project,
+            status.playing,
+            status.playhead_tick,
+            time,
+            0.016,
+        );
     }
 
     /// Polls, and waits until Bun did all it was told. The engine plays a little first, as a
@@ -143,7 +149,9 @@ impl Opened {
     /// The loudest sample of the next `frames` frames.
     pub(crate) fn loudest(&mut self, frames: usize) -> f32 {
         let output = self.render(frames);
-        output.iter().fold(0.0, |loudest, sample| sample.abs().max(loudest))
+        output
+            .iter()
+            .fold(0.0, |loudest, sample| sample.abs().max(loudest))
     }
 
     pub(crate) fn start_playing(&mut self) {

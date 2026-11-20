@@ -58,10 +58,13 @@ fn open_studio(two: bool) -> (Opened, SimulatedInput) {
     write(root, "project.json", project);
     write(root, "extensions/theme.json", "{}");
     write(root, "extensions/studio.tsx", STUDIO);
-    write(root, "state/studio/instance.json", r#"{"tool": "studio", "state": {}}"#);
-    let recorder = |channel: usize| {
-        format!(r#"{{"tool": "recorder", "state": {{"channels": [{channel}]}}}}"#)
-    };
+    write(
+        root,
+        "state/studio/instance.json",
+        r#"{"tool": "studio", "state": {}}"#,
+    );
+    let recorder =
+        |channel: usize| format!(r#"{{"tool": "recorder", "state": {{"channels": [{channel}]}}}}"#);
     write(root, "state/studio/rec.json", &recorder(0));
     if two {
         write(root, "state/studio/rec-2.json", &recorder(1));
@@ -106,7 +109,9 @@ fn a_recorder_records_the_input_and_the_keyboard_where_they_were_heard() {
     let (mut studio, input) = open_studio(false);
     // Armed from the view: the input opens before the song plays.
     studio.press("studio", "arm");
-    studio.until("the input opens", |_| input.openings.load(Ordering::Relaxed) == 1);
+    studio.until("the input opens", |_| {
+        input.openings.load(Ordering::Relaxed) == 1
+    });
     // The thread that opened it woke the owner.
     assert!(studio.wakes.load(Ordering::Relaxed) > 0);
     studio.start_playing();
@@ -156,7 +161,12 @@ fn a_recorder_records_the_input_and_the_keyboard_where_they_were_heard() {
     studio.settle();
     // A project of views wants a generic card, which this one does not need.
     let problems = studio.project.problems();
-    assert!(problems.iter().all(|problem| problem.message.contains("generic-card")), "{problems:?}");
+    assert!(
+        problems
+            .iter()
+            .all(|problem| problem.message.contains("generic-card")),
+        "{problems:?}"
+    );
     // The region plays what was recorded, the left side of the tone, once its file is read in
     // the background.
     studio.until("the region plays its take", |studio| {
@@ -211,7 +221,9 @@ fn a_take_whose_input_cannot_open_keeps_its_notes() {
 fn a_recorder_deleted_while_it_takes_lets_go_of_the_input() {
     let (mut studio, input) = open_studio(false);
     studio.press("studio", "arm");
-    studio.until("the input opens", |_| input.openings.load(Ordering::Relaxed) == 1);
+    studio.until("the input opens", |_| {
+        input.openings.load(Ordering::Relaxed) == 1
+    });
     studio.start_playing();
     studio.record_for(&input, 24_000);
     studio.play_midi(60);
@@ -242,11 +254,17 @@ fn a_recorder_that_starts_while_another_records_keeps_its_own_take() {
     });
     let regions = studio.made("region");
     let start = |name: &str| {
-        let (_, region) = regions.iter().find(|(each, _)| each.starts_with(name)).unwrap();
+        let (_, region) = regions
+            .iter()
+            .find(|(each, _)| each.starts_with(name))
+            .unwrap();
         region["start"].as_u64().unwrap()
     };
     // Half a second later at 120 bpm is a beat later.
-    assert!(start("rec-2-sound") >= start("rec-sound") + 900, "{regions:?}");
+    assert!(
+        start("rec-2-sound") >= start("rec-sound") + 900,
+        "{regions:?}"
+    );
     studio.until("the input let go", |studio| {
         studio.record_for(&input, 2_048);
         input.closed_on().len() == 1
@@ -258,7 +276,10 @@ fn a_recorder_that_starts_while_another_records_keeps_its_own_take() {
 #[test]
 fn a_take_across_a_loop_is_a_region_for_each_round() {
     let (mut studio, input) = open_studio(false);
-    studio.project.engine().set_loop(Some(Ticks(0)..Ticks(1_920)));
+    studio
+        .project
+        .engine()
+        .set_loop(Some(Ticks(0)..Ticks(1_920)));
     studio.press("studio", "arm");
     studio.start_playing();
     // One round is a second; stop just after the loop.
@@ -309,8 +330,14 @@ fn a_take_keeps_the_bend_and_the_mod_wheel() {
         !studio.made("timeline").is_empty()
     });
     let (_, timeline) = &studio.made("timeline")[0];
-    assert!(!timeline["bend"].as_array().unwrap().is_empty(), "{timeline}");
-    assert!(!timeline["mod_wheel"].as_array().unwrap().is_empty(), "{timeline}");
+    assert!(
+        !timeline["bend"].as_array().unwrap().is_empty(),
+        "{timeline}"
+    );
+    assert!(
+        !timeline["mod_wheel"].as_array().unwrap().is_empty(),
+        "{timeline}"
+    );
 }
 
 /// While it records, a take shows the notes it heard so far, a key still held with no end, and
@@ -325,7 +352,10 @@ fn a_take_shows_its_notes_and_its_sound_while_it_records() {
     let recorder = id("studio/rec");
     studio.until("the held key in the take", |studio| {
         studio.record_for(&input, 2_048);
-        let notes = studio.input.take_notes(&recorder).map(|take| take.notes.clone());
+        let notes = studio
+            .input
+            .take_notes(&recorder)
+            .map(|take| take.notes.clone());
         matches!(notes.as_deref(), Some([note]) if note.pitch == 60 && note.end.is_none())
     });
     studio.until("the sound of the take", |studio| {

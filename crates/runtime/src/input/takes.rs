@@ -144,7 +144,10 @@ impl Recorders {
 
     /// The newest take of `recorder`: at a loop the one before may still wait for its end.
     pub(super) fn sound_of(&self, recorder: &InstanceId) -> Option<&TakeSound> {
-        self.sounds.iter().rev().find(|take| take.recorder == *recorder)
+        self.sounds
+            .iter()
+            .rev()
+            .find(|take| take.recorder == *recorder)
     }
 }
 
@@ -188,7 +191,8 @@ impl Followed {
                 Heard::Note(NoteEvent::AllOff) => {
                     if let Some(take) = &mut self.take {
                         let ends = all_off(&take.notes);
-                        take.notes.extend(ends.into_iter().map(|event| (frame, event)));
+                        take.notes
+                            .extend(ends.into_iter().map(|event| (frame, event)));
                     }
                 }
                 Heard::Note(event) => {
@@ -280,7 +284,9 @@ impl Input {
             channels,
         } in present
         {
-            let each = followed.entry(id.clone()).or_insert_with(|| Followed::new(heard));
+            let each = followed
+                .entry(id.clone())
+                .or_insert_with(|| Followed::new(heard));
             let arms = armed && !channels.is_empty();
             if each.armed != arms {
                 each.armed = arms;
@@ -387,8 +393,7 @@ impl Input {
             notes: None,
         });
         self.audio.open();
-        self.audio
-            .send(RecorderCommand::Start(id, vec![request]));
+        self.audio.send(RecorderCommand::Start(id, vec![request]));
     }
 
     /// Ties each recording to the timeline while it runs, and asks for its end once its take
@@ -403,8 +408,8 @@ impl Input {
                 continue;
             };
             let ending = audio.ending.get_or_insert(Ending::Waiting(Instant::now()));
-            let frames = input_rate
-                .and_then(|rate| (audio.placement).input_frames_until(end, timing, rate));
+            let frames =
+                input_rate.and_then(|rate| (audio.placement).input_frames_until(end, timing, rate));
             let finish = match (*ending, frames) {
                 (Ending::Waiting(_), Some(frames)) => {
                     *ending = Ending::Asked(Instant::now());

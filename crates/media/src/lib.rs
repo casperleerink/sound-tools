@@ -60,8 +60,8 @@ pub use shifter::{Shift, Shifter};
 pub use stream::{HEAD_SECONDS, ReadAhead};
 pub use stretch::Periods;
 pub use take::{TakeFile, TakeOverview};
-pub use waves::{Wake, Waves};
 pub use varispeed::{MAX_STEP, Varispeed, varispeed};
+pub use waves::{Wake, Waves};
 
 /// The folder of audio files, under `assets/`.
 pub const AUDIO_FOLDER: &str = "audio";

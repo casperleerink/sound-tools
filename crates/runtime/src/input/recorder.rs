@@ -309,7 +309,9 @@ impl Recorder {
                 until.saturating_sub(recording.frames).min(read as u64)
             });
             recording.frames += wanted;
-            let read = samples.get(..wanted as usize * channels).unwrap_or_default();
+            let read = samples
+                .get(..wanted as usize * channels)
+                .unwrap_or_default();
             for take in &mut recording.takes {
                 let Some(file) = &mut take.file else {
                     continue;

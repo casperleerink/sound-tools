@@ -9,8 +9,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use sound_core::{
-    Assets, CaptureReader, CaptureStatus, DeviceError, InputDevice, InstanceId, LiveInput,
-    Project,
+    Assets, CaptureReader, CaptureStatus, DeviceError, InputDevice, InstanceId, LiveInput, Project,
 };
 
 use super::recorder::{Recorder, RecorderCommand, RecorderReport};
@@ -176,7 +175,10 @@ impl AudioInput {
     /// The opening that came back, if one did: its live input for the engine and the notice
     /// that it is not the one chosen, or why it did not open. `None` too for an opening given
     /// up since: its input closes again.
-    fn take_opened(&mut self, assets: &Assets) -> Option<Result<(LiveInput, Option<String>), DeviceError>> {
+    fn take_opened(
+        &mut self,
+        assets: &Assets,
+    ) -> Option<Result<(LiveInput, Option<String>), DeviceError>> {
         let (generation, opened) = self.opened.1.try_recv().ok()?;
         if self.opening != Some(generation) {
             if let Ok(input) = opened {

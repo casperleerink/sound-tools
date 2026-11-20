@@ -588,7 +588,11 @@ impl Update {
 
     fn of(updater: Option<Updater>, waker: Waker) -> Self {
         let found = Arc::new(Mutex::new(FAILED.get().cloned()));
-        if found.lock().unwrap_or_else(PoisonError::into_inner).is_some() {
+        if found
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+        {
             waker();
         }
         let Some(updater) = updater else {
@@ -618,7 +622,10 @@ impl Update {
 
     /// The newer release to tell the composer about, once there is one.
     pub fn poll(&self) -> Option<Ready> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 }
 

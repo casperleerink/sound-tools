@@ -121,7 +121,9 @@ impl Waves {
     /// How many overviews are being made now.
     pub fn making(&self) -> usize {
         let known = self.known.lock().unwrap_or_else(PoisonError::into_inner);
-        let making = known.values().filter(|entry| matches!(entry.state, State::Making));
+        let making = known
+            .values()
+            .filter(|entry| matches!(entry.state, State::Making));
         making.count()
     }
 }
@@ -158,7 +160,10 @@ mod tests {
     fn until_woken(woken: &AtomicU64, count: u64) {
         let start = Instant::now();
         while woken.load(Ordering::Relaxed) < count {
-            assert!(start.elapsed() < Duration::from_secs(30), "no overview came");
+            assert!(
+                start.elapsed() < Duration::from_secs(30),
+                "no overview came"
+            );
             std::thread::sleep(Duration::from_millis(1));
         }
     }

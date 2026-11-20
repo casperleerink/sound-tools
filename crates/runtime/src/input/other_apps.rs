@@ -172,7 +172,11 @@ impl OtherApps {
         self.openings += 1;
         let opening = self.openings;
         self.opening.insert(app.clone(), opening);
-        let (sounds, opened, waker) = (self.sounds.clone(), self.opened.0.clone(), self.waker.clone());
+        let (sounds, opened, waker) = (
+            self.sounds.clone(),
+            self.opened.0.clone(),
+            self.waker.clone(),
+        );
         let started = std::thread::Builder::new()
             .name("app-sound-open".into())
             .spawn(move || {

@@ -103,9 +103,7 @@ fn a_connection_from_an_app_hears_it_once_it_runs() {
     opened.connect(hear_music(), true);
     if cfg!(target_os = "macos") {
         let expected = r#"connections[0]: not heard, because "Music" is not running, or has played no sound yet"#;
-        opened.until("the problem", |opened| {
-            opened.problems() == [expected]
-        });
+        opened.until("the problem", |opened| opened.problems() == [expected]);
     }
 
     // The processes of the app are looked at again every two seconds.

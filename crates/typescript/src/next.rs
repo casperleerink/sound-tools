@@ -29,9 +29,7 @@ use crate::project::{
     changes_of, control_update, every_instance, find, played, told_to_bun, watch,
 };
 use crate::recorder::{ARM, PROCESSOR as RECORDING, RECORD, RECORDER, Recorder, RecorderUpdate};
-use crate::tools::{
-    Choice, Field, NOTES_TAP, SOUNDING_TAP, ToolInfo, feed_child, feed_processor,
-};
+use crate::tools::{Choice, Field, NOTES_TAP, SOUNDING_TAP, ToolInfo, feed_child, feed_processor};
 use crate::{Extensions, FOLDER, Launched, NoteMessage};
 
 /// The file of a project's design tokens, in `extensions/`. A project that has one is a project
@@ -473,7 +471,12 @@ impl Tools {
         self.clock.unwrap_or_else(|| Clock {
             time: 0.0,
             transport: Transport {
-                bpm: project.project_file().tempo_map.change_at(Ticks(0)).bpm.bpm(),
+                bpm: project
+                    .project_file()
+                    .tempo_map
+                    .change_at(Ticks(0))
+                    .bpm
+                    .bpm(),
                 bar: 1,
                 beat: 1,
                 ..Transport::default()

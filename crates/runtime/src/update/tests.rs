@@ -406,7 +406,10 @@ fn a_started_check_wakes_once_an_update_is_ready() {
     let update = Update::of(Some(updater(root, "linux", "x86_64", place)), waker);
     woken.recv_timeout(Duration::from_secs(60)).unwrap();
     let ready = update.poll().unwrap();
-    assert_eq!((ready.message(), ready.button()), ("Sound Tools 0.2.0 is ready".to_string(), "Restart"));
+    assert_eq!(
+        (ready.message(), ready.button()),
+        ("Sound Tools 0.2.0 is ready".to_string(), "Restart")
+    );
 }
 
 /// A build of no release, such as one a developer runs, never checks.

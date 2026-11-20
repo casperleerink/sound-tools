@@ -35,15 +35,13 @@ impl Importing {
 pub fn import(assets: &Assets, path: PathBuf, waker: Waker) -> Importing {
     let (send, done) = mpsc::channel();
     let assets = assets.clone();
-    let started = std::thread::Builder::new()
-        .name("import".into())
-        .spawn({
-            let send = send.clone();
-            move || {
-                send.send(bring(&assets, &path)).ok();
-                waker();
-            }
-        });
+    let started = std::thread::Builder::new().name("import".into()).spawn({
+        let send = send.clone();
+        move || {
+            send.send(bring(&assets, &path)).ok();
+            waker();
+        }
+    });
     if let Err(error) = started {
         send.send(Err(format!("The file was not brought in: {error}")))
             .ok();

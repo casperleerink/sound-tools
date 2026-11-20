@@ -41,8 +41,16 @@ fn open_listeners() -> Opened {
   "connections": [{"from": {"instance": "one", "port": "audio"}, "to": {"device_output": 0}}]}"#;
     write(root, "project.json", project);
     write(root, "extensions/listener.ts", LISTENER);
-    write(root, "state/one.json", r#"{"tool": "listener", "state": {}}"#);
-    write(root, "state/two.json", r#"{"tool": "listener", "state": {}}"#);
+    write(
+        root,
+        "state/one.json",
+        r#"{"tool": "listener", "state": {}}"#,
+    );
+    write(
+        root,
+        "state/two.json",
+        r#"{"tool": "listener", "state": {}}"#,
+    );
     open(folder, Devices::default())
 }
 
@@ -197,4 +205,3 @@ fn letting_go_of_the_computer_keys_ends_every_note_they_hold() {
         opened.held("one") == 0
     });
 }
-

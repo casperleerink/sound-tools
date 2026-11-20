@@ -126,7 +126,10 @@ impl Input {
             self.happened.extend(ports.notices().map(Happened::Notice));
         }
         // A deleted recorder is no longer armed.
-        if events.iter().any(|event| matches!(event, ProjectEvent::Deleted(_))) {
+        if events
+            .iter()
+            .any(|event| matches!(event, ProjectEvent::Deleted(_)))
+        {
             self.armed.retain(|armed| project.tool_of(armed).is_some());
         }
         self.poll_audio(project);
