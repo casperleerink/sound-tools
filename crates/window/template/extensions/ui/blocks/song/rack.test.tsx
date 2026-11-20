@@ -162,3 +162,10 @@ test("the panel's strip names its pan and says the volume and pan at rest, with 
   rack(song([tapeOf("audio-1", [chainOf([])])]), "audio-1");
   expect(find("input-audio-1", find("strip-audio-1"))).toMatchObject({ label: "Input of Audio 1", w: 64 });
 });
+
+test("an audio clip's card draws its wave from the clip's own sound", () => {
+  const self = song([tapeOf("audio-1", [chainOf([]), regionOf("r1", 0, 4)])]);
+  rack(self, "audio-1", (memory) => (memory.selected = ["audio-1/r1"]));
+  const card = JSON.stringify(find("slot-region"));
+  expect(card).toContain('{"op":"feed","name":"wave","path":"audio-1/r1"}');
+});

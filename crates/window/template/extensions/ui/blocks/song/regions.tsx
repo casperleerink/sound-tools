@@ -80,6 +80,8 @@ export const RegionHandles = ({ page, itemKey: key, region, words, x, y, width, 
   const db = gaining.dy.times(-DB_PER_ROW).plus(Math.max(state.gain_db, GAIN[0])).max(GAIN[0]).min(GAIN[1]);
   const [inX, outX] = [x.plus(inMs.over(msPerTick)), x.plus(width).minus(outMs.over(msPerTick))];
   const shown = (ms: number, held: Live) => held.max(ms > 0 ? 1 : 0);
+  // A fade's slope runs over the sound it turns down, under the name, then straight up to its handle.
+  const k = WAVE / ROW / tall;
   const fade = (from: Live, across: Live, line: number[], shade: number[], ms: number, held: Live) => (
     <shapes place={[from, y, across, tall]} units={[1, 1]} opacity={shown(ms, held)}
       lines={[{ color: "well/60", width: 0.5, points: shade, fill: "well/60" }, { color: "text", width: 1.5, points: line }]} />
@@ -92,8 +94,8 @@ export const RegionHandles = ({ page, itemKey: key, region, words, x, y, width, 
   );
   return (
     <box>
-      {fade(x, inX.minus(x), [0, 1, 1, 0], [0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1], state.fade_in_ms, fadingIn.active)}
-      {fade(outX, x.plus(width).minus(outX), [0, 0, 1, 1], [0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0], state.fade_out_ms, fadingOut.active)}
+      {fade(x, inX.minus(x), [0, 1, 1, k, 1, k, 1, 0], [0, 1, 0, k, 0, k, 1, k, 1, k, 0, 1], state.fade_in_ms, fadingIn.active)}
+      {fade(outX, x.plus(width).minus(outX), [0, 0, 0, k, 0, k, 1, 1], [0, k, 1, k, 1, k, 1, 1, 1, 1, 0, k], state.fade_out_ms, fadingOut.active)}
       <box key={fadeIn} label={`Fade in of ${words}`} role="slider" value={state.fade_in_ms} place={[inX, y]} w={11} h={11} radius="full" fill="text" border="well"
         drag={{ x: [-into, mostIn / msPerTick - into], plays: { [`${key}.fade_in_ms`]: inMs } }} onDragEnd={(p) => page.edits.regions.fadeIn(key, p, seconds)}>
         {pill("Fade in", inMs, "ms", fadingIn.active)}
