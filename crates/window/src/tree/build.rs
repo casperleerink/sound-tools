@@ -1,9 +1,11 @@
 //! A view's nodes as Rune elements.
 
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::rc::Rc;
 
-use rune::{Align, El, ScrollPos, ScrollSpec, col, el, memo, row, text};
+use rune::{Align, El, Phase, ScrollPos, ScrollSpec, col, el, memo, row, text};
 use sound_core::InstanceId;
 use sound_typescript::live::Num;
 use sound_typescript::next::Drawn;
@@ -312,21 +314,29 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
     let mut bars = Vec::new();
     if let Some(scroll) = b.scroll {
         let thumbs = [rune::Live::new([0.0; 4]), rune::Live::new([0.0; 4])];
+        // Where it is scrolled, and where it was when a thumb's drag began.
+        let scrolled_at: Rc<Cell<Option<ScrollPos>>> = Rc::default();
         e = scrolled(e, scroll).on_scroll_offset({
-            let thumbs = thumbs.clone();
+            let (thumbs, scrolled_at) = (thumbs.clone(), scrolled_at.clone());
             move |at: ScrollPos| {
                 for (i, thumb) in thumbs.iter().enumerate() {
                     thumb.set(thumb_at(&at, i));
                 }
+                scrolled_at.set(Some(at));
             }
         });
         let colour = theme.color("text-muted");
-        bars.extend(thumbs.iter().map(|thumb| {
-            el().absolute(0.0, 0.0)
+        let key = b.key.as_deref().map(|key| scope.key(key));
+        bars.extend(thumbs.iter().enumerate().map(|(i, thumb)| {
+            let bar = el()
+                .absolute(0.0, 0.0)
                 .live_rect(thumb)
                 .radius(THUMB / 2.0)
-                .fill(colour)
-                .inert()
+                .fill(colour);
+            match &key {
+                Some(key) => thumb_drag(bar, key.clone(), i, scrolled_at.clone()),
+                None => bar.inert(),
+            }
         }));
     }
     if b.inert {
@@ -406,6 +416,32 @@ const FADE: f32 = 24.0;
 /// How thick a scroll bar's thumb is, and how far from the edge.
 const THUMB: f32 = 4.0;
 const THUMB_EDGE: f32 = 2.0;
+
+/// `bar`, the thumb along axis `i` of the scroll `key`, scrolling it as it drags: the whole
+/// of what scrolls is the length of the bar.
+fn thumb_drag(bar: El, key: String, i: usize, at: Rc<Cell<Option<ScrollPos>>>) -> El {
+    let from = Rc::new(Cell::new(0.0_f32));
+    bar.on_drag(
+        move |_: &mut State, d: &mut rune::Drag, tx: &mut rune::Tx| {
+            let Some(now) = at.get() else {
+                return;
+            };
+            match d.phase {
+                Phase::Down => from.set(now.offset[i]),
+                Phase::Move => {
+                    let whole = now.max[i] + now.viewport[i];
+                    let moved = [d.dx, d.dy][i] * whole / now.viewport[i].max(1.0);
+                    let to = (from.get() + moved).clamp(0.0, now.max[i]);
+                    match i {
+                        0 => tx.scroll_to_x(key.clone(), to),
+                        _ => tx.scroll_to_y(key.clone(), to),
+                    }
+                }
+                Phase::Up => {}
+            }
+        },
+    )
+}
 
 /// Where the thumb of the scroll bar along axis `i` of a scroll at `at` is, in the points of
 /// what scrolls, so it stays at the edge: nothing when all of it shows.

@@ -1175,6 +1175,42 @@ export const lists = tool({{
     )
 }
 
+/// The thumb of a list's scroll bar drags: the list scrolls as far as the thumb goes, in its
+/// whole length to the bar's.
+#[test]
+fn a_scroll_bars_thumb_drags_the_list() {
+    let code = lists("List");
+    let files = [
+        ("extensions/lists.tsx", code.as_str()),
+        (
+            "state/lists.json",
+            r#"{"tool": "lists", "state": {"names": ["a"]}}"#,
+        ),
+    ];
+    let (_scratch, mut window) = page(&files, "lists");
+    let top = |window: &rune::Runtime<State>| window.presented("a-0").unwrap().0[1];
+    // Shown once it scrolls a little.
+    let [x, y, w, _] = window.presented("a").unwrap().0;
+    window.wheel(x + 50.0, y + 50.0, -1.0);
+    for _ in 0..30 {
+        window.frame(1.0 / 60.0);
+    }
+    let before = top(&window);
+    window.pointer_down(x + w - 4.0, y + 6.0);
+    window.frame(1.0 / 60.0);
+    for step in 1..=10 {
+        window.pointer_move(x + w - 4.0, y + 6.0 + 4.0 * step as f32);
+        window.frame(1.0 / 60.0);
+    }
+    window.pointer_up(x + w - 4.0, y + 46.0);
+    for _ in 0..10 {
+        window.frame(1.0 / 60.0);
+    }
+    // 40 points of a bar 100 long down a list 600 long.
+    let moved = before - top(&window);
+    assert!((moved - 240.0).abs() < 12.0, "scrolled {moved}");
+}
+
 /// A list keeps its scroll by its key: when the code is saved again, and when a list is put in
 /// before it.
 #[test]
