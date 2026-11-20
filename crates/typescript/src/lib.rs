@@ -16,6 +16,7 @@
 
 mod behaviours;
 mod bun;
+pub mod devices;
 mod fader;
 mod feeds;
 mod lane;

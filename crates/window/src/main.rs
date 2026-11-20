@@ -170,6 +170,7 @@ fn window(arguments: &[String]) -> Result<()> {
             ..rune::Chrome::DEFAULT
         })
         .args(rune_arguments)
+        .on_focus(app::on_focus)
         .init(move || state)
         .run();
     if let Some(failed) = app::FAILED

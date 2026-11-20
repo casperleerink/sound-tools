@@ -25,6 +25,7 @@ runtime = { path = "../runtime" }
 serde.workspace = true
 serde_json.workspace = true
 sound-core.workspace = true
+sound-media.workspace = true
 sound-typescript.workspace = true
 tempfile.workspace = true
 

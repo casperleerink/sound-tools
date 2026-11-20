@@ -24,9 +24,10 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
                 .padding(theme.space(4))
                 .child(tree::code_failed(state, main)),
             // A device's card on its own has the page's margin.
-            Some(drawn) if state.cards.contains_key(main) => el()
-                .padding(theme.space(4))
-                .child(tree::view(state, main, "", drawn)),
+            Some(drawn) if (state.tools.as_ref()).is_some_and(|tools| tools.draws_card(main)) => {
+                el().padding(theme.space(4))
+                    .child(tree::view(state, main, "", drawn))
+            }
             Some(drawn) => tree::view(state, main, "", drawn),
             None => el(),
         },
@@ -46,11 +47,13 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
     col()
         .w_full()
         .h_full()
+        .on_key_up(super::keys::on_key_up)
         .fill(theme.color("background"))
         .child(title_row(state))
         .child(el().grow(1.0).w_full().clip_soft(0.0).child(body))
         .children(notice)
         .children(tree::overlays(state))
+        .children(super::dialog::view(state))
 }
 
 fn title_row(state: &State) -> El {

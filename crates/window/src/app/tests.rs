@@ -11,6 +11,8 @@ use super::headless::copy_folder;
 use super::*;
 use crate::controls;
 
+mod host;
+
 /// What the live texts of the views show, but the values of the controls a drag turns, such
 /// as the template's faders and knobs.
 fn shown_texts(state: &State) -> Vec<String> {
@@ -936,38 +938,6 @@ fn a_press_plays_an_input_and_the_piece_as_a_control_loop_does() {
     );
     frame(&mut state, 0.6);
     assert!(!state.playing);
-}
-
-/// A press that asks for a menu, and keeps whether it got an answer.
-const ASKER: &str = r#"import { h, input, number, tool } from "./sdk";
-export const asker = tool({
-  name: "asker", title: "Asker", when: "Never", doc: "Asks.", state: { answered: number({ min: 0, max: 1, default: 0 }) },
-  sound: () => input,
-  view: (_, { openMenu, update }) => (
-    <box key="ask" label="Ask" onPress={async () => {
-      if ((await openMenu([{ label: "One" }])) === null) update("Answered", (draft) => void (draft.state.answered = 1));
-    }} />
-  ),
-});
-"#;
-
-#[test]
-fn a_menu_this_window_cannot_show_answers_none_and_says_so() {
-    let (_scratch, folder) = with_tools(&[("asker", ASKER)]);
-    let mut state = opened(&folder);
-    act(&mut state, json!({ "label": "Ask", "action": "press" }));
-    frame(&mut state, 0.1);
-    state.settle();
-    let id = InstanceId::new("song/t00/chain/asker").unwrap();
-    let held: Value = serde_json::from_str(&state.project.state_json(&id).unwrap()).unwrap();
-    assert_eq!(held["answered"], 1);
-    let problems = state.project.problems();
-    assert!(
-        problems
-            .iter()
-            .any(|problem| problem.message.contains("a menu")),
-        "{problems:?}"
-    );
 }
 
 /// The window of `state` as Rune lays it out and draws it, with the window's fonts.

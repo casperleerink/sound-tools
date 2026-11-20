@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use serde::Deserialize as _;
 use serde_json::{Value, json};
 use sound_core::InstanceId;
@@ -56,6 +56,7 @@ impl State {
     ) -> Result<()> {
         match target {
             Target::Play => self.play_or_stop(),
+            Target::Dialog(says) => self.answer_dialog(*says),
             Target::View(press) => {
                 let value = match action {
                     "drag" => value.or_else(|| Some(json!({ "dx": 0, "dy": 0 }))),
@@ -63,6 +64,32 @@ impl State {
                 };
                 self.try_press(press, action, value)?;
             }
+        }
+        Ok(())
+    }
+
+    /// Runs the action `<tool>.<action>` of the main view's tool, else of the first shown
+    /// instance of that tool, as its key does.
+    pub(crate) fn act_by_name(&mut self, name: &str) -> Result<()> {
+        let (tool, action) = name
+            .rsplit_once('.')
+            .context("an action is named <tool>.<action>")?;
+        let main = self.main().cloned();
+        let shown = main.iter().chain(&self.shown);
+        let instance = shown
+            .into_iter()
+            .find(|id| self.project.tool_of(id) == Some(tool))
+            .cloned()
+            .with_context(|| format!("no {tool} shows, so nothing runs {name}"))?;
+        let ids: Vec<String> = (self.keys.keymap.groups())
+            .filter(|group| group.name == tool)
+            .flat_map(|group| group.actions.iter().map(|action| action.name.clone()))
+            .collect();
+        if !ids.iter().any(|id| id == action) {
+            bail!("{tool} has no action {action}; it has: {}", ids.join(", "));
+        }
+        if !self.run_actions(&instance, &[action.to_string()]) {
+            bail!("the code of the project does not run now, so {name} did nothing");
         }
         Ok(())
     }

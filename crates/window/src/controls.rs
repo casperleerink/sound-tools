@@ -40,6 +40,8 @@ pub(crate) enum Target {
     /// The tool's code, for an element of its view, as a press on it goes.
     View(Press),
     Play,
+    /// A button of the window's dialog: whether it says yes.
+    Dialog(bool),
 }
 
 /// Every control the window shows now, and the instances whose views it shows.
@@ -58,6 +60,7 @@ pub(crate) fn collect(state: &State) -> Found {
     if let Some(main) = state.main() {
         found.instance(state, main);
     }
+    found.controls.extend(crate::app::dialog_controls(state));
     found
 }
 
@@ -224,6 +227,7 @@ impl Step {
             return match self.action.as_str() {
                 "undo" => state.undo(),
                 "redo" => state.redo(),
+                other if other.contains('.') => state.act_by_name(other),
                 other => bail!("{other} needs a control: give its label or key"),
             };
         }
