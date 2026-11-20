@@ -42,7 +42,7 @@ export const Timeline = ({ page }: TimelineProps) => {
     <col grow={1} h="full">
       <row grow={1} w="full">
         <box w={GUTTER} h="full" />
-        <box key={PLANE} label="Timeline" grow={1} h="full" plane={{ x: ACROSS, y: ROW, zoom: ZOOM }} drag={{ x: true, y: true }}
+        <box key={PLANE} label="Timeline" grow={1} h="full" plane={{ x: ACROSS, y: ROW, zoom: ZOOM, follow: live.playhead }} drag={{ x: true, y: true }}
           onPress={(p) => {
             const { rows, tracks, edits } = page;
             const row = rows.find((each) => p.y >= each.top && p.y < each.top + each.height);

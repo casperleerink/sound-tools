@@ -188,6 +188,8 @@ pub(super) fn build(scope: &Scope, node: &Node) -> El {
             Err(error) => failed(scope.state, &error.to_string()),
         },
         Node::Memo { key } => match scope.state.memo_of(scope.instance, key) {
+            // A plane builds what shows of it as it scrolls and zooms, which the memo does not say.
+            Some((_, node)) if holds_plane(scope, &node) => build(scope, &node),
             Some((version, node)) => {
                 // Rune keys a memo's root with the memo's key: the root keeps its own.
                 let root = node.key().unwrap_or(key);
@@ -195,6 +197,17 @@ pub(super) fn build(scope: &Scope, node: &Node) -> El {
             }
             None => el(),
         },
+    }
+}
+
+fn holds_plane(scope: &Scope, node: &Node) -> bool {
+    match node {
+        Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
+            b.plane.is_some() || b.children.iter().any(|child| holds_plane(scope, child))
+        }
+        Node::Memo { key } => (scope.state.memo_of(scope.instance, key))
+            .is_some_and(|(_, inner)| holds_plane(scope, &inner)),
+        _ => false,
     }
 }
 

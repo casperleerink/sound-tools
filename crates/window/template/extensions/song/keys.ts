@@ -4,8 +4,11 @@
 import type { Action, ActionKey } from "../sdk";
 import { editsOf } from "./edits";
 import { chosenEffect } from "./effects";
+import { itemsIn, spanOf } from "./clips";
 import { itemAt, rowOfKey, type Song } from "./model";
 import { noteCommand, openClip, type NoteCommand } from "./notes";
+import { BAR } from "./time";
+import { PLANE } from "./view";
 
 /** An action of the song. `run` says `false` when there was nothing for it to do. */
 const on = (keys: readonly ActionKey[], title: string, run: (song: Song) => boolean | void): Action<Song> => ({ title, keys, run });
@@ -97,6 +100,12 @@ export const actions: Record<string, Action<Song>> = {
     editsOf(song).effects(chosen.track).step(chosen.name, 1);
   }),
 
+  show_chosen: on(["z"], "Show the chosen clips", (song) => {
+    const span = spanOf(song, song.memory.selected);
+    if (!span) return false;
+    song.show(PLANE, { x: [span.from, span.to] });
+  }),
+  show_song: on(["z", "shift-z"], "Show the whole song", (song) => song.show(PLANE, { x: [0, spanOf(song, itemsIn(song))?.to ?? 4 * BAR] })),
   next_clip: on(["alt-right"], "Choose the next clip", (song) => editsOf(song).clips.step(1)),
   previous_clip: on(["alt-left"], "Choose the clip before", (song) => editsOf(song).clips.step(-1)),
   clip_menu: on(["alt-enter"], "Open the menu of the chosen clip", ({ memory }) => {

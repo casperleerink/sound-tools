@@ -585,3 +585,32 @@ fn code_shows_a_range_of_a_plane_zoomed_as_far_as_it_zooms() {
     let view = window.state.planes.view(FOLLOWING).unwrap();
     assert_eq!((view.left, view.zoom), (0.0, 0.25));
 }
+
+/// A ruler in a memo, as the song draws its bars once for many runs.
+const KEPT_PLANE: &str = r#"import { h, input, memo, tool } from "./sdk";
+export const kept = tool({
+  name: "kept", title: "Kept", when: "Never", doc: "Kept.", state: {}, sound: () => input,
+  view: () => memo("ruler", [], () => (
+    <box key="ruler" label="Ruler" w={400} h={20} plane={{ x: 0.1, zoom: [0.25, 8] }}>
+      <box key="bar-2" label="Bar 2" place={[3840, 0, 10, 10]} />
+    </box>
+  )),
+});
+"#;
+
+#[test]
+fn a_plane_a_memo_kept_builds_again_as_it_zooms() {
+    let (_scratch, folder) = with_tools(&[("kept", KEPT_PLANE)]);
+    let mut window = laid_out(opened(&folder));
+    redraw(&mut window);
+    let ruler = "t00/chain/kept:ruler";
+    act(
+        &mut window.state,
+        json!({ "key": ruler, "action": "view", "value": { "x": [0, 2000] } }),
+    );
+    window.invalidate();
+    window.frame(1.0 / 60.0);
+    redraw(&mut window);
+    let at = |key: &str| window.presented(key).unwrap().0[0];
+    assert_eq!(at("t00/chain/kept:bar-2") - at(ruler), 768.0);
+}

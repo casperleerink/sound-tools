@@ -89,3 +89,11 @@ test("shift-enter makes the open editor large and puts it back, with no undo ste
   expect(f.memory.editorLarge).toBe(true);
   expect(f.steps).toEqual([]);
 });
+
+test("Z shows the chosen clips on the timeline, else the whole song", () => {
+  const f = fakeSong({ children: [trackOf("t00", [clipOf("c00", BAR, BAR), clipOf("c01", 8 * BAR, 2 * BAR)])] });
+  expect(press(f.song, "z")).toBe("show_song");
+  f.memory.selected = ["t00/c00"];
+  expect(press(f.song, "z")).toBe("show_chosen");
+  expect(f.shown).toEqual([["song", { x: [0, 10 * BAR] }], ["song", { x: [BAR, 2 * BAR] }]]);
+});

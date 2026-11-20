@@ -150,8 +150,10 @@ fn window(arguments: &[String], last: bool) -> Result<()> {
     if !headless && installs_an_update() {
         return Ok(());
     }
+    // Steps of `--act` land once the window is laid out, as a plane shows a range: a few frames.
+    let at = play.or(act.as_ref().map(|_| 0.05));
     if let (Some(seconds), false) = (
-        play,
+        at,
         rune_arguments.iter().any(|argument| argument == "--at"),
     ) {
         rune_arguments.extend(["--at".to_string(), seconds.to_string()]);

@@ -56,6 +56,23 @@ export function choose(song: Song, keys: readonly string[], track: string | null
   }
 }
 
+/** From the earliest start of the clips and regions `keys` names to their latest end, in ticks: none for none. */
+export function spanOf(song: Song, keys: readonly string[]) {
+  const spans = keys.flatMap((key) => {
+    const start = itemAt(song.children, key)?.state.start;
+    return start === undefined ? [] : [{ from: start, to: start + lengthAt(song, key) }];
+  });
+  return spans.length === 0 ? undefined : { from: Math.min(...spans.map((each) => each.from)), to: Math.max(...spans.map((each) => each.to)) };
+}
+
+/** Every clip and region, `row/name`, by its row's order. */
+export const itemsIn = (song: Song) =>
+  rowsOf(song.children, song.state.order).flatMap(({ name }) => {
+    const owner = song.children.find((child) => child.name === name);
+    const items = owner?.tool === "track" || owner?.tool === "tape" ? owner.children.filter((child) => child.tool === "timeline" || child.tool === "region") : [];
+    return items.map((child) => `${name}/${child.name}`);
+  });
+
 /**
  * Tells the window what the composer works on: the first chosen clip or region, else the track,
  * and the bars of the chosen, which Export selection exports. Only when that changed: the view
@@ -63,11 +80,7 @@ export function choose(song: Song, keys: readonly string[], track: string | null
  */
 export function publish(song: Song) {
   const { memory } = song;
-  const spans = memory.selected.flatMap((key) => {
-    const start = itemAt(song.children, key)?.state.start;
-    return start === undefined ? [] : [{ from: start, to: start + lengthAt(song, key) }];
-  });
-  const span = spans.length === 0 ? undefined : { from: Math.min(...spans.map((each) => each.from)), to: Math.max(...spans.map((each) => each.to)) };
+  const span = spanOf(song, memory.selected);
   const path = memory.selected[0] ?? memory.track;
   const told = JSON.stringify([path, span]);
   if (told === memory.published) return;
@@ -426,11 +439,7 @@ export const clipEdits = (song: Song) => {
     },
     /** Chooses every clip and region. */
     all() {
-      choose(song, rows().flatMap(({ name }) => {
-        const owner = song.children.find((child) => child.name === name);
-        const items = owner?.tool === "track" || owner?.tool === "tape" ? owner.children.filter((child) => child.tool === "timeline" || child.tool === "region") : [];
-        return items.map((child) => `${name}/${child.name}`);
-      }));
+      choose(song, itemsIn(song));
     },
     /** Gives the clip `key` the title `title`. */
     rename(key: string, title: string) {
