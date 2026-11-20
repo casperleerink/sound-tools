@@ -37,6 +37,8 @@ export const Timeline = ({ page }: TimelineProps) => {
   // The clip a hint offers to start with: the first instrument track, while the song has no clip.
   const hinted = tracks.some((each) => each.children.some((child) => child.tool === "timeline")) ? undefined : tracks.find((each) => each.tool === "track")?.name;
   const bounds = boundsOf(page, chosen);
+  // What the tempo changes and time signatures are, as text: a memo compares it, not the object a run makes.
+  const tempo = JSON.stringify(song.clock.tempo_map);
   return (
     <col grow={1} h="full">
       <row grow={1} w="full">
@@ -61,9 +63,9 @@ export const Timeline = ({ page }: TimelineProps) => {
             if (d.audio.length > 0) edits.clips.dropAudio(d.audio, at);
           }}>
           <box place={[0, 0, end, height + 1]} />
-          <Grid runs={song.clock.tempo_map.time_signatures} end={end} height={height} />
+          <Grid runs={song.clock.tempo_map.time_signatures} tempo={tempo} end={end} height={height} />
           {rows.map((row) =>
-            row.kind === "track" ? <TrackTime page={page} row={row} chosen={chosen} bounds={bounds} hint={hinted === row.track.name ? "Double-click to add a clip" : row.track.tool === "tape" ? "Drop an audio file here" : ""} /> : null,
+            row.kind === "track" ? <TrackTime page={page} row={row} tempo={tempo} chosen={chosen} bounds={bounds} hint={hinted === row.track.name ? "Double-click to add a clip" : row.track.tool === "tape" ? "Drop an audio file here" : ""} /> : null,
           )}
           {laneGroups(rows).map((lanes) => <LaneTimes page={page} rows={lanes} />)}
           <box place={[marquee.x.min(marquee.x.plus(marquee.dx)), marquee.y.min(marquee.y.plus(marquee.dy)), marquee.dx.abs(), marquee.dy.abs()]} radius="sm" fill="fill" border="border-strong" opacity={marquee.active} />
@@ -125,8 +127,8 @@ function itemMenu(page: Page, key: string, region: boolean): Item[] {
 }
 
 /** The grid: a line at each bar, fewer as the song zooms out, and at each beat zoomed in; the window thins them, the view runs for none of it. */
-const Grid = ({ runs, end, height }: { runs: Runs; end: number; height: number }) =>
-  memo("grid", [runs, end, height], () => {
+const Grid = ({ runs, tempo, end, height }: { runs: Runs; tempo: string; end: number; height: number }) =>
+  memo("grid", [tempo, end, height], () => {
     const view = live.plane(PLANE);
     const bars = barStarts(runs, end);
     // Bars an odd multiple of 2^k apart show while they are at least 24 points apart.
@@ -160,7 +162,7 @@ function beatTicks(runs: Runs, bars: readonly number[]) {
  * The clips or the regions of one track on its row: one memo, so an edit of a clip draws its row
  * again and no other. The chosen move, copy and resize as one.
  */
-const TrackTime = ({ page, row, chosen, bounds, hint }: { page: Page; row: Row; chosen: ReadonlySet<string>; bounds: Bounds; hint: string }) => {
+const TrackTime = ({ page, row, tempo: tempoKey, chosen, bounds, hint }: { page: Page; row: Row; tempo: string; chosen: ReadonlySet<string>; bounds: Bounds; hint: string }) => {
   const { song } = page;
   const { memory } = song;
   const track = row.track;
@@ -173,7 +175,7 @@ const TrackTime = ({ page, row, chosen, bounds, hint }: { page: Page; row: Row; 
   const under = page.rows.filter((each) => each.kind !== "track" && each.track === track).reduce((sum, each) => sum + each.height, 0);
   const keys = ["cut_clips", "copy_clips", "duplicate_clips", "delete_clips"].map((action) => song.shortcut(action)).join(" ");
   const quiet = memory.recording !== null || track.children.some((child) => child.tool === "timeline" || child.tool === "region");
-  return memo(`time-${track.name}`, [track.children, colour, tempo, row.top, here.join(" "), here.length > 0 ? JSON.stringify(bounds) : null, renaming, memory.snap, dim, under, keys, quiet ? "" : hint], () => (
+  return memo(`time-${track.name}`, [track.children, colour, tempoKey, row.top, here.join(" "), here.length > 0 ? JSON.stringify(bounds) : null, renaming, memory.snap, dim, under, keys, quiet ? "" : hint], () => (
     <box>
       <box place={[0, row.top, page.end, 1]} border="border" borderSides={[0, 0, 1, 0]} />
       {!quiet && hint !== "" && (
