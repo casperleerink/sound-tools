@@ -159,8 +159,7 @@ fn cancelling_kills_curl_and_keeps_what_came() {
             false
         },
         async {
-            #[allow(clippy::disallowed_methods)]
-            smol::Timer::after(Duration::from_millis(500)).await;
+            crate::jobs::sleep(Duration::from_millis(500)).await;
             true
         },
     ));

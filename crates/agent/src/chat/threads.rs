@@ -3,42 +3,70 @@
 
 use std::path::PathBuf;
 
-use gpui::{Context, Focusable, Task, Window, prelude::*};
+use sound_core::Project;
 
-use super::Sidebar;
+use super::{Chat, Done};
 use crate::conversation::{Conversation, request_label};
+use crate::jobs::{self, Job, Outbox};
 use crate::store::{RecentThread, SavedThread, ThreadStore, Write};
 
 /// How many threads **Open recent** lists.
 const RECENT: usize = 10;
 
-impl Sidebar {
-    /// Reads the current thread of `project` from `threads` in the background.
-    pub(super) fn load(threads: PathBuf, project: PathBuf, cx: &mut Context<Self>) -> Task<()> {
-        cx.spawn(async move |sidebar, cx| {
-            let (store, current, recent) = cx
-                .background_spawn(async move {
-                    let store = ThreadStore::new(&threads, &project);
-                    let (current, recent) = (store.current(), store.recent(RECENT));
-                    (store, current, recent)
-                })
-                .await;
-            // A sidebar that went in the meantime shows nothing.
-            sidebar
-                .update(cx, |sidebar, cx| sidebar.loaded(store, current, recent, cx))
-                .ok();
-        })
-    }
+/// The label of **New**, its menu, and the rows of the menu.
+pub const NEW: &str = "New";
+pub const NEW_MENU: &str = "Recent threads and instructions";
+pub const NEW_THREAD: &str = "New thread";
+pub const OPEN_RECENT: &str = "Open recent";
 
-    fn loaded(
+/// Reads the current thread of `project` from `threads` in the background.
+pub(super) fn load(threads: PathBuf, project: PathBuf, outbox: Outbox<Done>) -> Job {
+    jobs::spawn(async move {
+        let loaded = smol::unblock(move || {
+            let store = ThreadStore::new(&threads, &project);
+            let (current, recent) = (store.current(), store.recent(RECENT));
+            Done::Loaded {
+                store,
+                current,
+                recent,
+            }
+        });
+        outbox.send(loaded.await);
+    })
+}
+
+/// Hands each write to the background in turn, so the files get them in order. Detached: it
+/// ends after the writes still queued once the chat is gone.
+fn write_in_order(store: ThreadStore, outbox: Outbox<Done>) -> smol::channel::Sender<Write> {
+    let (sender, receiver) = smol::channel::unbounded::<Write>();
+    smol::spawn(async move {
+        let mut told = false;
+        while let Ok(write) = receiver.recv().await {
+            let store = store.clone();
+            let written = smol::unblock(move || store.write(&write)).await;
+            // Said once: a full disk would otherwise add a line at every event.
+            if let Err(error) = written
+                && !told
+            {
+                told = true;
+                outbox.send(Done::Notice(format!("This thread is not saved: {error}")));
+            }
+            outbox.send(Done::Saved);
+        }
+    })
+    .detach();
+    sender
+}
+
+impl Chat {
+    pub(super) fn loaded(
         &mut self,
         store: ThreadStore,
         current: Result<Option<(SavedThread, Conversation)>, String>,
         recent: Result<Vec<RecentThread>, String>,
-        cx: &mut Context<Self>,
     ) {
         self.loading = None;
-        self.writes = Some(write_in_order(store.clone(), cx));
+        self.writes = Some(write_in_order(store.clone(), self.inbox.outbox()));
         self.store = Some(store);
         // The index did not read: `current` says so.
         self.recent = recent.unwrap_or_default();
@@ -57,8 +85,6 @@ impl Sidebar {
         match current {
             Ok(Some((saved, conversation))) => {
                 self.saved = Some(saved);
-                // A thread keeps its provider: the picker offers only its models.
-                self.follow(cx);
                 // Only notices came meanwhile: no message goes while it loads.
                 let meanwhile = std::mem::replace(&mut self.conversation, conversation);
                 self.conversation.append(meanwhile);
@@ -69,9 +95,12 @@ impl Sidebar {
                 .notice(format!("The saved thread could not be read: {error}")),
         }
         self.forget_entries();
-        self.list.reset(self.conversation.entries().len());
-        self.update_new_menu(cx);
-        cx.notify();
+    }
+
+    /// The project's other threads for **Open recent**, the last one left first, by their
+    /// first message.
+    pub fn recent_threads(&self) -> &[RecentThread] {
+        &self.recent
     }
 
     /// Puts a thread first in **Open recent**, by its first message. A thread with none has
@@ -87,56 +116,52 @@ impl Sidebar {
         self.recent.truncate(RECENT);
     }
 
-    pub(super) fn keep(&self, writes: impl IntoIterator<Item = Write>) {
+    pub(super) fn keep(&mut self, writes: impl IntoIterator<Item = Write>) {
         let Some(sender) = &self.writes else {
             return;
         };
         for write in writes {
-            // The writer ends only with the sidebar, which owns the sender.
-            sender.try_send(write).ok();
+            // Fails only once the writer is gone, which ends with the chat.
+            if sender.try_send(write).is_ok() {
+                self.saving += 1;
+            }
         }
     }
 
-    /// Drops the thread and its process, and starts empty.
-    pub(super) fn new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.leave_thread(window, cx);
+    /// **New**: drops the thread and its process, and starts empty. Mid-turn the turn ends,
+    /// and its request with it.
+    pub fn new_thread(&mut self, project: &mut Project) {
+        self.leave_thread(project);
         // The old one stays in the store, and no thread is current until the next message.
         self.keep([Write::Current(None)]);
         // With no writer yet, the thread that loads must not come back.
         self.new_thread_while_loading = self.loading.is_some();
-        window.focus(&self.focus_handle(cx), cx);
-        cx.notify();
     }
 
     /// Drops the thread and its process, and shows the recent thread `id` once it is read.
-    pub(super) fn open_thread(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_thread(&mut self, id: &str, project: &mut Project) {
         let Some(store) = self.store.clone() else {
             return;
         };
-        self.leave_thread(window, cx);
-        self.opening = Some(cx.spawn(async move |sidebar, cx| {
-            let opened = cx.background_spawn(async move { store.thread(&id) }).await;
-            // A sidebar that went in the meantime shows nothing.
-            sidebar
-                .update(cx, |sidebar, cx| sidebar.opened(opened, cx))
-                .ok();
-        }));
-        window.focus(&self.focus_handle(cx), cx);
-        cx.notify();
+        self.leave_thread(project);
+        self.openings += 1;
+        let opening = self.openings;
+        let outbox = self.inbox.outbox();
+        let id = id.to_string();
+        let job = jobs::spawn(async move {
+            let opened = smol::unblock(move || store.thread(&id)).await;
+            outbox.send(Done::Opened(opening, opened));
+        });
+        self.opening = Some((opening, job));
     }
 
-    fn opened(
-        &mut self,
-        opened: Result<Option<(SavedThread, Conversation)>, String>,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn opened(&mut self, opened: Result<Option<(SavedThread, Conversation)>, String>) {
         self.opening = None;
         match opened {
             Ok(Some((saved, conversation))) => {
                 self.recent.retain(|thread| thread.id != saved.id);
                 self.keep([Write::Current(Some(saved.clone()))]);
                 self.saved = Some(saved);
-                self.follow(cx);
                 // Only notices came meanwhile: no message goes while it reads.
                 let meanwhile = std::mem::replace(&mut self.conversation, conversation);
                 self.conversation.append(meanwhile);
@@ -150,55 +175,18 @@ impl Sidebar {
                 .notice(format!("The thread could not be read: {error}")),
         }
         self.forget_entries();
-        self.list.reset(self.conversation.entries().len());
-        self.update_new_menu(cx);
-        cx.notify();
     }
 
     /// Ends the thread's process, keeps the thread in **Open recent**, and empties the
-    /// sidebar. A recent thread still being read stays where it is.
-    fn leave_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_instructions(window, cx);
-        self.end_agent(cx);
+    /// chat. A recent thread still being read stays where it is.
+    fn leave_thread(&mut self, project: &mut Project) {
+        self.close_instructions();
+        self.end_agent(project);
         self.opening = None;
         let conversation = std::mem::take(&mut self.conversation);
         if let Some(saved) = self.saved.take() {
             self.remember(&saved, &conversation);
         }
         self.forget_entries();
-        self.list.reset(0);
-        self.update_new_menu(cx);
-        self.follow(cx);
     }
-}
-
-/// Hands each write to the background in turn, so the files get them in order. Detached: it
-/// ends when the sidebar does, after the writes still queued.
-fn write_in_order(store: ThreadStore, cx: &mut Context<Sidebar>) -> smol::channel::Sender<Write> {
-    let (sender, receiver) = smol::channel::unbounded::<Write>();
-    cx.spawn(async move |sidebar, cx| {
-        let mut told = false;
-        while let Ok(write) = receiver.recv().await {
-            let store = store.clone();
-            let written = cx
-                .background_spawn(async move { store.write(&write) })
-                .await;
-            // Said once: a full disk would otherwise add a line at every event.
-            if let Err(error) = written
-                && !told
-            {
-                told = true;
-                // A sidebar that went has nobody to tell.
-                sidebar
-                    .update(cx, |sidebar, cx| {
-                        let notice = format!("This thread is not saved: {error}");
-                        sidebar.conversation.notice(notice);
-                        sidebar.show(None, cx);
-                    })
-                    .ok();
-            }
-        }
-    })
-    .detach();
-    sender
 }
