@@ -970,3 +970,42 @@ fn a_page_follows_its_room_when_the_window_resizes() {
     );
     assert_eq!(window.state.tools.as_ref().unwrap().view_runs(), runs);
 }
+
+/// Two devices of one tool have the same keys inside their views: each element keeps its own
+/// focus and its own press, by the instance its key is scoped to.
+#[test]
+fn two_devices_with_the_same_inner_keys_keep_a_focus_and_a_press_each() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    std::fs::write(folder.join("extensions/steps.tsx"), super::STEPS).unwrap();
+    let chain = folder.join("state/song/t00/chain");
+    let order = json!({ "tool": "chain", "state": { "order": ["a", "b"] } });
+    std::fs::write(chain.join("instance.json"), order.to_string()).unwrap();
+    for name in ["a", "b"] {
+        std::fs::write(
+            chain.join(format!("{name}.json")),
+            r#"{"tool": "steps", "state": {}}"#,
+        )
+        .unwrap();
+    }
+    let mut window = laid_out(opened(&folder));
+    let on = |window: &rune::Runtime<State>, name: &str| {
+        record_of(&window.state, &format!("song/t00/chain/{name}"))["on"][2].clone()
+    };
+    act(
+        &mut window.state,
+        json!({ "key": "t00/chain/b:step-2", "action": "toggle" }),
+    );
+    redraw(&mut window);
+    assert_eq!(
+        (on(&window, "a"), on(&window, "b")),
+        (Value::Null, json!(true))
+    );
+    focus(&mut window, "t00/chain/a:step-2");
+    focus(&mut window, "t00/chain/b:step-2");
+    keys(&mut window, "space");
+    assert_eq!(
+        (on(&window, "a"), on(&window, "b")),
+        (Value::Null, json!(false))
+    );
+}
