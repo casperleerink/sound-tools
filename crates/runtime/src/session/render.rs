@@ -115,7 +115,7 @@ impl Session {
         let failed = last.unwrap_or("the render stopped");
         Some(match status {
             Ok(status) if status.success() => rendered.map_err(Into::into),
-            Ok(_) => Err(anyhow!("{}", failed.trim_start_matches("Error: "))),
+            Ok(_) => Err(anyhow!("{}", failed.trim().trim_start_matches("Error: "))),
             Err(error) => Err(error.into()),
         })
     }
