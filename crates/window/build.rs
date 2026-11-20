@@ -1,12 +1,8 @@
-//! Embeds the template of a new project: `template/`, and the tools it shares with the DAW
-//! template of `templates/daw`, which play the same. On Windows, also puts the app icon into
+//! Embeds the template of a new project: `template/`. On Windows, also puts the app icon into
 //! the program: Explorer, the Start menu and the taskbar show it.
 
 use std::error::Error;
 use std::path::{Path, PathBuf};
-
-/// The DAW's tools that have no view, so a project of the new window takes them as they are.
-const SHARED: [&str; 5] = ["track.ts", "chain.ts", "bus.ts", "tape.ts", "lfo.ts"];
 
 /// What the runtime writes into a project, never part of a template.
 const WRITTEN: [&str; 7] = [
@@ -22,15 +18,9 @@ const WRITTEN: [&str; 7] = [
 fn main() -> Result<(), Box<dyn Error>> {
     let crate_folder = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?);
     let template = crate_folder.join("template");
-    let daw = crate_folder.join("../../templates/daw/extensions");
     println!("cargo::rerun-if-changed={}", template.display());
     let mut files = Vec::new();
     files_in(&template, &template, &mut files)?;
-    for name in SHARED {
-        let file = daw.join(name);
-        println!("cargo::rerun-if-changed={}", file.display());
-        files.push((format!("extensions/{name}"), file));
-    }
     files.sort();
     let mut code = String::from("&[\n");
     for (path, file) in files {
