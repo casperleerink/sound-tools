@@ -403,8 +403,8 @@ pub(crate) fn in_views(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
 }
 
 pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
-    // A dialog keeps every key until it closes, but Quit, which works in any window as the
-    // GPUI app's did: its own buttons and fields take theirs.
+    // A dialog keeps every key until it closes, but Quit, which works in any window: its own
+    // buttons and fields take theirs.
     if !state.waiting.asked.is_empty() || state.shell.dialog.is_some() {
         if app_action(state, key).as_deref() == Some("quit") {
             tx.quit();

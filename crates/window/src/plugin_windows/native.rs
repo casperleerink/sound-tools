@@ -116,8 +116,8 @@ mod mac {
 
     pub(crate) fn owner() -> Owner {}
 
-    /// Above the main window, and hidden while another app is active, as GPUI's floating
-    /// panel was: a plugin window over a browser is the classic annoyance.
+    /// Above the main window, and hidden while another app is active: a plugin window over a
+    /// browser is the classic annoyance.
     pub(crate) fn float(handle: &RawWindowHandle, (): Owner) {
         let RawWindowHandle::AppKit(handle) = handle else {
             return;

@@ -1,7 +1,7 @@
 //! Starting the app and moving between projects: the start state with no project, the dialogs
 //! of a new project and of a saved template, and opening a project. One project a process:
 //! opening another remembers it first of the recent ones, quits, and starts the app again with
-//! no folder, which opens the last project, as the GPUI app did. A fresh process gives the new
+//! no folder, which opens the last project. A fresh process gives the new
 //! project its own lock, plugins and MIDI ports.
 
 use std::path::{Path, PathBuf};

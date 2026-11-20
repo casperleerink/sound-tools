@@ -83,7 +83,7 @@ const MISTAKE: &str = "This device's card has a mistake, so it shows nothing unt
 /// a run without a window. Bun calls code hung after 2 s itself.
 const SETTLE_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// How often the control loops run, as in the GPUI app.
+/// How often the control loops run.
 pub const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
 /// Why an action on a view did nothing while no Bun runs.

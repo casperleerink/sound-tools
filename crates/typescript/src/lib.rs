@@ -43,7 +43,7 @@ use serde::{Deserialize, Serialize};
 use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry, ToolSchema};
 use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
 
-pub use behaviours::{asked_behaviours, take_declared, wait_for_behaviours};
+pub use behaviours::{take_declared, wait_for_behaviours};
 pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};
 pub use timeline::timeline_state;
 pub use tools::forget_gone;

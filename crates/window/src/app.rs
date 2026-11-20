@@ -206,7 +206,7 @@ impl State {
                 runtime::templates::named("DAW").context("this release has no DAW template")?;
             runtime::templates::write(&folder, daw)?;
         }
-        // The tools wait for Bun while the output device opens, as the GPUI app did.
+        // The tools wait for Bun while the output device opens.
         let tools = std::thread::spawn({
             let folder = folder.clone();
             move || runtime::load_tools(&folder, false)

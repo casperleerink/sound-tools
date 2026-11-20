@@ -140,7 +140,7 @@ impl LeftPanel {
 
 impl State {
     /// Opens or closes the panel, and remembers it for the machine. Opening widens a window
-    /// too narrow for the panel and the main view, as the GPUI app did; closing leaves its size.
+    /// too narrow for the panel and the main view; closing leaves its size.
     pub(crate) fn set_panel_open(&mut self, open: bool) {
         let wanted = super::MIN_SIZE.0 + WIDTH;
         let (width, height) = self.panel.window;

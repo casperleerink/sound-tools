@@ -230,7 +230,7 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
 }
 
 impl State {
-    /// An empty project has no transport, as the GPUI app's had none: nothing in it plays.
+    /// An empty project has no transport: nothing in it plays.
     fn has_something_to_play(&self) -> bool {
         self.project().instances().next().is_some()
     }

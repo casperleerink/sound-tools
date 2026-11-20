@@ -267,11 +267,6 @@ enum Way {
 }
 
 impl SignInChoice {
-    /// Claude Code's ways in.
-    pub fn claude() -> Vec<Self> {
-        claude_choices()
-    }
-
     /// The id of the service of Pi it signs in to.
     pub fn service(&self) -> Option<&str> {
         match &self.way {

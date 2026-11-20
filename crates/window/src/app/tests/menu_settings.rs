@@ -206,7 +206,7 @@ fn an_agent_opens_the_menu_and_picks_by_label_and_an_entry_that_is_off_does_noth
         json!({ "label": "Settings…", "action": "press" }),
     );
     assert!(!state.project_menu.open);
-    // With an agent sidebar the page opens on Agents, as the GPUI app did.
+    // With an agent sidebar the page opens on Agents.
     assert_eq!(
         state.settings.page.as_ref().map(|page| page.section),
         Some(Section::Agents)
@@ -319,7 +319,7 @@ fn a_picked_device_is_kept_for_the_machine_and_a_missing_one_says_what_plays() {
 }
 
 #[test]
-fn a_key_pressed_on_an_action_becomes_its_key_and_the_file_keeps_it_as_the_gpui_app_did() {
+fn a_key_pressed_on_an_action_becomes_its_key_and_the_file_keeps_it() {
     let scratch = new_project();
     let file = runtime::app::shortcuts_file(&scratch.path().join("support"));
     let mut window = window_of(kept(&scratch));
