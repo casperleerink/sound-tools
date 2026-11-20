@@ -118,11 +118,17 @@ fn r_records_the_computer_keys_on_the_first_track_as_one_step_and_undo_waits_for
     release(&mut window, "r");
     until(&mut window, "the take", |state| state.session.recording());
     assert_eq!(record_button(&window.state).unwrap().checked, Some(true));
-    // `a` plays middle C into the take while it is held.
+    // `a` plays middle C into the take while it is held. What the take shows as it records
+    // runs no view.
+    for _ in 0..3 {
+        redraw(&mut window);
+    }
+    let runs = window.state.tools.as_ref().unwrap().view_runs();
     press(&mut window, "a");
     for _ in 0..12 {
         redraw(&mut window);
     }
+    assert_eq!(window.state.tools.as_ref().unwrap().view_runs(), runs);
     // Its recorder shows the note held, and where the take began; no sound, as none comes in.
     let (input, take, notes, taking) = shown_of_take(&window.state, "song/t00/rec");
     assert_eq!((input, take, notes), (0.0, 0, 4));
