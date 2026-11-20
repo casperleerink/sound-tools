@@ -156,11 +156,14 @@ impl State {
         self.pointed(&instance, &key, "enter", None);
     }
 
-    /// The press of a paint is let go.
-    pub(crate) fn painted(&mut self) {
+    /// The press of a paint is let go; a `cancelled` one takes back what it painted.
+    pub(crate) fn painted(&mut self, cancelled: bool) {
         self.painting = None;
         if let Some(tools) = &mut self.tools {
-            (self.session).background(|project| tools.hold(project, false));
+            (self.session).background(|project| match cancelled {
+                true => tools.cancel_hold(project),
+                false => tools.hold(project, false),
+            });
         }
         self.handled();
     }

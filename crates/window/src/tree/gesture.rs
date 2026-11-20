@@ -206,7 +206,7 @@ pub(super) fn pointer(scope: &Scope, mut e: El, b: &BoxNode, key: &str, press: &
                 // A press that paints is no press too.
                 Phase::Up if paints => {
                     s.dragged = Some(key.clone());
-                    s.painted();
+                    s.painted(d.cancelled());
                 }
                 Phase::Up => {
                     let Some(gesture) = s.gesture.take().filter(|gesture| gesture.key == key)

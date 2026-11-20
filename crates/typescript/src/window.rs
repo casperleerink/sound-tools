@@ -239,9 +239,9 @@ pub struct Tools {
     acting: Option<ProjectEdit>,
     /// How many actions went to Bun that it did not say it ran.
     acts: usize,
-    /// Whether a gesture over several elements is held, such as a paint: its actions are one
-    /// step of undo, which ends once it is let go and they ran.
-    held: bool,
+    /// A gesture over several elements, such as a paint: its actions are one step of undo,
+    /// which ends once it is let go and they ran.
+    held: Held,
     /// The label of the last update an action on a view made, until the window takes it.
     updated: Option<String>,
     /// Why actions on views did nothing, oldest first, for whoever asked: `--act`, or a notice.
@@ -277,6 +277,13 @@ pub struct Tools {
     taps: HashMap<InstanceId, (EventTap<NoteEvent>, u64)>,
     waker: Waker,
     open_window: Option<WindowOpener>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Held {
+    No,
+    Yes,
+    Cancelled,
 }
 
 impl Tools {
@@ -320,7 +327,7 @@ impl Tools {
             view_problems: BTreeMap::new(),
             acting: None,
             acts: 0,
-            held: false,
+            held: Held::No,
             updated: None,
             failed_actions: Vec::new(),
             ticking: false,
@@ -497,17 +504,32 @@ impl Tools {
     /// Holds a gesture over several elements, such as a paint, or lets it go: the actions while
     /// it is held are one step of undo.
     pub fn hold(&mut self, project: &mut Project, held: bool) {
-        self.held = held;
+        self.held = if held { Held::Yes } else { Held::No };
         if !held && self.acts == 0 {
             self.finish_action(project);
         }
     }
 
-    /// The step of undo of the actions that ran ends.
+    /// Lets go of a held gesture and takes back what its actions did, once they all ran.
+    pub fn cancel_hold(&mut self, project: &mut Project) {
+        self.held = Held::Cancelled;
+        if self.acts == 0 {
+            self.finish_action(project);
+        }
+    }
+
+    /// The step of undo of the actions that ran ends, or goes back if their gesture was
+    /// cancelled.
     fn finish_action(&mut self, project: &mut Project) {
-        if let Some(edit) = self.acting.take()
-            && let Err(error) = project.finish(edit)
-        {
+        let cancelled = std::mem::replace(&mut self.held, Held::No) == Held::Cancelled;
+        let Some(edit) = self.acting.take() else {
+            return;
+        };
+        let ended = match cancelled {
+            true => project.cancel(edit),
+            false => project.finish(edit),
+        };
+        if let Err(error) = ended {
             self.failed_actions.push(error.to_string());
         }
     }
@@ -1049,7 +1071,7 @@ impl Tools {
             }
             Event::Acted { error } => {
                 self.acts = self.acts.saturating_sub(1);
-                if !self.held {
+                if self.held == Held::No || (self.held == Held::Cancelled && self.acts == 0) {
                     self.finish_action(project);
                 }
                 self.failed_actions.extend(error);
