@@ -104,7 +104,7 @@ fn walk(scope: &Scope, node: &Node, bind: &mut impl FnMut(Shows)) {
             {
                 bind(Shows::Trim(trim.clone()));
             }
-            if let Some(listed) = super::shapes::listed(d) {
+            if let Some(listed) = super::shapes::listed(d, scope.plane.as_deref()) {
                 bind(Shows::Lists(listed));
             }
             let placed = (d.place.as_ref())

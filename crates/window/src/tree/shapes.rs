@@ -3,7 +3,10 @@
 
 use rune::{El, LineCap, Shape, canvas, el};
 use serde::Deserialize;
+use sound_core::InstanceId;
+use sound_typescript::live::Num;
 
+use crate::app::State;
 use crate::feeds::ListFeed;
 use crate::lives::Shows;
 use crate::theme::Theme;
@@ -45,7 +48,35 @@ pub(crate) struct Listed {
     units: Option<[[f32; 2]; 2]>,
     /// The part of a list it shows, where `units` gives its ends across.
     range: Option<[f64; 2]>,
+    /// The plane it is placed in, by its key in the window, and its place there: it reads and
+    /// draws only the part the plane shows.
+    plane: Option<(String, [Num; 4])>,
     parts: Vec<Part>,
+}
+
+/// What of a [`Listed`] is read and drawn now: all of it, or in a plane the part that shows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Seen {
+    size: [Option<f32>; 2],
+    units: Option<[[f32; 2]; 2]>,
+    range: Option<[f64; 2]>,
+    /// In a plane, where that part is in the shapes, in points: [x, y, w, h].
+    rect: Option<[f32; 4]>,
+}
+
+impl Seen {
+    /// How many numbers across a list of it reads: one a point of its width.
+    pub(crate) fn points(&self) -> usize {
+        self.size[0].map_or(0, |w| w.round().max(2.0) as usize)
+    }
+
+    pub(crate) fn range(&self) -> Option<[f64; 2]> {
+        self.range
+    }
+
+    pub(crate) fn rect(&self) -> Option<[f32; 4]> {
+        self.rect
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -64,25 +95,73 @@ impl Listed {
         self.parts.iter().map(|part| &part.feed)
     }
 
-    /// How many numbers across a list of it reads: one a point of its width.
-    pub(crate) fn points(&self) -> usize {
-        self.size[0].map_or(0, |w| w.round().max(2.0) as usize)
+    pub(crate) fn plane(&self) -> Option<&str> {
+        self.plane.as_ref().map(|(plane, _)| plane.as_str())
     }
 
-    pub(crate) fn range(&self) -> Option<[f64; 2]> {
-        self.range
+    /// What of it is read and drawn now, in the view of `instance`: none where its plane shows
+    /// none of it.
+    pub(crate) fn seen(&self, state: &State, instance: &InstanceId) -> Option<Seen> {
+        let all = Seen {
+            size: self.size,
+            units: self.units,
+            range: self.range,
+            rect: None,
+        };
+        let Some((plane, place)) = &self.plane else {
+            return Some(all);
+        };
+        let [x, _, w, h] = place
+            .each_ref()
+            .map(|num| state.lives.value(state, instance, num));
+        let (Some(view), [per_x, per_y]) = (state.planes.view(plane), state.planes.per(plane))
+        else {
+            return Some(all);
+        };
+        let [from, to] = [view.left, view.right].map(|edge| ((edge - x) / w).clamp(0.0, 1.0));
+        if to <= from || w <= 0.0 {
+            return None;
+        }
+        // Placed, it is in the units of its place, as its vectors are.
+        let [[left, right], down] = self.units.unwrap_or([[0.0, w], [0.0, h]]);
+        let across = [from, to].map(|part| left + (right - left) * part);
+        let [width, height] = [w * per_x * (to - from), h * per_y];
+        Some(Seen {
+            size: [Some(width), Some(height)],
+            units: Some([across, down]),
+            range: match [from, to] == [0.0, 1.0] {
+                true => self.range,
+                false => Some(across.map(f64::from)),
+            },
+            rect: Some([w * per_x * from, 0.0, width, height]),
+        })
     }
 
-    /// `lists`, one for each of its feeds, drawn: width, height and straight RGBA of sRGB.
-    pub(crate) fn raster(&self, theme: &Theme, lists: &[Vec<f32>]) -> (u32, u32, Vec<u8>) {
+    /// The pixels `lists` of `seen` draw into: width and height.
+    pub(crate) fn pixels(seen: &Seen, lists: &[Vec<f32>]) -> (u32, u32) {
+        let [w, h] = Self::extent(seen, lists).map(|points| (points * SCALE).ceil() as u32);
+        (w, h)
+    }
+
+    /// The size `lists` of `seen` draw at, in points: a list is a point a number where it has
+    /// none.
+    fn extent(seen: &Seen, lists: &[Vec<f32>]) -> [f32; 2] {
         let longest = lists.iter().map(Vec::len).max().unwrap_or(0) as f32;
-        let [w, h] = [
-            self.size[0].unwrap_or(longest),
-            self.size[1].unwrap_or(longest),
-        ];
+        seen.size.map(|size| size.unwrap_or(longest))
+    }
+
+    /// `lists`, one for each of its feeds, drawn as `seen`: width, height and straight RGBA of
+    /// sRGB.
+    pub(crate) fn raster(
+        &self,
+        theme: &Theme,
+        seen: &Seen,
+        lists: &[Vec<f32>],
+    ) -> (u32, u32, Vec<u8>) {
+        let [w, h] = Self::extent(seen, lists);
         let mut pixels = Raster::new((w * SCALE).ceil() as usize, (h * SCALE).ceil() as usize);
         // From the units the numbers are in to pixels, along each axis.
-        let [across, down] = self.units.unwrap_or([[0.0, w], [0.0, h]]);
+        let [across, down] = seen.units.unwrap_or([[0.0, w], [0.0, h]]);
         let along = |[from, to]: [f32; 2], pixels: usize| {
             let scale = pixels as f32 / (to - from);
             move |unit: f32| (unit - from) * scale
@@ -116,8 +195,8 @@ impl Listed {
     }
 }
 
-/// The list feeds of `d`, if it has any.
-pub(crate) fn listed(d: &ShapesNode) -> Option<Listed> {
+/// The list feeds of `d`, if it has any, placed in the plane `plane` (its key in the window).
+pub(crate) fn listed(d: &ShapesNode, plane: Option<&str>) -> Option<Listed> {
     let lines = (d.lines.iter()).filter_map(|lines| match &lines.points {
         Points::Fed(feed) => Some(Part {
             feed: feed.clone(),
@@ -141,6 +220,12 @@ pub(crate) fn listed(d: &ShapesNode) -> Option<Listed> {
         units,
         range: match d.units {
             Some([Span::Ends([from, to]), _]) => Some([f64::from(from), f64::from(to)]),
+            _ => None,
+        },
+        plane: match (plane, &d.place) {
+            (Some(plane), Some(super::Place::Box(place))) => {
+                Some((plane.to_string(), place.clone()))
+            }
             _ => None,
         },
         parts,
@@ -213,7 +298,7 @@ pub(super) fn drawing(scope: &Scope, d: &ShapesNode) -> El {
     if let Some(trim) = trim {
         e = scope.bind(e, Shows::Trim(trim));
     }
-    if let Some(listed) = listed(d) {
+    if let Some(listed) = listed(d, scope.plane.as_deref()) {
         // Over its numbers, the same size.
         let fed = scope.bind(
             el().absolute(0.0, 0.0).w_full().h_full(),
@@ -405,9 +490,16 @@ mod tests {
             "rects": [{ "color": "text", "rects": feed }],
             "lines": [{ "color": "text", "width": 1, "points": feed }],
         });
-        let listed = listed(&serde_json::from_value(node).unwrap()).unwrap();
+        let listed = listed(&serde_json::from_value(node).unwrap(), None).unwrap();
         // The line first, then the rects: a line along 10, the top, and a rect from 0 to 5 up.
-        let (w, h, rgba) = listed.raster(&theme, &[vec![10.0, 10.0], vec![0.0, 0.0, 5.0, 5.0]]);
+        let lists = [vec![10.0, 10.0], vec![0.0, 0.0, 5.0, 5.0]];
+        let seen = Seen {
+            size: listed.size,
+            units: listed.units,
+            range: listed.range,
+            rect: None,
+        };
+        let (w, h, rgba) = listed.raster(&theme, &seen, &lists);
         assert_eq!((w, h), (20, 20));
         assert_eq!(alpha(&rgba, w, [10, 0]), 255, "the line at the top");
         assert_eq!(

@@ -85,16 +85,23 @@ impl Feeds {
     }
 
     /// Draws the lists of `listed` in the view of `instance` into `pixels`, when they are not
-    /// those it drew `last`. A list that is empty, such as the wave of a file still read, is
-    /// read again next frame.
+    /// those it drew `last`; in a plane, only the part that shows, which `rect` moves to. A list
+    /// that is empty, such as the wave of a file still read, is read again next frame.
     pub(crate) fn draw(
         &self,
         state: &State,
         instance: &InstanceId,
         listed: &Listed,
-        pixels: &rune::Pixels,
+        (pixels, rect): (&rune::Pixels, Option<&rune::Live<[f32; 4]>>),
         last: &RefCell<Vec<Vec<f32>>>,
     ) {
+        let seen = listed.seen(state, instance);
+        if let Some(rect) = rect {
+            rect.set(seen.and_then(|seen| seen.rect()).unwrap_or_default());
+        }
+        let Some(seen) = seen else {
+            return;
+        };
         let lists: Vec<Vec<f32>> = (listed.feeds())
             .map(|ListFeed::Feed { name, path }| {
                 let Some(id) = inside(instance, path.as_deref()) else {
@@ -103,8 +110,8 @@ impl Feeds {
                 let key = (id, name.clone());
                 let request = FeedRequest {
                     tick: state.playhead,
-                    points: listed.points(),
-                    range: listed.range(),
+                    points: seen.points(),
+                    range: seen.range(),
                 };
                 let list = match self.read(state, &key, request) {
                     Some(Feed::List(list)) => list,
@@ -115,10 +122,11 @@ impl Feeds {
             })
             .collect();
         let mut last = last.borrow_mut();
-        if *last == lists && pixels.size() != (0, 0) {
+        let size = Listed::pixels(&seen, &lists);
+        if *last == lists && pixels.size() == size && size != (0, 0) {
             return;
         }
-        let (w, h, rgba) = listed.raster(&state.theme, &lists);
+        let (w, h, rgba) = listed.raster(&state.theme, &seen, &lists);
         pixels.set(w, h, rgba);
         *last = lists;
         self.drew.set(self.drew.get() + 1);

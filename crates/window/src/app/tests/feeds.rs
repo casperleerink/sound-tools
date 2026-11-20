@@ -49,7 +49,12 @@ export const scope = tool({{
 
 /// The project with the scope as the first effect of the first track, shown as the main view.
 fn scoped(analyzers: usize) -> (tempfile::TempDir, State) {
-    let (scratch, folder) = with_tools(&[("scope", &scope(analyzers))]);
+    scoped_as(&scope(analyzers), analyzers)
+}
+
+/// [`scoped`] with the tool `code`.
+fn scoped_as(code: &str, analyzers: usize) -> (tempfile::TempDir, State) {
+    let (scratch, folder) = with_tools(&[("scope", code)]);
     let chain = folder.join("state/song/t00/chain");
     std::fs::remove_file(chain.join("scope.json")).unwrap();
     std::fs::create_dir(chain.join("scope")).unwrap();
@@ -133,6 +138,69 @@ fn a_list_that_rests_is_not_drawn_again_until_its_record_changes() {
         .unwrap();
     frame(&mut state, 3.0 / 60.0);
     assert!(state.feeds.drew() > 0);
+}
+
+#[test]
+fn a_list_in_a_plane_reads_and_draws_only_the_part_the_plane_shows() {
+    // The compressor's curve from -60 to 0 dB in, 1200 units long in a plane that shows 300.
+    let code = r#"import { h, live, tool } from "./sdk";
+export const scope = tool({
+  name: "scope", title: "Scope", when: "Never", doc: "Shows its curve.", state: {},
+  behaviour: () => ({ connections: [{ from: { port: "audio" }, to: { child: "comp" } }, { from: { child: "comp" }, to: { port: "audio" } }] }),
+  view: () => (
+    <box key="curve" w={300} h={60} plane={{ x: 1, y: 60 }}>
+      <shapes key="long" place={[0, 0, 1200, 1]} units={[[-60, 0], [0, -60]]} lines={[{ color: "text", width: 1, points: live.feed("transfer", "comp") }]} />
+    </box>
+  ),
+});
+"#;
+    let (_scratch, mut state) = scoped_as(code, 0);
+    // Above the loudest it hears it changes nothing: a level out is the level in.
+    let record = state
+        .project()
+        .root()
+        .join("state/song/t00/chain/scope/comp.json");
+    let flat = json!({ "tool": "compressor", "state": { "threshold_db": 0.0 } });
+    std::fs::write(&record, flat.to_string()).unwrap();
+    (state.session)
+        .background(|project| project.apply_outside_changes(std::slice::from_ref(&record)))
+        .unwrap();
+    let mut window = laid_out(state);
+    redraw(&mut window);
+    let seen = |window: &rune::Runtime<State>| {
+        let [(lists, rect)] = <[_; 1]>::try_from(window.state.lives.lists()).unwrap();
+        let curve = &lists[0];
+        let ends = [curve[0], curve[curve.len() - 1]].map(|db| db.round());
+        (curve.len(), ends, rect, window.state.lives.pixels()[0])
+    };
+    // A quarter of it shows: a point a number of the 300 that show, the first quarter of its
+    // levels, and pixels as wide as that.
+    assert_eq!(
+        seen(&window),
+        (
+            300,
+            [-60.0, -45.0],
+            Some([0.0, 0.0, 300.0, 60.0]),
+            (600, 120)
+        )
+    );
+    let state = &window.state;
+    state
+        .planes
+        .set_view("curve", Some(600.0), None, None)
+        .unwrap();
+    state
+        .lives
+        .move_planes(state, &["curve".to_string()], false);
+    assert_eq!(
+        seen(&window),
+        (
+            300,
+            [-30.0, -15.0],
+            Some([600.0, 0.0, 300.0, 60.0]),
+            (600, 120)
+        )
+    );
 }
 
 /// The window's part of a frame of a playing piece with eight spectra 512 points wide: its feeds,

@@ -54,8 +54,12 @@ pub(crate) enum Shown {
     Offset(rune::Live<[f32; 2]>),
     Opacity(rune::Live<f32>),
     Trim(rune::Live<[f32; 2]>),
-    /// The lists it drew last.
-    Pixels(rune::Pixels, Rc<RefCell<Vec<Vec<f32>>>>),
+    /// The lists it drew last, and in a plane where the part that shows is.
+    Pixels(
+        rune::Pixels,
+        Rc<RefCell<Vec<Vec<f32>>>>,
+        Option<rune::Live<[f32; 4]>>,
+    ),
 }
 
 impl Shown {
@@ -67,7 +71,8 @@ impl Shown {
             Self::Offset(offset) => e.absolute(0.0, 0.0).live_offset(offset),
             Self::Opacity(opacity) => e.live_opacity(opacity),
             Self::Trim(trim) => e.live_trim(trim),
-            Self::Pixels(pixels, _) => e.pixels(pixels),
+            Self::Pixels(pixels, _, None) => e.pixels(pixels),
+            Self::Pixels(pixels, _, Some(rect)) => e.live_rect(rect).pixels(pixels),
         }
     }
 }
@@ -165,7 +170,11 @@ impl Lives {
             Shows::Opacity(_) => Shown::Opacity(rune::Live::new(1.0)),
             Shows::Trim(_) => Shown::Trim(rune::Live::new([0.0, 1.0])),
             Shows::Placed { .. } => Shown::Rect(rune::Live::new([0.0; 4])),
-            Shows::Lists(_) => Shown::Pixels(rune::Pixels::new(), Rc::default()),
+            Shows::Lists(listed) => Shown::Pixels(
+                rune::Pixels::new(),
+                Rc::default(),
+                (listed.plane()).map(|_| rune::Live::new([0.0; 4])),
+            ),
         };
         let binding = Binding {
             reads: self.reads(state, instance, &shows),
@@ -200,8 +209,11 @@ impl Lives {
                     .chain(parent.iter().flatten())
                     .collect()
             }
-            Shows::Lists(_) => {
-                recorder.reads.borrow_mut().always = true;
+            Shows::Lists(listed) => {
+                let mut reads = recorder.reads.borrow_mut();
+                reads.always = true;
+                // What shows of it moves with its plane at once.
+                reads.planes.extend(listed.plane().map(str::to_string));
                 Vec::new()
             }
         };
@@ -220,7 +232,7 @@ impl Lives {
     pub(crate) fn move_hand(&self, state: &State, id: &str, hand: Hand) {
         self.hands.borrow_mut().insert(id.to_string(), hand);
         self.moved.borrow_mut().drags.insert(id.to_string());
-        self.refresh(state);
+        self.refresh(state, false);
     }
 
     /// The planes `keys` moved, and with `scaled` their points per unit changed too: what binds
@@ -232,7 +244,7 @@ impl Lives {
             moved.scales.extend(keys.iter().cloned());
         }
         drop(moved);
-        self.refresh(state);
+        self.refresh(state, false);
     }
 
     /// The number `value` of the view of `instance` is now.
@@ -286,12 +298,13 @@ impl Lives {
         }
     }
 
-    /// Shows the bindings that read what moved since they were last read.
-    fn refresh(&self, state: &State) {
+    /// Shows the bindings that read what moved since they were last read, and in a `frame` those
+    /// that may move in any: a list feed draws once a frame.
+    fn refresh(&self, state: &State, frame: bool) {
         let moved = self.moved.take();
         for binding in self.bindings.borrow().values() {
             let reads = &binding.reads;
-            let moved = reads.always
+            let moved = (frame && reads.always)
                 || reads.drags.iter().any(|id| moved.drags.contains(id))
                 || reads.planes.iter().any(|key| moved.planes.contains(key))
                 || reads.scales.iter().any(|key| moved.scales.contains(key));
@@ -314,7 +327,7 @@ impl Lives {
         }
         drop(hands);
         self.moved.borrow_mut().drags.extend(ended);
-        self.refresh(state);
+        self.refresh(state, false);
     }
 
     /// The views show only the bindings `named` now, see [`Lives::name`]: the others go, also
@@ -332,7 +345,7 @@ impl Lives {
         self.elapsed.set(self.elapsed.get() + dt);
         self.playhead.set(playhead.0 as f64);
         self.moving.set(false);
-        self.refresh(state);
+        self.refresh(state, true);
         let mut spoken = self.spoken.borrow_mut();
         spoken.retain(|_, (instance, ..)| state.shown.contains(instance));
         for (instance, value, said) in spoken.values() {
@@ -411,8 +424,9 @@ impl Lives {
                 let place = place.numbers().iter().map(of).collect::<Vec<_>>();
                 shown.set(state.planes.points(plane, &place, size, parent));
             }
-            (Shows::Lists(listed), Shown::Pixels(pixels, last)) => {
-                (state.feeds).draw(state, &binding.instance, listed, pixels, last);
+            (Shows::Lists(listed), Shown::Pixels(pixels, last, rect)) => {
+                let drawn = (pixels, rect.as_ref());
+                (state.feeds).draw(state, &binding.instance, listed, drawn, last);
             }
             _ => {}
         }
@@ -447,7 +461,20 @@ impl Lives {
         let bindings = self.bindings.borrow();
         (bindings.values())
             .filter_map(|binding| match &binding.shown {
-                Shown::Pixels(pixels, _) => Some(pixels.size()),
+                Shown::Pixels(pixels, ..) => Some(pixels.size()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The lists each drawing of list feeds drew last, and where it is in a plane.
+    pub(crate) fn lists(&self) -> Vec<(Vec<Vec<f32>>, Option<[f32; 4]>)> {
+        let bindings = self.bindings.borrow();
+        (bindings.values())
+            .filter_map(|binding| match &binding.shown {
+                Shown::Pixels(_, last, rect) => {
+                    Some((last.borrow().clone(), rect.as_ref().map(rune::Live::get)))
+                }
                 _ => None,
             })
             .collect()
