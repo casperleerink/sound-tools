@@ -62,3 +62,53 @@ fn words(name: &str) -> String {
         None => String::new(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use sound_core::{Engine, EngineConfig, Registry};
+
+    use super::*;
+
+    /// A part with a title, which may own others.
+    #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+    struct Part {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        title: String,
+    }
+
+    impl sound_core::State for Part {
+        const TOOL: &'static str = "test.part";
+        const OWNS_CHILDREN: bool = true;
+    }
+
+    /// A composer reads "Bass · Verse", not a path: each part by its title, else by its name,
+    /// the page that holds them all left out.
+    #[test]
+    fn a_file_of_the_song_is_named_by_its_parts() {
+        let folder = tempfile::tempdir().unwrap();
+        let files = [
+            ("song/instance.json", ""),
+            ("song/t00/instance.json", "Bass"),
+            ("song/t00/c00/instance.json", "Verse"),
+            ("song/t01/instance.json", ""),
+        ];
+        for (path, title) in files {
+            let path = folder.path().join("state").join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let record = serde_json::json!({ "tool": "test.part", "state": { "title": title } });
+            std::fs::write(path, record.to_string()).unwrap();
+        }
+        let mut registry = Registry::new();
+        registry.tool::<Part>("test").unwrap();
+        let (control, _engine) = Engine::new(EngineConfig::new(48_000, 1));
+        let project = Project::open(folder.path(), registry, control).unwrap();
+        assert_eq!(project.problems(), []);
+        let name = |path: &str| file_name(&project, path);
+        assert_eq!(name("state/song/t00/c00/instance.json"), "Bass · Verse");
+        assert_eq!(name("state/song/t01/instance.json"), "T01");
+        assert_eq!(name("project.json"), "the project's settings");
+        assert_eq!(name("extensions/song-tracks.tsx"), "the code of Song tracks");
+    }
+}
