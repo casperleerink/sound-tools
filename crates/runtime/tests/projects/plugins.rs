@@ -139,7 +139,21 @@ fn the_problems_file_follows_a_plugin_that_is_corrected() {
 /// and call it the piece.
 #[test]
 fn a_render_answers_a_plugin_that_is_waiting_for_its_host() {
-    tell_the_plugin_to_wait_for_its_host();
+    // The plugin reads this from the environment of its process, so only a process of this
+    // test alone tells it: the other tests of the process run beside it.
+    let waits = test_plugin_support::NEEDS_HOST_VARIABLE;
+    if !test_plugin_support::told_to(waits) {
+        let name = "plugins::a_render_answers_a_plugin_that_is_waiting_for_its_host";
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name])
+            .env(waits, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{stdout}");
+        assert!(stdout.contains("1 passed"), "{stdout}");
+        return;
+    }
     for format in [PluginFormat::Clap, PluginFormat::Vst3] {
         let (harness, _plugins) = plugin_rack(format, "piano", &clip_with_pedal(None));
         assert_eq!(harness.project.problems(), []);
@@ -155,13 +169,6 @@ fn a_render_answers_a_plugin_that_is_waiting_for_its_host() {
         let sounded = left(&rendered)[note..].iter().any(|sample| *sample != 0.0);
         assert!(sounded, "{format:?}: the render is silent");
     }
-}
-
-/// Makes both test plugins wait for the main-thread work of their host before they sound. The
-/// plugin runs in this process, and nextest gives every test a process of its own.
-fn tell_the_plugin_to_wait_for_its_host() {
-    // SAFETY: nothing but this thread exists yet, so no other thread reads the environment.
-    unsafe { std::env::set_var(test_plugin_support::NEEDS_HOST_VARIABLE, "1") };
 }
 
 /// Both formats in one piece. The two test plugins are the same instrument, so the two racks

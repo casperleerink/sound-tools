@@ -570,6 +570,8 @@ struct Told {
     /// The records a behaviour told it since the window last looked: one of a group that did
     /// not apply is not what the project holds.
     unconfirmed: BTreeSet<InstanceId>,
+    /// How many records it was told, for a test that a frame tells none again.
+    count: u64,
 }
 
 /// A record to tell Bun: its id, and its tool, its key (see [`record_key`]) and `state` as
@@ -781,6 +783,13 @@ impl Bun {
         self.tell_in(&mut told, records, edits).is_some()
     }
 
+    pub(crate) fn records_told(&self) -> u64 {
+        self.told
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .count
+    }
+
     /// Tells Bun the record of `owner` and of each of its `children` as its behaviour gets
     /// them, and that each other child it holds is gone. Whether it went. Not the edits heard
     /// since the window last told it: the records those changed may be others, still to tell.
@@ -849,6 +858,7 @@ impl Bun {
             return None;
         }
         told.edits_told = edits;
+        told.count += keys.len() as u64;
         for id in &gone {
             told.records.remove(*id);
         }

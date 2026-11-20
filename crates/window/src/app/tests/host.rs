@@ -73,6 +73,7 @@ pub(super) fn event(chord: &str) -> KeyEvent {
         "up" => Key::Up,
         "enter" => Key::Enter,
         "escape" => Key::Escape,
+        "f10" => Key::Function(10),
         letter if mods.cmd => Key::Command(letter.chars().next().unwrap()),
         letter => Key::Text(letter.into()),
     };
@@ -872,5 +873,587 @@ fn notes_code_exports_are_written_where_the_composer_says() {
         labels(&window.state).contains(&"Written true".to_string()),
         "{:?}",
         labels(&window.state)
+    );
+}
+
+/// Counts what its code hears, notes and keys, in its memory; a press on its page keeps the
+/// count in its record.
+const EAR: &str = r#"import { h, note, number, sine, tool } from "./sdk";
+export const ear = tool({
+  name: "ear", title: "Ear", when: "Never", doc: "Counts the notes and keys it hears.",
+  voices: 4, sound: () => sine(note.freq).times(note.gate).times(0.1),
+  state: { heard: number({ min: 0, max: 100, default: 0 }) },
+  memory: () => ({ heard: 0 }),
+  keys: ["b"],
+  onNotes: ({ memory }, event) => { if (event.type === "noteOn") memory.heard += 1; },
+  onKey: ({ memory }, key) => { if (key.down) memory.heard += 1; },
+  view: (_, { memory, update }) => <box key="keep" w={120} h={20} label="Keep" onPress={() => update("Keep the count", (part) => void (part.state.heard = memory.heard))} />,
+});
+"#;
+
+/// The page draws again after its code hears a note or a key, and a press on it still runs.
+#[test]
+fn a_page_still_takes_presses_after_its_code_hears_a_note_and_a_key() {
+    let files = [
+        ("extensions/ear.tsx", EAR),
+        ("state/ear.json", r#"{"tool": "ear", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "ear");
+    let heard = |window: &rune::Runtime<State>| record_of(&window.state, "ear")["heard"].clone();
+    (window.state.session).select(Some(InstanceId::new("ear").unwrap()), None);
+    keys(&mut window, "cmd-k a");
+    for _ in 0..5 {
+        redraw(&mut window);
+    }
+    act(
+        &mut window.state,
+        json!({ "label": "Keep", "action": "press" }),
+    );
+    redraw(&mut window);
+    assert_eq!(heard(&window), 1);
+    keys(&mut window, "b");
+    act(
+        &mut window.state,
+        json!({ "label": "Keep", "action": "press" }),
+    );
+    redraw(&mut window);
+    assert_eq!(heard(&window), 2);
+}
+
+/// The agent adds the tool the window shows, and its page opens: the focus stays where the
+/// composer had it.
+#[test]
+fn a_page_that_opens_leaves_the_focus_where_it_is() {
+    let (_scratch, mut window) = page(&[("extensions/ear.tsx", EAR)], "ear");
+    assert!(window.find("keep").is_none());
+    focus(&mut window, "play");
+    let root = window.state.project().root().to_path_buf();
+    let record = root.join("state/ear.json");
+    std::fs::write(&record, r#"{"tool": "ear", "state": {}}"#).unwrap();
+    (window.state.session).background(|project| project.apply_outside_changes(&[record]).unwrap());
+    for _ in 0..5 {
+        polled(&mut window);
+        redraw(&mut window);
+    }
+    assert!(window.find("keep").is_some(), "the page did not open");
+    assert_eq!(focused(&window).as_deref(), Some("play"));
+}
+
+/// A page that fills the room it gets.
+const ROOM: &str = r#"import { h, tool } from "./sdk";
+export const room = tool({
+  name: "room", title: "Room", when: "Never", doc: "Fills its room.", state: {},
+  view: () => <box key="room" label="Room" w="full" h={40} />,
+});
+"#;
+
+/// A resize of the window reaches the page, with no view run.
+#[test]
+fn a_page_follows_its_room_when_the_window_resizes() {
+    let files = [
+        ("extensions/room.tsx", ROOM),
+        ("state/room.json", r#"{"tool": "room", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "room");
+    let width = |window: &rune::Runtime<State>| window.presented("room").unwrap().0[2];
+    let (before, runs) = (
+        width(&window),
+        window.state.tools.as_ref().unwrap().view_runs(),
+    );
+    window.set_viewport((900.0, 700.0), 1.0);
+    for _ in 0..60 {
+        redraw(&mut window);
+    }
+    assert!(
+        width(&window) < before - 400.0,
+        "{before} {}",
+        width(&window)
+    );
+    assert_eq!(window.state.tools.as_ref().unwrap().view_runs(), runs);
+}
+
+/// Two devices of one tool have the same keys inside their views: each element keeps its own
+/// focus and its own press, by the instance its key is scoped to.
+#[test]
+fn two_devices_with_the_same_inner_keys_keep_a_focus_and_a_press_each() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    std::fs::write(folder.join("extensions/steps.tsx"), super::STEPS).unwrap();
+    let chain = folder.join("state/song/t00/chain");
+    let order = json!({ "tool": "chain", "state": { "order": ["a", "b"] } });
+    std::fs::write(chain.join("instance.json"), order.to_string()).unwrap();
+    for name in ["a", "b"] {
+        std::fs::write(
+            chain.join(format!("{name}.json")),
+            r#"{"tool": "steps", "state": {}}"#,
+        )
+        .unwrap();
+    }
+    let mut window = laid_out(opened(&folder));
+    let on = |window: &rune::Runtime<State>, name: &str| {
+        record_of(&window.state, &format!("song/t00/chain/{name}"))["on"][2].clone()
+    };
+    act(
+        &mut window.state,
+        json!({ "key": "t00/chain/b:step-2", "action": "toggle" }),
+    );
+    redraw(&mut window);
+    assert_eq!(
+        (on(&window, "a"), on(&window, "b")),
+        (Value::Null, json!(true))
+    );
+    focus(&mut window, "t00/chain/a:step-2");
+    focus(&mut window, "t00/chain/b:step-2");
+    keys(&mut window, "space");
+    assert_eq!(
+        (on(&window, "a"), on(&window, "b")),
+        (Value::Null, json!(false))
+    );
+}
+
+/// A kit of two rows of steps, whose presses turn them in its record.
+const KIT: &str = r#"import { boolean, h, list, tool } from "./sdk";
+import { StepGrid } from "./ui/blocks/steps";
+export const kit = tool({
+  name: "kit", title: "Kit", when: "Never", doc: "Rows of steps.", state: { on: list(boolean({ default: false }), { max: 8 }) },
+  view: (self, { update }) => {
+    const on = (r: number, i: number) => self.state.on[r * 4 + i] ?? false;
+    const rows = ["Kick", "Snare"].map((name, r) => ({ name, steps: [0, 1, 2, 3].map((i) => ({ on: on(r, i), velocity: 0.5 })) }));
+    return <StepGrid id="grid" label="Steps" rows={rows} onToggle={(r, i) => update("Turn a step", (part) => void (part.state.on = Array.from({ length: 8 }, (_, j) => (j === r * 4 + i ? !on(r, i) : (self.state.on[j] ?? false)))))} onVelocity={() => {}} />;
+  },
+});
+"#;
+
+/// The arrows move along the steps of a grid, and space or enter turns the one they are on.
+#[test]
+fn the_arrows_move_along_steps_and_space_or_enter_turns_the_one_they_are_on() {
+    let files = [
+        ("extensions/kit.tsx", KIT),
+        ("state/kit.json", r#"{"tool": "kit", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "kit");
+    focus(&mut window, "grid-0-0");
+    window.key(KeyEvent {
+        key: Key::Right,
+        mods: Mods::default(),
+    });
+    redraw(&mut window);
+    window.key(KeyEvent {
+        key: Key::Down,
+        mods: Mods::default(),
+    });
+    redraw(&mut window);
+    assert_eq!(focused(&window).as_deref(), Some("grid-1-1"));
+    keys(&mut window, "space");
+    assert_eq!(record_of(&window.state, "kit")["on"][5], true);
+    keys(&mut window, "enter");
+    assert_eq!(record_of(&window.state, "kit")["on"][5], false);
+}
+
+/// Counts the left and the right presses of its box, and its drags.
+const PRESSES: &str = r#"import { h, number, tool } from "./sdk";
+export const presses = tool({
+  name: "presses", title: "Presses", when: "Never", doc: "Counts presses.",
+  state: { count: number({ min: 0, max: 100, default: 0 }), rights: number({ min: 0, max: 100, default: 0 }), dragged: number({ min: 0, max: 100, default: 0 }) },
+  view: (self, { update }) => (
+    <col>
+      <box key="tap" label="Tap" w={120} h={40} onPress={(p) => update("Count", (part) => void (p.right ? (part.state.rights = self.state.rights + 1) : (part.state.count = self.state.count + 1)))} />
+      <box key="drag" label="Drag" w={120} h={40} drag={{ y: true }} onDragEnd={() => update("Drag", (part) => void (part.state.dragged = self.state.dragged + 1))} />
+    </col>
+  ),
+});
+"#;
+
+/// The other buttons neither click a press the left holds nor end it, and a move with the
+/// right held keeps it: the left's release is its one press; the middle is not heard while
+/// the left holds a drag. A right press, and Shift-F10 on it, is its right press.
+#[test]
+fn the_other_buttons_neither_click_nor_end_a_press_the_left_holds() {
+    use rune::PointerButton::{Middle, Secondary};
+    let files = [
+        ("extensions/presses.tsx", PRESSES),
+        ("state/presses.json", r#"{"tool": "presses", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "presses");
+    let count = |window: &rune::Runtime<State>, field: &str| {
+        record_of(&window.state, "presses")[field].clone()
+    };
+    let (x, y) = window.find("tap").unwrap();
+    window.pointer_down(x, y);
+    window.button_down(x, y, Secondary);
+    window.pointer_move(x + 1.0, y);
+    window.button_up(x, y, Secondary);
+    redraw(&mut window);
+    assert_eq!(count(&window, "count"), Value::Null);
+    window.pointer_up(x + 1.0, y);
+    redraw(&mut window);
+    assert_eq!(count(&window, "count"), 1);
+    // A right press alone is no left press.
+    let rights = count(&window, "rights").as_u64().unwrap_or(0);
+    window.button_down(x, y, Secondary);
+    window.button_up(x, y, Secondary);
+    redraw(&mut window);
+    assert_eq!(count(&window, "count"), 1);
+    assert_eq!(count(&window, "rights"), rights + 1);
+    focus(&mut window, "tap");
+    keys(&mut window, "shift-f10");
+    assert_eq!(count(&window, "rights"), rights + 2);
+
+    let (x, y) = window.find("drag").unwrap();
+    window.pointer_down(x, y);
+    window.pointer_move(x, y - 20.0);
+    window.button_down(x, y - 20.0, Middle);
+    window.button_up(x, y - 20.0, Middle);
+    window.pointer_up(x, y - 20.0);
+    redraw(&mut window);
+    assert_eq!(
+        (count(&window, "count"), count(&window, "dragged")),
+        (json!(1), json!(1))
+    );
+}
+
+/// A key a tool took comes up to it after the focus left its view: the release follows the
+/// key, so none stays held. One the system never sends is let go with the window's focus.
+#[test]
+fn a_key_a_tool_took_comes_up_to_it_after_the_focus_left_its_view() {
+    let files = [
+        ("extensions/holder.tsx", HOLDER),
+        ("state/holder.json", r#"{"tool": "holder", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "holder");
+    focus(&mut window, "here");
+    window.key(event("b"));
+    redraw(&mut window);
+    assert_eq!(did(&window.state, "holder"), "b↓");
+    focus(&mut window, "play");
+    window.key_up(event("b"));
+    redraw(&mut window);
+    assert_eq!(did(&window.state, "holder"), "b↓ b↑");
+}
+
+/// Two elements of one key in a view: a press of one would reach the other.
+const TWINS: &str = r#"import { h, tool } from "./sdk";
+export const twins = tool({
+  name: "twins", title: "Twins", when: "Never", doc: "Two boxes of one key.", state: {},
+  view: () => <col><box key="same" label="First" w={20} h={20} onPress={() => {}} /><box key="same" label="Second" w={20} h={20} onPress={() => {}} /></col>,
+});
+"#;
+
+/// A key used twice in a view is a problem that names the key and says the fix.
+#[test]
+#[ignore = "missing: the window does not report a key used twice (win-sweep, crates/window/src/tree)"]
+fn a_key_used_twice_in_a_view_is_a_problem_that_says_the_fix() {
+    let files = [
+        ("extensions/twins.tsx", TWINS),
+        ("state/twins.json", r#"{"tool": "twins", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "twins");
+    redraw(&mut window);
+    window.state.settle();
+    let problems = problems(&window.state);
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.contains("twins.tsx") && problem.contains("\"same\"")),
+        "{problems:?}"
+    );
+}
+
+/// Lists that scroll, one a name of its record, each of rows of its name, with a title the code
+/// may change.
+fn lists(title: &str) -> String {
+    format!(
+        r#"import {{ h, list, text, tool }} from "./sdk";
+export const lists = tool({{
+  name: "lists", title: "Lists", when: "Never", doc: "Lists that scroll.", state: {{ names: list(text(), {{ max: 4 }}) }},
+  view: (self) => <row>{{self.state.names.map((name) => (
+    <col key={{name}} label="{title} {{name}}" w={{100}} h={{100}} scroll="y">{{Array.from({{ length: 30 }}, (_, i) => <box key={{`${{name}}-${{i}}`}} label={{`${{name}} ${{i}}`}} w={{100}} h={{20}} />)}}</col>
+  ))}}</row>,
+}});
+"#
+    )
+}
+
+/// A list keeps its scroll by its key: when the code is saved again, and when a list is put in
+/// before it.
+#[test]
+fn a_list_keeps_its_scroll_by_its_key_over_a_save_and_a_list_put_in_first() {
+    let code = lists("List");
+    let files = [
+        ("extensions/lists.tsx", code.as_str()),
+        (
+            "state/lists.json",
+            r#"{"tool": "lists", "state": {"names": ["a", "b"]}}"#,
+        ),
+    ];
+    let (_scratch, mut window) = page(&files, "lists");
+    let top = |window: &rune::Runtime<State>, key: &str| window.presented(key).unwrap().0[1];
+    let (x, y) = window.find("b").unwrap();
+    let (a, b) = (top(&window, "a-0"), top(&window, "b-0"));
+    window.wheel(x, y, -200.0);
+    for _ in 0..60 {
+        window.frame(1.0 / 60.0);
+    }
+    let scrolled = top(&window, "b-0");
+    assert!(scrolled < b - 100.0, "{b} {scrolled}");
+    assert_eq!(top(&window, "a-0"), a);
+
+    let root = window.state.project().root().to_path_buf();
+    let loads = window.state.tools.as_ref().unwrap().loads();
+    std::fs::write(root.join("extensions/lists.tsx"), lists("Scrolled")).unwrap();
+    window.state.tools.as_mut().unwrap().code_changed();
+    for _ in 0..10 {
+        polled(&mut window);
+        redraw(&mut window);
+    }
+    assert!(
+        window.state.tools.as_ref().unwrap().loads() > loads,
+        "the new code"
+    );
+    assert_eq!((top(&window, "a-0"), top(&window, "b-0")), (a, scrolled));
+
+    let record = root.join("state/lists.json");
+    std::fs::write(
+        &record,
+        r#"{"tool": "lists", "state": {"names": ["c", "a", "b"]}}"#,
+    )
+    .unwrap();
+    (window.state.session).background(|project| project.apply_outside_changes(&[record]).unwrap());
+    for _ in 0..10 {
+        polled(&mut window);
+        redraw(&mut window);
+    }
+    assert_eq!((top(&window, "a-0"), top(&window, "b-0")), (a, scrolled));
+}
+
+/// A menu of two shapes that checks the one its record names; picking `Square` changes nothing.
+const SHAPES: &str = r#"import { h, text, tool } from "./sdk";
+export const shapes = tool({
+  name: "shapes", title: "Shapes", when: "Never", doc: "A menu of shapes.", state: { shape: text({ default: "saw" }) },
+  view: (self, { update }) => (
+    <box key="shape" label="Shape" role="button" w={120} h={20} onPress={() => {}}>
+      <col overlay={{ open: "press" }} role="menu">
+        <box key="saw" label="Saw" role="menuitem" checked={self.state.shape === "saw"} w={100} h={20} onPress={() => update("Saw", (part) => void (part.state.shape = "saw"))} />
+        <box key="square" label="Square" role="menuitem" checked={self.state.shape === "square"} w={100} h={20} onPress={() => {}} />
+      </col>
+    </box>
+  ),
+});
+"#;
+
+/// A menu checks only what its code says, whatever was picked before.
+#[test]
+fn a_menu_checks_only_what_its_code_says_whatever_was_picked_before() {
+    let files = [
+        ("extensions/shapes.tsx", SHAPES),
+        ("state/shapes.json", r#"{"tool": "shapes", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "shapes");
+    let checked = |window: &rune::Runtime<State>| {
+        let controls = controls::collect(&window.state).controls;
+        ["Saw", "Square"].map(|label| control(&controls, label).checked)
+    };
+    for _ in 0..2 {
+        act(
+            &mut window.state,
+            json!({ "label": "Shape", "action": "press" }),
+        );
+        redraw(&mut window);
+        act(
+            &mut window.state,
+            json!({ "label": "Square", "action": "press" }),
+        );
+        redraw(&mut window);
+        act(
+            &mut window.state,
+            json!({ "label": "Shape", "action": "press" }),
+        );
+        redraw(&mut window);
+        assert_eq!(checked(&window), [Some(true), Some(false)]);
+        act(
+            &mut window.state,
+            json!({ "label": "Shape", "action": "press" }),
+        );
+        redraw(&mut window);
+    }
+}
+
+/// The opacity of the marker of the step `key` that plays: the inert box inside it.
+fn ring(window: &rune::Runtime<State>, key: &str) -> f32 {
+    let elements = window.elements();
+    let step = (elements.iter())
+        .find(|element| element.key.as_deref() == Some(key))
+        .unwrap();
+    let path = format!("{}/", step.path);
+    let marker = (elements.iter()).find(|element| element.inert && element.path.starts_with(&path));
+    marker.unwrap().opacity
+}
+
+/// The step the playhead is in shows that it plays, and only while the piece plays.
+#[test]
+fn the_step_the_playhead_is_in_shows_it_plays_only_while_the_piece_plays() {
+    let files = [
+        ("extensions/kit.tsx", KIT),
+        ("state/kit.json", r#"{"tool": "kit", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "kit");
+    assert_eq!(
+        (ring(&window, "grid-0-0"), ring(&window, "grid-0-1")),
+        (0.0, 0.0)
+    );
+    // Into the second step: a step is a sixteenth, 240 ticks, an eighth of a second at 120 bpm.
+    (window.state.session).background(|project| {
+        project.engine().seek(sound_core::Ticks(300));
+        project.engine().play();
+    });
+    for _ in 0..3 {
+        polled(&mut window);
+    }
+    assert_eq!(
+        (ring(&window, "grid-0-0"), ring(&window, "grid-0-1")),
+        (0.0, 1.0)
+    );
+    (window.state.session).background(|project| project.engine().stop());
+    for _ in 0..3 {
+        polled(&mut window);
+    }
+    assert_eq!(ring(&window, "grid-0-1"), 0.0);
+}
+
+/// A text cut to fit shows whole while the pointer is on it; one that fits shows nothing more.
+#[test]
+#[ignore = "missing: a cut text shows nothing more on hover (win-sweep, crates/window/src/tree)"]
+fn a_cut_text_shows_whole_on_hover_and_a_text_that_fits_does_not() {
+    const CUT: &str = r#"import { h, tool } from "./sdk";
+export const cut = tool({
+  name: "cut", title: "Cut", when: "Never", doc: "A text too long for its box.", state: {},
+  view: () => <col><text key="long" w={40} truncate>A name far too long for forty points</text><text key="short" w={200} truncate>Short</text></col>,
+});
+"#;
+    let files = [
+        ("extensions/cut.tsx", CUT),
+        ("state/cut.json", r#"{"tool": "cut", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "cut");
+    let shown = |window: &rune::Runtime<State>, text: &str| {
+        (window.elements().iter())
+            .filter(|element| element.text.as_deref() == Some(text))
+            .count()
+    };
+    let (x, y) = window.find("long").unwrap();
+    window.pointer_move(x, y);
+    for _ in 0..60 {
+        redraw(&mut window);
+    }
+    assert_eq!(shown(&window, "A name far too long for forty points"), 2);
+    let (x, y) = window.find("short").unwrap();
+    window.pointer_move(x, y);
+    for _ in 0..60 {
+        redraw(&mut window);
+    }
+    assert_eq!(shown(&window, "Short"), 1);
+}
+
+/// A newer template changes code the project changed too: the window says so, and the
+/// project's code stays as it is.
+#[test]
+#[ignore = "missing: no notice of a newer template for changed code (shell-fix, app/notices.rs)"]
+fn a_newer_template_for_code_the_project_changed_shows_a_notice() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    // As an older release kept it, and the project changed it since.
+    let song = "extensions/song.tsx";
+    std::fs::write(
+        folder.join(runtime::templates::KEPT).join(song),
+        "// an older template",
+    )
+    .unwrap();
+    let ours = std::fs::read_to_string(folder.join(song)).unwrap() + "\n// ours\n";
+    std::fs::write(folder.join(song), &ours).unwrap();
+    let state = opened(&folder);
+    let controls = controls::collect(&state).controls;
+    let texts: Vec<String> = controls.into_iter().map(|control| control.label).collect();
+    let texts = texts.join(", ");
+    let notice = state.session.notice().unwrap_or_default().to_string();
+    assert!(
+        notice.contains("template") || texts.contains("template"),
+        "{notice} {texts}"
+    );
+    assert_eq!(std::fs::read_to_string(folder.join(song)).unwrap(), ours);
+}
+
+/// A transport of its own: its presses play, pause, stop and jump the clock, and its label
+/// reads whether it plays.
+const DECK: &str = r#"import { h, tool } from "./sdk";
+export const deck = tool({
+  name: "deck", title: "Deck", when: "Never", doc: "Moves the clock.", state: {},
+  view: (_, { clock }) => (
+    <col>
+      <box key="play" label={clock.playing ? "Playing" : "Stopped"} w={120} h={20} onPress={() => (clock.playing ? clock.pause() : clock.play())} />
+      <box key="stop" label="Halt" w={120} h={20} onPress={() => clock.stop()} />
+      <box key="jump" label="Bar 3" w={120} h={20} onPress={() => clock.jump(7680)} />
+      <box key="later" label="Later" w={120} h={20} onPress={() => clock.jump(0, { atTick: 1920 })} />
+    </col>
+  ),
+});
+"#;
+
+/// Code plays, pauses, stops and jumps the clock, and what it shows follows.
+#[test]
+fn a_transport_of_code_moves_the_clock_and_its_view_reads_it() {
+    let files = [
+        ("extensions/deck.tsx", DECK),
+        ("state/deck.json", r#"{"tool": "deck", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "deck");
+    let tick = |window: &rune::Runtime<State>| window.state.session.status().playhead_tick.0;
+    act(
+        &mut window.state,
+        json!({ "label": "Stopped", "action": "press" }),
+    );
+    for _ in 0..30 {
+        polled(&mut window);
+    }
+    assert!(window.state.session.status().playing);
+    assert!(labels(&window.state).contains(&"Playing".to_string()));
+    act(
+        &mut window.state,
+        json!({ "label": "Playing", "action": "press" }),
+    );
+    polled(&mut window);
+    let paused = tick(&window);
+    assert!(!window.state.session.status().playing && paused > 0);
+    act(
+        &mut window.state,
+        json!({ "label": "Bar 3", "action": "press" }),
+    );
+    polled(&mut window);
+    assert_eq!(tick(&window), 7680);
+    act(
+        &mut window.state,
+        json!({ "label": "Halt", "action": "press" }),
+    );
+    polled(&mut window);
+    assert!(!window.state.session.status().playing);
+    // A jump at a tick waits for the playhead to get there.
+    act(
+        &mut window.state,
+        json!({ "label": "Stopped", "action": "press" }),
+    );
+    polled(&mut window);
+    act(
+        &mut window.state,
+        json!({ "label": "Later", "action": "press" }),
+    );
+    let mut ticks = vec![tick(&window)];
+    while ticks.len() < 120 && ticks.windows(2).all(|pair| pair[0] <= pair[1]) {
+        polled(&mut window);
+        ticks.push(tick(&window));
+    }
+    let back = ticks.windows(2).position(|pair| pair[1] < pair[0]);
+    let jumped = back.map(|at| (ticks[at], ticks[at + 1]));
+    assert!(
+        jumped.is_some_and(|(from, to)| from <= 1920 && to < 200),
+        "{ticks:?}"
     );
 }

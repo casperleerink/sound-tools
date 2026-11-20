@@ -150,6 +150,7 @@ test("an audio track shows its region chosen alone, else asks for one", () => {
   rack(self, "audio-1", (memory) => (memory.selected = ["audio-1/r1"]));
   expect(find("slot-region")).toMatchObject({ label: "Device r1.wav" });
   expect(act("Gain of r1.wav", "set", -6)).toEqual([[["children", 0, "children", 2, "state", "gain_db"], -6]]);
+  expect(act("Fade in of r1.wav", "set", 100)).toEqual([[["children", 0, "children", 2, "state", "fade_in_ms"], 100]]);
   rack(self, "audio-1", (memory) => (memory.selected = ["audio-1/r1", "audio-1/r2"]));
   expect(find("slot-region")).toBeUndefined();
 });

@@ -339,3 +339,20 @@ fn the_song_of_the_template_with_100_audio_clips_on_16_audio_tracks_runs_no_view
     assert!(scroll < SCROLL_AND_PLAY, "a scroll frame took {scroll:?}");
     assert!(play < SCROLL_AND_PLAY, "a play frame took {play:?}");
 }
+
+/// An idle window changes nothing and runs no view: a frame that finds nothing new draws
+/// nothing.
+#[test]
+fn idle_the_window_changes_nothing_and_runs_no_view() {
+    let scratch = new_project();
+    let mut state = opened(&scratch.path().join("song"));
+    for step in 1..=30 {
+        frame(&mut state, f64::from(step) / 60.0);
+    }
+    let runs = state.tools.as_ref().unwrap().view_runs();
+    for step in 31..=150 {
+        let (changed, _) = frame(&mut state, f64::from(step) / 60.0);
+        assert!(!changed, "frame {step} changed what shows");
+    }
+    assert_eq!(state.tools.as_ref().unwrap().view_runs(), runs);
+}

@@ -35,3 +35,13 @@ test("a gain from the card stays in the range of its handle", () => {
   regionEdits(fake.song).setGain("audio-1/r1", 40);
   expect(region(fake).gain_db).toBe(24);
 });
+
+test("alt-up and alt-down step the chosen region's gain a dB, one step each; with none chosen, nothing", () => {
+  const fake = voice({ gain_db: -3 });
+  expect(regionEdits(fake.song).step(1)).toBe(false);
+  fake.memory.selected = ["audio-1/r1"];
+  expect(regionEdits(fake.song).step(1)).toBe(true);
+  regionEdits(fake.song).step(-1);
+  regionEdits(fake.song).step(-1);
+  expect([region(fake).gain_db, fake.steps]).toEqual([-4, ["Change gain", "Change gain", "Change gain"]]);
+});

@@ -218,3 +218,36 @@ fn cmd_q_quits() {
     redraw(&mut window);
     assert!(matches!(window.shell_request, Some(rune::Shell::Quit)));
 }
+
+/// A template of the tools only of a song opens as an empty song, with no problem, that
+/// offers its first track.
+#[test]
+fn a_project_from_the_tools_only_of_a_song_opens_its_empty_song() {
+    let scratch = new_project();
+    let mut state = kept(&scratch);
+    act(&mut state, json!({ "action": "app.save-as-template" }));
+    act(
+        &mut state,
+        json!({ "key": "template-name", "action": "commit", "value": "Bare song" }),
+    );
+    act(
+        &mut state,
+        json!({ "label": "Tools only", "action": "press" }),
+    );
+    act(&mut state, json!({ "label": "Save", "action": "press" }));
+    let saved = runtime::templates::saved_in(&scratch.path().join("support/templates")).unwrap();
+    let folder = scratch.path().join("bare");
+    saved[0].write(&folder).unwrap();
+    let mut state = opened(&folder);
+    let tracks = |state: &State| {
+        let instances = state.project().instances();
+        instances.filter(|(_, tool)| *tool == "track").count()
+    };
+    assert_eq!(tracks(&state), 0);
+    act(
+        &mut state,
+        json!({ "label": "Add an instrument track", "action": "press" }),
+    );
+    assert_eq!(tracks(&state), 1);
+    assert_eq!(state.project().problems(), []);
+}

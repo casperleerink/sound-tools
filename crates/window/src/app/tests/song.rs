@@ -260,3 +260,80 @@ fn enter_and_space_press_a_focused_element_before_the_actions_of_the_song() {
     redraw(&mut window);
     assert!(window.find("roll-t00-bass").is_some());
 }
+
+/// The heads of the tracks scroll with the timeline: a wheel over the clips moves a head as far
+/// as its clips.
+#[test]
+fn the_heads_of_the_tracks_scroll_with_the_timeline() {
+    let scratch = new_project();
+    let song = scratch.path().join("song/state/song");
+    for track in 2..24 {
+        let to = song.join(format!("t{track:02}"));
+        std::fs::create_dir_all(to.join("chain")).unwrap();
+        for file in [
+            "instance.json",
+            "mix.json",
+            "synth.json",
+            "rec.json",
+            "chain/instance.json",
+        ] {
+            if song.join("t00").join(file).exists() {
+                std::fs::copy(song.join("t00").join(file), to.join(file)).unwrap();
+            }
+        }
+    }
+    let mut window = laid_out(opened(&scratch.path().join("song")));
+    for _ in 0..5 {
+        redraw(&mut window);
+    }
+    let head = |window: &rune::Runtime<State>| rect(window, "colour-t00")[1];
+    let clip = |window: &rune::Runtime<State>| rect(window, "clip-t00/bass")[1];
+    let (head_before, clip_before) = (head(&window), clip(&window));
+    let [x, y, ..] = rect(&window, "clip-t00/bass");
+    window.wheel_event(rune::WheelEvent::new(0.0, -120.0).at(x + 10.0, y + 10.0));
+    for _ in 0..30 {
+        redraw(&mut window);
+    }
+    let moved = clip_before - clip(&window);
+    assert!(moved > 50.0, "{moved}");
+    assert_eq!(head_before - head(&window), moved);
+}
+
+/// The track the song chooses is what the keyboard plays, and a chosen clip is the selection
+/// that Export selection exports.
+#[test]
+fn a_track_the_song_chooses_plays_the_keyboard_and_a_chosen_clip_is_the_selection() {
+    let (_scratch, mut window) = song();
+    let selected = |window: &rune::Runtime<State>| {
+        let selected = window
+            .state
+            .session
+            .selected()
+            .map(|id| id.as_str().to_string());
+        (selected, window.state.session.selected_span().is_some())
+    };
+    super::act(
+        &mut window.state,
+        serde_json::json!({ "label": "Choose Track 2", "action": "press" }),
+    );
+    redraw(&mut window);
+    let (track, span) = selected(&window);
+    assert!(
+        track
+            .as_deref()
+            .is_some_and(|id| id.starts_with("song/t01")),
+        "{track:?}"
+    );
+    assert!(!span);
+    super::act(
+        &mut window.state,
+        serde_json::json!({ "label": "Clip at 1.1 on Track 1", "action": "press" }),
+    );
+    redraw(&mut window);
+    let (clip, span) = selected(&window);
+    assert!(
+        clip.as_deref().is_some_and(|id| id.starts_with("song/t00")),
+        "{clip:?}"
+    );
+    assert!(span);
+}

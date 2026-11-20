@@ -47,6 +47,15 @@ pub(crate) struct Opened {
 
 /// The project in `folder`, with `devices`. Its files are written already.
 pub(crate) fn open(folder: tempfile::TempDir, devices: Devices) -> Opened {
+    opened(folder, devices, false)
+}
+
+/// The same, with the system's watcher on `extensions/`, as the window has it.
+pub(crate) fn open_watched(folder: tempfile::TempDir) -> Opened {
+    opened(folder, Devices::default(), true)
+}
+
+fn opened(folder: tempfile::TempDir, devices: Devices, watched: bool) -> Opened {
     assert!(
         sound_typescript::has_bun(),
         "the tools of the project run in Bun: install it, see tooling/fetch-bun.sh"
@@ -66,7 +75,7 @@ pub(crate) fn open(folder: tempfile::TempDir, devices: Devices) -> Opened {
             wakes.fetch_add(1, Ordering::Relaxed);
         })
     };
-    let tools = Tools::start(extensions.unwrap(), &project, false, waker.clone());
+    let tools = Tools::start(extensions.unwrap(), &project, watched, waker.clone());
     let input = Input::new(&mut project, devices, waker);
     let mut opened = Opened {
         project,

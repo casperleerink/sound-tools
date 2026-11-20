@@ -214,6 +214,9 @@ pub struct Tools {
     tools: Vec<Rc<ToolInfo>>,
     problems: Vec<Problem>,
     watch_problem: Option<Problem>,
+    /// Whether the system's watcher hears `extensions/`. It watches anew at every start, so a
+    /// folder made since is watched too.
+    watched: bool,
     _watcher: Option<RecommendedWatcher>,
     changes: mpsc::Receiver<()>,
     /// When the folder last changed, while a restart waits for it to be quiet.
@@ -297,6 +300,7 @@ impl Tools {
             tools: tools.into_iter().map(Rc::new).collect(),
             problems,
             watch_problem,
+            watched,
             _watcher: watcher,
             changes,
             changed_at: None,
@@ -380,6 +384,11 @@ impl Tools {
 
     pub fn view_runs(&self) -> u64 {
         self.view_runs
+    }
+
+    /// How many records the running Bun was told.
+    pub fn records_told(&self) -> u64 {
+        self.bun.as_ref().map_or(0, |bun| bun.records_told())
     }
 
     /// What is wrong with `extensions/`.
@@ -831,6 +840,11 @@ impl Tools {
             *again = true;
             return;
         }
+        if self.watched {
+            let (send, changes) = mpsc::channel();
+            let (watcher, problem) = watching(&self.folder, send, self.waker.clone());
+            (self._watcher, self.watch_problem, self.changes) = (watcher, problem, changes);
+        }
         let old = self.bun.take();
         self.performer_gone(project);
         let (folder, opening, skipped) = (self.folder.clone(), self.opening, self.skipped.clone());
@@ -913,7 +927,22 @@ impl Tools {
                     .collect(),
             }
         });
-        self.tools = tools.into_iter().map(Rc::new).collect();
+        // The project keeps playing a tool the code no longer defines, as it was.
+        let gone: Vec<Rc<ToolInfo>> = (self.tools.iter())
+            .filter(|info| !tools.iter().any(|tool| tool.name == info.name))
+            .cloned()
+            .collect();
+        // A file Bun runs without says why already.
+        let unexplained = (gone.iter()).filter(|info| !self.skipped.contains_key(&info.file));
+        problems.extend(unexplained.map(|info| {
+            info.problem(
+                "it is gone from the code; its records play as they did until the project opens again",
+            )
+        }));
+        self.tools = gone
+            .into_iter()
+            .chain(tools.into_iter().map(Rc::new))
+            .collect();
         self.problems = problems;
         self.listen(bun);
         for take in std::mem::take(&mut self.held_takes) {
@@ -1290,10 +1319,22 @@ impl Tools {
         let Some(child) = child else {
             return Ok(instance.clone());
         };
-        InstanceId::new(&format!("{instance}/{child}"))
+        let played = InstanceId::new(&format!("{instance}/{child}"))
             .ok()
-            .filter(|id| id.is_inside(instance) && project.tool_of(id).is_some())
-            .ok_or_else(|| "is not one it owns".to_string())
+            .filter(|id| id.is_inside(instance) && project.tool_of(id).is_some());
+        played.ok_or_else(|| {
+            let children: Vec<&str> = (project.instances())
+                .filter(|(id, _)| id.parent().as_ref() == Some(instance))
+                .map(|(id, _)| id.name())
+                .collect();
+            match children.is_empty() {
+                true => format!("{instance} does not own: it owns none"),
+                false => format!(
+                    "{instance} does not own: its children are {}",
+                    children.join(", ")
+                ),
+            }
+        })
     }
 
     /// Plays a key of `instance`, or lets go of one, as the keyboard would: on its own voices,
