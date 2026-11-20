@@ -447,7 +447,7 @@ fn label(scope: &Scope, t: &TextNode) -> El {
         _ => {}
     }
     if t.truncate {
-        e = e.truncate();
+        e = e.truncate().help_when_truncated(t.text.clone());
     }
     if let Some(live) = live {
         e = live.apply(e);

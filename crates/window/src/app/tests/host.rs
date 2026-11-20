@@ -1323,7 +1323,6 @@ fn the_step_the_playhead_is_in_shows_it_plays_only_while_the_piece_plays() {
 
 /// A text cut to fit shows whole while the pointer is on it; one that fits shows nothing more.
 #[test]
-#[ignore = "missing: a cut text shows nothing more on hover (win-sweep, crates/window/src/tree)"]
 fn a_cut_text_shows_whole_on_hover_and_a_text_that_fits_does_not() {
     const CUT: &str = r#"import { h, tool } from "./sdk";
 export const cut = tool({
@@ -1336,23 +1335,19 @@ export const cut = tool({
         ("state/cut.json", r#"{"tool": "cut", "state": {}}"#),
     ];
     let (_scratch, mut window) = page(&files, "cut");
-    let shown = |window: &rune::Runtime<State>, text: &str| {
-        (window.elements().iter())
-            .filter(|element| element.text.as_deref() == Some(text))
-            .count()
-    };
+    let tip = |window: &rune::Runtime<State>| window.help_tooltip().map(|(text, _)| text.to_string());
     let (x, y) = window.find("long").unwrap();
     window.pointer_move(x, y);
     for _ in 0..60 {
         redraw(&mut window);
     }
-    assert_eq!(shown(&window, "A name far too long for forty points"), 2);
+    assert_eq!(tip(&window).as_deref(), Some("A name far too long for forty points"));
     let (x, y) = window.find("short").unwrap();
     window.pointer_move(x, y);
     for _ in 0..60 {
         redraw(&mut window);
     }
-    assert_eq!(shown(&window, "Short"), 1);
+    assert_eq!(tip(&window), None);
 }
 
 /// A newer template changes code the project changed too: the window says so, and the
