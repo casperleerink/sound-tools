@@ -154,6 +154,7 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
     state.open_menu();
     if headless {
         changed |= state.settle();
+        state.feeds.wait_for_files();
         if let Err(error) = state.first_frame() {
             *FAILED.lock().unwrap_or_else(PoisonError::into_inner) = Some(format!("{error:#}"));
         }

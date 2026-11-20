@@ -149,6 +149,11 @@ impl Feeds {
         knows
     }
 
+    /// Waits a while for the waves of files still being read: a run without a window draws them.
+    pub(crate) fn wait_for_files(&self) {
+        self.files.wait(std::time::Duration::from_secs(5));
+    }
+
     /// Starts a frame `seconds` after the last.
     pub(crate) fn next_frame(&mut self, seconds: f64) {
         self.readings.next_frame(seconds as f32);
