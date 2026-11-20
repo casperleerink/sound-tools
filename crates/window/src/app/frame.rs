@@ -194,6 +194,7 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
         }
     }
     changed |= tree::follow_fields(state);
+    changed |= super::history::follow(state);
     let dt = (seconds - state.last).max(0.0);
     state.last = seconds;
     let mut moving = state.lives.update(state, dt);

@@ -69,6 +69,9 @@ impl State {
             Target::Chrome(super::chrome::Act::Shell(act)) => {
                 super::projects::run(self, *act, value)?;
             }
+            Target::Chrome(super::chrome::Act::History(act)) => {
+                super::history::run(self, *act, action, value)?;
+            }
             Target::Chrome(act) => act.run(self, value)?,
             Target::Dialog(says) => self.answer_dialog(*says),
             Target::View(press) => {

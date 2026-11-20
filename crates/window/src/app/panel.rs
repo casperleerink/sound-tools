@@ -60,20 +60,6 @@ pub(crate) trait PanelTab: Any {
     fn stop(&mut self) {}
 }
 
-/// What a tab shows until what belongs there is made.
-struct Waiting(&'static str);
-
-impl PanelTab for Waiting {
-    fn view(&self, state: &State) -> El {
-        let theme = &state.theme;
-        text(self.0)
-            .font(theme.text("body"))
-            .color(theme.color("text-muted"))
-            .wrap()
-            .padding(theme.space(4))
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Tab {
     Agent,
@@ -99,7 +85,7 @@ impl Tab {
 pub(crate) struct LeftPanel {
     /// None without an agent: then the panel has History only, and starts closed.
     pub(crate) agent: Option<Box<dyn PanelTab>>,
-    pub(crate) history: Box<dyn PanelTab>,
+    pub(crate) history: super::history::History,
     pub(crate) open: bool,
     pub(crate) tab: Tab,
     /// Remembers open or closed for every project, in the machine's support folder, never in a
@@ -121,7 +107,7 @@ impl LeftPanel {
                 Tab::History
             },
             agent,
-            history: Box::new(Waiting("Your changes and versions will show here.")),
+            history: super::history::History::default(),
             open,
             file,
             back: None,
@@ -137,7 +123,7 @@ impl LeftPanel {
     fn shown(&self) -> &dyn PanelTab {
         match (self.tab, &self.agent) {
             (Tab::Agent, Some(agent)) => agent.as_ref(),
-            _ => self.history.as_ref(),
+            _ => &self.history,
         }
     }
 

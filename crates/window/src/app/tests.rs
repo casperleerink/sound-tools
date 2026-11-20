@@ -2118,6 +2118,7 @@ mod budget;
 mod export;
 mod frame;
 mod geometry;
+mod history;
 mod input;
 mod plays;
 mod projects;

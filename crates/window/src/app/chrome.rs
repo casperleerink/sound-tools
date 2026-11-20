@@ -63,6 +63,7 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
     let overlays = tree::overlays(state)
         .into_iter()
         .chain(problems::list(state))
+        .chain(super::history::overlays(state))
         .chain(super::dialog::view(state))
         .chain(super::export::view(state))
         .chain(crate::shell::overlay(state, theme))
@@ -110,6 +111,7 @@ pub(crate) enum Act {
     Shell(crate::shell::Act),
     Sidebar(crate::sidebar::Act),
     Export(super::export::Act),
+    History(super::history::Act),
 }
 
 impl Act {
@@ -130,6 +132,7 @@ impl Act {
             Act::Shell(act) => crate::shell::run(state, act, None, &mut Tx::default()),
             Act::Sidebar(act) => act.run(state, None),
             Act::Export(act) => state.export_act(act),
+            Act::History(act) => super::history::run(state, act, "press", value)?,
         }
         Ok(())
     }
@@ -177,6 +180,7 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
             Act::AskToFix,
         ));
     }
+    controls.extend(super::history::controls(state));
     controls.extend(notices::controls(state));
     controls.extend(super::projects::controls(state));
     controls.extend(crate::sidebar::controls(state));

@@ -27,6 +27,7 @@ mod dialog;
 mod export;
 mod frame;
 mod headless;
+mod history;
 mod host;
 mod input;
 mod keys;
