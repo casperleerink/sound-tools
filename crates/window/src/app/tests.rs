@@ -975,6 +975,9 @@ fn laid_out(state: State) -> rune::Runtime<State> {
     let fonts = rune::text::TextSystem::new(&crate::FONTS, ("Inter Display", "ui-monospace"));
     let env = rune::Env::new(true, 1.0);
     let mut window = rune::Runtime::with_text(state, view, (1470.0, 920.0), env, fonts);
+    // As on a Mac with keyboard navigation off, and the app's Tab that reaches every control.
+    window.set_full_keyboard_access(false);
+    window.set_tab_visits_controls(true);
     window.frame(0.0);
     window
 }
@@ -2124,4 +2127,5 @@ fn code_that_opens_the_window_of_a_child_with_none_has_a_problem() {
     assert_eq!(state.report()["plugin_windows"], json!([]));
 }
 
+mod behaviours;
 mod frame;

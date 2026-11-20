@@ -1,4 +1,4 @@
-import { h, input, Live, tool, type Child } from "./sdk";
+import { h, input, live, Live, tool, type Child } from "./sdk";
 import { Button } from "./ui/button";
 import { Cell } from "./ui/cell";
 import { Display, displayWidth, DISPLAY_HEIGHT } from "./ui/display";
@@ -36,6 +36,8 @@ type Memory = {
   shape: Shape;
   values: Record<string, number>;
   name: string;
+  clip: string;
+  renaming: boolean;
   expanded: boolean;
   chosen: boolean;
   steps: Step[][];
@@ -58,6 +60,8 @@ export const gallery = tool({
     shape: "low",
     values: { note: 60, deep: 0, cutoff: 2000, resonance: 0.3, pan: -0.25, drive: 0.6, mix: 0.75, fader: -6, slider: 0.4 },
     name: "Bass",
+    clip: "Verse",
+    renaming: false,
     expanded: false,
     chosen: true,
     steps: [pattern([0, 4, 8, 12]), pattern([4, 12]), pattern([0, 2, 4, 6, 8, 10, 12, 14])],
@@ -80,7 +84,8 @@ export const gallery = tool({
                 <Button id="primary" label="Add a track" text="Add track" variant="primary" />
                 <Button id="subtle" label="Duplicate" text="Duplicate" />
                 <Button id="ghost" label="Rename" text="Rename" variant="ghost" />
-                <Button id="glyph" label="Add" glyph="+" tip="Add a device" />
+                <Button id="glyph" label="Add" icon="plus" tip="Add a device" />
+                <Button id="with-icon" label="Record" text="Record" icon="mic" />
               </Grid>
               <Grid>
                 <Button id="small" label="Small" text="Small" size="sm" />
@@ -95,15 +100,16 @@ export const gallery = tool({
                 {toggle("arm", "Arm", "danger", true)}
                 {toggle("freeze", "Freeze")}
                 {toggle("sync", "Sync")}
+                <Toggle id="lanes" label="Show lanes" icon="automation" on={memory.toggles.lanes ?? false} onToggle={flip("lanes")} />
               </Grid>
             </Section>
             <Section title="Choices">
               <Grid>
                 <Segmented id="wave" label="Waveform" options={WAVES} value={memory.wave} onChange={(wave) => (memory.wave = wave)} />
-                <Select id="shape" label="Filter" options={SHAPES} value={memory.shape} onChange={(shape) => (memory.shape = shape)} />
+                <Select id="shape" label="Filter" options={SHAPES} value={memory.shape} search onChange={(shape) => (memory.shape = shape)} />
               </Grid>
               <Grid>
-                <Menu id="menu" label="Track menu" items={[{ text: "Rename", onPress: () => {}, keys: "⏎" }, { text: "Duplicate", onPress: () => {}, keys: "⌘D" }, { text: "Delete", onPress: () => {}, danger: true }]} />
+                <Menu id="menu" label="Track menu" items={[{ text: "Rename", icon: "pencil", onPress: () => {}, keys: "⏎" }, { text: "Duplicate", icon: "copy", onPress: () => {}, keys: "⌘D" }, { text: "Delete", icon: "trash-2", onPress: () => {}, danger: true }]} />
                 <Popover id="popover" label="Swing" text="Swing" title="Swing">
                   {knob("swing", "Swing", { min: 0, max: 1, unit: "percent" })}
                 </Popover>
@@ -132,7 +138,10 @@ export const gallery = tool({
             </Section>
             <Section title="Text and marks">
               <col gap={3}>
-                <TextField id="name" label="Track name" value={memory.name} onCommit={(name) => (memory.name = name)} />
+                <TextField id="name" label="Track name" value={memory.name} onCommit={(name) => name !== null && (memory.name = name)} />
+                {memory.renaming
+                  ? <TextField id="rename" label="Rename the clip" value={memory.clip} focus onCommit={(name) => { memory.renaming = false; if (name !== null) memory.clip = name; }} />
+                  : <row key="clip" label="Clip" role="button" w={160} h={28} px={2} align="center" radius="lg" hover="fill" onPress={() => (memory.renaming = true)}><text style="body" color="text">{memory.clip}</text></row>}
                 <row gap={2} align="center">
                   <Kbd keys="⌘K" />
                   <Dot color="focus" />
@@ -142,6 +151,7 @@ export const gallery = tool({
                 <Notice text="Exported to the folder." />
                 <Notice text="This project does not load plugins." tone="warning" />
                 <Notice text="The file could not be read." tone="danger" />
+                <Take />
               </col>
             </Section>
             <Section title="Pads">
@@ -188,7 +198,7 @@ export const gallery = tool({
             </Section>
           </row>
           <row gap={8}>
-            <Panel title="Panel" end={<Button id="panel-add" label="Add a device" glyph="+" size="sm" variant="ghost" />}>
+            <Panel title="Panel" end={<Button id="panel-add" label="Add a device" icon="plus" size="sm" variant="ghost" />}>
               <text style="body" color="text-secondary">A surface with a title, for a part of a page.</text>
             </Panel>
             <box w={360} radius="lg" border="border">
@@ -210,15 +220,22 @@ const Grid = ({ children }: { children?: Child }) => (
   </row>
 );
 
-/** A low pass curve, the one bright line of the display, with a soft fill under it. */
+/** A low pass curve, the one bright line of the display, filled softly below. */
 const Curve = () => {
   const [w, tall] = [displayWidth(4), DISPLAY_HEIGHT];
   const points: number[] = [];
-  const rects: number[] = [];
   const y = (x: number) => tall * 0.35 + Math.max(0, x - w * 0.55) ** 2 / 90;
-  for (let x = 0; x < w; x += 4) {
-    points.push(x, y(x), x + 4, y(x + 4));
-    rects.push(x, y(x), 4, tall - y(x));
-  }
-  return <shapes at={[0, 0]} w={w} h={tall} rects={[{ color: "text/5", rects }]} lines={[{ color: "text", width: 1.5, points }]} />;
+  for (let x = 0; x < w; x += 4) points.push(x, y(x), x + 4, y(x + 4));
+  return <shapes at={[0, 0]} w={w} h={tall} lines={[{ color: "text", width: 1.5, points, fill: "text/5" }]} />;
+};
+
+/** A take as it records: its wave grows with the time, filled below, and runs no view. */
+const Take = () => {
+  const points: number[] = [];
+  for (let x = 0; x < 32; x += 1) points.push(x, 0.5 - 0.4 * Math.sin(x * 0.9) * Math.sin(x * 0.17), x + 1, 0.5 - 0.4 * Math.sin((x + 1) * 0.9) * Math.sin((x + 1) * 0.17));
+  return (
+    <box w={200} h={24} radius="sm" fill="well" clip>
+      <shapes w={live.elapsed.times(80).min(200)} h={24} units={[32, 1]} lines={[{ color: "sound", width: 1.5, points, fill: "sound/24" }]} />
+    </box>
+  );
 };

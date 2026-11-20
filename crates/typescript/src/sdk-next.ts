@@ -56,6 +56,9 @@ export type {
   FieldInfo, FieldProps, IconProps, Lines, Node, Offer, Op, Plane, Pointer, Radius, Rects, Role,
   Self, Shadow, ShapesProps, Space, TextProps, TextStyle, Tree
 } from "./sdk/view";
+export type {
+  IconName
+} from "./sdk/icons";
 // what the runtime calls
 export {
   host

@@ -103,13 +103,17 @@ pub(crate) struct State {
     /// What `--main` shows in place of the project's main instance.
     main: Option<InstanceId>,
     /// What the text fields say, by key, and the value each was made from.
-    fields: RefCell<HashMap<String, (rune::TextEdit, String)>>,
+    pub(crate) fields: RefCell<tree::Fields>,
     waker: Arc<Mutex<Option<rune::Waker>>>,
     /// The steps of `--act` and the seconds of `--play`, for the first frame of a run without a window.
     first: Option<(Vec<Step>, Option<f64>)>,
     last: f64,
     /// A run without a window opens a copy, so it writes nothing and works next to a window.
     _copy: Option<tempfile::TempDir>,
+    /// The project's icons, each read once per load of the code.
+    pub(crate) icons: tree::Icons,
+    /// Where the controls of groups are drawn, which their arrows go by.
+    pub(crate) reach: tree::Reach,
     // The areas of the window's chrome follow, a field each. An area is a module of `app` that
     // owns its state: `open` makes it, `chrome::view` draws it, `keys::on_key` gives it keys.
     pub(crate) panel: panel::LeftPanel,
@@ -230,6 +234,8 @@ impl State {
             problems_open: false,
             last: 0.0,
             _copy: copy,
+            icons: tree::Icons::default(),
+            reach: tree::Reach::default(),
         })
     }
 

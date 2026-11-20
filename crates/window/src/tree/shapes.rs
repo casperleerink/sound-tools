@@ -9,9 +9,21 @@ use super::{Scope, ShapesNode};
 pub(super) fn drawing(scope: &Scope, d: &ShapesNode) -> El {
     let theme = &scope.state.theme;
     let mut shape = Shape::new();
+    // The bottom, in the units the points are in, which an open line fills down to.
+    let bottom = match d.units {
+        Some([_, down]) => down,
+        None => d.h.fixed().unwrap_or(0.0),
+    };
     for lines in &d.lines {
         let colour = theme.color(&lines.color);
-        for run in runs(&lines.points) {
+        let runs = runs(&lines.points);
+        if let Some(fill) = &lines.fill {
+            let fill = theme.color(fill);
+            for run in &runs {
+                shape = shape.fill(filled(run, bottom), fill);
+            }
+        }
+        for run in runs {
             // Round, so the joints of a run, such as an arc, show no seams; but round joints
             // overlap, which shows in a see-through colour.
             let cap = match run.len() > 2 && colour.a >= 1.0 {
@@ -37,14 +49,34 @@ pub(super) fn drawing(scope: &Scope, d: &ShapesNode) -> El {
         Some(_) => trim = d.trim.clone(),
         None => {}
     }
-    let mut e = canvas(shape).size(d.w, d.h);
+    let mut e = canvas(shape);
+    if let (Some(w), Some(h)) = (d.w.fixed(), d.h.fixed()) {
+        e = e.size(w, h);
+    }
     if let Some(trim) = trim {
         e = scope.bind(e, Shows::Trim(trim));
     }
     if let Some(key) = &d.key {
         e = e.key(scope.key(key));
     }
-    scope.placed(e, d.at.as_ref(), (None, None), d.opacity.as_ref())
+    scope.placed(
+        e,
+        d.at.as_ref(),
+        (Some(&d.w), Some(&d.h)),
+        d.opacity.as_ref(),
+    )
+}
+
+/// The area a run of a line closes: itself when it ends where it starts, else down to `bottom`
+/// below its ends.
+fn filled(run: &[[f32; 2]], bottom: f32) -> Vec<[f32; 2]> {
+    let mut area = run.to_vec();
+    if let (Some(&[first_x, _]), Some(&[last_x, _])) = (run.first(), run.last())
+        && run.first() != run.last()
+    {
+        area.extend([[last_x, bottom], [first_x, bottom]]);
+    }
+    area
 }
 
 /// Line segments (x1 y1 x2 y2 each) as strokes: a segment that starts where the last ended goes

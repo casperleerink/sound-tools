@@ -12,7 +12,7 @@ use sound_typescript::next::Drawn;
 use crate::app::State;
 use crate::lives::{Lives, Shown, Shows};
 
-use super::field::typed;
+use super::field::{kept, typed};
 use super::gesture::Gesture;
 use super::semantics::{delegates_enter, semantics};
 use super::shapes::drawing;
@@ -78,7 +78,7 @@ fn walk(node: &Node, memos: &Memos, bind: &mut impl FnMut(Shows)) {
             {
                 bind(Shows::Trim(trim.clone()));
             }
-            live_place(d.at.as_ref(), (None, None), d.opacity.as_ref())
+            live_place(d.at.as_ref(), (Some(&d.w), Some(&d.h)), d.opacity.as_ref())
         }
         Node::Memo { key } => {
             let inner = memos
@@ -144,7 +144,7 @@ pub(super) fn build(scope: &Scope, node: &Node) -> El {
         Node::Text(t) => label(scope, t),
         Node::Shapes(shapes) => drawing(scope, shapes),
         Node::Field(field) => typed(scope, field),
-        Node::Icon(_) => el(),
+        Node::Icon(icon) => super::icon::drawn(scope, icon),
         Node::Child { path } => match scope.instance.child(path) {
             Ok(child) => match scope.state.drawn(&child) {
                 _ if scope.state.code_failed(&child) => code_failed(scope.state, &child),
@@ -243,7 +243,7 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
         e = e.group_opacity(0.0, 1.0);
     }
     if b.group {
-        e = e.focus_group();
+        e = super::reach::group(scope, e, b);
     }
     if let Some(colour) = &b.border {
         e = match b.border_sides {
@@ -314,7 +314,7 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
         within: scope.within.clone(),
         ..*scope
     };
-    let shown = (b.children.iter()).filter(|child| !is_overlay(child));
+    let shown = (b.children.iter()).filter(|child| !is_overlay(child) && kept(scope, child));
     e.children(shown.map(|child| build(&inside, child)))
 }
 

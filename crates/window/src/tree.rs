@@ -16,13 +16,18 @@ use crate::lives::Shows;
 mod build;
 mod field;
 mod gesture;
+mod icon;
 mod overlay;
+mod reach;
 mod semantics;
 mod shapes;
 
 pub(crate) use build::{bound, code_failed, enterable, view};
+pub(crate) use field::{Fields, follow_fields};
 pub(crate) use gesture::Gesture;
+pub(crate) use icon::{Icons, report_missing};
 pub(crate) use overlay::overlays;
+pub(crate) use reach::Reach;
 pub(crate) use semantics::Press;
 
 /// A node of `sdk/view.ts`. A test reads every field it sends, so the two cannot drift.
@@ -37,8 +42,7 @@ pub(crate) enum Node {
     Text(TextNode),
     Shapes(ShapesNode),
     Field(FieldNode),
-    /// Not drawn yet, so it takes no room.
-    Icon(serde::de::IgnoredAny),
+    Icon(icon::IconNode),
     Child {
         path: String,
     },
@@ -264,8 +268,8 @@ pub(crate) struct ShapesNode {
     key: Option<String>,
     at: Option<[Num; 2]>,
     opacity: Option<Num>,
-    w: f32,
-    h: f32,
+    w: Num,
+    h: Num,
     units: Option<[f32; 2]>,
     trim: Option<[Num; 2]>,
     #[serde(default)]
@@ -286,6 +290,8 @@ pub(crate) struct FieldNode {
     w: Option<f32>,
     align: Option<String>,
     placeholder: Option<String>,
+    #[serde(default)]
+    pub(crate) focus: bool,
 }
 
 #[derive(Deserialize)]
@@ -294,6 +300,7 @@ pub(crate) struct Lines {
     color: String,
     width: f32,
     points: Vec<f32>,
+    fill: Option<String>,
 }
 
 #[derive(Deserialize)]

@@ -5,6 +5,10 @@ use rune::{Key, KeyEvent, Tx};
 use super::State;
 
 pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
+    // What a field passes on is typing, never a shortcut.
+    if state.typing_now() {
+        return false;
+    }
     if panel_key(state, key, false, tx) {
         state.handled();
         return true;
