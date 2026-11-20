@@ -241,6 +241,11 @@ impl Agents {
         &self.settings
     }
 
+    /// Reads the settings again, for what another window changed: once this one gains the keys.
+    pub fn read_settings_again(&mut self) {
+        self.settings.read_again();
+    }
+
     pub(crate) fn settings_mut(&mut self) -> &mut AgentSettings {
         &mut self.settings
     }

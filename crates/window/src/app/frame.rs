@@ -63,8 +63,8 @@ impl State {
         self.session.held(shown)
     }
 
-    /// Polls the session and gives the code what changed in the project. Whether what the
-    /// window shows changed.
+    /// Polls the session and gives the code and the agent what changed in the project. Whether
+    /// what the window shows changed.
     pub(super) fn poll_session(&mut self) -> bool {
         let polled = self.session.poll();
         if let Some(Err(error)) = polled.rendered {
@@ -78,6 +78,7 @@ impl State {
             }
             changed |= drawn;
         }
+        changed |= crate::sidebar::pump(self, &polled.events);
         changed
     }
 
@@ -125,6 +126,7 @@ pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
     let (mut changed, next) = frame(state, seconds);
     changed |= state.planes.focus(tx.focused());
     state.open_file_dialogs(tx);
+    crate::sidebar::open_pages(state, tx);
     if let Some(next) = next {
         tx.wake_after(next);
     }
@@ -238,7 +240,9 @@ pub(crate) fn closing(state: &mut State, tx: &mut Tx) {
     tx.quit();
 }
 
-/// Before any window goes, so every plugin lets go of its view and saves its state.
-pub(crate) fn quitting(state: &mut State, _: &mut Tx) {
+/// Before any window goes, so every plugin lets go of its view and saves its state, and the
+/// agent's writes end.
+pub(crate) fn quitting(state: &mut State, tx: &mut Tx) {
     state.plugin_windows.close_all(&state.plugins);
+    crate::sidebar::before_quit(state, tx);
 }

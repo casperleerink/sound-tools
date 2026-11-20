@@ -30,7 +30,7 @@ impl PanelTab for Agent {
         self.busy
     }
 
-    fn ask(&mut self, message: &str) -> bool {
+    fn ask(&mut self, message: &str, _: &mut sound_core::Project) -> bool {
         self.asked.borrow_mut().push(message.into());
         true
     }

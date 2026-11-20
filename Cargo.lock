@@ -4628,6 +4628,7 @@ dependencies = [
  "runtime",
  "serde",
  "serde_json",
+ "smol",
  "sound-agent",
  "sound-core",
  "sound-media",

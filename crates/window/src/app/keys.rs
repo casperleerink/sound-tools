@@ -364,9 +364,11 @@ pub(crate) fn on_key_up(state: &mut State, key: &KeyEvent, _: &mut Tx) -> bool {
     true
 }
 
-/// The window lost the keys: whatever an `onKey` holds comes up.
-pub(crate) fn on_focus(state: &mut State, focused: bool, _: &mut Tx) {
+/// The window lost the keys: whatever an `onKey` holds comes up. It gained them: the agent
+/// reads its settings again.
+pub(crate) fn on_focus(state: &mut State, focused: bool, tx: &mut Tx) {
     if !focused {
         state.let_go_of_keys();
     }
+    crate::sidebar::focused(state, focused, tx);
 }

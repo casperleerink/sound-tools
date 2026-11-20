@@ -2126,4 +2126,5 @@ mod frame;
 mod geometry;
 mod plays;
 mod projects;
+mod sidebar;
 mod transport;

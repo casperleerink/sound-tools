@@ -64,7 +64,8 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
         .into_iter()
         .chain(problems::list(state))
         .chain(super::dialog::view(state))
-        .chain(crate::shell::overlay(state, theme));
+        .chain(crate::shell::overlay(state, theme))
+        .chain(crate::sidebar::overlays(state));
     // On the root, which hears the key ups when nothing has the focus.
     rune_kit::root(base, overlays).on_key_up(super::keys::on_key_up)
 }
@@ -104,6 +105,7 @@ pub(crate) enum Act {
     Problems,
     AskToFix,
     Shell(crate::shell::Act),
+    Sidebar(crate::sidebar::Act),
 }
 
 impl Act {
@@ -121,6 +123,7 @@ impl Act {
                 state.ask_to_fix(None::<&mut Tx>);
             }
             Act::Shell(act) => crate::shell::run(state, act, None, &mut Tx::default()),
+            Act::Sidebar(act) => act.run(state, None),
         }
         Ok(())
     }
@@ -170,5 +173,6 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
     }
     controls.extend(notices::controls(state));
     controls.extend(super::projects::controls(state));
+    controls.extend(crate::sidebar::controls(state));
     controls
 }

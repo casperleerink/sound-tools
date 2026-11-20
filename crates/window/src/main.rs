@@ -17,6 +17,7 @@ mod fields;
 mod lives;
 mod plugin_windows;
 mod shell;
+mod sidebar;
 mod theme;
 mod tree;
 
@@ -186,6 +187,7 @@ fn window(arguments: &[String], last: bool) -> Result<()> {
         on_key: Some(app::on_key),
         fonts: &FONTS,
         families: ("Inter Display", "ui-monospace"),
+        scenes: sidebar::SCENES,
         ..rune::AppSpec::new(
             title,
             (1470.0, 920.0),

@@ -49,7 +49,7 @@ pub(crate) trait PanelTab: Any {
         false
     }
     /// Sends `message` as if typed. Whether it went.
-    fn ask(&mut self, _message: &str) -> bool {
+    fn ask(&mut self, _message: &str, _project: &mut sound_core::Project) -> bool {
         false
     }
     /// cmd-.: stops what it does.
@@ -124,13 +124,7 @@ impl LeftPanel {
         }
     }
 
-    /// Until the agent's own tab is made.
-    pub(crate) fn waiting_agent() -> Box<dyn PanelTab> {
-        Box::new(Waiting("Ask the agent for a tool or a change here."))
-    }
-
     /// The agent's tab as what it is, for its own handlers.
-    #[expect(dead_code, reason = "the agent's tab comes with the sidebar")]
     pub(crate) fn agent_mut<T: PanelTab>(&mut self) -> Option<&mut T> {
         let agent: &mut dyn Any = self.agent.as_deref_mut()?;
         agent.downcast_mut()
@@ -174,7 +168,7 @@ impl State {
 
     /// cmd-L: the Agent tab with the keys, or closed when it has them already. Nothing
     /// without an agent.
-    pub(super) fn agent_keys(&mut self, inside: bool, tx: &mut Tx) {
+    pub(crate) fn agent_keys(&mut self, inside: bool, tx: &mut Tx) {
         let Some(agent) = &self.panel.agent else {
             return;
         };
@@ -209,16 +203,17 @@ impl State {
         }
     }
 
-    /// Asks the agent to fix the files that are not live: the panel opens on the agent and the
-    /// message goes, or, when the agent cannot take one now, its composer gets the keys.
+    /// Asks the agent to fix the files that are not live: the panel opens on the agent, the
+    /// message goes when the agent can take one, and its composer gets the keys.
     pub(crate) fn ask_to_fix(&mut self, tx: Option<&mut Tx>) {
         self.show_tab(Tab::Agent);
         if !self.panel.open {
             self.set_panel_open(true);
         }
-        let asked =
-            (self.panel.agent.as_mut()).is_some_and(|agent| agent.ask(sound_agent::FIX_NOT_LIVE));
-        if let (false, Some(tx)) = (asked, tx) {
+        if let Some(agent) = self.panel.agent.as_mut() {
+            (self.session).background(|project| agent.ask(sound_agent::FIX_NOT_LIVE, project));
+        }
+        if let Some(tx) = tx {
             self.agent_keys(false, tx);
         }
     }
