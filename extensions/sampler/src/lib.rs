@@ -327,7 +327,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         )
         .feed(
             "wave",
-            "The loudest sample, 0 to 1, of each of `points` equal stretches (96 unless the binding says) of its file, across the seconds of it the binding shows (all of it unless it says); empty without a file or while it is read.",
+            "The loudest sample, 0 to 1, of each of `points` equal stretches (96 unless the binding says) of its file, across the seconds of it the binding shows (all of it unless it says), as `rects` that draw it mirrored about its middle with `units` [across, 1]; empty without a file or while it is read.",
             shown::wave,
         )
         .feed(

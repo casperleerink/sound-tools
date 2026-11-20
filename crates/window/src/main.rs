@@ -156,9 +156,10 @@ fn window(arguments: &[String], last: bool) -> Result<()> {
     if !headless && installs_an_update() {
         return Ok(());
     }
-    // Steps of `--act` land once the window is laid out, as a plane shows a range: a few frames.
+    // A picture or a tree shows the window laid out, and steps of `--act` land once it is, as a
+    // plane shows a range: a few frames.
     let given = |flag: &str| rune_arguments.iter().any(|argument| argument == flag);
-    let at = play.or(act.as_ref().filter(|_| !given("--script")).map(|_| 0.05));
+    let at = play.or((!given("--script")).then_some(0.05));
     if let (Some(seconds), false) = (at, given("--at")) {
         rune_arguments.extend(["--at".to_string(), seconds.to_string()]);
     }

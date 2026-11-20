@@ -1,5 +1,5 @@
-import { h, live, Live, memo, type Color, type Live as LiveValue, type Pointer } from "../../../sdk";
-import { laneValue, roomOf, type AutomationPoint } from "../../../song/lanes";
+import { h, live, Live, memo, type Color, type Live as LiveValue, type Num, type Pointer } from "../../../sdk";
+import { laneValue, roomOf, type AutomationPoint, type Travel } from "../../../song/lanes";
 import { placeOf } from "../../../song/time";
 import { PLANE, ROW, type Page } from "../../../song/view";
 import { MenuList } from "../../menu";
@@ -92,10 +92,14 @@ const Points = ({ page, row, points, open, chosen, say }: { page: Page; row: Lan
   const lanes = page.edits.lanes;
   const [track, name] = [row.track.name, row.lane];
   const downs = points.filter((point) => chosen.includes(point.tick)).map((point) => downOf(point.value, travel));
+  const together = chosen.length > 1;
+  // The drag a point moves by: the chosen move as one.
+  const dragOf = (tick: number) => live.drag(together && chosen.includes(tick) ? `points-${id}` : `point-${id}-${tick}`);
   return (
     <box>
       {piecesOf(lineOf(points, travel, page.end)).map((piece) => (
-        <shapes place={[piece.start - MARGIN, at.y(0), PIECE + 2 * MARGIN, at.tall]} units={[PIECE + 2 * MARGIN, 1]} lines={[{ color: colour, width: 1.5, points: piece.points, fill: `${colour}/10` as Color }]} />
+        <shapes place={[piece.start - MARGIN, at.y(0), PIECE + 2 * MARGIN, at.tall]} units={[PIECE + 2 * MARGIN, 1]}
+          lines={[{ color: colour, width: 1.5, points: open ? following(piece, points, travel, page.end, dragOf, at.tall) : piece.points, fill: `${colour}/10` as Color }]} />
       ))}
       {!open && piecesOf(dotsOf(points, travel)).map((piece) => (
         <shapes place={[piece.start - MARGIN, at.y(0), PIECE + 2 * MARGIN, at.tall]} units={[PIECE + 2 * MARGIN, 1]} lines={[{ color: colour, width: DOT - 1, points: piece.points }]} />
@@ -117,16 +121,15 @@ const Points = ({ page, row, points, open, chosen, say }: { page: Page; row: Lan
         const isChosen = chosen.includes(point.tick);
         const down = downOf(point.value, travel);
         // The chosen points move as one, by one drag.
-        const together = isChosen && chosen.length > 1;
-        const moved = live.drag(together ? `points-${id}` : key);
-        const [earliest, latest] = roomOf(points, together ? chosen : [point.tick]);
-        const [top, bottom] = together ? [Math.min(...downs), Math.max(...downs)] : [down, down];
+        const moved = dragOf(point.tick);
+        const [earliest, latest] = roomOf(points, together && isChosen ? chosen : [point.tick]);
+        const [top, bottom] = together && isChosen ? [Math.min(...downs), Math.max(...downs)] : [down, down];
         // Each point is a few hundred bytes of the tree: only a chosen one says what it holds as it drags; the others in a tip.
         const value = shown(laneValue(travel, 1 - down), unit);
         return (
           <box key={key} label={`Point at ${say(point.tick)}, ${value}`} role="button" checked={isChosen}
             place={[moved.dx.plus(point.tick), moved.dy.plus(at.y(down))]} w={MARK} h={MARK} radius="full" fill={isChosen ? "text" : colour} border="background" hover="text/40"
-            drag={{ x: [earliest, latest], y: [fine(-top * at.tall), fine((1 - bottom) * at.tall)], ...(snap > 0 ? { snap: [snap, 0] as [number, number] } : {}), ...(together ? { id: `points-${id}` } : {}) }}
+            drag={{ x: [earliest, latest], y: [fine(-top * at.tall), fine((1 - bottom) * at.tall)], ...(snap > 0 ? { snap: [snap, 0] as [number, number] } : {}), ...(together && isChosen ? { id: `points-${id}` } : {}) }}
             onPress={(p) => lanes.pressPoint(track, name, point.tick, p)} onDragEnd={(p) => lanes.movePoint(track, name, point.tick, at.inLane(p))}>
             {isChosen ? (
               <row at={[MARK, -24]} h={22} px={2} align="center" radius="md" fill="raised" border="border-strong" inert>
@@ -139,6 +142,26 @@ const Points = ({ page, row, points, open, chosen, say }: { page: Page; row: Lan
     </box>
   );
 };
+
+/**
+ * The numbers of a piece of the line with its ends at a point where that point's drag has it,
+ * and the flat ends of the line at the height of the first and the last: the line follows a
+ * point as it moves.
+ */
+function following(piece: { start: number; points: readonly number[] }, points: readonly AutomationPoint[], travel: Travel, end: number, dragOf: (tick: number) => ReturnType<typeof live.drag>, tall: number): Num[] {
+  const [first, last] = [points[0], points.at(-1)];
+  const out: Num[] = [];
+  for (let at = 0; at + 1 < piece.points.length; at += 2) {
+    const [x, y] = [piece.points[at]!, piece.points[at + 1]!];
+    const tick = x + piece.start - MARGIN;
+    const point = points.find((each) => each.tick === tick && downOf(each.value, travel) === y);
+    // The flat ends before the first point and after the last follow their height only.
+    const flat = tick === 0 ? first : tick === Math.max(end, last?.tick ?? 0) ? last : undefined;
+    const by = point ?? flat ? dragOf((point ?? flat)!.tick) : undefined;
+    out.push(point && by ? by.dx.plus(x) : x, by ? by.dy.over(tall).plus(y) : y);
+  }
+  return out;
+}
 
 /** What a chosen point holds `down` its lane as it drags, in its unit: what a release there sets. */
 const Readout = ({ lane: { travel, unit }, down }: { lane: ReturnType<typeof laneOf>; down: LiveValue }) => {

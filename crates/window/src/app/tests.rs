@@ -1393,7 +1393,7 @@ fn after_a_drag_let_go_outside_its_element_the_keys_press_it() {
     redraw(&mut window);
     assert_eq!(kit_record(&window.state)["velocity"], 0.0);
     assert_eq!(focused(&window).as_deref(), Some("t00/chain/kit:step"));
-    key(&mut window, rune::Key::Text(" ".into()));
+    key(&mut window, rune::Key::Enter);
     assert_eq!(kit_record(&window.state)["on"], true);
 }
 
@@ -1444,7 +1444,7 @@ fn tab_to(window: &mut rune::Runtime<State>, key: &str) {
 fn a_row_with_a_menu_in_it_keeps_its_keys_and_tab_reaches_the_menu() {
     let (_scratch, mut window) = kit();
     tab_to(&mut window, "t00/chain/kit:item");
-    key(&mut window, rune::Key::Text(" ".into()));
+    key(&mut window, rune::Key::Enter);
     assert!(window.state.open.is_empty());
     assert_eq!(kit_record(&window.state)["name"], "item");
     key(&mut window, rune::Key::Tab);
@@ -2040,6 +2040,35 @@ fn acted(scratch: &tempfile::TempDir, steps: Value) -> State {
     .unwrap();
     frame(&mut state, 0.0);
     state
+}
+
+/// A step of an agent's that moves the playhead, then the tempo set: the tempo change in effect
+/// where the playhead went is the one that changes.
+#[test]
+fn a_tempo_set_after_a_step_that_moved_the_playhead_changes_the_tempo_there() {
+    let scratch = new_project();
+    let file = scratch.path().join("song/project.json");
+    let mut project: Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let changes = json!([{ "tick": 0, "bpm": 120.0 }, { "tick": 15360, "bpm": 140.0 }]);
+    project["tempo_map"]["tempo_changes"] = changes;
+    std::fs::write(&file, project.to_string()).unwrap();
+    let state = acted(
+        &scratch,
+        json!([
+            { "key": "ruler", "action": "press", "value": { "x": 19200 } },
+            { "label": "Tempo", "action": "set", "value": 96 },
+        ]),
+    );
+    let bpms: Vec<f64> = (state
+        .project()
+        .project_file()
+        .tempo_map
+        .tempo_changes()
+        .iter())
+    .map(|change| change.bpm.bpm())
+    .collect();
+    assert_eq!(bpms, [120.0, 96.0]);
 }
 
 #[test]

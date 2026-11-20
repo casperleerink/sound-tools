@@ -13,12 +13,39 @@ use crate::theme::Theme;
 
 use super::{Scope, ShapesNode};
 
-/// The numbers of a line or rects, or a list feed that gives them every frame.
+/// The numbers of a line or rects, some of them live, or a list feed that gives them every
+/// frame.
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub(super) enum Points {
     Fixed(Vec<f32>),
     Fed(ListFeed),
+    Moving(Vec<Num>),
+}
+
+impl Points {
+    /// Its numbers as they are now in the view of `scope`, but a list feed's.
+    fn now(&self, scope: &Scope) -> Option<Vec<f32>> {
+        let state = scope.state;
+        match self {
+            Self::Fixed(numbers) => Some(numbers.clone()),
+            Self::Moving(numbers) => Some(
+                numbers
+                    .iter()
+                    .map(|num| state.lives.value(state, scope.instance, num))
+                    .collect(),
+            ),
+            Self::Fed(_) => None,
+        }
+    }
+
+    /// Its live numbers.
+    pub(super) fn moving(&self) -> &[Num] {
+        match self {
+            Self::Moving(numbers) => numbers,
+            _ => &[],
+        }
+    }
 }
 
 /// One axis of `units`: a length from 0, or what its start and its end are, such as
@@ -125,7 +152,7 @@ impl Listed {
         // Placed, it is in the units of its place, as its vectors are.
         let [[left, right], down] = self.units.unwrap_or([[0.0, w], [0.0, h]]);
         let across = [from, to].map(|part| left + (right - left) * part);
-        let [width, height] = [w * per_x * (to - from), h * per_y];
+        let [width, height] = [w * per_x * (to - from), (h * per_y).abs()];
         Some(Seen {
             size: [Some(width), Some(height)],
             units: Some([across, down]),
@@ -203,7 +230,7 @@ pub(crate) fn listed(d: &ShapesNode, plane: Option<&str>) -> Option<Listed> {
             color: lines.color.clone(),
             line: Some((lines.width, lines.fill.clone())),
         }),
-        Points::Fixed(_) => None,
+        Points::Fixed(_) | Points::Moving(_) => None,
     });
     let rects = (d.rects.iter()).filter_map(|rects| match &rects.rects {
         Points::Fed(feed) => Some(Part {
@@ -211,7 +238,7 @@ pub(crate) fn listed(d: &ShapesNode, plane: Option<&str>) -> Option<Listed> {
             color: rects.color.clone(),
             line: None,
         }),
-        Points::Fixed(_) => None,
+        Points::Fixed(_) | Points::Moving(_) => None,
     });
     let parts: Vec<Part> = lines.chain(rects).collect();
     let units = d.units.map(|units| units.map(Span::ends));
@@ -250,11 +277,11 @@ pub(super) fn drawing(scope: &Scope, d: &ShapesNode) -> El {
         None => d.h.fixed().unwrap_or(0.0),
     };
     for lines in &d.lines {
-        let Points::Fixed(points) = &lines.points else {
+        let Some(points) = lines.points.now(scope) else {
             continue;
         };
         let colour = theme.color(&lines.color);
-        let runs = runs(points, unit);
+        let runs = runs(&points, unit);
         if let Some(fill) = &lines.fill {
             let fill = theme.color(fill);
             for run in &runs {
@@ -272,7 +299,7 @@ pub(super) fn drawing(scope: &Scope, d: &ShapesNode) -> El {
         }
     }
     for rects in &d.rects {
-        let Points::Fixed(numbers) = &rects.rects else {
+        let Some(numbers) = rects.rects.now(scope) else {
             continue;
         };
         let colour = theme.color(&rects.color);
@@ -298,6 +325,12 @@ pub(super) fn drawing(scope: &Scope, d: &ShapesNode) -> El {
     if let Some(trim) = trim {
         e = scope.bind(e, Shows::Trim(trim));
     }
+    let moving = moving(d);
+    if !moving.is_empty() {
+        #[cfg(test)]
+        (scope.state.lives.drawings).set(scope.state.lives.drawings.get() + 1);
+        e = scope.bind(e, Shows::Drawn(moving));
+    }
     if let Some(listed) = listed(d, scope.plane.as_deref()) {
         // Over its numbers, the same size.
         let fed = scope.bind(
@@ -317,6 +350,17 @@ pub(super) fn drawing(scope: &Scope, d: &ShapesNode) -> El {
         size.unwrap_or_default(),
         d.opacity.as_ref(),
     )
+}
+
+/// The live numbers of the lines and rects of `d`: while one moves, it is drawn again.
+pub(super) fn moving(d: &ShapesNode) -> Vec<Num> {
+    let lines = d.lines.iter().map(|lines| &lines.points);
+    let rects = d.rects.iter().map(|rects| &rects.rects);
+    lines
+        .chain(rects)
+        .flat_map(Points::moving)
+        .cloned()
+        .collect()
 }
 
 /// The area a run of a line closes: itself when it ends where it starts, else down to `bottom`

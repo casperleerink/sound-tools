@@ -5,7 +5,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, channel};
+use std::time::{Duration, Instant};
 
 use sound_core::feeds::Sources;
 use sound_core::{AssetName, Assets};
@@ -32,6 +33,23 @@ enum Reading {
 impl Files {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Waits up to `longest` for the overviews still being made, as a run without a window
+    /// does before its picture, so it shows the waves.
+    pub fn wait(&self, longest: Duration) {
+        let until = Instant::now() + longest;
+        for kept in self.overviews.borrow_mut().values_mut() {
+            let Reading::Waiting(made) = &kept.overview else {
+                continue;
+            };
+            kept.overview = match made.recv_timeout(until.saturating_duration_since(Instant::now()))
+            {
+                Ok(Some(overview)) => Reading::Ready(overview),
+                Ok(None) | Err(RecvTimeoutError::Disconnected) => Reading::Failed,
+                Err(RecvTimeoutError::Timeout) => return,
+            };
+        }
     }
 
     /// The overview of `asset` once it is made; asks a thread to make it the first time.

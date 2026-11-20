@@ -41,7 +41,7 @@ test("a section is chosen and played from by a press, and its drag moves it to t
 
 test("the repeat's bar turns the repeat off and on, and its ends land on beats, as no step of undo", () => {
   const f = fakeSong({ children: [] });
-  [f.memory.repeatRange, f.memory.repeating] = [{ from: BAR, to: 2 * BAR }, true];
+  f.clock.setRepeat({ from: BAR, to: 2 * BAR });
   ruler(f);
   act("End of the repeat", "drag", { dx: BEAT * 1.6 });
   expect(f.clock.repeat).toEqual({ from: BAR, to: 2 * BAR + 2 * BEAT });

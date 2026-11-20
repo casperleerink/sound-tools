@@ -178,6 +178,30 @@ impl<'a> FeedContext<'a> {
         self.instance
     }
 
+    /// What the feed `name` of each instance right inside this one gives this frame, for a feed
+    /// that gathers its children's, such as the keys down on what a track plays.
+    pub fn of_children(&self, name: &str) -> Vec<Feed> {
+        let request = FeedRequest {
+            tick: self.tick,
+            points: self.points,
+            range: self.range,
+        };
+        let children = (self.project.instances.keys())
+            .filter(|id| id.parent().as_ref() == Some(self.instance));
+        children
+            .filter_map(|child| {
+                read(
+                    self.project,
+                    self.readings,
+                    self.sources,
+                    child,
+                    name,
+                    request,
+                )
+            })
+            .collect()
+    }
+
     /// The largest value of each channel of the peaks the instance keeps as `name` since the
     /// last frame. Every feed of a frame gets the same values.
     pub fn peaks(&self, name: &str) -> [f32; 2] {
@@ -402,6 +426,22 @@ impl<S: State> Shows<'_, S> {
         self.shown.facts = Some(super::facts::erase(facts));
         self
     }
+}
+
+/// Heights, 0 to 1, of the stretches between `edges` as rects, x y w h each, centred on 0.5 of
+/// 0 to 1 down: a `rects` drawing with `units` [across, 1] shows a wave mirrored about its middle.
+pub fn band(edges: &[f64], tall: impl IntoIterator<Item = f32>) -> Vec<f32> {
+    (edges.windows(2).zip(tall))
+        .flat_map(|(edge, tall)| {
+            let tall = tall.clamp(0.0, 1.0);
+            [
+                edge[0] as f32,
+                (1.0 - tall) / 2.0,
+                (edge[1] - edge[0]) as f32,
+                tall,
+            ]
+        })
+        .collect()
 }
 
 /// What `name` of the instance `instance` gives this frame, from its record as it plays at the

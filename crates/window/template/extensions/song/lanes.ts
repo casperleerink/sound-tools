@@ -1,7 +1,7 @@
 // The automation of a track: lanes under it, each a line of points, an LFO or an envelope that
 // moves a number of the track's fader or of one of its devices over the song.
 // A lane's plane: x in ticks of the song, y down its travel, 0 its top (`max`) and 1 its bottom.
-import { builtInNumbers, type FilledStateOfTool, type Pointer, type Unit } from "../sdk";
+import { builtInNumbers, type Facts, type FieldInfo, type FilledStateOfTool, type Pointer, type Unit } from "../sdk";
 import { ENVELOPE, envelope, lfo } from "../lfo";
 import { freeName, splitTarget, type Mover } from "../track";
 import { isRow, mixOf, nameFrom, words, type Child, type Draft, type Song } from "./model";
@@ -69,10 +69,9 @@ export function laid(points: readonly AutomationPoint[], scale: Scale, line: rea
 export function travelOf(row: Child, target: string): Travel {
   const [path, number] = splitTarget(target);
   if (path === "mix" || path.startsWith("send-")) return number === "gain_db" ? { min: SILENT_DB, max: VOLUME.max, scale: "fader" } : { min: -1, max: 1, scale: "linear" };
-  let device: { tool: unknown; children: readonly unknown[] } | undefined = isRow(row) ? row : undefined;
-  for (const step of path.split("/")) device = (device?.children as { name: string; tool: unknown; children: readonly unknown[] }[] | undefined)?.find((child) => child.name === step);
-  const numbers = builtInNumbers[String(device?.tool)] ?? {};
-  const known = numbers[number] ?? numbers[number.replace(/\.\d+\./, ".*.")];
+  let device: Device | undefined = isRow(row) ? (row as Device) : undefined;
+  for (const step of path.split("/")) device = device?.children.find((child) => child.name === step);
+  const known = device && numbersOf(device).find((each) => each.number === number);
   if (known?.min !== undefined && known.max !== undefined) return { min: known.min, max: known.max, scale: known.scale };
   const lane = isRow(row) ? row.children.find((child) => child.tool === "lane" && row.state.automation.some((each) => each.lane === child.name && each.target === target)) : undefined;
   const values = lane?.tool === "lane" ? lane.state.points.map((point) => point.value) : [];
@@ -92,6 +91,41 @@ export function unitOf(target: string, { min, max, scale }: Travel): Unit | unde
 /** A number a new lane of a track can move: what it is, what the menu calls it, the device it is of, and where it is now. */
 export type Movable = { target: string; text: string; group: string; value: number };
 
+/** A device as a track holds it, and its facts where the window told them. */
+type Device = { name: string; tool: unknown; state: unknown; children: readonly Device[]; facts?: Facts & Partial<Pick<Facts<"plugin">, "parameters">> };
+/** A number of a device a lane can move, by its path in the record, and how far it goes. */
+type Known = { number: string; min?: number; max?: number; scale: Scale; default?: number };
+
+/**
+ * The numbers of `device` a lane can move: from its facts, the fields that take any value in a
+ * range and a plugin's parameters that do, else from what the built-in tools say.
+ */
+function numbersOf(device: Device): Known[] {
+  const facts = device.facts;
+  const parameters = (facts?.parameters ?? []).filter((parameter) => parameter.steps == null)
+    .map((parameter): Known => ({ number: `parameters.${parameter.id}.value`, min: parameter.min, max: parameter.max, scale: "linear", default: parameter.default }));
+  if (facts && (facts.fields.length > 0 || parameters.length > 0)) return [...fieldNumbers(facts.fields, device.state, ""), ...parameters];
+  return Object.entries(builtInNumbers[String(device.tool)] ?? {}).flatMap(([pattern, known]) => expand(pattern, device.state).map((number) => ({ ...known, number })));
+}
+
+/** The numbers among `fields` of `state`, by their paths after `prefix`, but the whole ones a lane cannot move. */
+function fieldNumbers(fields: readonly FieldInfo[], state: unknown, prefix: string): Known[] {
+  return fields.flatMap((field) => itemNumbers(field, (state as Record<string, unknown> | undefined)?.[field.name], `${prefix}${field.name}`));
+}
+function itemNumbers(field: FieldInfo, value: unknown, path: string): Known[] {
+  switch (field.kind) {
+    case "number":
+      return field.integer ? [] : [{ number: path, min: field.min, max: field.max, scale: field.scale, default: field.default }];
+    case "group":
+      return fieldNumbers(field.fields, value, `${path}.`);
+    case "list":
+    case "map":
+      return Object.entries((value as object | undefined) ?? {}).flatMap(([key, item]) => itemNumbers(field.item, item, `${path}.${key}`));
+    default:
+      return [];
+  }
+}
+
 /** The places of `pattern` in `state`: each `*` is every item of the list or key of the map there. */
 function expand(pattern: string, state: unknown): string[] {
   const [head = "", ...rest] = pattern.split(".");
@@ -106,7 +140,7 @@ const numberIn = (state: unknown, path: string): unknown => path.split(".").redu
 /**
  * What a new lane of `row` can move, a group a device: the track's volume and pan, its
  * instrument's numbers, then each effect's in the chain's order; those a lane moves already left
- * out. A plugin's numbers are not known here.
+ * out.
  */
 export function movablesOf(row: Child): Movable[] {
   if (!isRow(row)) return [];
@@ -119,17 +153,17 @@ export function movablesOf(row: Child): Movable[] {
   const effects = chain?.tool === "chain" ? chain.state.order.flatMap((name) => chain.children.filter((each) => each.name === name).map((each) => ({ path: `chain/${name}`, device: each }))) : [];
   const synth = row.children.find((child) => child.name === "synth");
   const devices = [...(synth ? [{ path: "synth", device: synth }] : []), ...effects];
+  const parameters = (device: Device) => new Map((device.facts?.parameters ?? []).map((parameter) => [`parameters.${parameter.id}.value`, parameter.name]));
   const numbers = devices.flatMap(({ path, device }) =>
-    Object.entries(builtInNumbers[String(device.tool)] ?? {}).flatMap(([pattern, known]) =>
-      expand(pattern, device.state).map((number) => {
-        const target = `${path}.${number}`;
-        const held = numberIn(device.state, number);
-        const value = typeof held === "number" ? held : (known.default ?? laneValue(travelOf(row, target), 0.5));
-        // An item of a list counts from 1, a key of a map is as it is: `bands.0.gain_db` is `Bands 1 gain`.
-        const parts = number.split(".").map((part, at, all) => (/^\d+$/.test(part) && Array.isArray(numberIn(device.state, all.slice(0, at).join("."))) ? String(Number(part) + 1) : part));
-        return { target, text: words(parts.join(" ")), group: words(device.name), value };
-      }),
-    ),
+    numbersOf(device as Device).map((known) => {
+      const number = known.number;
+      const target = `${path}.${number}`;
+      const held = numberIn(device.state, number);
+      const value = typeof held === "number" ? held : (known.default ?? laneValue(travelOf(row, target), 0.5));
+      // An item of a list counts from 1, a key of a map is as it is: `bands.0.gain_db` is `Bands 1 gain`.
+      const parts = number.split(".").map((part, at, all) => (/^\d+$/.test(part) && Array.isArray(numberIn(device.state, all.slice(0, at).join("."))) ? String(Number(part) + 1) : part));
+      return { target, text: parameters(device as Device).get(number) ?? words(parts.join(" ")), group: words(device.name), value };
+    }),
   );
   const taken = new Set(row.state.automation.map((each) => each.target));
   return [...own, ...numbers].filter((each) => !taken.has(each.target));

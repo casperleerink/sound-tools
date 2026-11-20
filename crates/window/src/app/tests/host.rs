@@ -1457,3 +1457,43 @@ fn a_transport_of_code_moves_the_clock_and_its_view_reads_it() {
         "{ticks:?}"
     );
 }
+
+/// A view that reads only the repeat of the clock, and counts its runs.
+const REPEATS: &str = r#"import { h, input, tool } from "./sdk";
+let runs = 0;
+export const repeats = tool({
+  name: "repeats", title: "Repeats", when: "Never", doc: "Shows the repeat.", state: {}, sound: () => input,
+  view: (_, { clock }) => (
+    <box key="repeat" w={120} h={20} label={`Run ${++runs}, repeat ${clock.repeat ? "on" : "off"}`} onPress={() => clock.setRepeat({ from: 0, to: 3840 })} />
+  ),
+});
+"#;
+
+#[test]
+fn a_view_that_reads_the_repeat_runs_again_when_it_changes_not_when_the_piece_plays() {
+    let (_scratch, folder) = with_tools(&[("repeats", REPEATS)]);
+    let mut state = opened(&folder);
+    let mut seconds = 0.0;
+    let mut frames = |state: &mut State, count: usize| {
+        for _ in 0..count {
+            seconds += 0.1;
+            frame(state, seconds);
+            state.settle();
+        }
+    };
+    frames(&mut state, 2);
+    let shown = |state: &State| {
+        (labels(state).into_iter())
+            .find(|label| label.starts_with("Run "))
+            .unwrap()
+    };
+    let before = shown(&state);
+    (state.session).background(|project| project.engine().play());
+    frames(&mut state, 3);
+    (state.session).background(|project| project.engine().stop());
+    frames(&mut state, 3);
+    assert_eq!(shown(&state), before);
+    act(&mut state, json!({ "label": before, "action": "press" }));
+    frames(&mut state, 2);
+    assert!(shown(&state).ends_with("repeat on"), "{}", shown(&state));
+}

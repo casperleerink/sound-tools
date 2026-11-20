@@ -13,6 +13,7 @@ use sound_core::InstanceId;
 use sound_typescript::shortcuts::{self, Group, Held, Shortcuts};
 
 use crate::controls::{self, Target};
+use crate::tree::Pointer;
 
 use super::State;
 use super::projects::AppAction;
@@ -359,6 +360,40 @@ impl State {
     }
 }
 
+/// A key that reaches the views before Rune presses what has the keys there, as the old app
+/// had it: Space is the keymap's wherever the focus is, so it plays; Enter presses the focused
+/// element that has a press, however it got the focus, with `clicks: 0`, so its code tells a
+/// press of the keys from a click.
+pub(crate) fn in_views(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
+    let Mods {
+        cmd,
+        ctrl,
+        alt,
+        shift,
+        ..
+    } = key.mods;
+    if cmd || ctrl || alt || shift {
+        return false;
+    }
+    match &key.key {
+        Key::Text(text) if text == " " => on_key(state, key, tx),
+        Key::Enter => match state.focused_press(tx.focused()) {
+            Some(press) => {
+                if !tx.key_repeat() {
+                    let keys = Pointer {
+                        clicks: 0,
+                        ..Pointer::default()
+                    };
+                    state.press(&press, "press", Some(serde_json::json!(keys)));
+                }
+                true
+            }
+            None => false,
+        },
+        _ => false,
+    }
+}
+
 pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
     // A dialog keeps every key until it closes, but Quit, which works in any window as the
     // GPUI app's did: its own buttons and fields take theirs.
@@ -408,17 +443,6 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
     {
         state.app_key(action, tx);
         return true;
-    }
-    // Enter presses an element the keys focused that has a press, as Space does, before the
-    // actions of a tool: else it would be an action of the page, such as renaming the chosen
-    // track. Focused by a click, Enter stays the page's: a clip clicked opens on Enter.
-    if !page && chord == "enter" && tx.focus_visible() {
-        if let Some(press) = state.focused_press(tx.focused()) {
-            if !repeat {
-                state.press(&press, "press", None);
-            }
-            return true;
-        }
     }
     let main = state.main().cloned();
     let chain = match page {

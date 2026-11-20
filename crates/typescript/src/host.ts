@@ -685,7 +685,7 @@ const shown = new Set<string>();
 
 /** Runs the view of `instance` and sends its tree, or that its tool has none. */
 function drawNext(instance: string) {
-  followsClock.delete(instance);
+  Object.values(followsClock).forEach((views) => views.delete(instance));
   followsSong.delete(instance);
   drawing = instance;
   try {
@@ -1267,11 +1267,11 @@ function clockFor(instance: string): SdkClock {
     return value;
   };
   return {
-    get playing() { return follows(followsClock, followed.playing); },
-    get repeat() { return follows(followsClock, followed.repeat); },
-    get click() { return follows(followsClock, followed.click); },
-    get computerKeys() { return follows(followsClock, followed.keys); },
-    get writeAutomation() { return follows(followsClock, followed.automation); },
+    get playing() { return follows(followsClock.playing, followed.playing); },
+    get repeat() { return follows(followsClock.repeat, followed.repeat); },
+    get click() { return follows(followsClock.click, followed.click); },
+    get computerKeys() { return follows(followsClock.keys, followed.keys); },
+    get writeAutomation() { return follows(followsClock.automation, followed.automation); },
     get tempo_map() { return follows(followsSong, songOf.tempo_map); },
     get sections() { return follows(followsSong, songOf.sections); },
     get tick() { return moving("tick"); },
@@ -1304,13 +1304,15 @@ function setClock({ time, transport: next }: Clock) {
   transport = next;
   const repeat = next.repeat && { from: next.repeat[0], to: next.repeat[1] };
   const followed = { playing: next.playing, repeat, click: next.click, keys: next.keys, automation: next.automation };
-  if (JSON.stringify(followed) === JSON.stringify(following)) return;
+  const moved = (Object.keys(followed) as (keyof typeof followed)[]).filter((name) => JSON.stringify(followed[name]) !== JSON.stringify(following[name]));
+  if (moved.length === 0) return;
+  const views = new Set(moved.flatMap((name) => [...followsClock[name]]));
   sdk.host.batch(() => sdk.host.reconcile(following as never, followed as never));
-  [...followsClock].filter((id) => shown.has(id)).forEach(drawNext);
+  [...views].filter((id) => shown.has(id)).forEach(drawNext);
 }
 
-/** The views that read what of the clock bindings follow, and those that read the song, when they last ran. */
-const followsClock = new Set<string>();
+/** The views that read each part of the clock that bindings follow, and those that read the song, when they last ran. */
+const followsClock: Record<keyof typeof following, Set<string>> = { playing: new Set(), repeat: new Set(), click: new Set(), keys: new Set(), automation: new Set() };
 const followsSong = new Set<string>();
 /** The instance whose view runs now. */
 let drawing: string | undefined;

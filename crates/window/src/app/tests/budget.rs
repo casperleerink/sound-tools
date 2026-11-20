@@ -196,7 +196,6 @@ pub(super) fn measure(
             window.frame(1.0 / 60.0);
         })
     });
-    assert!(window.state.planes.builds.get() > builds);
     let (x, y) = window.find(dragged).unwrap();
     window.pointer_down(x, y);
     window.frame(1.0 / 60.0);
@@ -210,25 +209,23 @@ pub(super) fn measure(
     ([scroll, play, zoom], rebuilt)
 }
 
-/// The budgets of the window's work in a frame. The template's song of 64 tracks costs about 1.8
-/// to scroll, 2.2 to play and 7 to zoom, on macOS and Linux alike.
-pub(super) const SCROLL_AND_PLAY: Cost = Cost(3.2);
-pub(super) const ZOOM: Cost = Cost(11.0);
+/// The budget of the window's work in a frame that scrolls, plays or zooms.
+pub(super) const FRAME: Cost = Cost(3.2);
 
 #[test]
 fn five_hundred_clips_scroll_play_zoom_and_drag_within_their_budgets_and_run_no_view() {
     let [scroll, play, zoom] = budgets("clips", CLIPS, "song", "c3");
-    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame cost {scroll:?}");
-    assert!(play < SCROLL_AND_PLAY, "a play frame cost {play:?}");
-    assert!(zoom < ZOOM, "a zoom frame cost {zoom:?}");
+    assert!(scroll < FRAME, "a scroll frame cost {scroll:?}");
+    assert!(play < FRAME, "a play frame cost {play:?}");
+    assert!(zoom < FRAME, "a zoom frame cost {zoom:?}");
 }
 
 #[test]
 fn two_thousand_notes_scroll_play_zoom_and_drag_within_their_budgets_and_run_no_view() {
     let [scroll, play, zoom] = budgets("notes", NOTES, "roll", "n5");
-    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame cost {scroll:?}");
-    assert!(play < SCROLL_AND_PLAY, "a play frame cost {play:?}");
-    assert!(zoom < ZOOM, "a zoom frame cost {zoom:?}");
+    assert!(scroll < FRAME, "a scroll frame cost {scroll:?}");
+    assert!(play < FRAME, "a play frame cost {play:?}");
+    assert!(zoom < FRAME, "a zoom frame cost {zoom:?}");
 }
 
 /// The song of the template with 64 tracks of 500 clips: its records, as the window keeps them.
@@ -281,9 +278,9 @@ fn the_song_of_the_template_with_64_tracks_and_500_clips_runs_no_view_as_it_scro
     }
     let ([scroll, play, zoom], rebuilt) = measure(&mut window, "song", "song", "clip-t05/c1");
     assert!(!rebuilt, "a scroll built the plane again");
-    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame cost {scroll:?}");
-    assert!(play < SCROLL_AND_PLAY, "a play frame cost {play:?}");
-    assert!(zoom < ZOOM, "a zoom frame cost {zoom:?}");
+    assert!(scroll < FRAME, "a scroll frame cost {scroll:?}");
+    assert!(play < FRAME, "a play frame cost {play:?}");
+    assert!(zoom < FRAME, "a zoom frame cost {zoom:?}");
 }
 
 /// The song of the template with 16 audio tracks of 100 audio clips of a four-second file, its
@@ -332,12 +329,11 @@ fn the_song_of_the_template_with_100_audio_clips_on_16_audio_tracks_runs_no_view
     for _ in 0..3 {
         redraw(&mut window);
     }
-    // A zoom reads and draws every wave that shows anew each frame, about 50 ms in a test build:
-    // over its budget until the window keeps a wave's drawing while its plane zooms.
-    let ([scroll, play, _zoom], rebuilt) = measure(&mut window, "song", "song", "clip-audio-03/r1");
+    let ([scroll, play, zoom], rebuilt) = measure(&mut window, "song", "song", "clip-audio-03/r1");
     assert!(!rebuilt, "a scroll built the plane again");
-    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame took {scroll:?}");
-    assert!(play < SCROLL_AND_PLAY, "a play frame took {play:?}");
+    assert!(scroll < FRAME, "a scroll frame cost {scroll:?}");
+    assert!(play < FRAME, "a play frame cost {play:?}");
+    assert!(zoom < FRAME, "a zoom frame cost {zoom:?}");
 }
 
 /// An idle window changes nothing and runs no view: a frame that finds nothing new draws

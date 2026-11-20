@@ -3,7 +3,7 @@
 //! undo step, from before the drag to what the update left.
 
 use runtime::session::Drag;
-use sound_core::InstanceId;
+use sound_core::{InstanceId, Project, Ticks};
 
 use sound_typescript::next::Tools;
 
@@ -20,6 +20,9 @@ pub(crate) struct Playing {
     refused: bool,
     /// It was let go: it ends once the code answered its release.
     let_go: bool,
+    /// How far what a lane played into each number it plays, by path, was from where the hand
+    /// began: the drag plays from what played, not from what the record says.
+    from: Vec<(String, f64)>,
 }
 
 impl Playing {
@@ -27,6 +30,42 @@ impl Playing {
     pub(crate) fn idle(&self) -> bool {
         self.drag.is_none()
     }
+
+    /// `values` moved by how far what a lane played was from where the hand began.
+    fn from_played<'a>(&self, values: &[(&'a str, f64)]) -> Vec<(&'a str, f64)> {
+        let from = |path: &str| {
+            (self.from.iter())
+                .find(|(each, _)| each == path)
+                .map_or(0.0, |(_, by)| *by)
+        };
+        (values.iter())
+            .map(|(path, value)| (*path, value + from(path)))
+            .collect()
+    }
+}
+
+/// A drag that plays `values` of `instance` begins, the hand where it was pressed: a number a
+/// lane plays into moves from what the lane plays now.
+pub(crate) fn grab(state: &mut State, instance: &InstanceId, values: &[(&str, f64)]) {
+    let (project, tick) = (state.session.project(), state.playhead);
+    let from = (values.iter()).filter_map(|(path, rest)| {
+        let played = lane_played(project, instance, path, tick)?;
+        Some((path.to_string(), f64::from(played) - rest))
+    });
+    state.plays.from = from.collect();
+}
+
+/// What a lane plays into the number `path` of `instance` at `tick`, if one does.
+fn lane_played(project: &Project, instance: &InstanceId, path: &str, tick: Ticks) -> Option<f32> {
+    // As `live.field` reads a path: `t00/mix.gain_db` is `gain_db` of the child `t00/mix`.
+    let (child, name) = match path.split_once('.') {
+        Some((child, name)) if !child.contains('[') => (instance.child(child).ok()?, name),
+        _ => (instance.clone(), path),
+    };
+    let mut values = Vec::new();
+    project.lanes(&child)?.values_at(tick, &mut values);
+    let (_, value) = values.into_iter().find(|(each, _)| **each == *name)?;
+    Some(value)
 }
 
 /// One move of the drag: `values` by their paths in `instance`, as `drag.plays` names them.
@@ -36,6 +75,8 @@ pub(crate) fn moved(state: &mut State, instance: &InstanceId, values: &[(&str, f
     if playing.refused {
         return false;
     }
+    let values = playing.from_played(values);
+    let values = values.as_slice();
     let mut drag = (playing.drag.take()).unwrap_or_else(|| Drag::new(STEP));
     match state.session.play(&mut drag, instance, values) {
         Ok(()) => {
@@ -118,8 +159,10 @@ pub(crate) fn write(
         .map(|(path, value)| (path.as_str(), *value))
         .collect();
     let playing = &mut state.plays;
+    // The code worked from where the hand began, as the drag did.
+    let shifted = playing.from_played(&values);
     let played = match playing.drag.as_mut().filter(|_| playing.let_go) {
-        Some(drag) => state.session.play(drag, instance, &values),
+        Some(drag) => state.session.play(drag, instance, &shifted),
         None => state.session.set(label, instance, &values),
     };
     if let Err(held) = played {

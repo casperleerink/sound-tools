@@ -30,8 +30,8 @@ export const lostOf = ({ state, facts }: Region) =>
 export const RegionWave = ({ region, path, x, y, length, tall, colour }: { region: Region; path: string; x: Live; y: Live; length: number; tall: number; colour: Color }) => {
   const lost = lostOf(region);
   return lost === null ? (
-    <shapes key={`wave-${path}`} place={[x, y.plus(WAVE / ROW), length, tall - (WAVE + 1) / ROW]} units={[length, [1, 0]]}
-      lines={[{ color: colour, width: 1, points: live.feed("wave", path), fill: tint(colour, 45) }]} />
+    <shapes key={`wave-${path}`} place={[x, y.plus(WAVE / ROW), length, tall - (WAVE + 1) / ROW]} units={[length, 1]}
+      rects={[{ color: tint(colour, 60), rects: live.feed("wave", path) }]} />
   ) : (
     <row label={lost} at={[8, 28]} gap={1} align="center">
       <icon name="triangle-alert" size={12} color="danger" />

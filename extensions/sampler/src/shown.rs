@@ -21,7 +21,8 @@ pub(crate) fn wave(state: &SamplerState, context: &FeedContext<'_>) -> Vec<f32> 
     };
     let columns = context.points_or(POINTS);
     let edges: Vec<f64> = context.across([0.0, info.seconds()], columns + 1).collect();
-    (context.wave(asset.asset_name(), &edges)).unwrap_or_default()
+    let peaks = (context.wave(asset.asset_name(), &edges)).unwrap_or_default();
+    sound_core::feeds::band(&edges, peaks)
 }
 
 /// See the feed `envelope`.

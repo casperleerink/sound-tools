@@ -208,12 +208,26 @@ fn two_thousand_notes_of_the_editor_scroll_play_zoom_and_drag_within_their_budge
     let ([scroll, play, zoom], _) =
         super::budget::measure(&mut window, "editor", "roll-t00-bass", "note-42");
     assert!(
-        scroll < super::budget::SCROLL_AND_PLAY,
+        scroll < super::budget::FRAME,
         "a scroll frame cost {scroll:?}"
     );
-    assert!(
-        play < super::budget::SCROLL_AND_PLAY,
-        "a play frame cost {play:?}"
-    );
-    assert!(zoom < super::budget::ZOOM, "a zoom frame cost {zoom:?}");
+    assert!(play < super::budget::FRAME, "a play frame cost {play:?}");
+    assert!(zoom < super::budget::FRAME, "a zoom frame cost {zoom:?}");
+}
+
+/// While the clip plays, the piano keys of the notes it holds down light: the track sounds what
+/// its clips and its input play.
+#[test]
+fn the_piano_keys_light_while_the_track_sounds_them() {
+    let (_scratch, mut window) = editor();
+    let lit = |window: &rune::Runtime<State>| {
+        let feeds = window.state.report()["feeds"].clone();
+        (feeds.as_object().unwrap().iter())
+            .filter(|(name, value)| name.contains(" sounding.") && value.as_f64() == Some(1.0))
+            .count()
+    };
+    assert_eq!(lit(&window), 0);
+    let end = window.state.last + 0.6;
+    played_until(&mut window, end);
+    assert!(lit(&window) > 0, "{}", window.state.report()["feeds"]);
 }

@@ -1,13 +1,13 @@
 import { h, live, memo, type Color, type Num } from "../../../sdk";
 import { changeBars } from "../../../song/marks";
-import type { Mark } from "../../../song/model";
+import { repeatOf, type Mark } from "../../../song/model";
 import { barAt, barNear, barStarts, BAR, BEAT, beatRuns, SNAPS, type Runs } from "../../../song/time";
 import { ACROSS, GUTTER, HEAD, PLANE, RULER, ZOOM, type Page } from "../../../song/view";
 import { Select } from "../../select";
 import { Toggle } from "../../toggle";
 import { Shades } from "./shades";
 import { TempoLane } from "./tempo-lane";
-import { after, bpmText, pointed, TimeMenu } from "./time-menu";
+import { bpmText, pointed, TimeMenu } from "./time-menu";
 
 export type RulerProps = { page: Page };
 
@@ -142,9 +142,11 @@ const Sections = ({ page }: RulerProps) => {
         const { start, end: next } = barAt(runs, from);
         if (memory.renamingSection?.bar === section.bar) {
           return (
-            <row place={[after(from, 160), LINE / 2]} w={160} h={LINE} px={1} align="center" radius="sm" fill="well" border="focus">
-              <field key="section-name" label={`Section at bar ${section.bar}`} value={section.name} focus style="label" w={150} onCommit={(text) => edits.marks.nameSection(text)} />
-            </row>
+            <box place={[from, 0, 0, 0]}>
+              <row at={[0, 0]} w={160} h={LINE} px={1} align="center" radius="sm" fill="well" border="focus">
+                <field key="section-name" label={`Section at bar ${section.bar}`} value={section.name} focus style="label" w={150} onCommit={(text) => edits.marks.nameSection(text)} />
+              </row>
+            </box>
           );
         }
         return (
@@ -183,14 +185,17 @@ const Changes = ({ page }: RulerProps) => {
             <row px={1} radius="sm" border={isChosen(page, "signature", tick) ? "text" : "border-strong"}><text style="label" color="text-secondary">{signature}</text></row>
           </row>
         );
-        if (bar === 1) return <box place={[after(tick, width), NUMBERS + 8]} w={width} h={18} px={1} opacity={shows} inert>{label}</box>;
+        // Placed with no size, its label laid out in points from its bar.
+        if (bar === 1) return <box place={[tick, NUMBERS - 1, 0, 0]}><box at={[0, 0]} w={width} h={18} px={1} opacity={shows} inert>{label}</box></box>;
         const mark: Mark = { kind: "signature", bar, tick };
         const key = `signature-${bar}`;
         const { start, end } = barAt(runs, tick);
         return (
-          <box key={key} label={`Time signature ${signature} at bar ${bar}`} role="button" checked={isChosen(page, "signature", tick)} place={[after(live.drag(key).dx.plus(tick), width), NUMBERS + 8]} w={width} h={18} px={1} radius="sm"
-            hover="fill" opacity={shows} drag={dragOf(tick, end - start, 1)} onPress={pressOf(page, mark)} onDragEnd={(p) => edits.marks.moveMark(mark, p.dx)}>
-            {label}
+          <box place={[live.drag(key).dx.plus(tick), NUMBERS - 1, 0, 0]}>
+            <box key={key} label={`Time signature ${signature} at bar ${bar}`} role="button" checked={isChosen(page, "signature", tick)} at={[0, 0]} w={width} h={18} px={1} radius="sm"
+              hover="fill" opacity={shows} drag={dragOf(tick, end - start, 1)} onPress={pressOf(page, mark)} onDragEnd={(p) => edits.marks.moveMark(mark, p.dx)}>
+              {label}
+            </box>
           </box>
         );
       })}
@@ -222,13 +227,11 @@ const Changes = ({ page }: RulerProps) => {
  * press turns it on or off, its body drags it, its ends stretch it, on beats: none is a step of undo.
  */
 const Repeat = ({ page }: RulerProps) => {
-  const { memory } = page.song;
-  const range = memory.repeatRange;
+  const { range, on } = repeatOf(page.song);
   if (!range) return null;
   const marks = page.edits.marks;
   const { from, to } = range;
   const [moving, starting, ending] = [live.drag("repeat"), live.drag("repeat-start"), live.drag("repeat-end")];
-  const on = memory.repeating;
   const band: Color = on ? "text" : "text-muted";
   const toggle = () => marks.toggleRepeat();
   const step = (part: "move" | "start" | "end") => ({ increment: (by: number) => marks.moveRepeat(part, { dx: by * BEAT }), decrement: (by: number) => marks.moveRepeat(part, { dx: -by * BEAT }), toggle });

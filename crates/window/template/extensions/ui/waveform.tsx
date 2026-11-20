@@ -4,7 +4,7 @@ import { h, type Color, type FeedList } from "../sdk";
 export type FileState = { name: string; state: "plays" | "missing" | "does_not_play" | "unknown" };
 
 export type WaveformProps = {
-  /** The loudest of each stretch of the file, 0 to 1, from the left: a `wave` feed. */
+  /** A `wave` feed: the loudest of each stretch of the file, as rects about the middle. */
   wave: FeedList;
   /** The seconds of the file across, as the feed reads them. */
   seconds: [from: number, to: number];
@@ -28,13 +28,5 @@ export const Waveform = ({ wave, seconds, file, w, h: tall, empty = "No sound ye
         <text style="label" color={file ? "warning" : "text-muted"} w={w - 16} align="center" truncate>{said}</text>
       </row>
     );
-  const half = tall / 2;
-  return (
-    <box at={[0, 0]} w={w} h={tall}>
-      <shapes at={[0, 0]} w={w} h={half} units={[seconds, [1, 0]]} lines={[{ color, width: 1, points: wave, fill: color }]} />
-      {/* The lower half: the tint to the middle, and the well over it beyond the wave, which a line fills only downwards. */}
-      <box at={[0, half]} w={w} h={half} fill={color} />
-      <shapes at={[0, half]} w={w} h={half} units={[seconds, [0, 1]]} lines={[{ color, width: 1, points: wave, fill: "well" }]} />
-    </box>
-  );
+  return <shapes at={[0, 0]} w={w} h={tall} units={[seconds, 1]} rects={[{ color, rects: wave }]} />;
 };

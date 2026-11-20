@@ -25,7 +25,7 @@ test("an audio clip draws the wave of its file across what it plays, read by the
   // Two seconds at 120 bpm are a bar.
   const wave = find("wave-audio-1/r") as unknown as Placed;
   expect(wave.place[2]).toBe(BAR);
-  expect(wave.lines?.[0]?.points.node).toEqual({ op: "feed", name: "wave", path: "audio-1/r" });
+  expect(wave.rects?.[0]?.rects.node).toEqual({ op: "feed", name: "wave", path: "audio-1/r" });
 });
 
 test("an audio clip whose file is missing is two bars long, says so and draws no wave", () => {

@@ -127,6 +127,18 @@ test("a new lane offers the track's volume and pan, then each device's numbers i
   expect(offered.find((each) => each.target === "chain/filter.cutoff_hz")).toMatchObject({ value: 500 });
 });
 
+test("a new lane offers what the facts of a device say a lane moves: no whole numbers, and a plugin's parameters that take any value", () => {
+  const number = (name: string, integer: boolean) => ({ kind: "number", name, label: name, min: -3, max: 3, scale: "linear", integer, unit: null, default: 0 }) as const;
+  const synth = { name: "synth", tool: "wavetable", state: { osc_1: { octave: 1, position: 0.5 } }, children: [], facts: { title: "Wavetable", fields: [{ kind: "group", name: "osc_1", label: "Osc 1", fields: [number("octave", true), number("position", false)] }] } };
+  const plugin = { name: "synth", tool: "plugin", state: { parameters: {} }, children: [], facts: { title: "Plugin", fields: [], parameters: [{ id: 7, name: "Brightness", min: 0, max: 1, default: 0.25 }, { id: 8, name: "Mode", min: 0, max: 2, default: 0, steps: 3 }] } };
+  const offered = (device: object) => movablesOf(fakeSong({ children: [trackOf("t00", [device as never])] }).song.children[0]!).map((each) => each.target);
+  expect(offered(synth)).toContain("synth.osc_1.position");
+  expect(offered(synth)).not.toContain("synth.osc_1.octave");
+  const plugged = movablesOf(fakeSong({ children: [trackOf("t00", [plugin as never])] }).song.children[0]!);
+  expect(plugged.find((each) => each.target === "synth.parameters.7.value")).toMatchObject({ text: "Brightness", value: 0.25 });
+  expect(offered(plugin)).not.toContain("synth.parameters.8.value");
+});
+
 test("a volume's lane and its fader agree: the same height for a value, and the same value at a height, but silence, which a lane holds as -100 dB", () => {
   const lane = travelOf(trackOf("t00") as never, "mix.gain_db");
   for (let tenths = SILENT_DB * 10; tenths <= 60; tenths++) expect(Math.abs(1 - downOf(tenths / 10, lane) - travelled(tenths / 10, VOLUME))).toBeLessThan(1e-4);

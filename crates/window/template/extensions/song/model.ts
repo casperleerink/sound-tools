@@ -50,9 +50,8 @@ export type Memory = {
   returnsOpen: boolean;
   /** Where the ruler's menu opened last, in ticks, and the mark it opened on. */
   rulerMenu: { x: number; mark: Mark | null };
-  /** The range the ruler shows to repeat, none until the composer made one, and whether it repeats. */
+  /** The range the ruler shows to repeat while the piece does not repeat, none until the composer made one. */
   repeatRange: { from: number; to: number } | null;
-  repeating: boolean;
   /** The grid of drags, nudges and new clips in ticks: 0 is off. */
   snap: number;
   /** How tall the note editor is, in points, and whether it takes all the window but one track. */
@@ -80,12 +79,15 @@ export const EDITOR = 352;
 
 export const memory = (): Memory => ({
   selected: [], below: null, track: null, published: null, armed: [], recording: null, clipboard: null, renaming: null, renamingClip: null, renamingSection: null,
-  mark: null, point: null, effect: null, lanes: [], tempoLane: false, returnsOpen: false, rulerMenu: { x: 0, mark: null }, repeatRange: null, repeating: false, snap: SNAP, editor: EDITOR, editorLarge: false, opened: false, regionMore: false,
+  mark: null, point: null, effect: null, lanes: [], tempoLane: false, returnsOpen: false, rulerMenu: { x: 0, mark: null }, repeatRange: null, snap: SNAP, editor: EDITOR, editorLarge: false, opened: false, regionMore: false,
   notes: [], rolls: {}, lane: "velocity", length: BEAT / 2, copied: null, strength: 1, swing: 0, humanized: 0,
 });
 
 /** What all code of the song gets: its view, its actions and the edits. */
 export type Song = Context<ValuesOf<typeof fields>, {}, Memory, typeof parts>;
+
+/** The repeat the ruler shows: the clock's while the piece repeats, else the range kept to show, off. */
+export const repeatOf = ({ clock, memory }: Pick<Song, "clock" | "memory">) => ({ range: clock.repeat ?? memory.repeatRange, on: clock.repeat !== null });
 /** The song's records as an `update` changes them. */
 export type Draft = Part<ValuesOf<typeof fields>, typeof parts>;
 /** A child of the song: a track, an audio track, a return, the master or its limiter. */

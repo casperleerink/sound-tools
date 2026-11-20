@@ -311,7 +311,8 @@ export const clipEdits = (song: Song) => {
       const region = itemAt(song.children, key)?.tool === "region";
       if (p.right) {
         if (!memory.selected.includes(key)) choose(song, [key]);
-      } else if (p.clicks === 2 && !region) {
+      } else if ((p.clicks === 2 || p.clicks === 0) && !region) {
+        // A double click opens its notes, and so does Enter, as the old app had it.
         this.open(key);
       } else if (p.shift || p.cmd) {
         choose(song, memory.selected.includes(key) ? memory.selected.filter((each) => each !== key) : [...memory.selected, key]);

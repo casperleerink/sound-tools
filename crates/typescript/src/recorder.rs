@@ -170,7 +170,8 @@ fn record(state: &Value) -> Result<RecorderState, String> {
 fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     record(state).map_err(BehaviourError::Other)?;
     let (tap, armed) = (context.tap::<Heard>(HEARD), context.watch(ARMED));
-    let node = context.processor(PROCESSOR, || Recorder::new(tap, armed))?;
+    let sounding = context.tap::<NoteEvent>(crate::tools::SOUNDING_TAP);
+    let node = context.processor(PROCESSOR, || Recorder::new(tap, armed, sounding))?;
     context.input(NOTES_INPUT, InputEndpoint::new(node, Recorder::NOTES));
     context.input(RECORD, InputEndpoint::new(node, Recorder::RECORD));
     context.input(ARM, InputEndpoint::new(node, Recorder::ARM));
@@ -180,6 +181,8 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
 pub(crate) struct Recorder {
     heard: EventTap<Heard>,
     armed: Watch,
+    /// Where it says which keys what reaches it holds down.
+    sounding: EventTap<NoteEvent>,
     /// Its input `record`, from a cable or a performer.
     record: bool,
     /// What a cable last sent: a number sent every block records once.
@@ -209,9 +212,10 @@ impl Recorder {
     pub(crate) const RECORD: EventInput<Number> = EventInput::new(1);
     pub(crate) const ARM: EventInput<Number> = EventInput::new(2);
 
-    fn new(heard: EventTap<Heard>, armed: Watch) -> Self {
+    fn new(heard: EventTap<Heard>, armed: Watch, sounding: EventTap<NoteEvent>) -> Self {
         Self {
             heard,
+            sounding,
             armed,
             record: false,
             cabled: None,
@@ -262,6 +266,8 @@ impl Processor for Recorder {
         let frame_at = |offset: usize| range.start + offset.saturating_sub(first) as u64;
         let mut cabled = context.event_inputs.get(Self::RECORD).iter().peekable();
         let notes = context.event_inputs.get(Self::NOTES);
+        // What reaches it, as the keyboard plays, sounds on its track.
+        crate::next::sounds(&self.sounding, notes);
         let mut read = 0;
         // The block in stretches between what turns `record` on or off, each at its frame.
         let mut offset = 0;
@@ -350,9 +356,11 @@ mod tests {
         let (mut control, engine) = Engine::new(EngineConfig::new(48_000, 2));
         let heard = EventTap::new();
         let mut edit = control.edit();
-        let recorder = Recorder::new(heard.clone(), Watch::new());
+        let recorder = Recorder::new(heard.clone(), Watch::new(), EventTap::new());
         let recorder = edit.add_processor("recorder", recorder).unwrap();
-        let timeline = edit.add_processor("timeline", Timeline::new()).unwrap();
+        let timeline = edit
+            .add_processor("timeline", Timeline::new(EventTap::new()))
+            .unwrap();
         edit.connect(Connection::new(
             timeline.id(),
             Timeline::NOTES,

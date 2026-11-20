@@ -3,7 +3,7 @@
 use serde_json::{Value, json};
 use sound_core::InstanceId;
 
-use super::{BOARD, act, key, laid_out, opened, redraw, travel, with_tools};
+use super::{BOARD, act, drawn_frame, key, laid_out, opened, redraw, travel, with_tools};
 use crate::app::{MAIN_MODIFIER, State};
 use crate::controls;
 
@@ -294,7 +294,7 @@ fn a_wheel_scrolls_a_plane_and_its_ruler_with_no_view_run_and_no_build() {
 }
 
 #[test]
-fn a_pinch_zooms_about_the_pointer_and_builds_again_in_rust_only() {
+fn a_pinch_zooms_about_the_pointer_moving_what_is_placed_and_builds_again_in_rust_once_it_rests() {
     let (_scratch, mut window) = lanes();
     redraw(&mut window);
     let song = rect(&window, "song");
@@ -308,8 +308,29 @@ fn a_pinch_zooms_about_the_pointer_and_builds_again_in_rust_only() {
     let view = window.state.planes.view(&format!("{PREFIX}song")).unwrap();
     assert_eq!(view.zoom, 2.0);
     assert_eq!(rect(&window, "clip-0")[2], 384.0);
+    assert_eq!(
+        window.state.planes.builds.get(),
+        builds,
+        "a zoom frame built"
+    );
+    // A press finds what is placed where it shows, not where it was built.
+    let clip = rect(&window, "clip-0");
+    let picked = window.element_at(clip[0] + clip[2] - 10.0, clip[1] + 5.0);
+    let key = format!("{PREFIX}clip-0");
+    assert_eq!(
+        picked.as_ref().and_then(rune::Picked::key),
+        Some(key.as_str())
+    );
+    for _ in 0..12 {
+        let seconds = window.state.last + 1.0 / 60.0;
+        drawn_frame(&mut window, seconds);
+    }
+    assert_eq!(rect(&window, "clip-0")[2], 384.0);
     assert_eq!(view_runs(&window), runs);
-    assert!(window.state.planes.builds.get() > builds);
+    assert!(
+        window.state.planes.builds.get() > builds,
+        "the rested zoom never built"
+    );
     // Cmd and the wheel zoom too, within the plane's zoom.
     let cmd = MAIN_MODIFIER;
     for _ in 0..20 {
@@ -463,8 +484,8 @@ const RANGE: &str = r#"import { h, input, tool } from "./sdk";
 export const range = tool({
   name: "range", title: "Range", when: "Never", doc: "A range.", state: {}, sound: () => input,
   view: () => (
-    <row>
-      <box key="bands" label="Bands" w={200} h={100} plane={{ x: [1000, 3000], y: [-24, 24], zoom: [1, 4] }}>
+    <row w={200} h={100}>
+      <box key="bands" label="Bands" grow={1} h="full" plane={{ x: [1000, 3000], y: [-24, 24], zoom: [1, 4] }}>
         <box key="band" label="Band" place={[2000, 0]} w={10} h={10} onPress={() => {}} />
       </box>
     </row>
@@ -473,7 +494,7 @@ export const range = tool({
 "#;
 
 #[test]
-fn a_range_shows_stretched_to_the_box_and_opens_where_it_says_once() {
+fn a_range_shows_stretched_to_the_box_the_layout_gives_and_opens_where_it_says_once() {
     let (_scratch, folder) = with_tools(&[("range", RANGE)]);
     let mut window = laid_out(opened(&folder));
     redraw(&mut window);
@@ -607,6 +628,21 @@ export const kept = tool({
 });
 "#;
 
+/// A view an agent asks for in a shape the window does not take is refused, saying the shape.
+#[test]
+fn a_view_of_an_old_shape_is_refused_with_the_shape_it_takes() {
+    let (_scratch, mut window) = lanes();
+    let song = format!("{PREFIX}song");
+    let old = json!({ "key": song, "action": "view", "value": { "left": 3840, "zoom": 2 } });
+    let refused = super::try_act(&mut window.state, old).unwrap_err();
+    assert!(
+        format!("{refused:#}").contains(r#""x": [0, 3840]"#),
+        "{refused:#}"
+    );
+    let new = json!({ "key": song, "action": "view", "value": { "x": [3840, 7680] } });
+    super::try_act(&mut window.state, new).unwrap();
+}
+
 #[test]
 fn a_plane_a_memo_kept_builds_again_as_it_zooms() {
     let (_scratch, folder) = with_tools(&[("kept", KEPT_PLANE)]);
@@ -622,4 +658,114 @@ fn a_plane_a_memo_kept_builds_again_as_it_zooms() {
     redraw(&mut window);
     let at = |key: &str| window.presented(key).unwrap().0[0];
     assert_eq!(at("t00/chain/kept:bar-2") - at(ruler), 768.0);
+}
+
+/// A lane placed in a song plane: its time is the song's, its value runs up from 0 to 1.
+const NESTED: &str = r#"import { h, input, tool } from "./sdk";
+export const nested = tool({
+  name: "nested", title: "Nested", when: "Never", doc: "A plane in a plane.", state: {}, sound: () => input,
+  view: () => (
+    <col w={400}>
+      <box key="song" label="Song" w={400} h={200} plane={{ x: 0.1, y: 1 }}>
+        <box key="lane" label="Lane" place={[1000, 100, 2000, 50]} plane={{ x: "song", y: [1, 0] }}>
+          <box key="point" label="Point" place={[2000, 0.75]} w={6} h={6} />
+          <box key="high" label="High" place={[1000, 0.5, 500, 0.5]} />
+        </box>
+      </box>
+    </col>
+  ),
+});
+"#;
+
+#[test]
+fn a_plane_placed_in_the_plane_whose_time_it_shares_starts_where_it_is_placed_and_a_range_runs_up()
+{
+    let (_scratch, folder) = with_tools(&[("nested", NESTED)]);
+    let mut window = laid_out(opened(&folder));
+    redraw(&mut window);
+    let at = |window: &rune::Runtime<State>, key: &str| {
+        let key = format!("t00/chain/nested:{key}");
+        window
+            .presented(&key)
+            .unwrap_or_else(|| panic!("no {key}"))
+            .0
+    };
+    let lane = at(&window, "lane");
+    assert_eq!(lane[2..], [200.0, 50.0]);
+    let middle = |rect: [f32; 4]| {
+        [
+            rect[0] + rect[2] / 2.0 - lane[0],
+            rect[1] + rect[3] / 2.0 - lane[1],
+        ]
+    };
+    // Tick 2000 of the song is 100 points into a lane that starts at its tick 1000; 0.75 is a
+    // quarter of the way down, and 0.5 to 1 the top half.
+    assert_eq!(middle(at(&window, "point")), [100.0, 12.5]);
+    assert_eq!(at(&window, "high")[..2], [lane[0], lane[1]]);
+    assert_eq!(at(&window, "high")[2..], [50.0, 25.0]);
+    // A scroll of the song moves the lane and what is in it once, together.
+    let song = at(&window, "song");
+    let shift = rune::Mods {
+        shift: true,
+        ..rune::Mods::default()
+    };
+    wheel(
+        &mut window,
+        [song[0] + 10.0, song[1] + 10.0],
+        [0.0, -50.0],
+        shift,
+    );
+    redraw(&mut window);
+    let moved = at(&window, "lane");
+    assert_eq!(moved[0], lane[0] - 50.0);
+    let middle = |rect: [f32; 4]| {
+        [
+            rect[0] + rect[2] / 2.0 - moved[0],
+            rect[1] + rect[3] / 2.0 - moved[1],
+        ]
+    };
+    assert_eq!(middle(at(&window, "point")), [100.0, 12.5]);
+}
+
+/// A line in a memo through a point that drags.
+const LINE: &str = r#"import { h, input, live, memo, tool } from "./sdk";
+export const line = tool({
+  name: "line", title: "Line", when: "Never", doc: "A line through a point that drags.", state: {}, sound: () => input,
+  view: () => {
+    const d = live.drag("point");
+    return (
+      <col w={400}>
+        <box key="song" label="Song" w={400} h={200} plane={{ x: 1, y: 1 }}>
+          {memo("line", [], () => <shapes place={[0, 0, 400, 200]} lines={[{ color: "text", width: 1, points: [0, 100, d.dx.plus(200), d.dy.plus(100), d.dx.plus(200), d.dy.plus(100), 400, 100] }]} />)}
+          {memo("still", [], () => <shapes place={[0, 0, 400, 200]} lines={[{ color: "text", width: 1, points: [0, 150, 400, 150] }]} />)}
+          <box key="point" label="Point" place={[d.dx.plus(200), d.dy.plus(100)]} w={8} h={8} drag={{ x: true, y: true }} />
+        </box>
+      </col>
+    );
+  },
+});
+"#;
+
+#[test]
+fn a_line_through_a_point_that_drags_is_drawn_again_as_it_moves_and_bun_runs_no_view() {
+    let (_scratch, folder) = with_tools(&[("line", LINE)]);
+    let mut window = laid_out(opened(&folder));
+    redraw(&mut window);
+    let runs = view_runs(&window);
+    let drawn = window.state.lives.drawings.get();
+    let (x, y) = window.find("t00/chain/line:point").unwrap();
+    let next = |window: &mut rune::Runtime<State>| {
+        let seconds = window.state.last + 1.0 / 60.0;
+        super::drawn_frame(window, seconds);
+    };
+    window.pointer_down(x, y);
+    next(&mut window);
+    for step in 1..=4 {
+        window.pointer_move(x + step as f32 * 5.0, y + step as f32 * 5.0);
+        next(&mut window);
+    }
+    // Built again for each move.
+    let again = window.state.lives.drawings.get() - drawn;
+    assert!((3..=5).contains(&again), "{again}");
+    assert_eq!(view_runs(&window), runs);
 }

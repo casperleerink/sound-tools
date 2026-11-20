@@ -120,7 +120,8 @@ fn first_of_wave(state: &State) -> f32 {
         "wave",
         request,
     ) {
-        Some(Feed::List(list)) => list[0],
+        // Rects, x y w h each: the height of the first.
+        Some(Feed::List(list)) => list[3],
         other => panic!("{other:?}"),
     }
 }
@@ -310,4 +311,35 @@ fn take_picture() {
         .init(move || state)
         .run();
     assert!(png.exists());
+}
+
+/// A run without a window waits for the waves of the files it shows, as it waits for Bun: its
+/// first picture has them.
+#[test]
+fn a_run_without_a_window_shows_the_waves_of_its_first_frames() {
+    let (_scratch, folder) = with_audio_track(&[TONE]);
+    // Long enough that its wave takes a while to read.
+    tone(&folder.join("assets/audio/tone.wav"), 600.0);
+    let state = State::open(Options {
+        folder,
+        headless: true,
+        play: None,
+        main: None,
+        act: None,
+    })
+    .unwrap();
+    let mut window = laid_out(state);
+    for step in 1..=2 {
+        frame(&mut window.state, f64::from(step) / 60.0);
+        window.invalidate();
+        window.frame(1.0 / 60.0);
+    }
+    let lists = window.state.lives.lists();
+    assert!(!lists.is_empty());
+    assert!(
+        lists
+            .iter()
+            .all(|(lists, _)| lists.iter().all(|list| !list.is_empty())),
+        "{lists:?}"
+    );
 }

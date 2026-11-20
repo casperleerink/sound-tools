@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 use sound_core::InstanceId;
 
-use super::budget::{SCROLL_AND_PLAY, ZOOM, measured, timed};
+use super::budget::{FRAME, measured, timed};
 use super::{frame, laid_out, new_project, opened, redraw};
 use crate::app::State;
 
@@ -124,6 +124,24 @@ fn a_point_dragged_lands_on_the_snap_as_one_step_and_the_sound_plays_from_there(
         json!({ "tick": 0, "value": 8000 })
     );
     assert_eq!(window.state.project().undo_label(), label);
+}
+
+/// While a point drags, the line through it follows, with no view in Bun.
+#[test]
+fn the_line_follows_a_point_as_it_drags() {
+    let scratch = cutoff_lane();
+    let mut window = opened_lane(&scratch);
+    let before = window.state.lives.drawn();
+    assert!(!before.is_empty());
+    let runs = window.state.tools.as_ref().unwrap().view_runs();
+    let (x, y) = window.find("point-t00-lane-cut-7680").unwrap();
+    window.pointer_down(x, y);
+    redraw(&mut window);
+    window.pointer_move(x - 40.0, y - 10.0);
+    redraw(&mut window);
+    let during = window.state.lives.drawn();
+    assert_ne!(during, before, "the line did not move");
+    assert_eq!(window.state.tools.as_ref().unwrap().view_runs(), runs);
 }
 
 /// The handle in the middle of the line, dragged up, bends it, one step "Bend a line"; a double
@@ -266,6 +284,6 @@ fn sixty_four_lanes_of_two_hundred_points_scroll_and_zoom_without_the_view() {
         "Bun ran the view"
     );
     eprintln!("64 lanes of 200 points: scroll {scroll:?}, zoom {zoom:?} a frame");
-    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame cost {scroll:?}");
-    assert!(zoom < ZOOM, "a zoom frame cost {zoom:?}");
+    assert!(scroll < FRAME, "a scroll frame cost {scroll:?}");
+    assert!(zoom < FRAME, "a zoom frame cost {zoom:?}");
 }
