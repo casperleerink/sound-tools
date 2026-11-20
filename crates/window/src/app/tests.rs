@@ -2011,6 +2011,35 @@ fn acted(scratch: &tempfile::TempDir, steps: Value) -> State {
     state
 }
 
+/// A step of an agent's that moves the playhead, then the tempo set: the tempo change in effect
+/// where the playhead went is the one that changes.
+#[test]
+fn a_tempo_set_after_a_step_that_moved_the_playhead_changes_the_tempo_there() {
+    let scratch = new_project();
+    let file = scratch.path().join("song/project.json");
+    let mut project: Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let changes = json!([{ "tick": 0, "bpm": 120.0 }, { "tick": 15360, "bpm": 140.0 }]);
+    project["tempo_map"]["tempo_changes"] = changes;
+    std::fs::write(&file, project.to_string()).unwrap();
+    let state = acted(
+        &scratch,
+        json!([
+            { "key": "ruler", "action": "press", "value": { "x": 19200 } },
+            { "label": "Tempo", "action": "set", "value": 96 },
+        ]),
+    );
+    let bpms: Vec<f64> = (state
+        .project()
+        .project_file()
+        .tempo_map
+        .tempo_changes()
+        .iter())
+    .map(|change| change.bpm.bpm())
+    .collect();
+    assert_eq!(bpms, [120.0, 96.0]);
+}
+
 #[test]
 fn each_step_of_act_sees_the_lanes_the_step_before_left() {
     let scratch = new_project();

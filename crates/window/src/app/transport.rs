@@ -185,12 +185,11 @@ impl State {
         Ok(())
     }
 
+    /// The tempo change in effect at the playhead, as the session has it now: a step of an
+    /// agent's that moved it came before this frame.
     fn tempo_now(&self) -> (Ticks, f64) {
-        let change = self
-            .project()
-            .project_file()
-            .tempo_map
-            .change_at(self.playhead);
+        let playhead = self.session.status().playhead_tick;
+        let change = (self.project().project_file().tempo_map).change_at(playhead);
         (change.tick, change.bpm.bpm())
     }
 
@@ -252,7 +251,7 @@ impl State {
         let signature = TimeSignature::new(beats, note).map_err(|error| anyhow!("{error}"))?;
         let map = &self.project().project_file().tempo_map;
         let signatures = map.time_signatures();
-        let run = signatures.change_at(self.playhead);
+        let run = signatures.change_at(self.session.status().playhead_tick);
         let signatures = (signatures.with_signature_at(run.number, signature))
             .context("the time signature could not change there")?;
         let map = TempoMap::new(signatures, map.tempo_changes().to_vec())
