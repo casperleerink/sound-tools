@@ -82,6 +82,15 @@ export function travelOf(row: Child, target: string): Travel {
   return { min: Math.min(0, ...values), max: Math.max(1, ...values), scale: "linear" };
 }
 
+/** How far the points at `ticks` of `points` may move in time: one alone stays between its neighbours, many stay after 0. */
+export function roomOf(points: readonly { tick: number }[], ticks: readonly number[]): [earliest: number, latest: number] {
+  if (ticks.length !== 1) return [-Math.min(...ticks), Infinity];
+  const index = points.findIndex((point) => point.tick === ticks[0]);
+  const tick = points[index]?.tick;
+  if (tick === undefined) return [0, 0];
+  return [(points[index - 1]?.tick ?? -1) + 1 - tick, (points[index + 1]?.tick ?? Infinity) - 1 - tick];
+}
+
 /** The track or audio track `name` of a draft. */
 const rowIn = (draft: Draft, name: string) => {
   const owner = draft.children.find((child) => child.name === name);
@@ -134,16 +143,24 @@ export const laneEdits = (song: Song) => {
     const target = targetOf(track, lane);
     return owner && target ? travelOf(owner, target) : { min: 0, max: 1, scale: "linear" as const };
   };
-  const choose = (track: string, lane: string, tick: number) => {
+  const choose = (track: string, lane: string, ticks: number[]) => {
     memory.selected = [];
     memory.mark = null;
-    memory.point = { track, lane, tick };
+    memory.point = ticks.length > 0 ? { track, lane, ticks } : null;
   };
-  /** The ticks the point at `tick` may move to: it does not pass its neighbours. */
-  const between = (track: string, lane: string, tick: number) => {
+  const chosenIn = (track: string, lane: string) => (memory.point?.track === track && memory.point.lane === lane ? memory.point.ticks : []);
+  /** The points at `ticks` moved by `dx` ticks and `dy` down the travel, as one step, and chosen. */
+  const shift = (track: string, lane: string, ticks: readonly number[], dx: number, dy: number) => {
     const points = pointsOf(track, lane);
-    const index = points.findIndex((point) => point.tick === tick);
-    return [(points[index - 1]?.tick ?? -1) + 1, (points[index + 1]?.tick ?? 1e12) - 1] as const;
+    const [earliest, latest] = roomOf(points, ticks);
+    const by = clamp(Math.round(dx), earliest, latest);
+    const range = travel(track, lane);
+    const moved = points.filter((point) => ticks.includes(point.tick)).map((point) => ({ ...point, tick: point.tick + by, value: laneValue(range, positionOf(point.value, range) - dy) }));
+    if (moved.length === 0) return false;
+    // The moved points last: one that lands on another takes its place.
+    editPoints(song, moved.length > 1 ? "Move points" : "Move a point", track, lane, (all) => [...all.filter((point) => !ticks.includes(point.tick)), ...moved]);
+    choose(track, lane, moved.map((point) => point.tick));
+    return true;
   };
   return {
     /** Shows or hides the lanes of `track`. */
@@ -198,33 +215,54 @@ export const laneEdits = (song: Song) => {
         row.state.automation = row.state.automation.map((each) => (each.lane === lane ? { ...each, lane: name } : each));
       });
     },
-    /** A press on an empty lane: a point there, on the snap unless cmd is held, chosen. Its drag then moves it with `move(…, true)`. */
+    /** A double click on a lane: a point there, on the snap unless cmd is held, chosen. */
     addPoint(track: string, lane: string, p: Pick<Pointer, "x" | "y" | "cmd">) {
       const tick = p.cmd ? Math.max(Math.round(p.x), 0) : nearestOf(p.x, memory.snap);
       editPoints(song, "Add a point", track, lane, (all) => [...all, { tick, value: laneValue(travel(track, lane), 1 - p.y) }]);
-      choose(track, lane, tick);
+      choose(track, lane, [tick]);
       return tick;
     },
-    /** The point at `tick` dragged by `p`, between its neighbours, chosen; `added` when the same press added it, so both are one undo step. */
-    movePoint(track: string, lane: string, tick: number, p: Pick<Pointer, "dx" | "dy">, added = false) {
-      const point = pointsOf(track, lane).find((each) => each.tick === tick);
-      if (!point) return;
-      const range = travel(track, lane);
-      const [earliest, latest] = between(track, lane, tick);
-      const to = clamp(tick + Math.round(p.dx), earliest, latest);
-      const value = laneValue(range, positionOf(point.value, range) - p.dy);
-      editPoints(song, added ? "Add a point" : "Move a point", track, lane, (all) => all.map((each) => (each.tick === tick ? { ...each, tick: to, value } : each)));
-      choose(track, lane, to);
+    /** A press on the point at `tick`: alt removes it, shift adds it to the chosen ones or lets it go, else it is chosen alone. */
+    pressPoint(track: string, lane: string, tick: number, p: Pick<Pointer, "shift" | "alt">) {
+      if (p.alt) return this.removePoint(track, lane, tick);
+      const chosen = chosenIn(track, lane);
+      if (!p.shift) return choose(track, lane, [tick]);
+      choose(track, lane, chosen.includes(tick) ? chosen.filter((each) => each !== tick) : [...chosen, tick]);
+    },
+    /** The point at `tick` dragged by `p`: with the others chosen in its lane when it is one of them, else alone between its neighbours. */
+    movePoint(track: string, lane: string, tick: number, p: Pick<Pointer, "dx" | "dy">) {
+      const chosen = chosenIn(track, lane);
+      shift(track, lane, chosen.includes(tick) ? chosen : [tick], p.dx, p.dy);
+    },
+    /** The chosen points moved by `dx` ticks and `dy` of the travel, by the keys: false while none is chosen. */
+    nudge(dx: number, dy: number) {
+      const point = memory.point;
+      return point !== null && shift(point.track, point.lane, point.ticks, dx, dy);
+    },
+    /** A drag over a lane: the points it covers are chosen, with those chosen already when shift is held. */
+    choosePoints(track: string, lane: string, p: Pick<Pointer, "x" | "dx" | "shift">) {
+      const [from, to] = [Math.min(p.x, p.x + p.dx), Math.max(p.x, p.x + p.dx)];
+      const covered = pointsOf(track, lane).filter((point) => point.tick >= from && point.tick <= to).map((point) => point.tick);
+      choose(track, lane, [...new Set([...(p.shift ? chosenIn(track, lane) : []), ...covered])]);
     },
     /** An alt-drag on the lane: the points it covers go. */
     erase(track: string, lane: string, p: Pick<Pointer, "x" | "dx">) {
       const [from, to] = [Math.min(p.x, p.x + p.dx), Math.max(p.x, p.x + p.dx)];
       editPoints(song, "Erase points", track, lane, (all) => all.filter((point) => point.tick < from || point.tick > to));
     },
-    /** An alt-click on a point, or delete on the chosen one: it goes, and the last point takes the lane along. */
+    /** An alt-click on a point: it goes, and the last point takes the lane along. */
     removePoint(track: string, lane: string, tick: number) {
-      if (memory.point?.track === track && memory.point.lane === lane && memory.point.tick === tick) memory.point = null;
+      const chosen = chosenIn(track, lane);
+      if (chosen.includes(tick)) choose(track, lane, chosen.filter((each) => each !== tick));
       editPoints(song, "Remove a point", track, lane, (all) => all.filter((point) => point.tick !== tick));
+    },
+    /** Delete: the chosen points go. False while none is chosen. */
+    removeChosen() {
+      const point = memory.point;
+      if (!point) return false;
+      memory.point = null;
+      editPoints(song, point.ticks.length > 1 ? "Remove points" : "Remove a point", point.track, point.lane, (all) => all.filter((each) => !point.ticks.includes(each.tick)));
+      return true;
     },
     /** The handle in the middle of the line from the point at `tick` dragged by `dy`: the curve whose middle is where it was let go. */
     bend(track: string, lane: string, tick: number, p: Pick<Pointer, "dy">) {
