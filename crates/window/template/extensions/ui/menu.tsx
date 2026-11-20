@@ -11,22 +11,26 @@ export type Item = { text: string; onPress: () => void; icon?: IconName; keys?: 
  * The list of a menu, inside the element that opens it (which needs a `key` and a `label`): on a
  * press, or with `"menu"` on a right press at the pointer. A press on an item closes it.
  */
-export const MenuList = ({ id, label, items, open = "press", w = 220 }: { id: string; label: string; items: readonly Item[]; open?: "press" | "menu"; w?: number }) => (
-  <col overlay={{ open, side: "bottom", align: "start", gap: 4 }} role="menu" group label={label} w={w} pad={1} radius="lg" fill="raised" border="border-strong" shadow="md">
-    {items.map((item) => {
-      const ink = item.disabled !== undefined ? "text-muted" : item.danger ? "danger" : "text";
-      return (
-        <row key={`${id}-${item.text}`} label={item.text} role="menuitem" checked={item.checked} w="full" h={height("md")} px={2} gap={2} align="center" radius="md" hover={item.disabled === undefined ? "fill" : undefined} onPress={item.disabled === undefined ? item.onPress : undefined}>
-          {item.checked !== undefined && <box w={14}>{item.checked && <icon name="check" size={14} color="text" />}</box>}
-          {item.icon !== undefined && <icon name={item.icon} color={item.danger ? "danger" : "text-secondary"} />}
-          <text style="label" color={ink} truncate>{item.text}</text>
-          {item.keys !== undefined && <row grow={1} justify="end"><Kbd keys={item.keys} /></row>}
-          {item.disabled !== undefined && <Tooltip text={item.disabled} side="bottom" />}
-        </row>
-      );
-    })}
-  </col>
-);
+export const MenuList = ({ id, label, items, open = "press", w = 220 }: { id: string; label: string; items: readonly Item[]; open?: "press" | "menu"; w?: number }) => {
+  // Words line up when some items have an icon and others none.
+  const icons = items.some((item) => item.icon !== undefined);
+  return (
+    <col overlay={{ open, side: "bottom", align: "start", gap: 4 }} role="menu" group label={label} w={w} pad={1} radius="lg" fill="raised" border="border-strong" shadow="md">
+      {items.map((item) => {
+        const ink = item.disabled !== undefined ? "text-muted" : item.danger ? "danger" : "text";
+        return (
+          <row key={`${id}-${item.text}`} label={item.text} role="menuitem" checked={item.checked} w="full" h={height("md")} px={2} gap={2} align="center" radius="md" hover={item.disabled === undefined ? "fill" : undefined} onPress={item.disabled === undefined ? item.onPress : undefined}>
+            {item.checked !== undefined && <box w={14}>{item.checked && <icon name="check" size={14} color="text" />}</box>}
+            {item.icon !== undefined ? <icon name={item.icon} color={item.danger ? "danger" : "text-secondary"} /> : icons && <box w={16} />}
+            <text style="label" color={ink} truncate>{item.text}</text>
+            {item.keys !== undefined && <row grow={1} justify="end"><Kbd keys={item.keys} /></row>}
+            {item.disabled !== undefined && <Tooltip text={item.disabled} side="bottom" />}
+          </row>
+        );
+      })}
+    </col>
+  );
+};
 
 /** A button that opens a list of things to do. */
 export const Menu = ({ id, label, text, icon = "ellipsis", variant = "ghost", size = "md", items }: { id: string; label: string; text?: string; icon?: IconName; variant?: Variant; size?: Size; items: readonly Item[] }) => (
