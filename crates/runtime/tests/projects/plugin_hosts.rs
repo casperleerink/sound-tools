@@ -8,11 +8,11 @@ use plugin_host::{Plugins, ScanCache, ScanCommand};
 use runtime::{open_or_create_with, open_read_only_with};
 use sound_core::{Engine, EngineControl, Project};
 
-/// The real `runtime` executable with its scan argument, so the child process of a scan is the
-/// one the application starts.
+/// The program of this crate's tests with its scan argument, so the child process of a scan
+/// runs the runtime's code, as the application's does.
 pub(crate) fn scanner() -> ScanCommand {
     ScanCommand::new(
-        env!("CARGO_BIN_EXE_runtime"),
+        env!("CARGO_BIN_EXE_test-runtime"),
         [std::ffi::OsString::from(plugin_host::SCAN_ARGUMENT)],
     )
 }

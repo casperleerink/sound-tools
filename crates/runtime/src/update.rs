@@ -3,10 +3,9 @@
 //! When the window opens, and every day while it stays open, it asks GitHub for the latest
 //! release. A newer one is downloaded in the background with the agent's downloader (the
 //! system's curl, a lock, resume), checked against the release's `SHA256SUMS` and unpacked in
-//! the support folder. The window then shows a notice with **Restart**. The swap itself happens at the next start
-//! of the windowed app, before any window: Restart is a quit and a start again, and a quit
-//! without Restart gets the update at the next launch. GPUI gives a quit too little time to
-//! copy an app.
+//! the support folder. The window then shows a notice with **Restart**. The swap itself happens
+//! at the next start of the windowed app, before any window: Restart is a quit and a start
+//! again, and a quit without Restart gets the update at the next launch.
 //!
 //! On macOS the `.app` the program runs from is replaced. When its folder cannot be written,
 //! as for an app macOS runs from a read-only copy, the notice offers **Download**, which opens
@@ -32,11 +31,10 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use gpui::{App, AppContext as _, Global};
 use serde::Deserialize;
 use sound_agent::Download;
 #[cfg(windows)]
@@ -105,8 +103,6 @@ pub struct Ready {
     pub version: Version,
     pub action: Action,
 }
-
-impl Global for Ready {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -577,37 +573,26 @@ pub fn start_pending_update() -> bool {
     }
 }
 
-/// Checks for an update in the background, now and every day while the app is open, and
-/// sets [`Ready`] when there is one, or when [`start_pending_update`] could not install one at
-/// this start. Quiet when a check fails: the next one tries again.
-pub fn check_in_background(support: &Path, cx: &mut App) {
+/// Checks for an update on a thread of its own, now and every day while the app is open, and
+/// calls `ready` once there is one, or at once when [`start_pending_update`] could not install
+/// one at this start. Quiet when a check fails: the next one tries again.
+pub fn check_in_background(support: &Path, ready: impl Fn(Ready) + Send + 'static) {
     if let Some(failed) = FAILED.get() {
-        cx.set_global(failed.clone());
+        ready(failed.clone());
     }
     let Some(updater) = Updater::of_this_app(support) else {
         return;
     };
-    let updater = Arc::new(updater);
-    cx.spawn(async move |cx| {
+    std::thread::spawn(move || {
         loop {
-            let checked = cx
-                .background_spawn({
-                    let updater = updater.clone();
-                    async move { updater.check().await }
-                })
-                .await;
-            match checked {
-                Ok(Some(ready)) => {
-                    cx.update(|cx| cx.set_global(ready));
-                    return;
-                }
+            match smol::block_on(updater.check()) {
+                Ok(Some(found)) => return ready(found),
                 Ok(None) => {}
                 Err(error) => eprintln!("update: {error:#}"),
             }
-            cx.background_executor().timer(CHECK_EVERY).await;
+            std::thread::sleep(CHECK_EVERY);
         }
-    })
-    .detach();
+    });
 }
 
 #[cfg(test)]

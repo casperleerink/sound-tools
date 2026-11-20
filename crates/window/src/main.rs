@@ -1,11 +1,15 @@
-//! `sound-tools-next`: the window on Rune, beside the GPUI app until it takes its place. Every
-//! form without a window is the runtime's (`runtime::cli`), so agents may call either program.
+//! `sound-tools`: the app. Every form without a window is the runtime's (`runtime::cli`).
 //!
-//! `sound-tools-next <project-folder>` opens the window; a missing or empty folder becomes a new
+//! `sound-tools <project-folder>` opens the window; a missing or empty folder becomes a new
 //! project of the DAW. With Rune's `--snap`, `--tree` or `--script` it runs without a window,
 //! on a copy of the folder, and adds `--play <seconds>` (plays from the start first),
 //! `--act <steps.json>` (runs actions on controls by label or key first, in the folder itself)
 //! and `--main <instance>` (shows that instance in place of the project's main one).
+//!
+//! On Windows it is a window program, so the app opens no console window next to its own.
+//! Started from a terminal, it prints there anyway: see `print_to_the_terminal`.
+
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
 mod controls;
@@ -21,13 +25,12 @@ use anyhow::{Context as _, Result, bail};
 use runtime::cli;
 
 /// The second words of the forms without a window.
-const COMMANDS: [&str; 6] = [
+const COMMANDS: [&str; 5] = [
     "--headless",
     "--inspect",
     "--render",
     "--analyze",
     "--save-template",
-    "--screenshot",
 ];
 
 /// Rune's flags that run without a window.
@@ -36,36 +39,45 @@ const HEADLESS: [&str; 7] = [
 ];
 
 const FONTS: [&[u8]; 3] = [
-    include_bytes!("../../ui/assets/fonts/InterDisplay-Regular.ttf"),
-    include_bytes!("../../ui/assets/fonts/InterDisplay-Medium.ttf"),
-    include_bytes!("../../ui/assets/fonts/InterDisplay-SemiBold.ttf"),
+    include_bytes!("../assets/fonts/InterDisplay-Regular.ttf"),
+    include_bytes!("../assets/fonts/InterDisplay-Medium.ttf"),
+    include_bytes!("../assets/fonts/InterDisplay-SemiBold.ttf"),
 ];
 
+/// Gives a window program the terminal that started it, so `--version` and the other forms
+/// print there. Only when it was handed no output: what a parent pipes, such as an agent's
+/// shell, stays in the pipe.
+#[cfg(windows)]
+fn print_to_the_terminal() {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE,
+    };
+    // SAFETY: both take plain values and touch no memory of this program.
+    unsafe {
+        let output = GetStdHandle(STD_OUTPUT_HANDLE);
+        if output.is_null() || output == INVALID_HANDLE_VALUE {
+            // Fails when no terminal started this, as for a double click: nobody reads it then.
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+}
+
 fn main() -> Result<()> {
+    #[cfg(windows)]
+    print_to_the_terminal();
     if let Some(served) = cli::plugin_process() {
         return served;
     }
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let words: Vec<&str> = arguments.iter().map(String::as_str).collect();
     match words.as_slice() {
-        [] => bail!(
-            "sound-tools-next opens a project: give its folder\n{}",
-            cli::USAGE
-        ),
+        [] => bail!(cli::USAGE),
         [first, ..] if first.starts_with('-') => {
-            return cli::run(&words, false).unwrap_or_else(|| bail!(cli::USAGE));
+            return cli::run(&words).unwrap_or_else(|| bail!(cli::USAGE));
         }
         [_, second, ..] if COMMANDS.contains(second) => {
-            let (words, progress) = match words.as_slice() {
-                [words @ .., "--progress"] => (words, true),
-                words => (words, false),
-            };
-            if *second == "--screenshot" {
-                bail!(
-                    "sound-tools-next draws with --snap <png> [--play <seconds>] [--act <steps.json>] [--tree <json>]"
-                );
-            }
-            return cli::run(words, progress).unwrap_or_else(|| bail!(cli::USAGE));
+            return cli::run(&words).unwrap_or_else(|| bail!(cli::USAGE));
         }
         _ => {}
     }
@@ -106,6 +118,17 @@ fn window(arguments: &[String]) -> Result<()> {
         .any(|argument| HEADLESS.contains(&argument.as_str()));
     if !headless && (play.is_some() || act.is_some() || main.is_some()) {
         bail!("--play, --act and --main come with --snap, --tree or --script");
+    }
+    // A flag Rune does not know is no reason to open a window.
+    if !headless && !rune_arguments.is_empty() {
+        bail!(cli::USAGE);
+    }
+    // The log first, so a failed update is in it.
+    if !headless {
+        runtime::log_file::start();
+        if runtime::update::start_pending_update() {
+            return Ok(());
+        }
     }
     if let (Some(seconds), false) = (
         play,

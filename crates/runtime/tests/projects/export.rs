@@ -115,7 +115,7 @@ fn a_project_without_timelines_has_no_end() {
 fn render_with_flags(harness: &Harness, file: &str, flags: &[&str]) -> (hound::WavSpec, Vec<f32>) {
     let output = tempfile::tempdir().unwrap();
     let file = output.path().join(file);
-    let ran = std::process::Command::new(env!("CARGO_BIN_EXE_runtime"))
+    let ran = std::process::Command::new(env!("CARGO_BIN_EXE_test-runtime"))
         .arg(harness.project.root())
         .arg("--render")
         .arg(&file)

@@ -1,5 +1,4 @@
-//! The command line forms in `USAGE` that tests, CI and agents use, which open no window. Both
-//! programs take them: `sound-tools` and `sound-tools-next`, so either is the one agents call.
+//! The command line forms in `USAGE` that tests, CI and agents use, which open no window.
 //!
 //! `--only <path>` makes the device play that one instance, in memory. `--progress` at the end
 //! prints `progress: <percent>` lines, for the window's export.
@@ -728,7 +727,7 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
-pub const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <file> [<span>] [--rate <hz>] [--depth <bits>] [--loudness streaming|broadcast] [--progress] | --analyze [<span>] | --screenshot <png> [--click <x>,<y>]... [--play <seconds>] | --save-template <name> [--with-content] [--replace]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
+pub const USAGE: &str = "usage: sound-tools <project-folder> [--snap <png> | --tree <json> | --script <file>] [--play <seconds>] [--act <steps.json>] [--main <instance>] [--size <w>x<h>]\n       sound-tools <project-folder> --headless | --inspect | --render <file> [<span>] [--rate <hz>] [--depth <bits>] [--loudness streaming|broadcast] [--progress] | --analyze [<span>] | --save-template <name> [--with-content] [--replace]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at> [--no-tail]] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
 
 /// A plugin in a process of its own, which runs before anything of the app: no log, no update.
 /// `None` for every other process.
@@ -748,12 +747,16 @@ pub fn plugin_process() -> Option<Result<()>> {
     None
 }
 
-/// Runs the form of `arguments` that opens no window. `None` for those that do: none at all,
-/// a folder alone, and `--screenshot`.
-pub fn run(arguments: &[&str], progress: bool) -> Option<Result<()>> {
+/// Runs the form of `arguments` that opens no window. `None` for those of the window: none at
+/// all, and a folder alone.
+pub fn run(arguments: &[&str]) -> Option<Result<()>> {
     crate::use_library();
+    let (arguments, progress) = match arguments {
+        [arguments @ .., "--progress"] => (arguments, true),
+        arguments => (arguments, false),
+    };
     Some(match arguments {
-        [] | [_, "--screenshot", ..] => return None,
+        [] => return None,
         ["--plugins"] => list_plugins(),
         ["--plugin-params", format, plugin_id] => list_plugin_parameters(format, plugin_id),
         ["--version"] => {

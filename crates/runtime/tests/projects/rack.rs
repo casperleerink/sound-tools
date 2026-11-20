@@ -50,14 +50,9 @@ tool({
 });
 "#;
 
-/// The files of a project that plays a `rack` of `children`, each a name and its record, into
-/// the device. Its `order` is every child but `instrument`, the timelines and the lanes, as
-/// given.
-pub(crate) fn rack_files(children: &[(&str, &str)]) -> Vec<(String, String)> {
-    racks_files(&[("rack", children)])
-}
-
-/// The same for several racks at the top, each by its name, all played into the device.
+/// The files of a project that plays racks at the top, each by its name and its `children`
+/// (a name and a record each), all into the device. Its `order` is every child but
+/// `instrument`, the timelines and the lanes, as given.
 pub(crate) fn racks_files(racks: &[(&str, &[(&str, &str)])]) -> Vec<(String, String)> {
     let connections: Vec<_> = (racks.iter())
         .map(|(rack, _)| json!({ "from": { "instance": rack, "port": "audio" }, "to": { "device_output": 0 } }))
@@ -93,17 +88,4 @@ pub(crate) fn racks_files(racks: &[(&str, &[(&str, &str)])]) -> Vec<(String, Str
 pub(crate) fn plays_no_sound(record: &str) -> bool {
     let record: serde_json::Value = serde_json::from_str(record).unwrap();
     matches!(record["tool"].as_str(), Some("timeline" | "lane"))
-}
-
-/// The record of a built-in tool.
-pub(crate) fn record(tool: &str, state: &str) -> String {
-    format!(r#"{{"tool": "{tool}", "state": {state}}}"#)
-}
-
-/// A timeline of (start, length, pitch) notes at velocity 100, from tick 0 for `length` ticks.
-pub(crate) fn notes(length: u64, notes: &[(u64, u64, u8)]) -> String {
-    let notes: Vec<_> = (notes.iter())
-        .map(|(start, length, pitch)| json!({ "start": start, "length": length, "pitch": pitch, "velocity": 100 }))
-        .collect();
-    json!({ "tool": "timeline", "state": { "length": length, "notes": notes } }).to_string()
 }
