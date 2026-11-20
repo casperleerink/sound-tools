@@ -70,6 +70,21 @@ test("a drag lands its place on the grid unless Cmd is held, within its bounds",
   expect(act("Clip", "drag", { dx: -1000 })).toEqual([[["state", "start"], 0]]);
 });
 
+const open = tool({
+  name: "open", title: "Open", when: "Never", doc: "A clip with no end.", state: { start: number({ min: 0, max: 1e7, default: 0 }) }, sound: () => input,
+  view: (self, { update }) => (
+    <box key="lane" label="Lane" w={400} h={40} plane={{ x: 0.1 }}>
+      <box key="clip" label="Clip" place={[self.state.start, 0, 960, 1]} drag={{ x: [-self.state.start, null] }} onDragEnd={(p) => update("Move", (draft) => void (draft.state.start += p.dx))} />
+    </box>
+  ),
+});
+
+test("a drag with one end goes as far as it likes the other way", () => {
+  render(open, { name: "open", state: { start: 100 }, children: [] });
+  expect(act("Clip", "drag", { dx: 5e6 })).toEqual([[["state", "start"], 5000100]]);
+  expect(act("Clip", "drag", { dx: -1e7 })).toEqual([[["state", "start"], 0]]);
+});
+
 test("a drag says the key it ended over, which must be one of the view", () => {
   render(board, clip);
   act("Clip", "drag", { over: "lane" });
@@ -121,6 +136,12 @@ export const wrong = [
   <box key="k" label="K" drag={{ snap: [1, 1] }} />,
   // @ts-expect-error: a shapes is placed as a box, or sized
   <shapes place={[0, 0, 10, 10]} w={10} h={10} />,
+  // @ts-expect-error: a box placed as a box is sized by its place: a line N points wide is an inset
+  <box place={[live.playhead, 0, 0, 4]} w={1} />,
+  <box place={[live.playhead, 0, 0, 4]} inset={[0, 0, -1, 0]} />,
+  <box place={[live.playhead, 0]} w={1} h={8} />,
+  // A drag may have one end; a switch's value is true or false.
+  <box key="k" label="K" role="switch" value={true} drag={{ x: [0, null], snap: [240, 1] }} />,
   // @ts-expect-error: a feed is one a tool publishes
   <box opacity={live.feed("peek")} />,
   // @ts-expect-error: a list feed is drawn by a shapes, not a number

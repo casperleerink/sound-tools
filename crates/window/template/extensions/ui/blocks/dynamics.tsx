@@ -27,7 +27,7 @@ export const TurnedDown = () => {
   return (
     <box at={[0, 0]} w={w} h={tall} inert>
       <box at={[w - (ROOM + BAR) / 2, INSET]} fill="fill"><Bar value={reduction} range={[0, MOST_DB]} w={BAR} h={tall - 2 * INSET} down /></box>
-      <row at={[INSET, INSET]} h={18} px={1} gap={1} align="center" radius="sm" fill="well" opacity={reduction.gt(0.05)}>
+      <row at={[INSET, INSET]} h={18} pad={[1, 0]} gap={1} align="center" radius="sm" fill="well" opacity={reduction.gt(0.05)}>
         <text style="number" color="text-secondary">Turned down</text>
         <text style="number" color="text-secondary" live={reduction.times(10).round().over(10)} unit="db" />
       </row>

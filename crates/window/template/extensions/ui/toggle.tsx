@@ -13,7 +13,7 @@ export const Toggle = ({ id, label, text, icon, on, color = "on", dot = false, s
   const width = dot || icon !== undefined || face.length === 1 ? tall : w;
   const ink: Color = on ? color : "text-secondary";
   return (
-    <row key={id} label={label} role="switch" checked={on} h={tall} {...(width === undefined ? { px: 2 } : { w: width })} align="center" justify="center" radius={corner(size)} fill={on ? tint(color) : undefined} border={on ? "#00000000" : "border-strong"} hover="fill" onPress={onToggle} actions={{ toggle: onToggle }}>
+    <row key={id} label={label} role="switch" value={on} h={tall} {...(width === undefined ? { pad: [2, 0] as const } : { w: width })} align="center" justify="center" radius={corner(size)} fill={on ? tint(color) : undefined} border={on ? "#00000000" : "border-strong"} hover="fill" onPress={onToggle} actions={{ toggle: onToggle }}>
       {dot ? <box w={10} h={10} radius="full" fill={on ? color : undefined} border={on ? undefined : ink} /> : icon !== undefined ? <icon name={icon} size={14} color={ink} /> : <text style="label" color={ink} truncate>{face}</text>}
       {tip !== undefined && <Tooltip text={tip} keys={keys} />}
     </row>

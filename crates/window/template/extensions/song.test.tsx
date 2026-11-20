@@ -14,8 +14,8 @@ const self = (mute: boolean) => ({ name: "song", state: { order: [], solo: [], s
 
 test("mute is lit only on a muted track", () => {
   render(song, self(true));
-  expect(find("Mute Track 2")).toMatchObject({ checked: true });
-  expect(find("Mute Track 1")).toMatchObject({ checked: false });
+  expect(find("Mute Track 2")).toMatchObject({ value: true });
+  expect(find("Mute Track 1")).toMatchObject({ value: false });
 });
 
 test("a press on mute mutes that track's fader, and a second unmutes it", () => {
@@ -24,7 +24,7 @@ test("a press on mute mutes that track's fader, and a second unmutes it", () => 
   const changes = press("mute-t01");
   expect(changes).toEqual([[["children", 1, "children", 0, "state", "mute"], true]]);
   render(song, apply(first, changes));
-  expect(find("mute-t01")).toMatchObject({ checked: true });
+  expect(find("mute-t01")).toMatchObject({ value: true });
   expect(press("mute-t01")).toEqual([[["children", 1, "children", 0, "state", "mute"], false]]);
 });
 
@@ -36,7 +36,7 @@ test("a fader takes a volume by its label", () => {
 test("choosing a track shows its devices", () => {
   render(song, self(false));
   press("track-t01");
-  expect(find("track-t01")).toMatchObject({ checked: true });
+  expect(find("track-t01")).toMatchObject({ value: true });
 });
 
 test("a press mutes the track it names, also after tracks come and go", () => {

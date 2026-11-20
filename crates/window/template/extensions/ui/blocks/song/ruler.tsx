@@ -1,8 +1,8 @@
-import { h, live, memo, type Color, type Num } from "../../../sdk";
+import { h, live, memo, type Color, type Drag, type Num } from "../../../sdk";
 import { changeBars } from "../../../song/marks";
 import { repeatOf, type Mark } from "../../../song/model";
 import { barAt, barNear, barStarts, BAR, BEAT, beatRuns, SNAPS, type Runs } from "../../../song/time";
-import { ACROSS, GUTTER, HEAD, PLANE, RULER, ZOOM, type Page } from "../../../song/view";
+import { GUTTER, HEAD, PLANE, RULER, TIME, type Page } from "../../../song/view";
 import { Select } from "../../select";
 import { Toggle } from "../../toggle";
 import { Shades } from "./shades";
@@ -26,7 +26,7 @@ export const Ruler = ({ page }: RulerProps) => {
   return (
     <col w="full">
       <row w="full" h={RULER} border="border" borderSides={[0, 0, 1, 0]}>
-        <row w={HEAD} h="full" px={2} gap={2} align="center" border="border" borderSides={[0, 1, 0, 0]}>
+        <row w={HEAD} h="full" pad={[2, 0]} gap={2} align="center" border="border" borderSides={[0, 1, 0, 0]}>
           <Toggle id="tempo-lane" label="Tempo lane" icon="tempo-change" tip="Tempo" on={memory.tempoLane} onToggle={() => (memory.tempoLane = !memory.tempoLane)} />
           <text style="label" color="text-muted">Snap</text>
           <row grow={1} justify="end">
@@ -65,8 +65,8 @@ const Bars = ({ page }: RulerProps) => {
 
 /** 1 while `points` fit in `ticks` at the zoom of the song's time: what thins labels as it zooms out, with no run of the view. */
 function fits(points: number, ticks: number): Num {
-  const zoom = points / (Math.max(ticks, 1) * ACROSS);
-  return zoom <= ZOOM[0] ? 1 : live.plane(PLANE).zoom.ge(zoom);
+  const zoom = points / Math.max(ticks, 1);
+  return zoom <= TIME.zoom[0] ? 1 : live.plane(PLANE).zoom.ge(zoom);
 }
 
 const both = (a: Num, b: Num): Num => (typeof a === "number" ? (a === 1 ? b : 0) : typeof b === "number" ? (b === 1 ? a : 0) : a.times(b));
@@ -119,7 +119,7 @@ const pressOf = (page: Page, mark: Mark) => (p: { right: boolean; alt: boolean; 
 };
 
 /** How far a drag of a mark at `tick` steps: a bar for a section or a time signature, the snap for a tempo change. */
-const dragOf = (tick: number, step: number, least: number) => ({ x: [least - tick, 1e7] as [number, number], ...(step > 0 ? { snap: [step, 1] as [number, number], from: [tick, 0] as [number, number] } : {}) });
+const dragOf = (tick: number, step: number, least: number): Drag => ({ x: [least - tick, null], snap: step > 0 ? [step, 1] : undefined, from: step > 0 ? [tick, 0] : undefined });
 
 /**
  * The sections on the top line: a tick at its bar, its name at the left edge while the section
@@ -143,7 +143,7 @@ const Sections = ({ page }: RulerProps) => {
         if (memory.renamingSection?.bar === section.bar) {
           return (
             <box place={[from, 0, 0, 0]}>
-              <row at={[0, 0]} w={160} h={LINE} px={1} align="center" radius="sm" fill="well" border="focus">
+              <row at={[0, 0]} w={160} h={LINE} pad={[1, 0]} align="center" radius="sm" fill="well" border="focus">
                 <field key="section-name" label={`Section at bar ${section.bar}`} value={section.name} focus style="label" w={150} onCommit={(text) => edits.marks.nameSection(text)} />
               </row>
             </box>
@@ -152,7 +152,7 @@ const Sections = ({ page }: RulerProps) => {
         return (
           <box place={[moved, 0, to - from, LINE]} clip>
             <box at={[0, 3]} w={1} h={LINE - 3} fill="border-strong" />
-            <row key={key} label={`Section ${section.name}`} role="button" checked={chosen} at={[view.left.minus(from).max(0).times(view.zoom.times(ACROSS)).plus(4), 1]} h={LINE - 2} px={1} align="center" radius="sm"
+            <row key={key} label={`Section ${section.name}`} role="button" value={chosen} at={[view.left.minus(from).max(0).times(view.zoom).plus(4), 1]} h={LINE - 2} pad={[1, 0]} align="center" radius="sm"
               fill={chosen ? "selected" : undefined} border={chosen ? "focus" : undefined} hover="fill" drag={dragOf(from, next - start, 0)}
               onPress={pressOf(page, mark)} onDragEnd={(p) => edits.marks.moveMark(mark, p.dx)}>
               <text style="label" color="text" truncate>{section.name}</text>
@@ -182,17 +182,17 @@ const Changes = ({ page }: RulerProps) => {
         const label = (
           <row gap={1} align="center">
             <text style="label" color="text-muted">{bar}</text>
-            <row px={1} radius="sm" border={isChosen(page, "signature", tick) ? "text" : "border-strong"}><text style="label" color="text-secondary">{signature}</text></row>
+            <row pad={[1, 0]} radius="sm" border={isChosen(page, "signature", tick) ? "text" : "border-strong"}><text style="label" color="text-secondary">{signature}</text></row>
           </row>
         );
         // Placed with no size, its label laid out in points from its bar.
-        if (bar === 1) return <box place={[tick, NUMBERS - 1, 0, 0]}><box at={[0, 0]} w={width} h={18} px={1} opacity={shows} inert>{label}</box></box>;
+        if (bar === 1) return <box place={[tick, NUMBERS - 1, 0, 0]}><box at={[0, 0]} w={width} h={18} pad={[1, 0]} opacity={shows} inert>{label}</box></box>;
         const mark: Mark = { kind: "signature", bar, tick };
         const key = `signature-${bar}`;
         const { start, end } = barAt(runs, tick);
         return (
           <box place={[live.drag(key).dx.plus(tick), NUMBERS - 1, 0, 0]}>
-            <box key={key} label={`Time signature ${signature} at bar ${bar}`} role="button" checked={isChosen(page, "signature", tick)} at={[0, 0]} w={width} h={18} px={1} radius="sm"
+            <box key={key} label={`Time signature ${signature} at bar ${bar}`} role="button" value={isChosen(page, "signature", tick)} at={[0, 0]} w={width} h={18} pad={[1, 0]} radius="sm"
               hover="fill" opacity={shows} drag={dragOf(tick, end - start, 1)} onPress={pressOf(page, mark)} onDragEnd={(p) => edits.marks.moveMark(mark, p.dx)}>
               {label}
             </box>
@@ -206,12 +206,12 @@ const Changes = ({ page }: RulerProps) => {
         const chosen = isChosen(page, "tempo", change.tick);
         const ink: Color = chosen ? "text" : "text-muted";
         const pill = (
-          <row at={[10, 0]} h={18} px={1} align="center" radius="sm" fill="background" border="border-strong">
+          <row at={[10, 0]} h={18} pad={[1, 0]} align="center" radius="sm" fill="background" border="border-strong">
             <text style="label" color="text">{`${bpmText(change.bpm)} bpm`}</text>
           </row>
         );
         return (
-          <box key={key} label={`Tempo change at bar ${bar}`} value={change.bpm} role="button" checked={chosen} hoverGroup place={[live.drag(key).dx.plus(change.tick), (LINE + RULER) / 2]} w={9} h={RULER - LINE}
+          <box key={key} label={`Tempo change at bar ${bar}`} value={change.bpm} role="button" hoverGroup place={[live.drag(key).dx.plus(change.tick), (LINE + RULER) / 2]} w={9} h={RULER - LINE}
             drag={dragOf(change.tick, memory.snap, 1)} onPress={pressOf(page, mark)} onDragEnd={(p) => edits.marks.moveMark(mark, p.dx)}>
             <box at={[4, RULER - LINE - 8]} w={1} h={8} fill={ink} />
             {chosen ? pill : <box reveal>{pill}</box>}
@@ -236,14 +236,14 @@ const Repeat = ({ page }: RulerProps) => {
   const toggle = () => marks.toggleRepeat();
   const step = (part: "move" | "start" | "end") => ({ increment: (by: number) => marks.moveRepeat(part, { dx: by * BEAT }), decrement: (by: number) => marks.moveRepeat(part, { dx: -by * BEAT }), toggle });
   return (
-    <box key="repeat" label="Repeat" role="switch" checked={on} place={[moving.dx.plus(starting.dx).plus(from), RULER - 14, ending.dx.minus(starting.dx).plus(to - from), 14]}
-      drag={{ x: [-from, 1e7], snap: [BEAT, 1], from: [from, 0] }} onPress={toggle} onDragEnd={(p) => marks.moveRepeat("move", p)} actions={step("move")}>
+    <box key="repeat" label="Repeat" role="switch" value={on} place={[moving.dx.plus(starting.dx).plus(from), RULER - 14, ending.dx.minus(starting.dx).plus(to - from), 14]}
+      drag={{ x: [-from, null], snap: [BEAT, 1], from: [from, 0] }} onPress={toggle} onDragEnd={(p) => marks.moveRepeat("move", p)} actions={step("move")}>
       <box inset={[0, 8, 0, 3]} radius="sm" fill={band} />
       <box key="repeat-start" label="Start of the repeat" role="slider" value={from} at={[0, 0]} w={8} h={14} drag={{ x: [-from, to - BEAT - from], snap: [BEAT, 1], from: [from, 0] }}
         onPress={toggle} onDragEnd={(p) => marks.moveRepeat("start", p)} actions={step("start")}>
         <box at={[0, 3]} w={2} h={5} fill={band} />
       </box>
-      <box key="repeat-end" label="End of the repeat" role="slider" value={to} inset={[null, 0, 0, 0]} w={8} drag={{ x: [from + BEAT - to, 1e7], snap: [BEAT, 1], from: [to, 0] }}
+      <box key="repeat-end" label="End of the repeat" role="slider" value={to} inset={[null, 0, 0, 0]} w={8} drag={{ x: [from + BEAT - to, null], snap: [BEAT, 1], from: [to, 0] }}
         onPress={toggle} onDragEnd={(p) => marks.moveRepeat("end", p)} actions={step("end")}>
         <box inset={[null, 3, 0, null]} w={2} h={5} fill={band} />
       </box>

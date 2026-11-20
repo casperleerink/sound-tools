@@ -19,10 +19,10 @@ pub(super) fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>
     if let Some(label) = &b.label {
         e = e.label(label.clone());
     }
-    if let Some(checked) = b.checked {
+    if let Some(checked) = b.checked() {
         e = e.checked(checked);
     }
-    if let (Some(value), Some(key)) = (&b.value, key) {
+    if let (Some(value), Some(key)) = (b.value(), key) {
         let lives = &scope.state.lives;
         e = e.a11y_value(lives.said_live(scope.state, scope.instance, key, value));
     }

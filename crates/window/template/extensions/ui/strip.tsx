@@ -46,7 +46,7 @@ export const Strip = ({ page, name, height, full = false, children }: StripProps
     ),
   ];
   return (
-    <row key={`strip-${name}`} label={`${title} strip`} role="group" group hoverGroup w={full ? FULL_STRIP : STRIP} h={height + VALUE_LINE} px={2} gap={1}>
+    <row key={`strip-${name}`} label={`${title} strip`} role="group" group hoverGroup w={full ? FULL_STRIP : STRIP} h={height + VALUE_LINE} pad={[2, 0]} gap={1}>
       <box w={METER} h={height}>
         <Meter {...meter} label={`Level ${title}`} w={METER} h={height} />
         {!full && (

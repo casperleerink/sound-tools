@@ -75,10 +75,10 @@ const LaneHead = ({ page, row }: { page: Page; row: LaneRow }) => {
     const items = laneItems(page, row);
     const cut = short(lane.name);
     return (
-      <row key={`lane-head-${lane.id}`} label={`${lane.name} of ${lane.title}`} place={[0, row.top, HEAD - 1, row.height]} px={2} border="border" borderSides={[0, 0, 1, 0]}>
+      <row key={`lane-head-${lane.id}`} label={`${lane.name} of ${lane.title}`} place={[0, row.top, HEAD - 1, row.height]} pad={[2, 0]} border="border" borderSides={[0, 0, 1, 0]}>
         <box w={INDENT} />
         <col grow={1} gap={1} justify="center" align="start">
-          <row key={`lane-name-${lane.id}`} label={`Menu of the ${lane.name} lane of ${lane.title}`} role="button" h={20} px={1} gap={1} align="center" radius="sm" hover="fill">
+          <row key={`lane-name-${lane.id}`} label={`Menu of the ${lane.name} lane of ${lane.title}`} role="button" h={20} pad={[1, 0]} gap={1} align="center" radius="sm" hover="fill">
             <text style="label" color="text-secondary" truncate>{cut}</text>
             <icon name="chevron-down" size={12} color="text-muted" />
             {cut !== lane.name && <Tooltip text={lane.name} />}
@@ -99,7 +99,7 @@ const MoverControls = ({ page, row }: { page: Page; row: LaneRow }) => {
   if (mover?.tool === "lfo") {
     const { shape, rate } = mover.state;
     return (
-      <row gap={1} px={1}>
+      <row gap={1} pad={[1, 0]}>
         <Select id={`lfo-shape-${id}`} label={`Shape of the LFO of ${name}`} w={76} value={shape} options={SHAPES.map((each) => ({ value: each, text: words(each) }))} onChange={tune("shape")} />
         <Select id={`lfo-rate-${id}`} label={`Rate of the LFO of ${name}`} w={56} value={rate} options={RATES.map((each) => ({ value: each, text: each }))} onChange={tune("rate")} />
       </row>
@@ -111,7 +111,7 @@ const MoverControls = ({ page, row }: { page: Page; row: LaneRow }) => {
       return <Knob {...bound} id={`env-${field}-${id}`} label={`${spec.label} of the envelope of ${name}`} text={spec.label} />;
     });
     return (
-      <box px={1}>
+      <box pad={[1, 0]}>
         <Popover id={`env-${id}`} label={`Shape of the envelope of ${name}`} text="Attack, decay…" size="sm" title="Envelope">
           <row gap={1}>{knobs}</row>
         </Popover>
@@ -119,7 +119,7 @@ const MoverControls = ({ page, row }: { page: Page; row: LaneRow }) => {
     );
   }
   const playing = live.field(path);
-  return <row px={1} h={20} align="center">{unit === undefined ? <text style="number" color="text-muted" w={120} live={playing} digits={2} /> : <text style="number" color="text-muted" w={120} live={playing} unit={unit} />}</row>;
+  return <row pad={[1, 0]} h={20} align="center">{unit === undefined ? <text style="number" color="text-muted" w={120} live={playing} digits={2} /> : <text style="number" color="text-muted" w={120} live={playing} unit={unit} />}</row>;
 };
 
 /** The row under a track's lanes: a menu of every number a new lane of it can move, by device, with a search line. */
@@ -129,7 +129,7 @@ const AddLane = ({ page, row }: { page: Page; row: Extract<Row, { kind: "add-lan
   return memo(`add-lane-${row.track.name}`, [row.top, row.height, title, offered], () => {
     const groups = [...new Set(offered.map((each) => each.group))];
     return (
-      <row place={[0, row.top, HEAD - 1, row.height]} px={2} align="center" border="border" borderSides={[0, 0, 1, 0]}>
+      <row place={[0, row.top, HEAD - 1, row.height]} pad={[2, 0]} align="center" border="border" borderSides={[0, 0, 1, 0]}>
         <box w={INDENT - 4} />
         <Button id={`add-lane-${row.track.name}`} label={`Add a lane to ${title}`} text="Add lane" icon="plus" variant="ghost" size="sm">
           <MenuList id={`add-lane-${row.track.name}`} label={`What a new lane of ${title} moves`} w={260} search notes={offered.length === 0 ? ["A lane moves every number already"] : []}

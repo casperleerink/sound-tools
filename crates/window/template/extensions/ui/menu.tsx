@@ -14,7 +14,7 @@ export type Group = { heading: string; items: readonly Item[] };
 
 /** The line at the top of a list that keeps the items whose name holds what is typed. */
 export const Search = ({ id, label, w }: { id: string; label: string; w: number }) => (
-  <row h={height("md")} px={2} gap={2} align="center">
+  <row h={height("md")} pad={[2, 0]} gap={2} align="center">
     <icon name="search" size={14} color="text-muted" />
     <field key={`${id}-search`} label={`Search ${label}`} value="" placeholder="Search" focus style="label" w={w - 48} onCommit={() => {}} />
   </row>
@@ -25,7 +25,7 @@ const Row = ({ id, item, icons }: { id: string; item: Item; icons: boolean }) =>
   const detail = off ? item.disabled : item.detail;
   const ink = off ? "text-muted" : item.danger ? "danger" : "text";
   return (
-    <row key={`${id}-${item.key ?? item.text}`} label={item.label ?? item.text} role="menuitem" checked={item.checked} w="full" {...(detail ? { py: 1 } : { h: height("md") })} px={2} gap={2} align="center" radius="md" hover={off ? undefined : "fill"} onPress={off ? undefined : item.onPress}>
+    <row key={`${id}-${item.key ?? item.text}`} label={item.label ?? item.text} role="menuitem" value={item.checked} w="full" {...(detail ? {} : { h: height("md") })} pad={[2, detail ? 1 : 0]} gap={2} align="center" radius="md" hover={off ? undefined : "fill"} onPress={off ? undefined : item.onPress}>
       {item.checked !== undefined && <box w={14}>{item.checked && <icon name="check" size={14} color="text" />}</box>}
       {item.icon !== undefined ? <icon name={item.icon} color={off ? "text-muted" : item.danger ? "danger" : "text-secondary"} /> : icons && <box w={16} />}
       <col grow={1}>
@@ -56,12 +56,12 @@ export const MenuList = ({ id, label, items, open = "press", w = 220, search = f
       {items.map((each) => ("heading" in each
         ? (
           <col key={`${id}-group-${each.heading}`} w="full">
-            <row h={height("sm")} px={2} align="end"><text style="label" color="text-muted">{each.heading}</text></row>
+            <row h={height("sm")} pad={[2, 0]} align="end"><text style="label" color="text-muted">{each.heading}</text></row>
             {each.items.map(row)}
           </col>
         )
         : row(each)))}
-      {notes.map((note) => <row px={2} py={1}><text style="label" color="text-muted">{note}</text></row>)}
+      {notes.map((note) => <row pad={[2, 1]}><text style="label" color="text-muted">{note}</text></row>)}
     </col>
   );
 };

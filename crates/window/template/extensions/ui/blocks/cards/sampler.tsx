@@ -158,7 +158,7 @@ export const card: Card<"sampler"> = (self, ctx) => {
   const named = instrument?.name ?? (state.sfz ? (facts.sfz ?? state.sfz) : (state.sample ?? "Audio file…"));
   const picker = (
     <Cell span={2} text="Instrument">
-      <row key="instrument" label={`${field.title} instrument`} role="button" value={named} w={2 * CELL - 8} h={24} px={2} gap={1} align="center" justify="between" radius="md" fill="fill" hover="fill">
+      <row key="instrument" label={`${field.title} instrument`} role="button" value={named} w={2 * CELL - 8} h={24} pad={[2, 0]} gap={1} align="center" justify="between" radius="md" fill="fill" hover="fill">
         <text style="label" color="text" truncate>{named}</text>
         <icon name="chevron-down" size={14} color="text-muted" />
         <MenuList id="instrument" label={`${field.title} instrument`} items={[...own, ...groups]} w={280} search />

@@ -68,7 +68,7 @@ test("a card's binder reads and writes inside lists, names its steps and refuses
     const field = cardBinder(self, ctx);
     const on = field.toggle("bands[0].on");
     const shape = field.choice("bands[0].shape", "Shape");
-    return <col><Choice {...shape} /><box key={on.id} label={on.label} role="switch" checked={on.on} onPress={on.onToggle} /></col>;
+    return <col><Choice {...shape} /><box key={on.id} label={on.label} role="switch" value={on.on} onPress={on.onToggle} /></col>;
   }) as Card, { name: "eq", state: structuredClone(STATE), children: [] }, { facts: { title: "EQ", fields: FIELDS } });
   expect(find("EQ Shape")).toMatchObject({ role: "radiogroup" });
   expect(press("EQ Shape Notch")).toEqual([[["state", "bands", 0, "shape"], "notch"]]);

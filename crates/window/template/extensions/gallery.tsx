@@ -138,7 +138,7 @@ export const gallery = tool({
                   {knob("swing", "Swing", { min: 0, max: 1, unit: "percent" })}
                 </Popover>
               </Grid>
-              <row key="row" label="Choose Bass" role="tab" checked={memory.chosen} w={240} h={32} px={2} gap={2} align="center" justify="between" radius="md" fill={memory.chosen ? "selected" : undefined} hover="fill" onPress={() => (memory.chosen = !memory.chosen)}>
+              <row key="row" label="Choose Bass" role="tab" value={memory.chosen} w={240} h={32} pad={[2, 0]} gap={2} align="center" justify="between" radius="md" fill={memory.chosen ? "selected" : undefined} hover="fill" onPress={() => (memory.chosen = !memory.chosen)}>
                 <text style="body" color="text">Bass</text>
                 <Menu id="row-menu" label="Bass menu" size="sm" items={[{ text: "Rename", onPress: () => {} }, { text: "Delete", onPress: () => {}, danger: true }]} />
               </row>
@@ -165,7 +165,7 @@ export const gallery = tool({
                 <TextField id="name" label="Track name" value={memory.name} onCommit={(name) => name !== null && (memory.name = name)} />
                 {memory.renaming
                   ? <TextField id="rename" label="Rename the clip" value={memory.clip} focus onCommit={(name) => { memory.renaming = false; if (name !== null) memory.clip = name; }} />
-                  : <row key="clip" label="Clip" role="button" w={160} h={28} px={2} align="center" radius="lg" hover="fill" onPress={() => (memory.renaming = true)}><text style="body" color="text">{memory.clip}</text></row>}
+                  : <row key="clip" label="Clip" role="button" w={160} h={28} pad={[2, 0]} align="center" radius="lg" hover="fill" onPress={() => (memory.renaming = true)}><text style="body" color="text">{memory.clip}</text></row>}
                 <row gap={2} align="center">
                   <Kbd keys="⌘K" />
                   <Dot color="focus" />
@@ -328,7 +328,7 @@ type Clip = { name: string; start: number; row: number; length: number };
  */
 const Clips = ({ memory }: { memory: Memory }) => {
   const item = (text: string, run: () => void) => (
-    <row key={`clips-${text}`} label={text} role="menuitem" w="full" h={28} px={2} align="center" radius="md" hover="fill" onPress={run}>
+    <row key={`clips-${text}`} label={text} role="menuitem" w="full" h={28} pad={[2, 0]} align="center" radius="md" hover="fill" onPress={run}>
       <text style="label" color="text">{text}</text>
     </row>
   );
@@ -337,7 +337,7 @@ const Clips = ({ memory }: { memory: Memory }) => {
     <col w={480} radius="md" border="border" clip>
       <box key="clips-ruler" label="Ruler" w={480} h={20} fill="surface" plane={{ x: "clips" }}>
         {Array.from({ length: 16 }, (_, bar) => (
-          <box place={[bar * BAR, 0, BAR, 20]} px={1} border="border" borderSides={[0, 0, 0, 1]}>
+          <box place={[bar * BAR, 0, BAR, 20]} pad={[1, 0]} border="border" borderSides={[0, 0, 0, 1]}>
             <text style="label" color="text-muted">{bar + 1}</text>
           </box>
         ))}

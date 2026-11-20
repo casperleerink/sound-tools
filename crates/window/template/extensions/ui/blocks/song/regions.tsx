@@ -1,10 +1,11 @@
 // An audio clip on the timeline: its sound as it plays, its gain and fades in it, or the words of
 // a file that is not there; its trims; and, chosen alone, the handles of its fades and its gain.
 // The window draws the sound and moves the handles; the view runs for none of it.
-import { h, live, type Color, type Live, type Pointer } from "../../../sdk";
+import { h, live, type Color, type Drag, type Live, type Pointer } from "../../../sdk";
 import { GAIN } from "../../../song/regions";
 import { BEAT, secondsBetween, ticksAcross } from "../../../song/time";
 import { ROW, type Page, type Track } from "../../../song/view";
+import { INSET } from "../time";
 
 /** An audio clip of a track, with its facts. */
 export type Region = Extract<Track["children"][number], { tool: "region" }>;
@@ -23,14 +24,14 @@ export const lostOf = ({ state, facts }: Region) =>
   facts.file.state === "missing" ? `${state.asset} is missing` : facts.file.state === "does_not_play" ? `${state.asset} does not play` : null;
 
 /**
- * Inside the box of `region` at `path`, under its name: its sound as it plays from `x`, the
- * box's top `y`, `length` ticks and `tall` rows, rising from the foot. A long file reads only what
+ * Inside the box of `region` at `path`, under its name: its sound as it plays from `x` in the row
+ * at `y`, `length` ticks, rising from the foot. A long file reads only what
  * the plane shows; a trim cuts it, as the box clips it.
  */
-export const RegionWave = ({ region, path, x, y, length, tall, colour }: { region: Region; path: string; x: Live; y: Live; length: number; tall: number; colour: Color }) => {
+export const RegionWave = ({ region, path, x, y, length, colour }: { region: Region; path: string; x: Live; y: Live; length: number; colour: Color }) => {
   const lost = lostOf(region);
   return lost === null ? (
-    <shapes key={`wave-${path}`} place={[x, y.plus(WAVE / ROW), length, tall - (WAVE + 1) / ROW]} units={[length, 1]}
+    <shapes key={`wave-${path}`} place={[x, y, length, 1]} inset={[0, INSET + WAVE, 0, INSET + 1]} units={[length, 1]}
       rects={[{ color: tint(colour, 60), rects: live.feed("wave", path) }]} />
   ) : (
     <row label={lost} at={[8, 28]} gap={1} align="center">
@@ -52,12 +53,12 @@ export function trimsOf(page: Page, key: string, { state, facts }: Region, start
   const later = Math.round(ticksAcross(changes, start + length, rest));
   const shortest = Math.min(step, length);
   return {
-    start: { x: [-earlier, length - shortest] as [number, number], onDragEnd: (p: Pointer) => page.edits.regions.trimStart(key, p) },
-    end: { x: [-(length - shortest), later] as [number, number], onDragEnd: (p: Pointer) => page.edits.regions.trimEnd(key, p, facts.seconds ?? 0) },
+    start: { x: [-earlier, length - shortest] satisfies Drag["x"], onDragEnd: (p: Pointer) => page.edits.regions.trimStart(key, p) },
+    end: { x: [-(length - shortest), later] satisfies Drag["x"], onDragEnd: (p: Pointer) => page.edits.regions.trimEnd(key, p, facts.seconds ?? 0) },
   };
 }
 
-type HandlesProps = { page: Page; itemKey: string; region: Region; words: string; x: Live; y: Live; width: Live; tall: number };
+type HandlesProps = { page: Page; itemKey: string; region: Region; words: string; x: Live; y: Live; width: Live };
 
 /**
  * The handles of `region` chosen alone, on its top edge: a fade at each end with its line down to the
@@ -65,7 +66,7 @@ type HandlesProps = { page: Page; itemKey: string; region: Region; words: string
  * while it drags, so the sound and the wave follow the hand, shows it in a pill above, and is one undo
  * step when let go.
  */
-export const RegionHandles = ({ page, itemKey: key, region, words, x, y, width, tall }: HandlesProps) => {
+export const RegionHandles = ({ page, itemKey: key, region, words, x, y: row, width }: HandlesProps) => {
   const { state, facts } = region;
   const seconds = facts.seconds ?? 0;
   const changes = page.song.clock.tempo_map.tempo_changes;
@@ -80,14 +81,15 @@ export const RegionHandles = ({ page, itemKey: key, region, words, x, y, width, 
   const db = gaining.dy.times(-DB_PER_ROW).plus(Math.max(state.gain_db, GAIN[0])).max(GAIN[0]).min(GAIN[1]);
   const [inX, outX] = [x.plus(inMs.over(msPerTick)), x.plus(width).minus(outMs.over(msPerTick))];
   const shown = (ms: number, held: Live) => held.max(ms > 0 ? 1 : 0);
-  // A fade's slope runs over the sound it turns down, under the name, then straight up to its handle.
-  const k = WAVE / ROW / tall;
+  // A fade's slope runs over the sound it turns down, under the name, then straight up to its handle on the clip's top.
+  const k = WAVE / (ROW - 2 * INSET);
+  const y = row.plus(INSET / ROW);
   const fade = (from: Live, across: Live, line: number[], shade: number[], ms: number, held: Live) => (
-    <shapes place={[from, y, across, tall]} units={[1, 1]} opacity={shown(ms, held)}
+    <shapes place={[from, row, across, 1]} inset={[0, INSET, 0, INSET]} units={[1, 1]} opacity={shown(ms, held)}
       lines={[{ color: "well/60", width: 0.5, points: shade, fill: "well/60" }, { color: "text", width: 1.5, points: line }]} />
   );
   const pill = (title: string, value: Live, unit: "ms" | "db", held: Live) => (
-    <row at={[8, -30]} h={22} px={2} gap={2} align="center" radius="sm" fill="background" border="border-strong" opacity={held}>
+    <row at={[8, -30]} h={22} pad={[2, 0]} gap={2} align="center" radius="sm" fill="background" border="border-strong" opacity={held}>
       <text style="label" color="text-secondary">{title}</text>
       <text style="number" color="text" w={56} align="end" live={value} unit={unit} />
     </row>

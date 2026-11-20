@@ -75,9 +75,9 @@ pub(crate) struct Listed {
     units: Option<[[f32; 2]; 2]>,
     /// The part of a list it shows, where `units` gives its ends across.
     range: Option<[f64; 2]>,
-    /// The plane it is placed in, by its key in the window, and its place there: it reads and
-    /// draws only the part the plane shows.
-    plane: Option<(String, [Num; 4])>,
+    /// The plane it is placed in, by its key in the window, its place there and the points in
+    /// from its edges: it reads and draws only the part the plane shows.
+    plane: Option<(String, [Num; 4], [f32; 4])>,
     parts: Vec<Part>,
 }
 
@@ -123,7 +123,7 @@ impl Listed {
     }
 
     pub(crate) fn plane(&self) -> Option<&str> {
-        self.plane.as_ref().map(|(plane, _)| plane.as_str())
+        self.plane.as_ref().map(|(plane, ..)| plane.as_str())
     }
 
     /// What of it is read and drawn now, in the view of `instance`: none where its plane shows
@@ -135,7 +135,7 @@ impl Listed {
             range: self.range,
             rect: None,
         };
-        let Some((plane, place)) = &self.plane else {
+        let Some((plane, place, [in_left, in_top, in_right, in_bottom])) = &self.plane else {
             return Some(all);
         };
         let [x, _, w, h] = place
@@ -152,7 +152,9 @@ impl Listed {
         // Placed, it is in the units of its place, as its vectors are.
         let [[left, right], down] = self.units.unwrap_or([[0.0, w], [0.0, h]]);
         let across = [from, to].map(|part| left + (right - left) * part);
-        let [width, height] = [w * per_x * (to - from), (h * per_y).abs()];
+        let whole = (w * per_x - in_left - in_right).max(0.0);
+        let tall = (h * per_y).abs() - in_top - in_bottom;
+        let [width, height] = [whole * (to - from), tall.max(0.0)];
         Some(Seen {
             size: [Some(width), Some(height)],
             units: Some([across, down]),
@@ -160,7 +162,7 @@ impl Listed {
                 true => self.range,
                 false => Some(across.map(f64::from)),
             },
-            rect: Some([w * per_x * from, 0.0, width, height]),
+            rect: Some([whole * from, 0.0, width, height]),
         })
     }
 
@@ -251,7 +253,7 @@ pub(crate) fn listed(d: &ShapesNode, plane: Option<&str>) -> Option<Listed> {
         },
         plane: match (plane, &d.place) {
             (Some(plane), Some(super::Place::Box(place))) => {
-                Some((plane.to_string(), place.clone()))
+                Some((plane.to_string(), place.clone(), d.inside()))
             }
             _ => None,
         },

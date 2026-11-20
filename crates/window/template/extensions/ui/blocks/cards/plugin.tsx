@@ -47,7 +47,7 @@ export const card: Card<"plugin"> = (self, ctx) => {
   const title = facts.title;
   const pins = (state.parameters ?? {}) as Record<string, Pin>;
   const says = (text: string) => (
-    <col w={OWN * CELL} h={2 * theme.size.row} px={2} justify="center">
+    <col w={OWN * CELL} h={2 * theme.size.row} pad={[2, 0]} justify="center">
       {lines(text, OWN * LETTERS_A_CELL).map((line) => <text style="label" color="text-secondary">{line}</text>)}
     </col>
   );
@@ -86,7 +86,7 @@ export const card: Card<"plugin"> = (self, ctx) => {
     ...pinned.filter((id) => !parameters.has(id)).map((id) => ({ text: pins[id]!.name, key: String(id), checked: true, detail: "Not in this plugin", onPress: () => pinOrUnpin(id) })),
   ];
   const list = (
-    <row key="plugin-parameters" label={`${title} parameters`} role="button" w={OWN * CELL - 8} h={24} px={2} gap={1} align="center" justify="between" radius="md" fill="fill" hover="fill">
+    <row key="plugin-parameters" label={`${title} parameters`} role="button" w={OWN * CELL - 8} h={24} pad={[2, 0]} gap={1} align="center" justify="between" radius="md" fill="fill" hover="fill">
       <text style="label" color="text">Parameters</text>
       <icon name="chevron-down" size={14} color="text-muted" />
       <MenuList id="plugin-parameters" label={`${title} parameters`} items={listed} w={260} search notes={full ? [`The card holds ${MOST} parameters at most. Take one off to add another.`] : []} />

@@ -20,7 +20,7 @@ export const Button = ({ id, label, text, icon, variant = "subtle", size = "md",
   const square = text === undefined;
   const words = size === "sm" ? "label" : "heading";
   return (
-    <row key={id} label={label} role="button" h={height(size)} {...(square ? { w: height(size) } : { px: size === "sm" ? 2 : 3 })} gap={1} align="center" justify="center" radius={corner(size)} fill={look.fill} hover={look.hover} onPress={onPress}>
+    <row key={id} label={label} role="button" h={height(size)} {...(square ? { w: height(size) } : { pad: [size === "sm" ? 2 : 3, 0] as const })} gap={1} align="center" justify="center" radius={corner(size)} fill={look.fill} hover={look.hover} onPress={onPress}>
       {icon !== undefined && <icon name={icon} size={square && size !== "lg" ? 14 : 16} color={look.ink} />}
       {text !== undefined && <text style={words} color={look.ink}>{text}</text>}
       {tip !== undefined && <Tooltip text={tip} keys={keys} />}

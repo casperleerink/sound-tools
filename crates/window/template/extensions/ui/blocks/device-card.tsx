@@ -61,14 +61,14 @@ export const DeviceCard = ({ id, title, display, cells = [], more = [], sections
   const shown = sections[Math.min(Math.max(page, 0), sections.length - 1)];
   return (
     <row key={id} h={BODY} align="start">
-      <row px={4} gap={2}>
+      <row pad={[4, 0]} gap={2}>
         {display}
         <row>{columns(cells)}</row>
         {expanded && more.length > 0 && [<Hairline />, <row>{columns(more)}</row>]}
         {expanded && shown && [<Hairline />, sections.length > 1 && <Tabs id={id} title={title} sections={sections} page={page} onPage={onPage} />, <row>{columns(shown.cells)}</row>]}
       </row>
       {hides && [
-        <col key={`${id}-more`} label={`More of ${title}`} role="switch" checked={expanded} w={20} h={2 * ROW + theme.space[1]} align="center" justify="center" radius="md" hover="fill" onPress={onExpand} actions={{ toggle: onExpand }}>
+        <col key={`${id}-more`} label={`More of ${title}`} role="switch" value={expanded} w={20} h={2 * ROW + theme.space[1]} align="center" justify="center" radius="md" hover="fill" onPress={onExpand} actions={{ toggle: onExpand }}>
           <icon name={expanded ? "chevron-left" : "chevron-right"} size={14} color="text-secondary" />
           <Tooltip text={expanded ? "Less" : "More"} />
         </col>,
@@ -84,7 +84,7 @@ const Hairline = () => <box w={1} h={2 * ROW} fill="border-strong" />;
 const Tabs = ({ id, title, sections, page, onPage }: { id: string; title: string; sections: readonly Section[]; page: number; onPage?: (page: number) => void }) => (
   <col key={`${id}-pages`} label={`Pages of ${title}`} role="radiogroup" group gap={1}>
     {sections.map((section, at) => (
-      <row key={`${id}-page-${at}`} label={`${title} ${section.name}`} role="radio" checked={at === page} h={ICON} px={2} gap={1} align="center" radius="md" fill={at === page ? "selected" : undefined} hover="fill" onPress={() => onPage?.(at)}>
+      <row key={`${id}-page-${at}`} label={`${title} ${section.name}`} role="radio" value={at === page} h={ICON} pad={[2, 0]} gap={1} align="center" radius="md" fill={at === page ? "selected" : undefined} hover="fill" onPress={() => onPage?.(at)}>
         <text style="label" color={at === page ? "text" : "text-secondary"}>{section.name}</text>
         {section.changed && <box w={4} h={4} radius="full" fill="text-secondary" />}
       </row>
@@ -119,16 +119,16 @@ export type FrameProps = {
 export const Frame = ({ id, title, menu, on = true, onPower, onRemove, end, chosen = false, onChoose, drag, onDragEnd, children }: FrameProps) => (
   <col key={id} label={`Device ${title}`} role="group" h={CARD_HEIGHT} radius="lg" fill="surface" border={chosen ? "text-muted" : "border-strong"} hoverGroup
     {...(drag ? { opacity: live.drag(id).active.times(-0.5).plus(1) } : {})}>
-    <row key={`${id}-header`} label={`Choose ${title}`} role="toolbar" group h={HEADER} px={1} gap={1} align="center"
+    <row key={`${id}-header`} label={`Choose ${title}`} role="toolbar" group h={HEADER} pad={[1, 0]} gap={1} align="center"
       {...(drag ? { drag: { ...drag, id }, onDragEnd } : {})} {...(onChoose ? { onPress: onChoose } : {})}>
       {menu ? (
-        <row key={`${id}-title`} label={menu.label} role="button" h={height("sm")} px={2} gap={1} align="center" radius="md" hover="fill">
+        <row key={`${id}-title`} label={menu.label} role="button" h={height("sm")} pad={[2, 0]} gap={1} align="center" radius="md" hover="fill">
           <text style="heading" color={on ? "text" : "text-muted"} truncate>{title}</text>
           <icon name="chevron-down" size={12} color="text-muted" />
           <MenuList id={`${id}-title`} label={menu.label} items={menu.items} notes={menu.notes} w={280} search />
         </row>
       ) : (
-        <row px={2}><text style="heading" color={on ? "text" : "text-muted"} truncate>{title}</text></row>
+        <row pad={[2, 0]}><text style="heading" color={on ? "text" : "text-muted"} truncate>{title}</text></row>
       )}
       <row grow={1} gap={1} justify="end" align="center">
         {end}
@@ -144,7 +144,7 @@ export const Frame = ({ id, title, menu, on = true, onPower, onRemove, end, chos
 
 /** An icon of a header: 24 points to hit, a fill on hover. `checked` makes it a switch. */
 export const HeaderIcon = ({ id, label, icon, color, checked, tip, onPress }: { id: string; label: string; icon: IconName; color: Color; checked?: boolean; tip: string; onPress: () => void }) => (
-  <row key={id} label={label} role={checked === undefined ? "button" : "switch"} checked={checked} w={ICON} h={ICON} align="center" justify="center" radius="md" hover="fill" onPress={onPress} {...(checked === undefined ? {} : { actions: { toggle: onPress } })}>
+  <row key={id} label={label} role={checked === undefined ? "button" : "switch"} value={checked} w={ICON} h={ICON} align="center" justify="center" radius="md" hover="fill" onPress={onPress} {...(checked === undefined ? {} : { actions: { toggle: onPress } })}>
     <icon name={icon} size={14} color={color} />
     <Tooltip text={tip} />
   </row>

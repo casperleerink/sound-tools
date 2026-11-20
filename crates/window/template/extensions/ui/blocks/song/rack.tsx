@@ -41,12 +41,12 @@ export const Rack = ({ page, name }: RackProps) => {
     <row w="full" h="full" fill="background">
       <Side page={page} name={name} each={each} />
       <box key="rack" grow={1} h="full" scroll="x">
-        <row px={3} py={2} gap={2} align="start">
+        <row pad={[3, 2]} gap={2} align="start">
           {name === "master" ? <Limiter page={page} /> : each && <Devices page={page} each={each} />}
         </row>
       </box>
       {each && sends.length > 0 && <Sends page={page} each={each} sends={sends} />}
-      <col h="full" px={2} py={2}>
+      <col h="full" pad={[2, 2]}>
         <row h={HEADER} align="center">
           <Button id="close-panel" label="Close the panel" icon="x" variant="ghost" size="sm" tip="Close" onPress={() => (page.song.memory.below = null)} />
         </row>
@@ -115,7 +115,7 @@ const Devices = ({ page, each }: { page: Page; each: Channel }) => {
         );
       })}
       {empty && (
-        <col h={HEADER} px={2} justify="center">
+        <col h={HEADER} pad={[2, 0]} justify="center">
           <text style="heading" color="text-muted">No devices yet</text>
         </col>
       )}
@@ -131,7 +131,7 @@ const Devices = ({ page, each }: { page: Page; each: Channel }) => {
 /** The first card of an audio track while none of its regions is chosen alone. */
 const NoClip = () => (
   <Frame id="clip-empty" title="Clip">
-    <col w={2 * CELL} h={CARD_HEIGHT - HEADER} px={4}>
+    <col w={2 * CELL} h={CARD_HEIGHT - HEADER} pad={[4, 0]}>
       <text style="label" color="text-secondary">Select a clip.</text>
     </col>
   </Frame>
@@ -175,7 +175,7 @@ const Side = ({ page, name, each }: { page: Page; name: string; each: Channel | 
   const rec = each?.tool === "tape" ? each.children.find((child) => child.name === "rec") : undefined;
   const channels = rec?.tool === "recorder" ? rec.state.channels.join() : "";
   return (
-    <col key={`side-${name}`} w={HEAD} h="full" px={3} py={2} gap={1} border="border" borderSides={[0, 1, 0, 0]}>
+    <col key={`side-${name}`} w={HEAD} h="full" pad={[3, 2]} gap={1} border="border" borderSides={[0, 1, 0, 0]}>
       <row w="full" h={HEADER} gap={2} align="center">
         <Dot color={each && colourOf(each)} />
         <text style="heading" color="text" truncate>{title}</text>
@@ -195,7 +195,7 @@ const Side = ({ page, name, each }: { page: Page; name: string; each: Channel | 
 
 /** A track's sends: a row for each return, a small dial, its name and what it sends, which a click types. Five show, then they scroll. */
 const Sends = ({ page, each, sends }: { page: Page; each: Channel; sends: readonly string[] }) => (
-  <col key={`sends-${each.name}`} h="full" px={4} py={2} border="border" borderSides={[0, 0, 0, 1]}>
+  <col key={`sends-${each.name}`} h="full" pad={[4, 2]} border="border" borderSides={[0, 0, 0, 1]}>
     <row h={HEADER} align="center"><text style="heading" color="text">Sends</text></row>
     <col key="sends" maxH={SENDS * SEND} scroll="y">
       {sends.map((send) => {

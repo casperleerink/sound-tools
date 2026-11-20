@@ -1235,8 +1235,8 @@ export const shapes = tool({
   view: (self, { update }) => (
     <box key="shape" label="Shape" role="button" w={120} h={20} onPress={() => {}}>
       <col overlay={{ open: "press" }} role="menu">
-        <box key="saw" label="Saw" role="menuitem" checked={self.state.shape === "saw"} w={100} h={20} onPress={() => update("Saw", (part) => void (part.state.shape = "saw"))} />
-        <box key="square" label="Square" role="menuitem" checked={self.state.shape === "square"} w={100} h={20} onPress={() => {}} />
+        <box key="saw" label="Saw" role="menuitem" value={self.state.shape === "saw"} w={100} h={20} onPress={() => update("Saw", (part) => void (part.state.shape = "saw"))} />
+        <box key="square" label="Square" role="menuitem" value={self.state.shape === "square"} w={100} h={20} onPress={() => {}} />
       </col>
     </box>
   ),

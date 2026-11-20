@@ -90,8 +90,8 @@ test("a drag of a chosen note moves every chosen one on the snap, up a row a pit
   editor.apply(ops);
   expect(editor.notes()).toEqual([note(240, 62), note(BEAT, 64), note(2 * BEAT + 240, 69)]);
   expect(ops.length).toBeGreaterThan(0);
-  expect(find("note-0")).toMatchObject({ checked: true });
-  expect(find("note-1")).toMatchObject({ checked: false });
+  expect(find("note-0")).toMatchObject({ value: true });
+  expect(find("note-1")).toMatchObject({ value: false });
 });
 
 test("a drag of a note not chosen moves it alone, and with alt copies it", () => {
@@ -99,8 +99,8 @@ test("a drag of a note not chosen moves it alone, and with alt copies it", () =>
   editor.apply(press("note-0"));
   editor.apply(act("note-1", "drag", { dx: BEAT, dy: 0, alt: true }));
   expect(editor.notes().map((each) => each.start)).toEqual([0, BEAT, 2 * BEAT]);
-  expect(find("note-2")).toMatchObject({ checked: true });
-  expect(find("note-0")).toMatchObject({ checked: false });
+  expect(find("note-2")).toMatchObject({ value: true });
+  expect(find("note-0")).toMatchObject({ value: false });
 });
 
 test("a chosen note's ends resize it on the snap, the start keeping its end; one not chosen has none", () => {
@@ -116,7 +116,7 @@ test("a chosen note's ends resize it on the snap, the start keeping its end; one
 test("a drag over empty roll chooses the notes it touches, and shift adds to them", () => {
   const editor = shown([note(0, 60), note(BEAT, 72), note(2 * BEAT, 60)]);
   editor.apply(act(ROLL, "drag", { x: 100, y: editor.row(60) + 0.2, dx: BEAT, dy: 0.5 }));
-  expect([find("note-0"), find("note-1"), find("note-2")]).toMatchObject([{ checked: true }, { checked: false }, { checked: false }]);
+  expect([find("note-0"), find("note-1"), find("note-2")]).toMatchObject([{ value: true }, { value: false }, { value: false }]);
   editor.apply(act(ROLL, "drag", { x: 2 * BEAT + 10, y: editor.row(60) + 0.5, dx: 10, dy: 0.2, shift: true }));
   expect(editor.memory.notes.length).toBe(2);
 });
@@ -126,10 +126,10 @@ test("a right press on a note chooses it and opens the note menu; on empty roll 
   press(ROLL, { x: 3000, y: editor.row(50), right: true });
   expect([find("Add a note"), find("Cut")]).toMatchObject([{ role: "menuitem" }, undefined]);
   press("note-1", { right: true });
-  expect(find("note-1")).toMatchObject({ checked: true });
+  expect(find("note-1")).toMatchObject({ value: true });
   editor.apply(act("Duplicate", "press"));
   expect(editor.notes().map((each) => each.start)).toEqual([0, BEAT, 2 * BEAT]);
-  expect(find("Strength 100%")).toMatchObject({ checked: true });
+  expect(find("Strength 100%")).toMatchObject({ value: true });
 });
 
 test("a drag of a velocity bar changes every chosen note, and a line across the lane draws velocities", () => {

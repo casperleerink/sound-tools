@@ -64,8 +64,8 @@ test("a strip per track in their order in the part that scrolls; the returns and
 test("a click on a strip's name chooses its track and keeps the mixer; a double click shows its panel", () => {
   mixer(songOf([track("t00", "Drums"), track("t01", "Bass")]));
   press("strip-name-t01");
-  expect([find("strip-name-t01"), find("mixer")]).toMatchObject([{ checked: true }, {}]);
-  expect(find("strip-name-t00")).toMatchObject({ checked: false });
+  expect([find("strip-name-t01"), find("mixer")]).toMatchObject([{ value: true }, {}]);
+  expect(find("strip-name-t00")).toMatchObject({ value: false });
   press("strip-name-t00", { clicks: 2 });
   expect(find("mixer")).toBeUndefined();
   expect(find("strip-t00")).toBeDefined();

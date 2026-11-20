@@ -66,13 +66,13 @@ export const Handle = ({ id, label, w, h: tall, x, y, number, chosen = true, dim
   const [left, top] = [Live.of(0).plus(across.place).times(w).minus(TARGET / 2), Live.of(1).minus(up.place).times(tall).minus(TARGET / 2)];
   const dot = number === undefined ? DOT : NUMBERED;
   return (
-    <box key={id} label={label} role="slider" value={said} checked={chosen} at={[left, top]} w={TARGET} h={TARGET} radius="full" opacity={dimmed ? 0.4 : 1} hoverGroup
+    <box key={id} label={label} role="slider" value={said} at={[left, top]} w={TARGET} h={TARGET} radius="full" opacity={dimmed ? 0.4 : 1} hoverGroup
       {...(dragged ? { drag: dragged, onDragEnd: dragEnd } : {})} {...(actions ? { actions } : {})} {...(onPress ? { onPress } : {})}>
       <row at={[(TARGET - dot) / 2, (TARGET - dot) / 2]} w={dot} h={dot} align="center" justify="center" radius="full" fill={chosen ? "text" : "well"} border={chosen ? undefined : "text"}>
         {number !== undefined && <text style="label" color={chosen ? "text-inverse" : "text"}>{number}</text>}
       </row>
       {caption !== undefined && (
-        <row reveal at={[Live.of(6).minus(left), Live.of(tall - 22).minus(top)]} h={18} px={1} align="center" radius="sm" fill="well">
+        <row reveal at={[Live.of(6).minus(left), Live.of(tall - 22).minus(top)]} h={18} pad={[1, 0]} align="center" radius="sm" fill="well">
           {typeof caption === "string" ? <text style="number" color="text-secondary">{caption}</text> : caption}
         </row>
       )}
@@ -95,7 +95,7 @@ const along = (axis: HandleAxis | Num, size: number, moved: Live) => {
   return {
     axis,
     place,
-    along: [-at * size, (1 - at) * size] as [number, number],
+    along: [-at * size, (1 - at) * size] satisfies [number, number],
     plays: axis.path === undefined ? undefined : ([axis.path, liveValueAt(now.clamp(0, 1), travel).clamp(axis.min, axis.max)] as const),
     end: (d: number) => (d === 0 ? axis.value : fitted(valueOf(Math.min(Math.max(at + d / size, 0), 1), travel), axis)),
   };

@@ -48,7 +48,7 @@ test("a track shows its instrument, then its effects in order, each in a frame w
   rack(rich());
   expect(["slot-instrument", "slot-comp", "slot-eq", "slot-dly"].map((key) => find(key)).map((slot) => slot && "label" in slot && slot.label)).toEqual(["Device Synth", "Device Compressor", "Device EQ", "Device Delay"]);
   expect(find("slot-instrument-power")).toBeUndefined();
-  expect(find("Turn EQ on")).toMatchObject({ checked: false });
+  expect(find("Turn EQ on")).toMatchObject({ value: false });
 });
 
 test("power turns an effect off and on, and remove takes it out with its sidechain, each one step", () => {
@@ -86,11 +86,11 @@ test("an effect's title menu moves it a step, with its keys, and not past the en
 
 test("a pick in an effect's title menu replaces it where it is and lets go of its sidechain; the instrument's title replaces the instrument", () => {
   const { offers } = rack(rich({ sidechains: [{ effect: "t00/chain/comp", from: "t01", tap: "post_fx" }] }));
-  expect(find("slot-comp-title-compressor")).toMatchObject({ checked: true });
+  expect(find("slot-comp-title-compressor")).toMatchObject({ value: true });
   expect(press("slot-comp-title-delay")).toEqual([[["state", "sidechains"], []]]);
   press("slot-instrument-title-wavetable");
   expect(offers).toEqual([["delay", "t00/chain/comp", "Change an effect"], ["wavetable", "t00/synth", "Change the instrument"]]);
-  expect(find("slot-instrument-title-instrument.synth")).toMatchObject({ checked: true });
+  expect(find("slot-instrument-title-instrument.synth")).toMatchObject({ value: true });
 });
 
 test("an effect dragged onto another goes before it; onto the instrument, first; onto Add effect, last", () => {

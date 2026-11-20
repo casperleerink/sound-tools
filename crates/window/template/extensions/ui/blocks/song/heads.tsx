@@ -32,7 +32,7 @@ export const Heads = ({ page }: HeadsProps) => {
         {rows.map((row) => (row.kind === "track" ? <Head page={page} row={row} /> : null))}
         {laneGroups(rows).map((lanes) => <LaneHeads page={page} rows={lanes} />)}
         {tracks.length > 0 && (
-          <row place={[0, height, HEAD - 1, 1]} px={1} align="center" border="border" borderSides={[1, 0, 0, 0]}>
+          <row place={[0, height, HEAD - 1, 1]} pad={[1, 0]} align="center" border="border" borderSides={[1, 0, 0, 0]}>
             <Button id="add-track" label="Add track" text="Add track" icon="plus" variant="ghost" size="sm" onPress={() => addTrack(page)} />
             <Button id="add-track-kind" label="Add a track of a kind" icon="chevron-down" variant="ghost" size="sm" tip="Add an instrument, audio or return track">
               <MenuList id="add-track-kind" label="Add a track of a kind" items={kinds(page)} w={240} />
@@ -43,7 +43,7 @@ export const Heads = ({ page }: HeadsProps) => {
       {returns.length > 0 && (
         <col w="full" border="border" borderSides={[1, 0, 0, 0]}>
           <row w="full" h={LOW_ROW} pad={2} gap={1} align="center">
-            <row key="returns-header" label={memory.returnsOpen ? "Fold the returns" : "Show the returns"} role="button" grow={1} h={LOW_ROW - 8} px={1} gap={1} align="center" radius="md" hover="fill" onPress={() => (memory.returnsOpen = !memory.returnsOpen)}>
+            <row key="returns-header" label={memory.returnsOpen ? "Fold the returns" : "Show the returns"} role="button" grow={1} h={LOW_ROW - 8} pad={[1, 0]} gap={1} align="center" radius="md" hover="fill" onPress={() => (memory.returnsOpen = !memory.returnsOpen)}>
               <icon name={memory.returnsOpen ? "chevron-down" : "chevron-right"} size={12} color="text-muted" />
               <text style="label" color="text">Returns</text>
               <text style="label" color="text-muted">{returns.length}</text>
@@ -150,8 +150,8 @@ const Head = ({ page, row }: { page: Page; row: Row }) => {
   const order = tracks.map((track) => track.name).join(" ");
   const key = `track-${each.name}`;
   return memo(`head-${each.name}`, [title, kind, chosen, isMuted, soloed, armed, colour, row.top, lanes, shown, renaming, order, ...keys, each.children], () => (
-    <row key={key} label={`Choose ${title}`} role="tab" checked={chosen} hoverGroup place={[0, live.drag(key).dy.plus(row.top), HEAD - 1, 1]} opacity={live.drag(key).active.times(-0.4).plus(1)}
-      px={2} gap={2} align="center" fill={chosen ? "selected" : undefined} hover="fill" border="border" borderSides={[0, 0, 1, 0]}
+    <row key={key} label={`Choose ${title}`} role="tab" value={chosen} hoverGroup place={[0, live.drag(key).dy.plus(row.top), HEAD - 1, 1]} opacity={live.drag(key).active.times(-0.4).plus(1)}
+      pad={[2, 0]} gap={2} align="center" fill={chosen ? "selected" : undefined} hover="fill" border="border" borderSides={[0, 0, 1, 0]}
       drag={{ y: true }} onDragEnd={(p) => { const before = trackUnder(page, p.over); if (before) page.edits.tracks.moveBefore(each.name, before); }}
       onPress={pressHead(page, each.name)}>
       <row key={`colour-${each.name}`} label={`Colour of ${title}`} role="button" w={12} h={ROW - 16} align="center" justify="center" radius="sm" hover="fill">
@@ -182,7 +182,7 @@ const Low = ({ page, each }: { page: Page; each: Strip }) => {
   const isMuted = muted(each);
   const chosen = chosenTrack(page.song.memory) === each.name;
   return (
-    <row key={`track-${each.name}`} label={`Choose ${title}`} role="tab" checked={chosen} w="full" h={LOW_ROW} px={3} gap={2} align="center" fill={chosen ? "selected" : undefined} hover="fill"
+    <row key={`track-${each.name}`} label={`Choose ${title}`} role="tab" value={chosen} w="full" h={LOW_ROW} pad={[3, 0]} gap={2} align="center" fill={chosen ? "selected" : undefined} hover="fill"
       onPress={pressHead(page, each.name)}>
       <box opacity={isMuted ? DIM : 1}><Dot color={colourOf(each)} /></box>
       <row grow={1}><Name page={page} each={each} title={title} /></row>
@@ -197,7 +197,7 @@ const MasterRow = ({ page }: { page: Page }) => {
   const { memory } = page.song;
   const [chosen, mixer] = [memory.below?.kind === "master", memory.below?.kind === "mixer"];
   return (
-    <row key="master" label="Master" role="tab" checked={chosen} w="full" h={LOW_ROW} px={3} gap={2} align="center" fill={chosen ? "selected" : undefined} hover="fill" border="border" borderSides={[1, 0, 0, 0]}
+    <row key="master" label="Master" role="tab" value={chosen} w="full" h={LOW_ROW} pad={[3, 0]} gap={2} align="center" fill={chosen ? "selected" : undefined} hover="fill" border="border" borderSides={[1, 0, 0, 0]}
       onPress={() => page.edits.tracks.openMaster()}>
       <Dot />
       <row grow={1}><text style="heading" color="text">Master</text></row>

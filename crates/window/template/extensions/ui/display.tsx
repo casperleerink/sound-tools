@@ -67,7 +67,7 @@ export const Display = ({ columns = 4, strip, keepStrip = false, across = [], up
         {up.map(({ at, text }) => text !== undefined && <text at={[4, (1 - at) * tall - 16]} style="label" color="text-muted">{text}</text>)}
         {children}
       </box>
-      {caption !== undefined && <row at={[6, DISPLAY_HEIGHT - 22]} h={18} px={1} align="center" radius="sm" fill="well">{typeof caption === "string" ? <text style="number" color="text-secondary">{caption}</text> : caption}</row>}
+      {caption !== undefined && <row at={[6, DISPLAY_HEIGHT - 22]} h={18} pad={[1, 0]} align="center" radius="sm" fill="well">{typeof caption === "string" ? <text style="number" color="text-secondary">{caption}</text> : caption}</row>}
     </box>
   );
 };

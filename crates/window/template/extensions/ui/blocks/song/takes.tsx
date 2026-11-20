@@ -3,16 +3,16 @@
 import { h, live } from "../../../sdk";
 import { colourOf, titleOf } from "../../../song/model";
 import { BAR } from "../../../song/time";
-import { ROW, type Page, type Track } from "../../../song/view";
+import type { Page, Track } from "../../../song/view";
 import { liveLevel } from "../../value";
+import { INSET } from "../time";
 import { tint } from "./regions";
 
 /**
- * The take that runs on `track`, from where it began to the playhead, at `y` and `tall` rows of
- * the plane: a red border, its sound so far on an audio track, else its notes, at
+ * The take that runs on `track`, from where it began to the playhead, in the row at `top`: a red border, its sound so far on an audio track, else its notes, at
  * the pitches of the track's clips.
  */
-export const Take = ({ page, track, y, tall }: { page: Page; track: Track; y: number; tall: number }) => {
+export const Take = ({ page, track, top }: { page: Page; track: Track; top: number }) => {
   const recorder = track.children.find((child) => child.tool === "recorder");
   const from = recorder?.tool === "recorder" ? recorder.facts.taking?.from : null;
   if (from === null || from === undefined) return null;
@@ -20,14 +20,13 @@ export const Take = ({ page, track, y, tall }: { page: Page; track: Track; y: nu
   const colour = colourOf(track);
   // What it draws into is as long as the song: the take box shows as much as has been recorded.
   const span = Math.max(page.end - from, BAR);
-  const inner = [y + 22 / ROW, tall - 23 / ROW] as const;
   return (
-    <box key={`take-${track.name}`} label={`Recording on ${titleOf(track)}`} place={[from, y, live.playhead.minus(from).max(1), tall]} radius="md" fill="surface" border="danger" clip inert>
+    <box key={`take-${track.name}`} label={`Recording on ${titleOf(track)}`} place={[from, top, live.playhead.minus(from).max(1), 1]} inset={[0, INSET, 0, INSET]} radius="md" fill="surface" border="danger" clip inert>
       <text at={[8, 4]} style="label" color="danger">Recording</text>
       {track.tool === "tape" ? (
-        <shapes place={[from, inner[0], span, inner[1]]} units={[span, 1]} rects={[{ color: tint(colour, 60), rects: live.feed("take", path) }]} />
+        <shapes place={[from, top, span, 1]} inset={[0, INSET + 22, 0, INSET + 1]} units={[span, 1]} rects={[{ color: tint(colour, 60), rects: live.feed("take", path) }]} />
       ) : (
-        <shapes place={[from, inner[0], span, inner[1]]} units={[span, pitchesOf(track)]} rects={[{ color: colour, rects: live.feed("notes", path) }]} />
+        <shapes place={[from, top, span, 1]} inset={[0, INSET + 22, 0, INSET + 1]} units={[span, pitchesOf(track)]} rects={[{ color: colour, rects: live.feed("notes", path) }]} />
       )}
     </box>
   );

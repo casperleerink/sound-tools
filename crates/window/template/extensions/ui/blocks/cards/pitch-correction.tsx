@@ -27,7 +27,7 @@ export const card: Card<"pitch-correction"> = (self, ctx) => {
     <Display strip={strip} across={[{ at: 0.25, text: "−25" }, { at: 0.5, text: "0" }, { at: 0.75, text: "+25 ct" }]}>
       <box at={[sung.min(plays).times(w), (1 - MOVED) * tall]} w={plays.minus(sung).abs().times(w)} h={MOVED * tall} fill="text/16" opacity={moving} />
       <box at={[sung.times(w).minus(0.75), (1 - SUNG) * tall]} w={1.5} h={SUNG * tall} fill="text" opacity={moving} />
-      <row at={[6, tall - 22]} h={18} px={1} gap={1} align="center" radius="sm" fill="well" opacity={heard.gt(0)}>
+      <row at={[6, tall - 22]} h={18} pad={[1, 0]} gap={1} align="center" radius="sm" fill="well" opacity={heard.gt(0)}>
         <text style="number" color="text-secondary" live={heard} unit="pitch" />
         <row gap={1} opacity={target.gt(0)}>
           <text style="number" color="text-secondary">→</text>

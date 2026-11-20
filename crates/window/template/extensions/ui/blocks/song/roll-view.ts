@@ -65,7 +65,7 @@ export function rollOf(page: Page, clip: string) {
 export type Roll = NonNullable<ReturnType<typeof rollOf>>;
 
 /** How far the roll zooms, about where it opened. */
-export const zoomOf = (roll: Roll): [number, number] => [FARTHEST / roll.across, CLOSEST / roll.across];
+export const ZOOM: [number, number] = [FARTHEST, CLOSEST];
 
 /** The notes of the clip with their places in its list, a list each bar: a memo a bar, so an edit draws one bar again. */
 export function barsOf(notes: readonly Frozen<Note>[]) {

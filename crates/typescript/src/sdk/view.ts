@@ -52,7 +52,7 @@ export const live = {
     (name: FeedNames<number> | `${FeedNames<number[]>}.${number}`, path?: string): Live;
     (name: FeedNames<number[]>, path?: string): FeedList;
   },
-  /** What the plane `key` of this view shows now, in its units, and how far it is zoomed: 1 as it opened. */
+  /** What the plane `key` of this view shows now, in its units, and its `zoom`: points per unit across now. `place={[view.left, …]}` stays at its left edge. */
   plane: (key: string) => ({ left: planePart(key, "left"), right: planePart(key, "right"), top: planePart(key, "top"), bottom: planePart(key, "bottom"), zoom: planePart(key, "zoom") }),
   /** The drag `id` (an element's key, or its `drag.id`) now, in its units: how far it moved, where it began (`x`, `y`), 1 while it is and while Alt is held; 0 once its record took it. */
   drag: (id: string) => ({ dx: dragPart(id, "dx"), dy: dragPart(id, "dy"), x: dragPart(id, "startX"), y: dragPart(id, "startY"), active: dragPart(id, "active"), alt: dragPart(id, "alt") }),
@@ -88,15 +88,15 @@ type Axis = number | [from: number, to: number] | string;
 export type Plane = {
   x?: Axis;
   y?: Axis;
+  /** The least and most points per unit across. */
   zoom?: [min: number, max: number];
   /** A place across it keeps in view while it moves, such as `live.playhead`: the plane pages on when it leaves. A scroll or zoom by hand stops that until it shows again, or rests and moves again. */
   follow?: Num;
 };
-/** In units of the plane around it, at any depth: `[x, y]` a mark, its `w` and `h` points centred on it; `[x, y, w, h]` a box. */
-type Place = [x: Num, y: Num] | [x: Num, y: Num, w: Num, h: Num];
+type Inset = [left: number | null, top: number | null, right: number | null, bottom: number | null];
 
-/** Where a drag may go along an axis: anywhere, or the least and most of the move, in units. */
-type Along = true | [min: number, max: number];
+/** Where a drag may go along an axis: anywhere, or the least and most of the move, in units, `null` for no end. */
+type Along = true | [min: number | null, max: number | null];
 /** A drag along one axis or both. */
 export type Drag = ({ x: Along; y?: Along } | { x?: Along; y: Along }) & {
   /** Grid steps in units: `from` lands on the grid. Cmd held skips it. */
@@ -130,10 +130,8 @@ type Interactive =
       /** What it is called, such as "Mute Track 2": an agent acts on it by this name. */
       label: string;
       role?: Role;
-      /** A switch's state. */
-      checked?: boolean;
-      /** What it shows, such as -6 for a fader in dB, or what plays while a lane moves it. */
-      value?: number | string | Live;
+      /** What it shows, such as -6 for a fader in dB, or what plays while a lane moves it; a switch's state, `true` or `false`. */
+      value?: number | string | boolean | Live;
       onPress?: (p: Pointer) => void;
       actions?: Actions;
       /** `live.drag(key)` follows it every frame and `onDragEnd` hears where it stopped. A press that went past a few points is a drag and never also presses. */
@@ -147,27 +145,29 @@ type Interactive =
 
 /** Points, or its parent's. A live `w` or `h` places it at `at` (0, 0 when left out), out of the flow, and needs the other in points. */
 type Size = { w?: number | "full"; h?: number | "full" } | { w: Num; h: Num };
+/**
+ * Placed in the plane around it, out of the flow, in its units at any depth: `[x, y]` a mark,
+ * its `w` and `h` points centred there; `[x, y, w, h]` a box, sized by its place. Outside a plane it is a problem.
+ */
+type Placed = ({ place?: undefined } & Size) | { place: [x: Num, y: Num]; w?: Num; h?: Num } | { place: [x: Num, y: Num, w: Num, h: Num]; w?: never; h?: never };
 
-export type BoxProps = Interactive & Size & {
+export type BoxProps = Interactive & Placed & {
   key?: string;
   label?: string;
   role?: Role;
   grow?: number;
-  pad?: Space;
-  px?: Space;
-  py?: Space;
+  /** Steps of the spacing scale on every side, or `[across, down]`. */
+  pad?: Space | [x: Space, y: Space];
   gap?: Space;
   /** Where its children sit across: stretched to fill it when left out. */
   align?: "start" | "center" | "end";
   justify?: "center" | "between" | "end";
   /** Placed at [left, top] points in its parent, out of the flow. */
   at?: [Num, Num];
-  /** Placed in the plane around it, out of the flow. Outside a plane it is a problem. */
-  place?: Place;
   /** Gives it units of its own, which `place` inside it uses. */
   plane?: Plane;
-  /** Pinned to its parent's edges: [left, top, right, bottom] points, `null` for free. */
-  inset?: [number | null, number | null, number | null, number | null];
+  /** Pinned to its parent's edges: [left, top, right, bottom] points, `null` for free. Placed: points in from the edges of its place, below 0 out. */
+  inset?: Inset;
   /** The most points tall it grows; past it, what does not fit is cut, or scrolls with `scroll`. */
   maxH?: number;
   clip?: boolean;
@@ -227,8 +227,8 @@ type Span = number | [from: number, to: number];
  * lines' length draws, end to end, such as the arc of a knob.
  */
 export type ShapesProps = { key?: string; at?: [Num, Num]; units?: [Span, Span]; lines?: Lines[]; rects?: Rects[]; opacity?: Num; trim?: [Num, Num] } & (
-  | { w: Num; h: Num; place?: [x: Num, y: Num] }
-  | { place: [x: Num, y: Num, w: Num, h: Num]; w?: never; h?: never }
+  | { w: Num; h: Num; place?: [x: Num, y: Num]; inset?: never }
+  | { place: [x: Num, y: Num, w: Num, h: Num]; w?: never; h?: never; inset?: Inset }
 );
 /** One line of text the composer types, such as a name or a value: Enter or a press elsewhere gives `onCommit` what it says, Escape gives it `null`. Inside a `menu` or `listbox` overlay, what it says picks the items shown by their labels. */
 export type FieldProps = {
@@ -713,7 +713,12 @@ function moved(path: Node[], p: Partial<Pointer> = {}): Partial<Pointer> {
     const step = drag.snap?.[axis];
     return !step || p.cmd ? d : Math.round((from(axis) + d) / step) * step - from(axis);
   };
-  const bounded = (d: number, along: Along | undefined) => (along === undefined ? 0 : along === true ? d : Math.min(Math.max(d, Math.min(...along)), Math.max(...along)));
+  const bounded = (d: number, along: Along | undefined) => {
+    if (along === undefined) return 0;
+    if (along === true) return d;
+    const [low, high] = along.every((end) => end !== null) ? [Math.min(...along), Math.max(...along)] : along;
+    return Math.min(Math.max(d, low ?? -Infinity), high ?? Infinity);
+  };
   return { ...p, dx: bounded(snapped(p.dx ?? 0, 0), drag.x), dy: bounded(snapped(p.dy ?? 0, 1), drag.y) };
 }
 

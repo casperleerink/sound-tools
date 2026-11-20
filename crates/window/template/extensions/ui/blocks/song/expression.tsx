@@ -34,7 +34,7 @@ export const ExpressionLane = ({ roll, lane }: { roll: Roll; lane: PointLane }) 
         );
       })}
       {points.length === 0 && (
-        <row place={[0, 0, roll.end, 1]} px={3} align="center" inert>
+        <row place={[0, 0, roll.end, 1]} pad={[3, 0]} align="center" inert>
           <text style="label" color="text-muted">Double-click to add a point</text>
         </row>
       )}
