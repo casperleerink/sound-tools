@@ -722,3 +722,56 @@ fn a_card_of_a_tool_that_hangs_is_left_out_next_start_and_the_generic_card_draws
     assert!(matches!(state.drawn(&synth), Some(Drawn::View { .. })));
     control(&controls::collect(&state).controls, "Mute Track 2");
 }
+
+/// A press that exports the notes of its timeline child, and keeps whether they were written.
+const EXPORTER: &str = r#"import { h, input, tool } from "./sdk";
+export const exporter = tool({
+  name: "exporter", title: "Exporter", when: "Never", doc: "Exports its clip.", state: {},
+  memory: () => ({ written: "nothing" }),
+  sound: () => input,
+  behaviour: () => ({ connections: [] }),
+  view: (_, { memory, exportNotes }) => (
+    <box key="export" w={120} h={20} label={`Written ${memory.written}`} onPress={async () => {
+      memory.written = String(await exportNotes("clip", { name: "Bass" }));
+    }} />
+  ),
+});
+"#;
+
+#[test]
+fn notes_code_exports_are_written_where_the_composer_says() {
+    let clip = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/template/state/song/t00/bass.json"
+    ))
+    .unwrap();
+    let files = [
+        ("extensions/exporter.tsx", EXPORTER),
+        (
+            "state/exporter/instance.json",
+            r#"{"tool": "exporter", "state": {}}"#,
+        ),
+        ("state/exporter/clip.json", clip.as_str()),
+    ];
+    let (scratch, mut window) = page(&files, "exporter");
+    act(
+        &mut window.state,
+        json!({ "label": "Written nothing", "action": "press" }),
+    );
+    polled(&mut window);
+    let (kind, options) = window.file_dialog().expect("a save dialog");
+    assert_eq!(
+        (kind, options.file_name.as_deref()),
+        (FileDialogKind::Save, Some("Bass.mid"))
+    );
+    let file = scratch.path().join("Bass.mid");
+    window.resolve_file_dialog(Some(file.clone())).unwrap();
+    polled(&mut window);
+    redraw(&mut window);
+    assert!(std::fs::read(&file).unwrap().starts_with(b"MThd"));
+    assert!(
+        labels(&window.state).contains(&"Written true".to_string()),
+        "{:?}",
+        labels(&window.state)
+    );
+}
