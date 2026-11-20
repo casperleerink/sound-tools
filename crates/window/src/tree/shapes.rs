@@ -125,7 +125,7 @@ impl Listed {
         // Placed, it is in the units of its place, as its vectors are.
         let [[left, right], down] = self.units.unwrap_or([[0.0, w], [0.0, h]]);
         let across = [from, to].map(|part| left + (right - left) * part);
-        let [width, height] = [w * per_x * (to - from), h * per_y];
+        let [width, height] = [w * per_x * (to - from), (h * per_y).abs()];
         Some(Seen {
             size: [Some(width), Some(height)],
             units: Some([across, down]),

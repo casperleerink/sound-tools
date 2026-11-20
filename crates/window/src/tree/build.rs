@@ -203,7 +203,7 @@ pub(super) fn build(scope: &Scope, node: &Node) -> El {
     }
 }
 
-fn holds_plane(scope: &Scope, node: &Node) -> bool {
+pub(super) fn holds_plane(scope: &Scope, node: &Node) -> bool {
     match node {
         Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
             b.plane.is_some() || b.children.iter().any(|child| holds_plane(scope, child))
@@ -333,7 +333,7 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
     };
     e = semantics(&here, e, b, key.as_deref());
     if let Some((spec, key)) = plane {
-        return plane::plane(&here, e, b, key, spec);
+        return plane::plane(&here, e, b, (key, spec), scope.plane.as_deref());
     }
     let inside = Scope {
         in_control: scope.in_control || delegates_enter(b),

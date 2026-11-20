@@ -14,7 +14,7 @@ use sound_typescript::live::Num;
 use crate::app::State;
 use crate::lives::Shows;
 
-use super::build::{build, is_overlay};
+use super::build::{build, holds_plane, is_overlay};
 use super::{AxisSpec, BoxNode, Node, Place, PlaneSpec, Scope};
 
 /// The cameras of the planes, kept by key across the views' runs, and what is built in them.
@@ -84,8 +84,9 @@ enum Axis {
     Points,
     Scale(f32),
     Range(f32, f32),
-    /// The plane with this key in the window, whose camera it shares on this axis.
-    Shared(String),
+    /// The plane with this key in the window, whose camera it shares on this axis; placed in
+    /// that plane, where it starts in its units, as it moves with it already.
+    Shared(String, Option<f32>),
 }
 
 /// What a plane's content is built for: the points per unit its elements are built at, and the
@@ -175,7 +176,13 @@ impl Planes {
     ) -> [f32; 4] {
         let [ox, oy] = parent.unwrap_or_default();
         match *place {
-            [x, y, w, h] => [(x - ox) * px, (y - oy) * py, w * px, h * py],
+            [x, y, w, h] => {
+                // An axis that runs backwards, such as a range [1, 0] down, has fewer points
+                // per unit than none: the place reaches back from its start.
+                let along = |at: f32, long: f32| [at.min(at + long), long.abs()];
+                let ([x, w], [y, h]) = (along((x - ox) * px, w * px), along((y - oy) * py, h * py));
+                [x, y, w, h]
+            }
             [x, y] => {
                 let [w, h] = size.map(Option::unwrap_or_default);
                 [(x - ox) * px - w / 2.0, (y - oy) * py - h / 2.0, w, h]
@@ -186,21 +193,27 @@ impl Planes {
 
     /// Takes the plane `key` as its view now gives it, keeping where it is.
     /// `given` is its size in points where its view says it, which layout confirms later.
+    /// `within` is the plane it is placed in and where it starts there.
     fn ensure(
         &self,
         key: &str,
         (spec, instance): (&PlaneSpec, &InstanceId),
         prefix: &str,
         given: [Option<f32>; 2],
+        within: Option<(&str, [f32; 2])>,
     ) {
-        let axis = |spec: &Option<AxisSpec>| match spec {
+        let axis = |spec: &Option<AxisSpec>, i: usize| match spec {
             None => Axis::Points,
             Some(AxisSpec::Scale(scale)) => Axis::Scale(scale.max(f32::EPSILON)),
             Some(AxisSpec::Range([from, to])) if to != from => Axis::Range(*from, *to),
             Some(AxisSpec::Range(_)) => Axis::Points,
-            Some(AxisSpec::Shared(key)) => Axis::Shared(format!("{prefix}{key}")),
+            Some(AxisSpec::Shared(key)) => {
+                let leader = format!("{prefix}{key}");
+                let starts = within.filter(|(outer, _)| *outer == leader);
+                Axis::Shared(leader, starts.map(|(_, start)| start[i]))
+            }
         };
-        let axes = [axis(&spec.x), axis(&spec.y)];
+        let axes = [axis(&spec.x, 0), axis(&spec.y, 1)];
         let mut cameras = self.cameras.borrow_mut();
         let camera = cameras.entry(key.to_string()).or_insert_with(|| Camera {
             axes: axes.clone(),
@@ -446,9 +459,9 @@ impl Planes {
             camera.offset.set([-at[0] * per[0], -at[1] * per[1]]);
             let size = camera.size;
             for i in 0..2 {
-                let shared = matches!(camera.axes[i], Axis::Shared(_));
+                let shared = matches!(camera.axes[i], Axis::Shared(..));
                 let (low, high) = bounds(&cameras, key, i);
-                let view = size[i] / per[i];
+                let view = (size[i] / per[i]).abs();
                 let whole = high - low + view;
                 let thumb = match shared || high - low <= f32::EPSILON || whole <= 0.0 {
                     true => [0.0; 4],
@@ -478,8 +491,9 @@ impl Planes {
             let now = [per(&cameras, key, 0, 0), per(&cameras, key, 1, 0)];
             let size = laid(camera.size);
             let outside = (0..2).any(|i| {
-                let ([from, to], begins) = (built.range[i], at(&cameras, key, i, 0));
-                begins < from || begins + size[i] / now[i] > to
+                let begins = at(&cameras, key, i, 0);
+                let [low, high] = ordered([begins, begins + size[i] / now[i]]);
+                low < built.range[i][0] || high > built.range[i][1]
             });
             outside || (built.per != now && !zooming(&cameras, key))
         })
@@ -575,6 +589,13 @@ impl Camera {
     }
 }
 
+/// The plane `outer` the plane `b` is placed in, and where it starts there.
+fn within<'a>(scope: &Scope, outer: Option<&'a str>, b: &BoxNode) -> Option<(&'a str, [f32; 2])> {
+    let origin = b.place.as_ref()?.origin();
+    let start = origin.each_ref().map(|num| scope.state.lives.value(scope.state, scope.instance, num));
+    Some((outer?, start))
+}
+
 /// The size in points the view gives `b`, where it gives one.
 fn given(b: &BoxNode) -> [Option<f32>; 2] {
     let (w, h) = b.size();
@@ -586,7 +607,7 @@ fn owner<'a>(cameras: &'a HashMap<String, Camera>, key: &'a str, i: usize) -> Op
     let mut key = key;
     for _ in 0..8 {
         match &cameras.get(key)?.axes[i] {
-            Axis::Shared(leader) => key = leader,
+            Axis::Shared(leader, _) => key = leader,
             _ => return Some(key),
         }
     }
@@ -602,8 +623,8 @@ fn per(cameras: &HashMap<String, Camera>, key: &str, i: usize, depth: u8) -> f32
     match &camera.axes[i] {
         Axis::Points => 1.0,
         Axis::Scale(scale) => scale * zoom,
-        Axis::Range(from, to) => laid(camera.size)[i] / (to - from).abs() * zoom,
-        Axis::Shared(leader) => per(cameras, leader, i, depth + 1),
+        Axis::Range(from, to) => laid(camera.size)[i] / (to - from) * zoom,
+        Axis::Shared(leader, _) => per(cameras, leader, i, depth + 1),
     }
 }
 
@@ -613,7 +634,8 @@ fn at(cameras: &HashMap<String, Camera>, key: &str, i: usize, depth: u8) -> f32 
         Some(Camera {
             axes, at: begins, ..
         }) => match &axes[i] {
-            Axis::Shared(leader) => at(cameras, leader, i, depth + 1),
+            Axis::Shared(_, Some(start)) => *start,
+            Axis::Shared(leader, None) => at(cameras, leader, i, depth + 1),
             _ => begins[i],
         },
         None => 0.0,
@@ -625,6 +647,8 @@ fn at(cameras: &HashMap<String, Camera>, key: &str, i: usize, depth: u8) -> f32 
 fn bounds(cameras: &HashMap<String, Camera>, key: &str, i: usize) -> (f32, f32) {
     let camera = &cameras[key];
     let view = laid(camera.size)[i] / per(cameras, key, i, 0);
+    // A range that runs backwards begins at its high end and shows down from there.
+    let (backwards, view) = (view < 0.0, view.abs());
     let (mut low, mut high) = match camera.axes[i] {
         Axis::Range(from, to) => (from.min(to), from.max(to)),
         _ => (0.0, 0.0),
@@ -635,7 +659,10 @@ fn bounds(cameras: &HashMap<String, Camera>, key: &str, i: usize) -> (f32, f32) 
     if matches!(camera.axes[i], Axis::Scale(_)) {
         high += view;
     }
-    (low, low.max(high - view))
+    match backwards {
+        true => (high.min(low + view), high),
+        false => (low, low.max(high - view)),
+    }
 }
 
 /// What the plane `key` builds now: the stretch it shows, at the points per unit it has, or
@@ -653,9 +680,13 @@ fn stretch(cameras: &HashMap<String, Camera>, key: &str) -> Stretch {
         range: std::array::from_fn(|i| {
             let long = size[i] / now[i];
             let from = (at(cameras, key, i, 0) / long).floor() * long;
-            [from, from + 2.0 * long]
+            ordered([from, from + 2.0 * long])
         }),
     }
+}
+
+fn ordered([a, b]: [f32; 2]) -> [f32; 2] {
+    [a.min(b), a.max(b)]
 }
 
 /// Whether the plane `key` zooms across now, and has not rested.
@@ -715,7 +746,7 @@ impl Scope<'_> {
                 let per =
                     (self.plane.as_deref()).map_or([1.0; 2], |plane| self.state.planes.per(plane));
                 let [w, h] = [size.0, size.1].map(|size| size.map_or(0.0, value));
-                let [w, h] = [w / per[0], h / per[1]];
+                let [w, h] = [w / per[0].abs(), h / per[1].abs()];
                 [value(x) - w / 2.0, value(y) - h / 2.0, w, h]
             }
         }
@@ -735,11 +766,19 @@ impl Scope<'_> {
 
 /// The box `b`, a plane keyed `key` in the window, as `e`: what is placed in it moves with its
 /// camera, and only what shows, and a stretch about it, is built.
-pub(super) fn plane(scope: &Scope, e: El, b: &BoxNode, key: &str, spec: &PlaneSpec) -> El {
+/// `outer` is the plane it is in.
+pub(super) fn plane(
+    scope: &Scope,
+    e: El,
+    b: &BoxNode,
+    (key, spec): (&str, &PlaneSpec),
+    outer: Option<&str>,
+) -> El {
     let planes = &scope.state.planes;
     #[cfg(test)]
     planes.builds.set(planes.builds.get() + 1);
-    planes.ensure(key, (spec, scope.instance), scope.prefix, given(b));
+    let within = within(scope, outer, b);
+    planes.ensure(key, (spec, scope.instance), scope.prefix, given(b), within);
     planes
         .found
         .borrow_mut()
@@ -854,7 +893,7 @@ impl Planes {
         };
         let (low, high) = bounds(&cameras, key, i);
         let size = laid(camera.size)[i];
-        (high - low + size / per(&cameras, key, i, 0)) / size
+        (high - low + (size / per(&cameras, key, i, 0)).abs()) / size
     }
 
     /// A key while the plane `key` has the keys: Page and Home keys scroll it, Cmd-= and Cmd--
@@ -908,17 +947,18 @@ impl Planes {
     pub(crate) fn discover(&self, state: &State) {
         for id in &state.shown {
             if let Some(root) = state.root(id) {
-                self.find(state, id, &state.prefix_of(id), &root);
+                self.find(state, id, &state.prefix_of(id), &root, None);
             }
         }
     }
 
-    fn find(&self, state: &State, id: &InstanceId, prefix: &str, node: &Node) {
+    fn find(&self, state: &State, id: &InstanceId, prefix: &str, node: &Node, outer: Option<&str>) {
         match node {
             Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
-                if let (Some(spec), Some(key)) = (&b.plane, &b.key) {
-                    let key = format!("{prefix}{key}");
-                    self.ensure(&key, (spec, id), prefix, given(b));
+                let key = (b.plane.as_ref()).zip(b.key.as_ref().map(|key| format!("{prefix}{key}")));
+                if let Some((spec, key)) = &key {
+                    let within = within(&Scope::new(state, id, prefix), outer, b);
+                    self.ensure(key, (spec, id), prefix, given(b), within);
                     let scope = Scope {
                         plane: Some(key.clone()),
                         ..Scope::new(state, id, prefix)
@@ -927,17 +967,18 @@ impl Planes {
                     b.children
                         .iter()
                         .for_each(|child| span(&scope, child, &mut extent));
-                    if let Some(camera) = self.cameras.borrow_mut().get_mut(&key) {
+                    if let Some(camera) = self.cameras.borrow_mut().get_mut(key) {
                         camera.extent = extent;
                     }
                 }
+                let inner = key.as_ref().map_or(outer, |(_, key)| Some(key.as_str()));
                 for child in &b.children {
-                    self.find(state, id, prefix, child);
+                    self.find(state, id, prefix, child, inner);
                 }
             }
             Node::Memo { key } => {
                 if let Some((_, inner)) = state.memo_of(id, key) {
-                    self.find(state, id, prefix, &inner);
+                    self.find(state, id, prefix, &inner, outer);
                 }
             }
             _ => {}
@@ -1086,9 +1127,10 @@ fn gather(scope: &Scope, node: &Node, into: &mut Gathered) {
         rect,
         &mut planes.found.borrow_mut(),
     );
-    // Built again when its tree or the scale it is built at changes; one with a field each
-    // time, as what the field says and whether it has the keys are the window's.
-    if scope.state.shows_a_field() && holds_field(scope, node) {
+    // Built again when its tree or the scale it is built at changes; one with a field or a
+    // plane each time, as what the field says and whether it has the keys are the window's, and
+    // what a plane shows.
+    if (scope.state.shows_a_field() && holds_field(scope, node)) || holds_plane(scope, node) {
         into.placed.push(build(scope, node));
         return;
     }

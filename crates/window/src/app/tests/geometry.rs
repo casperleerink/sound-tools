@@ -644,3 +644,51 @@ fn a_plane_a_memo_kept_builds_again_as_it_zooms() {
     let at = |key: &str| window.presented(key).unwrap().0[0];
     assert_eq!(at("t00/chain/kept:bar-2") - at(ruler), 768.0);
 }
+
+/// A lane placed in a song plane: its time is the song's, its value runs up from 0 to 1.
+const NESTED: &str = r#"import { h, input, tool } from "./sdk";
+export const nested = tool({
+  name: "nested", title: "Nested", when: "Never", doc: "A plane in a plane.", state: {}, sound: () => input,
+  view: () => (
+    <col w={400}>
+      <box key="song" label="Song" w={400} h={200} plane={{ x: 0.1, y: 1 }}>
+        <box key="lane" label="Lane" place={[1000, 100, 2000, 50]} plane={{ x: "song", y: [1, 0] }}>
+          <box key="point" label="Point" place={[2000, 0.75]} w={6} h={6} />
+          <box key="high" label="High" place={[1000, 0.5, 500, 0.5]} />
+        </box>
+      </box>
+    </col>
+  ),
+});
+"#;
+
+#[test]
+fn a_plane_placed_in_the_plane_whose_time_it_shares_starts_where_it_is_placed_and_a_range_runs_up() {
+    let (_scratch, folder) = with_tools(&[("nested", NESTED)]);
+    let mut window = laid_out(opened(&folder));
+    redraw(&mut window);
+    let at = |window: &rune::Runtime<State>, key: &str| {
+        let key = format!("t00/chain/nested:{key}");
+        window.presented(&key).unwrap_or_else(|| panic!("no {key}")).0
+    };
+    let lane = at(&window, "lane");
+    assert_eq!(lane[2..], [200.0, 50.0]);
+    let middle = |rect: [f32; 4]| [rect[0] + rect[2] / 2.0 - lane[0], rect[1] + rect[3] / 2.0 - lane[1]];
+    // Tick 2000 of the song is 100 points into a lane that starts at its tick 1000; 0.75 is a
+    // quarter of the way down, and 0.5 to 1 the top half.
+    assert_eq!(middle(at(&window, "point")), [100.0, 12.5]);
+    assert_eq!(at(&window, "high")[..2], [lane[0], lane[1]]);
+    assert_eq!(at(&window, "high")[2..], [50.0, 25.0]);
+    // A scroll of the song moves the lane and what is in it once, together.
+    let song = at(&window, "song");
+    let shift = rune::Mods {
+        shift: true,
+        ..rune::Mods::default()
+    };
+    wheel(&mut window, [song[0] + 10.0, song[1] + 10.0], [0.0, -50.0], shift);
+    redraw(&mut window);
+    let moved = at(&window, "lane");
+    assert_eq!(moved[0], lane[0] - 50.0);
+    let middle = |rect: [f32; 4]| [rect[0] + rect[2] / 2.0 - moved[0], rect[1] + rect[3] / 2.0 - moved[1]];
+    assert_eq!(middle(at(&window, "point")), [100.0, 12.5]);
+}
