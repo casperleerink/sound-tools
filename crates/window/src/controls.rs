@@ -217,7 +217,10 @@ impl Step {
             return match self.action.as_str() {
                 "undo" => state.undo(),
                 "redo" => state.redo(),
-                other => bail!("{other} needs a control: give its label or key"),
+                other => match state.act_app(other, self.value.clone()) {
+                    Some(done) => done,
+                    None => bail!("{other} needs a control: give its label or key"),
+                },
             };
         }
         let found = collect(state).controls.into_iter().find(|control| {

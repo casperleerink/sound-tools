@@ -25,6 +25,7 @@ mod headless;
 mod keys;
 mod panel;
 mod problems;
+mod projects;
 
 use headless::copied;
 
@@ -113,6 +114,7 @@ pub(crate) struct State {
     pub(crate) panel: panel::LeftPanel,
     /// The list of the files that are not live is open.
     problems_open: bool,
+    pub(crate) shell: crate::shell::Projects,
 }
 
 impl State {
@@ -218,6 +220,11 @@ impl State {
                     .map(|support| runtime::app::left_panel_file(&support)),
             ),
             problems_open: false,
+            shell: crate::shell::Projects::new(
+                crate::shell::Projects::machine(),
+                headless,
+                Some(folder),
+            ),
             last: 0.0,
             _copy: copy,
         })

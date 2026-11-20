@@ -32,10 +32,7 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
             Some(drawn) => tree::view(state, main, "", drawn),
             None => el(),
         },
-        None => text("This project has no main tool.")
-            .font(theme.text("body"))
-            .color(theme.color("text-muted"))
-            .padding(theme.space(4)),
+        None => super::projects::empty(state),
     };
     let notice = (state.notice.iter()).map(|notice| {
         text(notice.clone())
@@ -69,7 +66,8 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
         .children(notice);
     let overlays = tree::overlays(state)
         .into_iter()
-        .chain(problems::list(state));
+        .chain(problems::list(state))
+        .chain(crate::shell::overlay(state, theme));
     rune_kit::root(base, overlays)
 }
 
@@ -136,6 +134,7 @@ pub(crate) enum Act {
     Tab(Tab),
     Problems,
     AskToFix,
+    Shell(crate::shell::Act),
 }
 
 impl Act {
@@ -150,6 +149,7 @@ impl Act {
                 state.problems_open = false;
                 state.ask_to_fix(None::<&mut Tx>);
             }
+            Act::Shell(act) => crate::shell::run(state, act, None, &mut Tx::default()),
         }
     }
 }
@@ -203,5 +203,6 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
             Act::AskToFix,
         ));
     }
+    controls.extend(super::projects::controls(state));
     controls
 }

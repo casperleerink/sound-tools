@@ -55,6 +55,9 @@ impl State {
         value: Option<Value>,
     ) -> Result<()> {
         match target {
+            Target::Chrome(super::chrome::Act::Shell(act)) => {
+                super::projects::run(self, *act, value)?;
+            }
             Target::Chrome(act) => act.run(self),
             Target::View(press) => {
                 let value = match action {

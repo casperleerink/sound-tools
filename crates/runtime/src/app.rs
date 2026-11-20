@@ -102,7 +102,7 @@ pub fn recent_projects() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-fn recent_projects_in(support: &Path) -> Vec<PathBuf> {
+pub fn recent_projects_in(support: &Path) -> Vec<PathBuf> {
     recent_folders(support)
         .filter(|folder| folder.is_dir())
         .collect()
@@ -158,7 +158,7 @@ pub fn remember_project(folder: &Path) -> Result<()> {
     remember_project_in(&support_folder()?, folder)
 }
 
-fn remember_project_in(support: &Path, folder: &Path) -> Result<()> {
+pub fn remember_project_in(support: &Path, folder: &Path) -> Result<()> {
     let folder = dunce::canonicalize(folder)
         .with_context(|| format!("{} is not there", folder.display()))?;
     let first = bytes_of_path(&folder)?;

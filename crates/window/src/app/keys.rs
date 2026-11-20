@@ -5,6 +5,9 @@ use rune::{Key, KeyEvent, Tx};
 use super::State;
 
 pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
+    if super::projects::key(state, key, tx) {
+        return true;
+    }
     if panel_key(state, key, false, tx) {
         state.handled();
         return true;

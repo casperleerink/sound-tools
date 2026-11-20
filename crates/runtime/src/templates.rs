@@ -318,7 +318,7 @@ fn is_empty_project(root: &Path, folder: &Path) -> Result<bool> {
 }
 
 /// Whether `folder` holds nothing but hidden files.
-pub(crate) fn is_empty(folder: &Path) -> Result<bool> {
+pub fn is_empty(folder: &Path) -> Result<bool> {
     let entries = std::fs::read_dir(folder)
         .with_context(|| format!("could not read {}", folder.display()))?;
     for entry in entries {
