@@ -1,6 +1,6 @@
 import { h, live, memo, type Color, type Num } from "../../../sdk";
 import { changeBars } from "../../../song/marks";
-import type { Mark } from "../../../song/model";
+import { repeatOf, type Mark } from "../../../song/model";
 import { barAt, barNear, barStarts, BAR, BEAT, beatRuns, SNAPS, type Runs } from "../../../song/time";
 import { ACROSS, GUTTER, HEAD, PLANE, RULER, ZOOM, type Page } from "../../../song/view";
 import { Select } from "../../select";
@@ -225,13 +225,11 @@ const Changes = ({ page }: RulerProps) => {
  * press turns it on or off, its body drags it, its ends stretch it, on beats: none is a step of undo.
  */
 const Repeat = ({ page }: RulerProps) => {
-  const { memory } = page.song;
-  const range = memory.repeatRange;
+  const { range, on } = repeatOf(page.song);
   if (!range) return null;
   const marks = page.edits.marks;
   const { from, to } = range;
   const [moving, starting, ending] = [live.drag("repeat"), live.drag("repeat-start"), live.drag("repeat-end")];
-  const on = memory.repeating;
   const band: Color = on ? "text" : "text-muted";
   const toggle = () => marks.toggleRepeat();
   const step = (part: "move" | "start" | "end") => ({ increment: (by: number) => marks.moveRepeat(part, { dx: by * BEAT }), decrement: (by: number) => marks.moveRepeat(part, { dx: -by * BEAT }), toggle });

@@ -4,7 +4,7 @@
 // too: a view that read the clock's would run again at every play and pause. The ruler's plane: x in ticks of the song.
 import type { Pointer, Section, TempoMap } from "../sdk";
 import { lengthAt } from "./clips";
-import { itemAt, type Mark, type Song } from "./model";
+import { itemAt, repeatOf, type Mark, type Song } from "./model";
 import { barNear, barStarts, BEAT, nearestOf, tickOfBar, type Runs } from "./time";
 
 /** What the marks are read from: the clock, or a test's copy of `project.json`. */
@@ -69,7 +69,7 @@ export const markEdits = (song: Song) => {
   const runs = () => clock.tempo_map.time_signatures;
   /** Repeats `range` or keeps it to show, off. */
   const repeat = (range: { from: number; to: number }, on: boolean) => {
-    [memory.repeatRange, memory.repeating] = [range, on];
+    memory.repeatRange = range;
     clock.setRepeat(on ? range : null);
   };
   const choose = (mark: Mark) => {
@@ -225,18 +225,19 @@ export const markEdits = (song: Song) => {
     },
     /** A click on the repeat's bar: it repeats, or plays on and keeps its range. */
     toggleRepeat(): boolean {
-      if (!memory.repeatRange) return false;
-      repeat(memory.repeatRange, !memory.repeating);
+      const { range, on } = repeatOf(song);
+      if (!range) return false;
+      repeat(range, !on);
       return true;
     },
     /** A drag of the repeat's bar by `dx` on beats: its body moves it, an end stretches it, at least a beat. */
     moveRepeat(part: "move" | "start" | "end", p: Pick<Pointer, "dx">) {
-      const range = memory.repeatRange;
+      const { range, on } = repeatOf(song);
       if (!range) return;
       const { from, to } = range;
       const moved = Math.max(from + p.dx, 0) - from;
       const [start, end] = part === "move" ? [from + moved, to + moved] : part === "start" ? [Math.min(Math.max(from + p.dx, 0), to - BEAT), to] : [from, Math.max(to + p.dx, from + BEAT)];
-      repeat({ from: start, to: end }, memory.repeating);
+      repeat({ from: start, to: end }, on);
     },
   };
   return edits;

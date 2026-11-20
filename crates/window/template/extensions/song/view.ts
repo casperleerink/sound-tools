@@ -9,7 +9,7 @@ import type { track } from "../track";
 import { control, type Bound } from "../ui/field";
 import { VOLUME } from "../ui/value";
 import { trackBelow } from "./clips";
-import { isRow, isStrip, lanesOf, ordered, rowOfKey, type fields, type Memory, type parts, type Song } from "./model";
+import { isRow, isStrip, lanesOf, ordered, repeatOf, rowOfKey, type fields, type Memory, type parts, type Song } from "./model";
 import { BAR } from "./time";
 
 /** The plane the ruler, the timeline and the lanes share across, and the heads down. */
@@ -115,8 +115,7 @@ function laidOut(self: Drawn<ValuesOf<typeof fields>, typeof parts>, song: Song)
     height: rows.reduce((sum, row) => sum + row.height, 0),
     /** How tall the returns and the master are under the heads, in points. */
     low: lowOf(returns.length, song.memory.returnsOpen),
-    // The range the ruler shows, not the clock's: a view that reads the clock runs again as it plays.
-    end: endOf(tracks, song.memory.repeatRange),
+    end: endOf(tracks, repeatOf(song).range),
   };
 }
 
