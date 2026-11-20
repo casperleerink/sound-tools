@@ -12,6 +12,7 @@ use sound_typescript::shortcuts::{self, Group, Held, Shortcuts};
 use crate::controls::{self, Target};
 
 use super::State;
+use super::projects::AppAction;
 
 /// The app's own group in the keymap.
 const APP: &str = "app";
@@ -66,6 +67,8 @@ fn app_group() -> Group {
                 "Play notes with the computer keys",
                 "cmd-k",
             ),
+            action("new-project", "New project", "cmd-n"),
+            action("open-project", "Open project", "cmd-o"),
         ],
     }
 }
@@ -204,8 +207,8 @@ impl State {
         }
     }
 
-    /// The app's action `action`.
-    fn app_action(&mut self, action: &str) {
+    /// The app's action `action` of the keymap.
+    fn app_key(&mut self, action: &str, tx: &mut Tx) {
         let done = match action {
             "undo" => self.undo(),
             "redo" => self.redo(),
@@ -215,6 +218,14 @@ impl State {
                 Ok(())
             }
             "computer-keys" => super::transport::Act::Keys.run(self, None),
+            "new-project" => {
+                self.app_action(AppAction::NewProject, tx);
+                Ok(())
+            }
+            "open-project" => {
+                self.app_action(AppAction::OpenProject, tx);
+                Ok(())
+            }
             _ => Ok(()),
         };
         // What refused is the session's notice already.
@@ -259,8 +270,8 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
     if state.typing_now() {
         return false;
     }
-    // A question of code keeps every key until it is answered: its own buttons take theirs.
-    if !state.waiting.asked.is_empty() {
+    // A dialog keeps every key until it closes: its own buttons take theirs.
+    if !state.waiting.asked.is_empty() || state.shell.dialog.is_some() {
         return true;
     }
     let Some(name) = name_of(&key.key) else {
@@ -287,7 +298,7 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
         .as_deref()
         .filter(|action| BEFORE_TOOLS.contains(action))
     {
-        state.app_action(action);
+        state.app_key(action, tx);
         return true;
     }
     let repeat = tx.key_repeat();
@@ -320,7 +331,7 @@ pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
     let Some(action) = app else {
         return false;
     };
-    state.app_action(&action);
+    state.app_key(&action, tx);
     true
 }
 

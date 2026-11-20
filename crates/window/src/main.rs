@@ -16,6 +16,7 @@ mod controls;
 mod fields;
 mod lives;
 mod plugin_windows;
+mod shell;
 mod theme;
 mod tree;
 
@@ -74,7 +75,10 @@ fn main() -> Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let words: Vec<&str> = arguments.iter().map(String::as_str).collect();
     match words.as_slice() {
-        [] => bail!(cli::USAGE),
+        [] => return no_folder(),
+        [first, ..] if HEADLESS.contains(first) => {
+            return shell::start::run(arguments.clone(), None);
+        }
         [first, ..] if first.starts_with('-') => {
             return cli::run(&words).unwrap_or_else(|| bail!(cli::USAGE));
         }
@@ -83,11 +87,27 @@ fn main() -> Result<()> {
         }
         _ => {}
     }
-    window(&arguments)
+    window(&arguments, false)
 }
 
-/// The window, or a run of it without one.
-fn window(arguments: &[String]) -> Result<()> {
+/// No folder, as a double click starts the app: the last project, else the start state.
+fn no_folder() -> Result<()> {
+    match runtime::app::last_project() {
+        Some(last) => window(&[last.to_string_lossy().into_owned()], true),
+        None if installs_an_update() => Ok(()),
+        None => shell::start::run(Vec::new(), None),
+    }
+}
+
+/// Starts the log, then a downloaded update, which starts the app again: whether it did.
+fn installs_an_update() -> bool {
+    runtime::log_file::start();
+    runtime::update::start_pending_update()
+}
+
+/// The window, or a run of it without one. `last`: the folder is the last project, and the
+/// start state says why when it does not open.
+fn window(arguments: &[String], last: bool) -> Result<()> {
     let mut rest = arguments.iter();
     let folder = PathBuf::from(rest.next().context("give a project folder")?);
     let (mut play, mut act, mut main, mut rune_arguments) = (None, None, None, vec![]);
@@ -126,11 +146,8 @@ fn window(arguments: &[String]) -> Result<()> {
         bail!(cli::USAGE);
     }
     // The log first, so a failed update is in it.
-    if !headless {
-        runtime::log_file::start();
-        if runtime::update::start_pending_update() {
-            return Ok(());
-        }
+    if !headless && installs_an_update() {
+        return Ok(());
     }
     if let (Some(seconds), false) = (
         play,
@@ -145,14 +162,21 @@ fn window(arguments: &[String]) -> Result<()> {
         .map(PathBuf::from);
     runtime::use_library();
     let state = app::State::open(app::Options {
-        folder,
+        folder: folder.clone(),
         headless,
         play,
         main: main
             .map(|main| sound_core::InstanceId::new(&main))
             .transpose()?,
         act: act.map(|path| controls::read_steps(&path)).transpose()?,
-    })?;
+    });
+    let state = match state {
+        Err(error) if last => {
+            let message = shell::start::did_not_open(&folder, &error);
+            return shell::start::run(Vec::new(), Some(message));
+        }
+        state => state?,
+    };
     // The window is named after its project; Rune keeps the title for as long as the app runs.
     let title: &'static str = Box::leak(state.name.clone().into_boxed_str());
     let spec = rune::AppSpec {
@@ -183,6 +207,9 @@ fn window(arguments: &[String]) -> Result<()> {
         .on_focus(app::on_focus)
         .init(move || state)
         .run();
+    if shell::starts_again() {
+        runtime::app::start_again()?;
+    }
     if let Some(failed) = app::FAILED
         .lock()
         .unwrap_or_else(PoisonError::into_inner)

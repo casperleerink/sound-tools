@@ -36,6 +36,7 @@ mod panel;
 )]
 mod plays;
 mod problems;
+mod projects;
 mod transport;
 
 use headless::copied;
@@ -143,6 +144,7 @@ pub(crate) struct State {
         expect(dead_code, reason = "the drag calls it once it plays numbers")
     )]
     pub(crate) plays: Option<plays::Playing>,
+    pub(crate) shell: crate::shell::Projects,
 }
 
 impl State {
@@ -272,6 +274,11 @@ impl State {
             problems_open: false,
             transport: transport::Transport::new(output),
             plays: None,
+            shell: crate::shell::Projects::new(
+                crate::shell::Projects::machine(),
+                headless,
+                Some(folder),
+            ),
             last: 0.0,
             _copy: copy,
             icons: tree::Icons::default(),

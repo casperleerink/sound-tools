@@ -35,10 +35,7 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
             Some(drawn) => tree::view(state, main, "", drawn),
             None => el(),
         },
-        None => text("This project has no main tool.")
-            .font(theme.text("body"))
-            .color(theme.color("text-muted"))
-            .padding(theme.space(4)),
+        None => super::projects::empty(state),
     };
     cx.focus_ring(2.0, 2.0, theme.color("focus"));
     cx.help_look(TooltipStyle::from_kit(&theme.kit, TooltipAppearance::Compact).help_look());
@@ -66,7 +63,8 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
     let overlays = tree::overlays(state)
         .into_iter()
         .chain(problems::list(state))
-        .chain(super::dialog::view(state));
+        .chain(super::dialog::view(state))
+        .chain(crate::shell::overlay(state, theme));
     // On the root, which hears the key ups when nothing has the focus.
     rune_kit::root(base, overlays).on_key_up(super::keys::on_key_up)
 }
@@ -105,6 +103,7 @@ pub(crate) enum Act {
     Tab(Tab),
     Problems,
     AskToFix,
+    Shell(crate::shell::Act),
 }
 
 impl Act {
@@ -121,6 +120,7 @@ impl Act {
                 state.problems_open = false;
                 state.ask_to_fix(None::<&mut Tx>);
             }
+            Act::Shell(act) => crate::shell::run(state, act, None, &mut Tx::default()),
         }
         Ok(())
     }
@@ -166,5 +166,6 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
         ));
     }
     controls.extend(notices::controls(state));
+    controls.extend(super::projects::controls(state));
     controls
 }
