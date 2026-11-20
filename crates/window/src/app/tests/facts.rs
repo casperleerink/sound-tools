@@ -31,6 +31,7 @@ fn values(field: &Value, record: &Value, at: &str) -> Vec<String> {
 fn the_generic_card_of_every_built_in_device_has_a_control_for_each_value_of_its_record() {
     let scratch = new_project();
     let folder = scratch.path().join("song");
+    without_cards(&folder);
     let chain = folder.join("state/song/t00/chain");
     let tools: Vec<String> = (sound_typescript::devices::built_in().into_iter())
         .map(|offer| offer.key)

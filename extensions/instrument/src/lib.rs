@@ -196,9 +196,44 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<SynthState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Synth::AUTOMATION.parameters());
+        .schema(Synth::AUTOMATION.parameters())
+        .feed(
+            "envelope",
+            "Its envelope as a card draws it, at each of `points` places (157 unless the binding says), evenly from 0 to 3.36 unless the binding shows another range: the level of a held note, 0 to 1. The attack, the decay and the release each take as much across as their knob has turned, from 0 to 1, one after the other; the note holds for 0.36 between the decay and the release.",
+            |state, context| context.curve([0.0, f64::from(3.0 + ENVELOPE_HOLD)], 157, |x| envelope_at(state, x)),
+        );
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
+}
+
+/// How long a held note is drawn at the sustain level, in the travel of a time knob.
+pub const ENVELOPE_HOLD: f32 = 0.36;
+
+/// The level of a held note at `x` across the drawing of its envelope, see the `envelope` feed:
+/// each time takes the travel of its knob, so a handle at a corner moves as its knob turns. The
+/// synth's stages are straight lines.
+pub fn envelope_at(state: &SynthState, x: f32) -> f32 {
+    let travel = |time: &Parameter, seconds| time.scale.position(time.min, time.max, seconds);
+    let peak = travel(&ATTACK, state.attack_seconds);
+    let decayed = peak + travel(&DECAY, state.decay_seconds);
+    let held = decayed + ENVELOPE_HOLD;
+    let released = held + travel(&RELEASE, state.release_seconds);
+    let part = |from: f32, to: f32| {
+        if to > from {
+            (x - from) / (to - from)
+        } else {
+            1.0
+        }
+    };
+    let sustain = state.sustain;
+    match x {
+        x if x < 0.0 => 0.0,
+        x if x < peak => part(0.0, peak),
+        x if x < decayed => 1.0 + (sustain - 1.0) * part(peak, decayed),
+        x if x < held => sustain,
+        x if x < released => sustain * (1.0 - part(held, released)),
+        _ => 0.0,
+    }
 }
 
 /// Runs for every valid state, from every source. The processor is kept between runs, so held
@@ -217,6 +252,48 @@ mod tests {
     use sound_core::testing::check_parameter_ranges;
 
     use super::*;
+
+    /// The handles of the card sit at the corners: the peak where the attack's knob has turned,
+    /// the sustain level after the decay, held, then silence after the release.
+    #[test]
+    fn the_envelope_has_its_corners_where_the_knobs_of_its_times_have_turned() {
+        let state = SynthState {
+            attack_seconds: 0.1,
+            decay_seconds: 1.0,
+            sustain: 0.4,
+            release_seconds: 0.01,
+            ..SynthState::default()
+        };
+        let travel = |time: &Parameter, seconds| time.scale.position(time.min, time.max, seconds);
+        let peak = travel(&ATTACK, 0.1);
+        let decayed = peak + travel(&DECAY, 1.0);
+        let released = decayed + ENVELOPE_HOLD + travel(&RELEASE, 0.01);
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        assert!(
+            near(peak, 0.5),
+            "a tenth of a second is half way on 1 ms to 10 s: {peak}"
+        );
+        assert!(near(envelope_at(&state, peak), 1.0));
+        assert!(
+            near(envelope_at(&state, peak / 2.0), 0.5),
+            "the attack is straight"
+        );
+        assert!(near(
+            envelope_at(&state, decayed + ENVELOPE_HOLD / 2.0),
+            0.4
+        ));
+        assert!(envelope_at(&state, released - 1e-3) < 0.01);
+        assert_eq!(envelope_at(&state, released + 1e-3), 0.0);
+        let longer = SynthState {
+            attack_seconds: 1.0,
+            ..state
+        };
+        assert!(near(envelope_at(&longer, travel(&ATTACK, 1.0)), 1.0));
+        assert!(
+            envelope_at(&longer, peak) < 0.7,
+            "a longer attack rises later"
+        );
+    }
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {
