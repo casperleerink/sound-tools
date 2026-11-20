@@ -60,12 +60,6 @@ const differs = (page: (typeof PAGES)[number], state: State, initial: State) => 
   }
 };
 
-/**
- * `osc_1.position` as `live.field` reads a number of a group of the tool's own record: it takes
- * `osc_1.` for a child named `osc_1`, so the drawing would show 0. A lane of it does not show here.
- */
-const own = <B extends Bound>(bound: B): B => (bound.path ? { ...bound, path: bound.path.replace(/^([^.[]+)\.([^.[]+)$/, "$1[$2]") } : bound);
-
 /** Columns of two cells, as given: tops first, then bottoms, as the card lays one width out. */
 const stacked = (columns: [Node, Node?][]): Node[] => [...columns.map(([top]) => top), ...columns.flatMap(([, bottom]) => (bottom ? [bottom] : []))];
 
@@ -100,7 +94,7 @@ export const card: Card<"wavetable"> = (self, ctx) => {
     return (
       <Display strip={<Select {...tables} options={options} w={140} menuW={200} />}>
         <shapes at={[0, 0]} w={w} h={tall} units={[[0, 1], [1, 0]]} rects={[{ color: "text/24", rects: live.feed(`frames${suffix}`) }, { color: "text", rects: live.feed(`frame${suffix}`) }]} />
-        <Area axis={own(position)} w={w} h={tall} />
+        <Area axis={position} w={w} h={tall} />
       </Display>
     );
   };
@@ -136,7 +130,7 @@ export const card: Card<"wavetable"> = (self, ctx) => {
     const [cutoff, resonance] = [number(`${path}.cutoff_hz`, "Cutoff", name), number(`${path}.resonance`, "Resonance", name)];
     return (
       <Handle id={`${path}-handle`} label={`${field.title} ${name} cutoff and resonance`} w={w} h={tall} number={String(n)} chosen={n === 1} dimmed={!(state[path as Group] as { on: boolean }).on}
-        x={own(cutoff)} y={{ ...own(resonance), travel: RESONANCE_TRAVEL }}
+        x={cutoff} y={{ ...resonance, travel: RESONANCE_TRAVEL }}
         onChange={(hz, amount) => field.change(`Change ${name} cutoff and resonance`, { [`${path}.cutoff_hz`]: hz, [`${path}.resonance`]: amount })} />
     );
   };
@@ -179,10 +173,10 @@ export const card: Card<"wavetable"> = (self, ctx) => {
       page("Env", [
         <Display strip={<Choice id="envelope-shown" label={`${field.title} envelope shown`} options={ENVELOPES.map(([, text], value) => ({ value, text }))} value={Number(memory.envelope ?? 0)} onChange={(to) => (memory.envelope = to)} />}>
           <Curve heights={live.feed(`envelope_${Number(memory.envelope ?? 0) + 1}` as "envelope_1")} w={w} h={tall} across={[LEFT, RIGHT]} range={LEVEL} />
-          <Handle id="attack" label={`${field.title} ${envelopeName} attack point`} w={w} h={tall} x={{ ...own(attack), travel: stage(attack, 0) }} y={top} />
-          <Handle id="decay" label={`${field.title} ${envelopeName} decay and sustain`} w={w} h={tall} x={{ ...own(decay), travel: stage(decay, peak) }} y={{ ...own(sustain), travel: { min: LEVEL[1], max: LEVEL[0] } }}
+          <Handle id="attack" label={`${field.title} ${envelopeName} attack point`} w={w} h={tall} x={{ ...attack, travel: stage(attack, 0) }} y={top} />
+          <Handle id="decay" label={`${field.title} ${envelopeName} decay and sustain`} w={w} h={tall} x={{ ...decay, travel: stage(decay, peak) }} y={{ ...sustain, travel: { min: LEVEL[1], max: LEVEL[0] } }}
             onChange={(seconds, level) => field.change(`Change ${envelopeName} decay and sustain`, { [`${envelope}.decay_seconds`]: seconds, [`${envelope}.sustain`]: level })} />
-          <Handle id="release" label={`${field.title} ${envelopeName} release point`} w={w} h={tall} x={{ ...own(release), travel: stage(release, held) }} y={bottom} />
+          <Handle id="release" label={`${field.title} ${envelopeName} release point`} w={w} h={tall} x={{ ...release, travel: stage(release, held) }} y={bottom} />
         </Display>,
         ...stacked([
           [<Knob {...attack} unit="seconds" />, <Knob {...number(`${envelope}.attack_curve`, "Curve", `${envelopeName} attack`)} unit="percent" />],

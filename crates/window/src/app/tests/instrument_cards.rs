@@ -166,3 +166,16 @@ fn the_samplers_download_button_starts_its_download() {
     );
     assert!(drawn(&window.state).contains("Try again"));
 }
+
+/// A number of a group of the record, `osc_1.position`, shows what the record holds on its
+/// knob: no child is named `osc_1`.
+#[test]
+fn a_knob_of_a_number_in_a_group_shows_its_record() {
+    let record = json!({ "tool": "wavetable", "state": { "osc_1": { "position": 0.35 } } });
+    let (_scratch, mut window) = with_instrument(record);
+    wait(&mut window, 1.0 / 60.0);
+    let texts: Vec<String> = (window.state.lives.texts().into_iter())
+        .map(|(_, text)| text)
+        .collect();
+    assert!(texts.iter().any(|text| text == "35%"), "{texts:?}");
+}

@@ -1304,13 +1304,14 @@ impl Tools {
         name: &str,
         tick: Ticks,
     ) -> f64 {
-        let id = match child {
-            Some(path) => instance.child(path).ok(),
-            None => Some(instance.clone()),
+        // `osc_1.position` names a child `osc_1` when there is one, else a group of the record.
+        let child = child.and_then(|path| instance.child(path).ok().map(|id| (path, id)));
+        let (id, name) = match child {
+            Some((_, id)) if project.tool_of(&id).is_some() => (id, name.to_string()),
+            Some((path, _)) => (instance.clone(), format!("{path}.{name}")),
+            None => (instance.clone(), name.to_string()),
         };
-        let Some(id) = id else {
-            return 0.0;
-        };
+        let name = name.as_str();
         let at = crate::feeds::Moment::at(tick);
         if let Some((value, _)) = crate::feeds::lane_value(project, &id, name, at) {
             return f64::from(value);
