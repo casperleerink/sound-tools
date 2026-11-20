@@ -1,4 +1,4 @@
-import { h, input, Live, tool, type Child } from "./sdk";
+import { h, input, live, Live, tool, type Child } from "./sdk";
 import { Button } from "./ui/button";
 import { Cell } from "./ui/cell";
 import { Display, displayWidth, DISPLAY_HEIGHT } from "./ui/display";
@@ -151,6 +151,7 @@ export const gallery = tool({
                 <Notice text="Exported to the folder." />
                 <Notice text="This project does not load plugins." tone="warning" />
                 <Notice text="The file could not be read." tone="danger" />
+                <Take />
               </col>
             </Section>
             <Section title="Pads">
@@ -226,4 +227,15 @@ const Curve = () => {
   const y = (x: number) => tall * 0.35 + Math.max(0, x - w * 0.55) ** 2 / 90;
   for (let x = 0; x < w; x += 4) points.push(x, y(x), x + 4, y(x + 4));
   return <shapes at={[0, 0]} w={w} h={tall} lines={[{ color: "text", width: 1.5, points, fill: "text/5" }]} />;
+};
+
+/** A take as it records: its wave grows with the time, filled below, and runs no view. */
+const Take = () => {
+  const points: number[] = [];
+  for (let x = 0; x < 32; x += 1) points.push(x, 0.5 - 0.4 * Math.sin(x * 0.9) * Math.sin(x * 0.17), x + 1, 0.5 - 0.4 * Math.sin((x + 1) * 0.9) * Math.sin((x + 1) * 0.17));
+  return (
+    <box w={200} h={24} radius="sm" fill="well" clip>
+      <shapes w={live.elapsed.times(80).min(200)} h={24} units={[32, 1]} lines={[{ color: "sound", width: 1.5, points, fill: "sound/24" }]} />
+    </box>
+  );
 };

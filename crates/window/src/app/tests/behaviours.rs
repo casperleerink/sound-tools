@@ -318,17 +318,19 @@ fn home_and_end_take_a_knob_to_its_least_and_most_and_the_ring_shows_only_for_ke
         serde_json::from_str::<Value>(&state.project.state_json(&id).unwrap()).unwrap()["gain"]
             .clone()
     };
-    let ring = |window: &rune::Runtime<State>| {
-        let elements = window.elements().into_iter();
-        elements.filter(|element| element.focus_visible).count()
-    };
     let knob = "t00/chain/amp:gain";
     click(&mut window, knob);
     assert_eq!(focused(&window).as_deref(), Some(knob));
-    assert_eq!(ring(&window), 0);
+    assert_eq!(rings(&window), 0);
     key(&mut window, rune::Key::End);
     assert_eq!(gain(&window.state), 1.0);
-    assert_eq!(ring(&window), 1);
+    assert_eq!(rings(&window), 1);
     key(&mut window, rune::Key::Home);
     assert_eq!(gain(&window.state), 0.0);
+}
+
+/// How many elements show the ring of the keys.
+fn rings(window: &rune::Runtime<State>) -> usize {
+    let elements = window.elements().into_iter();
+    elements.filter(|element| element.focus_visible).count()
 }

@@ -29,6 +29,8 @@ pub(super) fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>
         return e;
     };
     e = tracked(scope, e, key);
+    // Rune leaves the ring off the controls of a list, a grid or a menu; ours keep it.
+    e = e.focus_ring(2.0, 2.0, scope.state.theme.color("focus"));
     let (instance, element, key) = (scope.instance.clone(), element.clone(), key.to_string());
     if b.enter {
         let (instance, element, key) = (instance.clone(), element.clone(), key.clone());
