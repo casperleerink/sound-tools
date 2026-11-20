@@ -1353,3 +1353,31 @@ export const cut = tool({
     }
     assert_eq!(shown(&window, "Short"), 1);
 }
+
+/// A newer template changes code the project changed too: the window says so, and the
+/// project's code stays as it is.
+#[test]
+#[ignore = "missing: no notice of a newer template for changed code (shell-fix, app/notices.rs)"]
+fn a_newer_template_for_code_the_project_changed_shows_a_notice() {
+    let scratch = new_project();
+    let folder = scratch.path().join("song");
+    // As an older release kept it, and the project changed it since.
+    let song = "extensions/song.tsx";
+    std::fs::write(
+        folder.join(runtime::templates::KEPT).join(song),
+        "// an older template",
+    )
+    .unwrap();
+    let ours = std::fs::read_to_string(folder.join(song)).unwrap() + "\n// ours\n";
+    std::fs::write(folder.join(song), &ours).unwrap();
+    let state = opened(&folder);
+    let controls = controls::collect(&state).controls;
+    let texts: Vec<String> = controls.into_iter().map(|control| control.label).collect();
+    let texts = texts.join(", ");
+    let notice = state.session.notice().unwrap_or_default().to_string();
+    assert!(
+        notice.contains("template") || texts.contains("template"),
+        "{notice} {texts}"
+    );
+    assert_eq!(std::fs::read_to_string(folder.join(song)).unwrap(), ours);
+}
