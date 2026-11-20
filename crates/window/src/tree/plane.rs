@@ -1052,7 +1052,7 @@ fn gather(scope: &Scope, node: &Node, into: &mut Gathered) {
     );
     // Built again when its tree or the zoom changes; one with a field each time, as what the
     // field says and whether it has the keys are the window's.
-    if holds_field(scope, node) {
+    if scope.state.shows_a_field() && holds_field(scope, node) {
         into.placed.push(build(scope, node));
         return;
     }

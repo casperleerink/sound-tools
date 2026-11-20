@@ -249,6 +249,11 @@ impl State {
         }
     }
 
+    /// Whether a view shows a field now.
+    pub(crate) fn shows_a_field(&self) -> bool {
+        !self.fields.borrow().found.is_empty()
+    }
+
     /// Whether a field has the keys: none of them is a shortcut then.
     pub(crate) fn typing_now(&self) -> bool {
         let fields = self.fields.borrow();
