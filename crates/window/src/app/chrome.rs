@@ -32,10 +32,7 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
             Some(drawn) => tree::view(state, main, "", drawn),
             None => el(),
         },
-        None => text("This project has no main tool.")
-            .font(theme.text("body"))
-            .color(theme.color("text-muted"))
-            .padding(theme.space(4)),
+        None => crate::sidebar::no_main_tool(state),
     };
     let notice = (state.notice.iter()).map(|notice| {
         text(notice.clone())

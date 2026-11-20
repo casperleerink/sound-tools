@@ -38,6 +38,15 @@ pub struct AgentSettings {
     inbox: Inbox<Done>,
 }
 
+/// Reads `file` in the background.
+fn read(file: PathBuf, inbox: &Inbox<Done>) -> Job {
+    let outbox = inbox.outbox();
+    jobs::spawn(async move {
+        let read = smol::unblock(move || Settings::read(&file)).await;
+        outbox.send(Done::Read(read));
+    })
+}
+
 enum Done {
     Read(Result<Settings, String>),
     NotSaved(String),
@@ -47,13 +56,7 @@ impl AgentSettings {
     /// Reads `file` in the background. With `None` the defaults hold and nothing is saved.
     pub fn new(file: Option<PathBuf>, waker: Waker) -> Self {
         let inbox = Inbox::new(waker);
-        let reading = file.clone().map(|file| {
-            let outbox = inbox.outbox();
-            jobs::spawn(async move {
-                let read = smol::unblock(move || Settings::read(&file)).await;
-                outbox.send(Done::Read(read));
-            })
-        });
+        let reading = file.clone().map(|file| read(file, &inbox));
         let writes = file.clone().map(|file| {
             let (sender, receiver) = smol::channel::unbounded::<Settings>();
             let outbox = inbox.outbox();
@@ -85,6 +88,13 @@ impl AgentSettings {
         }
     }
 
+    /// Reads the file again, for what another window of the app changed in it meanwhile.
+    pub fn read_again(&mut self) {
+        if let (Some(file), None) = (&self.file, &self.reading) {
+            self.reading = Some(read(file.clone(), &self.inbox));
+        }
+    }
+
     /// What came in: the file once read, or a change not written. Gives what the thread says
     /// of it.
     pub(crate) fn poll(&mut self) -> Vec<String> {
@@ -94,11 +104,17 @@ impl AgentSettings {
                 Done::Read(read) => {
                     self.reading = None;
                     match read {
-                        Ok(settings) => self.settings = settings,
+                        Ok(settings) => {
+                            self.settings = settings;
+                            self.unreadable = None;
+                        }
                         Err(error) => {
                             let unreadable =
                                 format!("{error}. The agent uses its default settings.");
-                            notices.push(unreadable.clone());
+                            // Said once, not at every reading again.
+                            if self.unreadable.as_ref() != Some(&unreadable) {
+                                notices.push(unreadable.clone());
+                            }
                             self.unreadable = Some(unreadable);
                         }
                     }
@@ -269,6 +285,39 @@ mod tests {
             Settings::default().approval_mode,
             ApprovalMode::AskBeforeCommands
         );
+    }
+
+    /// Another window of the app changed the file: read again, it holds; a broken file is
+    /// said once.
+    #[test]
+    fn a_file_read_again_brings_what_another_window_wrote() {
+        let machine = tempfile::tempdir().unwrap();
+        let file = machine.path().join("settings.json");
+        let (waker, woken) = jobs::testing::waker();
+        let mut settings = AgentSettings::new(Some(file.clone()), waker);
+        let mut said = Vec::new();
+        let mut read = |settings: &mut AgentSettings| loop {
+            said.extend(settings.poll());
+            if settings.is_read() {
+                return said.len();
+            }
+            jobs::testing::wait(&woken);
+        };
+        read(&mut settings);
+        let elsewhere = Settings {
+            approval_mode: ApprovalMode::NeverAsk,
+            ..Settings::default()
+        };
+        elsewhere.write(&file).unwrap();
+        settings.read_again();
+        read(&mut settings);
+        assert_eq!(settings.settings(), &elsewhere);
+
+        fs::write(&file, "{").unwrap();
+        settings.read_again();
+        assert_eq!(read(&mut settings), 1);
+        settings.read_again();
+        assert_eq!(read(&mut settings), 1);
     }
 
     /// The caller shows the error and goes on with the defaults.

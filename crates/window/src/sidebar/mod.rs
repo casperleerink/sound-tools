@@ -274,6 +274,52 @@ pub(crate) fn open_pages(state: &mut State, tx: &mut Tx) {
     }
 }
 
+/// In place of the main view of a project that has none: the agent makes it.
+pub(crate) fn no_main_tool(state: &State) -> El {
+    let theme = &state.theme;
+    let ask = sidebar(state).map(|_| {
+        rune_kit::Button::new(ASK_THE_AGENT)
+            .variant(rune_kit::ButtonVariant::Neutral)
+            .control_size(rune_kit::ControlSize::Large)
+            .on_press_tx(|s: &mut State, tx: &mut Tx| {
+                ask_the_agent(s, Some(tx));
+                s.handled();
+            })
+            .build(&theme.kit)
+            .key("ask-the-agent")
+    });
+    rune::col()
+        .gap(theme.space(3))
+        .items_start()
+        .padding(theme.space(4))
+        .child(
+            rune::text("This project has no main tool.")
+                .font(theme.text("body"))
+                .color(theme.color("text-muted")),
+        )
+        .children(ask)
+}
+
+const ASK_THE_AGENT: &str = "Ask the agent";
+
+/// Opens the panel on the composer.
+fn ask_the_agent(state: &mut State, tx: Option<&mut Tx>) {
+    state.show_tab(crate::app::Tab::Agent);
+    if !state.panel.open {
+        state.set_panel_open(true);
+    }
+    if let Some(tx) = tx {
+        tx.focus_when_shown(COMPOSER, false);
+    }
+}
+
+/// The window gained the keys: another window of the app may have changed the agent's settings.
+pub(crate) fn focused(state: &mut State, focused: bool, _: &mut Tx) {
+    if let (true, Some(sidebar)) = (focused, state.panel.agent_mut::<Sidebar>()) {
+        sidebar.chat.agents_mut().read_settings_again();
+    }
+}
+
 /// Before the app quits: the thread and the instructions are written to the end, so the
 /// next start opens them as they were. A disk that hangs gets a few seconds.
 pub(crate) fn before_quit(state: &mut State, _: &mut Tx) {
@@ -313,11 +359,16 @@ pub(crate) enum Act {
     /// The button of `Provider`'s part of the Agents section, by its place there.
     Setup(Provider, usize),
     CopyDetails(Provider),
+    /// The empty project's way to the agent.
+    AskTheAgent,
 }
 
 impl Act {
     /// Runs it. With `tx`, as a pointer or a key does: the keys go where they belong after.
     pub(crate) fn run(self, state: &mut State, tx: Option<&mut Tx>) {
+        if let Act::AskTheAgent = self {
+            return ask_the_agent(state, tx);
+        }
         let focus = with_chat(state, |sidebar, project| sidebar.act(self, project)).flatten();
         if let (Some(tx), Some(focus)) = (tx, focus) {
             match focus {
@@ -440,6 +491,7 @@ impl Sidebar {
                 None
             }
             Act::CopyDetails(provider) => self.settings.copy(self.chat.agents(), provider).map(Focus::Copy),
+            Act::AskTheAgent => None,
         }
     }
 }
@@ -463,13 +515,18 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
     let Some(sidebar) = sidebar(state) else {
         return Vec::new();
     };
+    let mut controls = Vec::new();
+    if state.main().is_none() {
+        controls.push(control("ask-the-agent", ASK_THE_AGENT, "button", Act::AskTheAgent));
+    }
     if !state.panel.open || state.panel.tab != crate::app::Tab::Agent {
-        return Vec::new();
+        return controls;
     }
     if sidebar.shows_settings {
-        return settings::controls(sidebar.chat.agents(), &sidebar.settings);
+        controls.extend(settings::controls(sidebar.chat.agents(), &sidebar.settings));
+        return controls;
     }
-    let mut controls = menus::controls(sidebar);
+    controls.extend(menus::controls(sidebar));
     controls.extend(thread::controls(state, sidebar));
     controls.extend(composer::controls(sidebar));
     controls

@@ -294,7 +294,8 @@ pub(super) fn controls(sidebar: &Sidebar) -> Vec<Control> {
     }
     controls.push(Control {
         value: Some(sidebar.composer.text.clone().into()),
-        actions: Vec::new(),
+        // What it says goes as a message; `--script` types into it.
+        actions: vec!["send".into()],
         ..control(COMPOSER, COMPOSER_PLACEHOLDER, "textbox", Act::Send)
     });
     match chat.is_working() {

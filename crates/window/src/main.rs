@@ -179,6 +179,7 @@ fn window(arguments: &[String]) -> Result<()> {
         // Every control is a stop of Tab, whatever the system's keyboard setting.
         .tab_visits_controls(true)
         .on_quit(sidebar::before_quit)
+        .on_focus(sidebar::focused)
         .args(rune_arguments)
         .init(move || state)
         .run();
