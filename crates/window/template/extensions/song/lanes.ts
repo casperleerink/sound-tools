@@ -204,7 +204,7 @@ export const laneEdits = (song: Song) => {
   const choose = (track: string, lane: string, ticks: number[]) => {
     memory.selected = [];
     memory.mark = null;
-    memory.point = ticks.length > 0 ? { track, lane, ticks } : null;
+    memory.point = { track, lane, ticks };
   };
   const chosenIn = (track: string, lane: string) => (memory.point?.track === track && memory.point.lane === lane ? memory.point.ticks : []);
   /** The points at `ticks` moved by `dx` ticks and `dy` down the travel, as one step, and chosen. */
@@ -318,8 +318,8 @@ export const laneEdits = (song: Song) => {
     /** Delete: the chosen points go. False while none is chosen. */
     removeChosen() {
       const point = memory.point;
-      if (!point) return false;
-      memory.point = null;
+      if (!point || point.ticks.length === 0) return false;
+      memory.point = { ...point, ticks: [] };
       editPoints(song, point.ticks.length > 1 ? "Remove points" : "Remove a point", point.track, point.lane, (all) => all.filter((each) => !point.ticks.includes(each.tick)));
       return true;
     },

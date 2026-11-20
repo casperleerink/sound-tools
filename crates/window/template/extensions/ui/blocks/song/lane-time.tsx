@@ -4,15 +4,15 @@ import { placeOf } from "../../../song/time";
 import { PLANE, ROW, type Page } from "../../../song/view";
 import { MenuList } from "../../menu";
 import { liveTravelled, liveValueAt, shown } from "../../value";
-import { downOf, lineOf, middleOf, PIECE, piecesOf, waveOf } from "./lane-shapes";
+import { dotsOf, downOf, fine, lineOf, MARGIN, middleOf, PIECE, piecesOf, waveOf } from "./lane-shapes";
 import { laneItems, laneOf, type LaneRow } from "./lanes";
 
 /** Room over the top of a lane's travel and under its bottom, a share of its row, so a point there shows whole. */
 const PAD = 0.12;
 /** How tall the line of a band's edge is to grab, in rows. */
 const EDGE = 10 / ROW;
-/** A point's mark, the ring of the background round its dot, and a bend's handle, in points. */
-const [MARK, RING, DOT] = [12, 2, 8];
+/** A point's mark, with a ring of the background round its dot, and a bend's handle, in points. */
+const [MARK, DOT] = [11, 8];
 
 /**
  * Where a lane's row is in the song's plane: `y` of a place `down` its travel (0 its top, 1 its
@@ -23,7 +23,7 @@ function placesOf(row: LaneRow) {
   const top = row.top + row.height * PAD;
   return {
     tall,
-    y: (down: number) => top + down * tall,
+    y: (down: number) => fine(top + down * tall),
     liveY: (down: Live) => down.times(tall).plus(top),
     down: (y: number) => (y - top) / tall,
     /** A pointer in the lane's units, as the edits take it. */
@@ -38,9 +38,11 @@ function placesOf(row: LaneRow) {
 export const LaneTime = ({ page, row }: { page: Page; row: LaneRow }) => {
   const lane = laneOf(row);
   const { song, end } = page;
-  const chosen = song.memory.point?.track === row.track.name && song.memory.point.lane === row.lane ? song.memory.point.ticks : [];
+  // Only the open lane's points take the pointer: a song's every point as an element is more than the window takes at once.
+  const open = song.memory.point?.track === row.track.name && song.memory.point.lane === row.lane;
+  const chosen = open ? song.memory.point!.ticks : [];
   const runs = song.clock.tempo_map.time_signatures;
-  return memo(`lane-time-${lane.id}`, [row.top, row.height, end, lane.mover?.tool, JSON.stringify(lane.mover?.state), song.memory.snap, chosen.join(), lane.colour, row.target, JSON.stringify(runs)], () => {
+  return memo(`lane-time-${lane.id}`, [row.top, row.height, end, lane.mover?.tool, JSON.stringify(lane.mover?.state), song.memory.snap, open, chosen.join(), lane.colour, row.target, JSON.stringify(runs)], () => {
     const key = `lane-${lane.id}`;
     const at = placesOf(row);
     const marquee = live.drag(key);
@@ -54,7 +56,7 @@ export const LaneTime = ({ page, row }: { page: Page; row: LaneRow }) => {
     const lanes = page.edits.lanes;
     const [track, name] = [row.track.name, row.lane];
     return (
-      <box key={key} label={`${lane.name} lane of ${lane.title}`} place={[0, row.top, end, row.height]} border="border" borderSides={[0, 0, 1, 0]}
+      <box key={key} label={`${lane.name} lane of ${lane.title}`} place={[0, row.top, end, row.height]} fill={open ? "fill/40" : undefined} border="border" borderSides={[0, 0, 1, 0]}
         drag={band ? undefined : { x: true, y: true }}
         onPress={(p) => {
           if (band || p.right) return;
@@ -67,7 +69,7 @@ export const LaneTime = ({ page, row }: { page: Page; row: LaneRow }) => {
             <text at={[8, 6]} style="label" color="text-muted" w={420}>Double-click to add a point, drag over points to choose them</text>
           </box>
         )}
-        {band ? <Band page={page} row={row} /> : <Points page={page} row={row} points={points} chosen={chosen} say={say} />}
+        {band ? <Band page={page} row={row} /> : <Points page={page} row={row} points={points} open={open} chosen={chosen} say={say} />}
         {!band && <box place={[from, row.top, marquee.dx.abs(), row.height]} fill={`${lane.colour}/15` as Color} border={`${lane.colour}/60` as Color} opacity={marquee.active.times(Live.of(1).minus(marquee.alt))} />}
         {!band && <box place={[from, row.top, marquee.dx.abs(), row.height]} fill="danger/15" border="danger/60" opacity={marquee.active.times(marquee.alt)} />}
         <box place={[live.playhead, at.liveY(liveTravelled(live.field(lane.path), lane.travel).negate().plus(1))]} w={DOT} h={DOT} radius="full" fill="text" opacity={live.playing} />
@@ -78,11 +80,11 @@ export const LaneTime = ({ page, row }: { page: Page; row: LaneRow }) => {
 };
 
 /**
- * The points of a lane and the line through them: a point drags in time on the snap and in value
- * (finer with Shift), with the others chosen with it. A sloped line beside a chosen point has a
+ * The points of a lane and the line through them. In the open lane a point drags in time on the
+ * snap and in value (finer with Shift), with the others chosen with it. A sloped line beside a chosen point has a
  * handle in its middle that bends it, and a double click on it straightens it.
  */
-const Points = ({ page, row, points, chosen, say }: { page: Page; row: LaneRow; points: readonly AutomationPoint[]; chosen: readonly number[]; say: (tick: number) => string }) => {
+const Points = ({ page, row, points, open, chosen, say }: { page: Page; row: LaneRow; points: readonly AutomationPoint[]; open: boolean; chosen: readonly number[]; say: (tick: number) => string }) => {
   const { travel, colour, unit, id } = laneOf(row);
   const at = placesOf(row);
   const snap = page.song.memory.snap;
@@ -92,7 +94,10 @@ const Points = ({ page, row, points, chosen, say }: { page: Page; row: LaneRow; 
   return (
     <box>
       {piecesOf(lineOf(points, travel, page.end)).map((piece) => (
-        <shapes place={[piece.start, at.y(0), PIECE, at.tall]} units={[PIECE, 1]} lines={[{ color: colour, width: 1.5, points: piece.points, fill: `${colour}/10` as Color }]} />
+        <shapes place={[piece.start - MARGIN, at.y(0), PIECE + 2 * MARGIN, at.tall]} units={[PIECE + 2 * MARGIN, 1]} lines={[{ color: colour, width: 1.5, points: piece.points, fill: `${colour}/10` as Color }]} />
+      ))}
+      {!open && piecesOf(dotsOf(points, travel)).map((piece) => (
+        <shapes place={[piece.start - MARGIN, at.y(0), PIECE + 2 * MARGIN, at.tall]} units={[PIECE + 2 * MARGIN, 1]} lines={[{ color: colour, width: DOT - 1, points: piece.points }]} />
       ))}
       {points.slice(0, -1).map((point, index) => {
         const next = points[index + 1]!;
@@ -106,7 +111,7 @@ const Points = ({ page, row, points, chosen, say }: { page: Page; row: LaneRow; 
             drag={{ y: [-down * at.tall, (1 - down) * at.tall] }} onDragEnd={(p) => lanes.bend(track, name, point.tick, at.inLane(p))} onPress={(p) => p.clicks === 2 && lanes.straighten(track, name, point.tick)} />
         );
       })}
-      {points.map((point) => {
+      {open && points.map((point) => {
         const key = `point-${id}-${point.tick}`;
         const isChosen = chosen.includes(point.tick);
         const down = downOf(point.value, travel);
@@ -117,9 +122,9 @@ const Points = ({ page, row, points, chosen, say }: { page: Page; row: LaneRow; 
         const [top, bottom] = together ? [Math.min(...downs), Math.max(...downs)] : [down, down];
         // Each point is a few hundred bytes of the tree: only a chosen one says what it holds as it drags.
         return (
-          <box key={key} label={`Point at ${say(point.tick)}, ${shown(laneValue(travel, 1 - down), unit)}`} role="button" checked={isChosen} value={point.value}
-            place={[moved.dx.plus(point.tick), moved.dy.plus(at.y(down))]} w={MARK} h={MARK} radius="full" fill={isChosen ? "text" : colour} border="background" borderSides={[RING, RING, RING, RING]} hover="text/40"
-            drag={{ x: [earliest, latest], y: [-top * at.tall, (1 - bottom) * at.tall], ...(snap > 0 ? { snap: [snap, 0] as [number, number] } : {}), ...(together ? { id: `points-${id}` } : {}) }}
+          <box key={key} label={`Point at ${say(point.tick)}, ${shown(laneValue(travel, 1 - down), unit)}`} role="button" checked={isChosen}
+            place={[moved.dx.plus(point.tick), moved.dy.plus(at.y(down))]} w={MARK} h={MARK} radius="full" fill={isChosen ? "text" : colour} border="background" hover="text/40"
+            drag={{ x: [earliest, latest], y: [fine(-top * at.tall), fine((1 - bottom) * at.tall)], ...(snap > 0 ? { snap: [snap, 0] as [number, number] } : {}), ...(together ? { id: `points-${id}` } : {}) }}
             onPress={(p) => lanes.pressPoint(track, name, point.tick, p)} onDragEnd={(p) => lanes.movePoint(track, name, point.tick, at.inLane(p))}>
             {isChosen && (
               <row at={[MARK, -24]} h={22} px={2} align="center" radius="md" fill="raised" border="border-strong" inert>
@@ -174,7 +179,7 @@ const Band = ({ page, row }: { page: Page; row: LaneRow }) => {
   return (
     <box>
       <box place={[0, low.min(high), page.end, low.minus(high).abs()]} fill={`${colour}/10` as Color} />
-      {piecesOf(wave).map((piece) => <shapes place={[piece.start, at.y(0), PIECE, at.tall]} units={[PIECE, 1]} lines={[{ color: colour, width: 1.5, points: piece.points }]} opacity={still} />)}
+      {piecesOf(wave).map((piece) => <shapes place={[piece.start - MARGIN, at.y(0), PIECE + 2 * MARGIN, at.tall]} units={[PIECE + 2 * MARGIN, 1]} lines={[{ color: colour, width: 1.5, points: piece.points }]} opacity={still} />)}
       {edge("high")}
       {edge("low")}
       {said("high")}

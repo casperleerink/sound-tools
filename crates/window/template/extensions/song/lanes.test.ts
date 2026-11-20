@@ -33,7 +33,7 @@ test("a double click adds a point on the snap, chosen, and its drag moves it bet
   for (const point of [...child(f, "t00", "lane-pan").state.points]) lanes.pressPoint("t00", "lane-pan", point.tick, { alt: true, shift: false });
   expect(child(f, "t00", "lane-pan")).toBeUndefined();
   expect(automation(f, "t00")).toEqual([]);
-  expect(f.memory.point).toEqual(null);
+  expect(f.memory.point).toEqual({ track: "t00", lane: "lane-pan", ticks: [] });
 });
 
 test("a drag over a lane chooses the points it covers, shift-click adds one, and a drag of one moves them all as one step", () => {

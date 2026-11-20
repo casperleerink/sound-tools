@@ -178,8 +178,8 @@ fn budgets(tool: &str, code: &str, plane: &str, dragged: &str) -> [Duration; 3] 
 
 /// The budgets of the window's work in a frame, as the app is built. A test build of the window
 /// is not optimized, which makes this work about three times slower.
-const SCROLL_AND_PLAY: Duration = Duration::from_millis(4 * UNOPTIMIZED);
-const ZOOM: Duration = Duration::from_millis(8 * UNOPTIMIZED);
+pub(super) const SCROLL_AND_PLAY: Duration = Duration::from_millis(4 * UNOPTIMIZED);
+pub(super) const ZOOM: Duration = Duration::from_millis(8 * UNOPTIMIZED);
 const UNOPTIMIZED: u64 = if cfg!(debug_assertions) { 3 } else { 1 };
 
 #[test]

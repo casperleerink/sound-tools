@@ -41,6 +41,7 @@ export type Memory = {
   menu: string | null;
   /** The chosen mark of the ruler, points of a lane and effect of a panel: delete and the keys act on it. */
   mark: Mark | null;
+  /** The lane open for editing, whose points take the pointer, and its chosen points. */
   point: { track: string; lane: string; ticks: number[] } | null;
   effect: { track: string; name: string } | null;
   /** The tracks whose automation lanes show under them. */

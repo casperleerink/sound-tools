@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 use sound_core::InstanceId;
 
-use super::budget::{measured, timed};
+use super::budget::{SCROLL_AND_PLAY, ZOOM, measured, timed};
 use super::{frame, laid_out, new_project, opened, redraw};
 use crate::app::State;
 
@@ -63,12 +63,22 @@ fn drag(window: &mut rune::Runtime<State>, key: &str, by: (f32, f32)) {
     redraw(window);
 }
 
-fn shown(scratch: &tempfile::TempDir) -> rune::Runtime<State> {
+/// The song with its lane `lane-cut` open: a press on it, where it has no point.
+fn opened_lane(scratch: &tempfile::TempDir) -> rune::Runtime<State> {
     let mut window = laid_out(opened(&scratch.path().join("song")));
     for _ in 0..3 {
         redraw(&mut window);
     }
+    let [x, y, _, h] = window.presented("lane-t00-lane-cut").unwrap().0;
+    click(&mut window, (x + 600.0, y + h / 2.0));
     window
+}
+
+fn click(window: &mut rune::Runtime<State>, (x, y): (f32, f32)) {
+    window.pointer_down(x, y);
+    window.pointer_up(x, y);
+    redraw(window);
+    redraw(window);
 }
 
 /// The first point dragged 31 points later lands on the snap, a sixteenth, at bar 1.2: lower,
@@ -76,7 +86,7 @@ fn shown(scratch: &tempfile::TempDir) -> rune::Runtime<State> {
 #[test]
 fn a_point_dragged_lands_on_the_snap_as_one_step_and_the_sound_plays_from_there() {
     let scratch = cutoff_lane();
-    let mut window = shown(&scratch);
+    let mut window = opened_lane(&scratch);
     assert!(
         shows(&window.state, "8 kHz"),
         "{:?}",
@@ -121,13 +131,10 @@ fn a_point_dragged_lands_on_the_snap_as_one_step_and_the_sound_plays_from_there(
 #[test]
 fn a_line_bends_by_its_handle_and_a_double_click_straightens_it() {
     let scratch = cutoff_lane();
-    let mut window = shown(&scratch);
+    let mut window = opened_lane(&scratch);
     // Its handle shows beside a chosen point.
-    let (x, y) = window.find("point-t00-lane-cut-0").unwrap();
-    window.pointer_down(x, y);
-    window.pointer_up(x, y);
-    redraw(&mut window);
-    redraw(&mut window);
+    let point = window.find("point-t00-lane-cut-0").unwrap();
+    click(&mut window, point);
     drag(&mut window, "bend-t00-lane-cut-0", (0.0, -4.0));
     let bent = points(&window.state, "lane-cut");
     let curve = bent[0]["curve"].as_f64().unwrap_or_default();
@@ -155,8 +162,8 @@ fn a_line_bends_by_its_handle_and_a_double_click_straightens_it() {
     );
 }
 
-/// Two tracks of 32 lanes, each of 200 points on a wavetable's numbers: a scroll and a zoom of
-/// the song run no view in Bun.
+/// Two tracks of 32 lanes, each of 200 points on a wavetable's numbers: the song opens, and a
+/// scroll and a zoom of it run no view in Bun and stay within the window's budgets.
 #[test]
 fn sixty_four_lanes_of_two_hundred_points_scroll_and_zoom_without_the_view() {
     let scratch = new_project();
@@ -219,8 +226,11 @@ fn sixty_four_lanes_of_two_hundred_points_scroll_and_zoom_without_the_view() {
             std::fs::write(folder.join(format!("lane-{index}.json")), lane.to_string()).unwrap();
         }
     }
-    let mut window = shown(&scratch);
-    assert!(window.find("point-t00-lane-0-480").is_some());
+    let mut window = laid_out(opened(&scratch.path().join("song")));
+    for _ in 0..3 {
+        redraw(&mut window);
+    }
+    assert!(window.find("lane-t00-lane-0").is_some());
     let runs = window.state.tools.as_ref().unwrap().view_runs();
     let [x, y, w, h] = window.presented("song").unwrap().0;
     let at = (x + w / 2.0, y + h / 2.0);
@@ -256,4 +266,6 @@ fn sixty_four_lanes_of_two_hundred_points_scroll_and_zoom_without_the_view() {
         "Bun ran the view"
     );
     eprintln!("64 lanes of 200 points: scroll {scroll:?}, zoom {zoom:?} a frame");
+    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame took {scroll:?}");
+    assert!(zoom < ZOOM, "a zoom frame took {zoom:?}");
 }

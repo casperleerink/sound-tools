@@ -40,7 +40,8 @@ const song = () => ({
 });
 /** The song drawn afresh with every track's lanes showing. */
 const shown = () => {
-  Object.assign(memory, fresh(), { lanes: ["t00", "t01", "audio-1"] });
+  // The volume lane of Track 1 open: its points take the pointer.
+  Object.assign(memory, fresh(), { lanes: ["t00", "t01", "audio-1"], point: { track: "t00", lane: "lane-vol", ticks: [] } });
   render(Lanes as never, song() as never);
 };
 /** The state of the child `name` of the track `track` after the last change. */
@@ -49,19 +50,23 @@ const pointsOf = (track: string, lane: string) => childOf(track, lane)?.state.po
 /** Where `down` of the travel of the lane at row `top` is, in rows of the plane: 12% of a row over and under the travel. */
 const yOf = (top: number, down: number) => top + 0.12 + down * 0.76;
 
-test("a track's lanes show under it: a head that says what each moves and what plays, a point that says where it is, and a row to add one", () => {
+test("a track's lanes show under it: a head that says what each moves and what plays, the points of the open one, and a row to add one", () => {
   shown();
   expect(find("lane-name-t00-lane-vol")).toMatchObject({ label: "Menu of the Volume lane of Track 1" });
   expect(find("lane-name-t00-lane-cut")).toMatchObject({ label: "Menu of the Synth · Cutoff lane of Track 1" });
   expect(JSON.stringify(find("lane-head-t00-lane-vol"))).toContain('"live":{"op":"value","child":"t00/mix","name":"gain_db"');
   expect(find("point-t00-lane-vol-3840")).toMatchObject({ label: "Point at 2.1, 0 dB", role: "button", checked: false });
-  expect(find("point-t00-lane-cut-0")).toMatchObject({ label: "Point at 1.1, 400 Hz" });
   expect(find("Add a lane to Track 1")).toBeDefined();
   // A line bends from beside a chosen point, and a flat one not at all.
   expect(find("bend-t00-lane-vol-3840")).toBeUndefined();
   press("point-t00-lane-vol-7680");
   expect(find("bend-t00-lane-vol-3840")).toBeDefined();
   expect(find("bend-t00-lane-vol-7680")).toBeUndefined();
+  // A lane opens by a press: then its points take the pointer.
+  expect(find("point-t00-lane-cut-0")).toBeUndefined();
+  press("lane-t00-lane-cut", { x: 100 * BAR });
+  expect(find("point-t00-lane-cut-0")).toMatchObject({ label: "Point at 1.1, 400 Hz" });
+  expect(find("point-t00-lane-vol-0")).toBeUndefined();
 });
 
 test("a lane's menu, from its name or a right press on it, moves its number with an LFO and takes the lane away; an audio track has no envelope", () => {
@@ -153,8 +158,8 @@ test("a sloped line bends by its handle, and a double click on it straightens it
 test("an edit of one lane draws only that lane again", () => {
   shown();
   // What a kept memo drew is the same element, not one drawn again.
-  const [other, edited] = [find("point-t00-lane-cut-0"), find("point-t00-lane-vol-0")];
+  const [other, edited] = [find("lane-t00-lane-cut"), find("point-t00-lane-vol-0")];
   act("point-t00-lane-vol-3840", "drag", { dy: 0.076 });
-  expect(find("point-t00-lane-cut-0")).toBe(other);
+  expect(find("lane-t00-lane-cut")).toBe(other);
   expect(find("point-t00-lane-vol-0")).not.toBe(edited);
 });
