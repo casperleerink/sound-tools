@@ -26,6 +26,10 @@ mod headless;
 mod keys;
 mod notices;
 mod panel;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the drag calls it once it plays numbers")
+)]
 mod plays;
 mod problems;
 mod transport;
@@ -119,6 +123,10 @@ pub(crate) struct State {
     problems_open: bool,
     pub(crate) transport: transport::Transport,
     /// The drag that plays numbers into the session's gesture now.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the drag calls it once it plays numbers")
+    )]
     pub(crate) plays: Option<plays::Playing>,
 }
 
