@@ -644,13 +644,13 @@ pub fn tick(
     // A Sampler whose instrument was downloaded or loaded on a thread of its own. A render, an
     // inspect and the tests load at once, so there is nothing here for them.
     let loaded = sampler::take_ready(project.assets());
-    errors.extend(rebind(project, &loaded));
+    errors.extend(project.rebind_all(&loaded));
     // A tool of the project that owns children, whose behaviour Bun answered.
     let declared = sound_typescript::take_declared(project.assets());
-    errors.extend(rebind(project, &declared));
+    errors.extend(project.rebind_all(&declared));
     // A sample, a region's file or its periods that were read on a thread of their own.
     let read = sound_typescript::take_read(project.assets());
-    errors.extend(rebind(project, &read));
+    errors.extend(project.rebind_all(&read));
     sound_typescript::forget_gone(project);
     // The main-thread callbacks the plugins ask for, and the state they say changed.
     let mut problems = plugins.poll(project);
@@ -663,16 +663,8 @@ pub fn tick(
     errors.extend(plugins.follow_pins(project));
     // Records that were waiting for a plugin the scan had not reached, plugins that asked to be
     // loaded again, and plugins whose parameters changed. After the poll too.
-    errors.extend(rebind(project, &plugins.take_retries()));
+    errors.extend(project.rebind_all(&plugins.take_retries()));
     (problems, errors)
-}
-
-/// Runs the behaviour of each instance again, which is what makes it play what a service
-/// outside the project has ready now and takes its problem away. It is not an edit and is
-/// never undone.
-fn rebind(project: &mut Project, instances: &[InstanceId]) -> Vec<ProjectError> {
-    let failed = instances.iter().filter_map(|id| project.rebind(id).err());
-    failed.collect()
 }
 
 /// Waits for Bun to answer every behaviour it was asked, and runs each of them again, which
@@ -686,7 +678,7 @@ fn settle_behaviours(project: &mut Project) -> Vec<ProjectError> {
         if declared.is_empty() {
             return errors;
         }
-        errors.extend(rebind(project, &declared));
+        errors.extend(project.rebind_all(&declared));
     }
 }
 
@@ -695,7 +687,7 @@ fn settle_behaviours(project: &mut Project) -> Vec<ProjectError> {
 fn take_drum_sounds(project: &mut Project) -> Vec<ProjectError> {
     let ready = drum_pad::take_ready(project.assets());
     let instances: Vec<InstanceId> = ready.iter().map(|(instance, _)| instance.clone()).collect();
-    let errors = rebind(project, &instances);
+    let errors = project.rebind_all(&instances);
     // The sounds are let go of here, now that the kits hold them.
     drop(ready);
     errors
