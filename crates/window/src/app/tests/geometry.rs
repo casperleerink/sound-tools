@@ -637,6 +637,21 @@ export const kept = tool({
 });
 "#;
 
+/// A view an agent asks for in a shape the window does not take is refused, saying the shape.
+#[test]
+fn a_view_of_an_old_shape_is_refused_with_the_shape_it_takes() {
+    let (_scratch, mut window) = lanes();
+    let song = format!("{PREFIX}song");
+    let old = json!({ "key": song, "action": "view", "value": { "left": 3840, "zoom": 2 } });
+    let refused = super::try_act(&mut window.state, old).unwrap_err();
+    assert!(
+        format!("{refused:#}").contains(r#""x": [0, 3840]"#),
+        "{refused:#}"
+    );
+    let new = json!({ "key": song, "action": "view", "value": { "x": [3840, 7680] } });
+    super::try_act(&mut window.state, new).unwrap();
+}
+
 #[test]
 fn a_plane_a_memo_kept_builds_again_as_it_zooms() {
     let (_scratch, folder) = with_tools(&[("kept", KEPT_PLANE)]);

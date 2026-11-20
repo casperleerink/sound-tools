@@ -1369,7 +1369,7 @@ fn after_a_drag_let_go_outside_its_element_the_keys_press_it() {
     redraw(&mut window);
     assert_eq!(kit_record(&window.state)["velocity"], 0.0);
     assert_eq!(focused(&window).as_deref(), Some("t00/chain/kit:step"));
-    key(&mut window, rune::Key::Text(" ".into()));
+    key(&mut window, rune::Key::Enter);
     assert_eq!(kit_record(&window.state)["on"], true);
 }
 
@@ -1420,7 +1420,7 @@ fn tab_to(window: &mut rune::Runtime<State>, key: &str) {
 fn a_row_with_a_menu_in_it_keeps_its_keys_and_tab_reaches_the_menu() {
     let (_scratch, mut window) = kit();
     tab_to(&mut window, "t00/chain/kit:item");
-    key(&mut window, rune::Key::Text(" ".into()));
+    key(&mut window, rune::Key::Enter);
     assert!(window.state.open.is_empty());
     assert_eq!(kit_record(&window.state)["name"], "item");
     key(&mut window, rune::Key::Tab);

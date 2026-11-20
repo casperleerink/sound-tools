@@ -69,7 +69,7 @@ export type Pointer = {
   y: number;
   dx: number;
   dy: number;
-  /** 2 on the second press of a double click. */
+  /** 2 on the second press of a double click; 0 for Enter on it while it has the keys. */
   clicks: number;
   /** The right button, the menu key or Shift-F10. */
   right: boolean;

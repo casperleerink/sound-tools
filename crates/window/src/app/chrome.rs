@@ -51,6 +51,7 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
                 .grow(1.0)
                 .h_full()
                 .clip_soft(0.0)
+                .on_key(super::keys::in_views)
                 .child(body),
         );
     let (menu, menu_layer) = super::menu::view(state);

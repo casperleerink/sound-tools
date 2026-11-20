@@ -327,11 +327,15 @@ fn landed(drag: &DragSpec, from: [f32; 2], value: Option<&Value>) -> Value {
 /// Shows a range of the plane `key`, as `{ "x": [from, to], "y": [from, to] }` say: as code's
 /// `show` does.
 fn view(state: &mut State, key: &str, value: Option<&Value>) -> Result<()> {
-    let range = |axis: &str| {
-        let range = value.and_then(|value| value.get(axis)).cloned();
-        range.map(serde_json::from_value::<[f32; 2]>).transpose()
-    };
-    let (x, y) = (range("x")?, range("y")?);
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Shown {
+        x: Option<[f32; 2]>,
+        y: Option<[f32; 2]>,
+    }
+    let value = value.cloned().unwrap_or_else(|| serde_json::json!({}));
+    let Shown { x, y } = serde_json::from_value(value)
+        .context(r#"view takes the ranges to show, such as { "x": [0, 3840], "y": [0, 4] }"#)?;
     state.planes.find_plane(key).map_err(anyhow::Error::msg)?;
     state.planes.show(key, x, y);
     state.lives.move_planes(state);
