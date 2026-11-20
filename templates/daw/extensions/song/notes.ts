@@ -6,7 +6,7 @@
 import { humanize, legato, quantize, type FilledStateOfTool, type Frozen, type Note, type Pointer } from "../sdk";
 import { editClips, lengthOf } from "./clips";
 import { itemAt, rowOfKey, type Song } from "./model";
-import { BEAT, cellOf, stepped } from "./time";
+import { barAt, BEAT, cellOf, stepAt, stepped } from "./time";
 
 type Clip = FilledStateOfTool<"timeline">;
 /** A lane under the notes: the velocities, the pedal, an expression lane, or a MIDI controller by number. */
@@ -78,20 +78,30 @@ const OPERATIONS: Record<Operation, string> = { quantize: "Quantize notes", huma
 export const STRENGTHS = [1, 0.75, 0.5] as const;
 export const SWINGS = [{ label: "No swing", swing: 0 }, { label: "Light", swing: 1 / 3 }, { label: "Medium", swing: 2 / 3 }, { label: "Full", swing: 1 }] as const;
 
-/** Quantizes the notes to the snap (1/16 while it is off) at its strength and swing, humanizes or makes them legato, as one undo step. They stay chosen and inside the clip. */
+/** Quantizes the notes to the song's grid of the snap (1/16 while it is off) at its strength and swing, humanizes or makes them legato, as one undo step. They stay chosen and inside the clip. */
 export function operate(song: Song, key: string, operation: Operation) {
   const clip = clipAt(song, key);
   if (!clip) return;
   const { memory } = song;
   const seed = operation === "humanize" ? ++memory.humanized : 0;
   const last = (clip.length ?? Infinity) - 1;
+  const runs = song.clock.tempo_map.time_signatures;
+  /** `picked` quantized to the song's grid: each bar's notes from its own line, the clip's ticks. */
+  const quantized = (picked: Note[]) => {
+    const done = [...picked];
+    const bars = Map.groupBy(picked.map((_, at) => at), (at) => barAt(runs, clip.start + picked[at]!.start).start);
+    for (const [line, ats] of bars) {
+      const moved = quantize(ats.map((at) => ({ ...picked[at]!, start: clip.start + picked[at]!.start - line })), { grid: stepAt(runs, line, memory.snap), strength: memory.strength, swing: memory.swing });
+      ats.forEach((at, index) => (done[at] = { ...moved[index]!, start: moved[index]!.start + line - clip.start }));
+    }
+    return done;
+  };
   change(song, key, OPERATIONS[operation], (notes, chosen) => {
     const places = chosen.size > 0 ? [...chosen] : notes.map((_, index) => index);
     const picked = places.map((index) => notes[index]!);
-    const done = operation === "quantize" ? quantize(picked, { grid: memory.snap || BEAT / 4, strength: memory.strength, swing: memory.swing })
-      : operation === "humanize" ? humanize(picked, { seed, ...HUMANIZE }) : legato(picked);
+    const done = operation === "quantize" ? quantized(picked) : operation === "humanize" ? humanize(picked, { seed, ...HUMANIZE }) : legato(picked);
     const next = [...notes];
-    places.forEach((index, at) => (next[index] = { ...done[at]!, start: Math.min(done[at]!.start, last) }));
+    places.forEach((index, at) => (next[index] = { ...done[at]!, start: clamp(done[at]!.start, 0, last) }));
     return { notes: next, chosen };
   });
 }

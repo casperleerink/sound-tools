@@ -198,3 +198,16 @@ test("in a clip that starts off the grid, a double click, N and the arrow keys l
   noteCommand(f.song, "right");
   expect(notes().map((each) => 1000 + each.start)).toEqual([1200, 2160]);
 });
+
+test("quantize lines up with the song's grid in a clip that starts off it, and after a bar of 7/8", () => {
+  const late = fakeSong({ children: [trackOf("t00", [clipOf("c00", 1000, BAR, [note(2 * BEAT + 10 - 1000)])])] });
+  late.memory.below = { kind: "editor", clip: "t00/c00" };
+  noteCommand(late.song, "quantize");
+  expect((late.self.children[0] as any).children[1].state.notes[0].start + 1000).toBe(2 * BEAT);
+  const piece = { tempo_map: { time_signatures: [{ signature: "7/8", bars: 1 }, { signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] } };
+  const seven = fakeSong({ children: [trackOf("t00", [clipOf("c00", 0, 2 * BAR, [note(4.5 * BEAT + 100)])])] }, { piece });
+  seven.memory.below = { kind: "editor", clip: "t00/c00" };
+  seven.memory.snap = BEAT;
+  noteCommand(seven.song, "quantize");
+  expect((seven.self.children[0] as any).children[1].state.notes[0].start).toBe(4.5 * BEAT);
+});
