@@ -423,6 +423,11 @@ impl Tools {
         }
     }
 
+    /// Whether Bun said it ran every action sent to it.
+    pub fn answered(&self) -> bool {
+        self.acts == 0
+    }
+
     /// Holds a gesture over several elements, such as a paint, or lets it go: the actions while
     /// it is held are one step of undo.
     pub fn hold(&mut self, project: &mut Project, held: bool) {

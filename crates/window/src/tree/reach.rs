@@ -6,7 +6,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use rune::{El, Key, KeyEvent, Live, Tx};
-use serde::Deserialize;
 
 use crate::app::State;
 
@@ -83,9 +82,8 @@ fn items_in(scope: &Scope, children: &[Node], items: &mut Vec<Item>) {
                 steps: false,
             }),
             Node::Memo { key } => {
-                let inner = (scope.memos.get(key)).and_then(|(_, n)| Node::deserialize(&**n).ok());
-                if let Some(inner) = inner {
-                    items_in(scope, std::slice::from_ref(&inner), items);
+                if let Some(inner) = scope.memo(key) {
+                    items_in(scope, std::slice::from_ref(&*inner), items);
                 }
             }
             _ => {}

@@ -4,15 +4,14 @@
 use std::collections::{BTreeSet, HashMap};
 
 use rune::{Align, El, Key, KeyEvent, TextEdit, Tx, text};
-use serde::Deserialize;
 use serde_json::{Value, json};
 use sound_core::InstanceId;
-use sound_typescript::next::{Drawn, Tools};
+use sound_typescript::next::Tools;
 
 use crate::app::State;
 
 use super::semantics::Press;
-use super::{BoxNode, FieldNode, Memos, Node, Opens, Scope, Within};
+use super::{BoxNode, FieldNode, Node, Opens, Scope, Within};
 
 /// The fields shown, by key in the window.
 #[derive(Default)]
@@ -344,15 +343,12 @@ pub(crate) fn follow_fields(state: &mut State) -> bool {
 fn shown_fields(state: &State) -> HashMap<String, (String, Press, bool)> {
     let mut found = HashMap::new();
     for id in &state.shown {
-        if let Some(Drawn::View { root, memos }) = state.drawn(id)
-            && let Ok(node) = Node::deserialize(&**root)
-        {
+        if let Some(node) = state.root(id) {
             let prefix = state.prefix_of(id);
             let mut look = Look {
                 state,
                 instance: id,
                 prefix: &prefix,
-                memos,
                 found: &mut found,
             };
             look.node(&node, None);
@@ -365,7 +361,6 @@ struct Look<'a> {
     state: &'a State,
     instance: &'a InstanceId,
     prefix: &'a str,
-    memos: &'a Memos,
     found: &'a mut HashMap<String, (String, Press, bool)>,
 }
 
@@ -408,11 +403,7 @@ impl Look<'_> {
                 self.found.insert(key, (f.value.clone(), press, f.focus));
             }
             Node::Memo { key } => {
-                let inner = self
-                    .memos
-                    .get(key)
-                    .and_then(|(_, n)| Node::deserialize(&**n).ok());
-                if let Some(inner) = inner {
+                if let Some((_, inner)) = self.state.memo_of(self.instance, key) {
                     self.node(&inner, within);
                 }
             }

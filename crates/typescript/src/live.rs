@@ -106,7 +106,7 @@ pub fn evaluate(live: &Live, leaves: &(impl Leaves + ?Sized)) -> f64 {
         | Live::DevicePeak { .. }
         | Live::Input { .. }
         | Live::Drag { .. }
-        | Live::Space { .. }
+        | Live::Plane { .. }
         | Live::Hover { .. }
         | Live::Touched { .. } => leaves.leaf(live),
     }
@@ -272,9 +272,10 @@ pub enum Live {
         id: String,
         part: DragPart,
     },
-    Space {
+    /// What the plane `key` of the view shows, in its units, and how far it is zoomed.
+    Plane {
         key: String,
-        part: SpacePart,
+        part: PlanePart,
     },
     /// 1 while the pointer is over the shape of `key`.
     Hover {
@@ -410,13 +411,12 @@ pub enum DragPart {
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum SpacePart {
+pub enum PlanePart {
     Left,
     Top,
     Right,
     Bottom,
-    PointX,
-    PointY,
+    Zoom,
 }
 
 /// How text shows a live number: in a unit, or a tick of the clock.

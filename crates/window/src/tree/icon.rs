@@ -6,12 +6,12 @@ use std::path::Path;
 
 use rune::{El, Icon, el};
 use serde::Deserialize;
-use sound_core::{Problem, Project};
-use sound_typescript::next::{Drawn, Tools};
+use sound_core::{InstanceId, Problem, Project};
+use sound_typescript::next::Tools;
 
 use crate::app::State;
 
-use super::{Memos, Node, Scope};
+use super::{Node, Scope};
 
 /// Where the icons of a project are, in its folder.
 const FOLDER: &str = "extensions/ui/icons/";
@@ -88,10 +88,8 @@ pub(super) fn drawn(scope: &Scope, i: &IconNode) -> El {
 pub(crate) fn report_missing(state: &mut State) {
     let mut names = Vec::new();
     for id in &state.shown {
-        if let Some(Drawn::View { root, memos }) = state.drawn(id)
-            && let Ok(node) = Node::deserialize(&**root)
-        {
-            named(&node, memos, &mut names);
+        if let Some(node) = state.root(id) {
+            named(state, id, &node, &mut names);
         }
     }
     let (folder, loads) = (state.project().root().to_path_buf(), loads(state));
@@ -118,18 +116,15 @@ fn reported(project: &Project) -> Vec<Problem> {
 }
 
 /// The names of the icons in `node` and its memos.
-fn named(node: &Node, memos: &Memos, names: &mut Vec<String>) {
+fn named(state: &State, id: &InstanceId, node: &Node, names: &mut Vec<String>) {
     match node {
         Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
-            (b.children.iter()).for_each(|child| named(child, memos, names));
+            (b.children.iter()).for_each(|child| named(state, id, child, names));
         }
         Node::Icon(icon) => names.push(icon.name.clone()),
         Node::Memo { key } => {
-            if let Some(inner) = memos
-                .get(key)
-                .and_then(|(_, n)| Node::deserialize(&**n).ok())
-            {
-                named(&inner, memos, names);
+            if let Some((_, inner)) = state.memo_of(id, key) {
+                named(state, id, &inner, names);
             }
         }
         Node::Text(_) | Node::Shapes(_) | Node::Field(_) | Node::Child { .. } => {}

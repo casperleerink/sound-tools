@@ -1,8 +1,6 @@
 //! Boxes that show over everything: menus a press opens and tips a hover shows.
 
 use rune::{Align, El, Side, el};
-use serde::Deserialize;
-use sound_typescript::next::Drawn;
 
 use crate::app::State;
 
@@ -35,21 +33,11 @@ impl BoxNode {
 pub(crate) fn overlays(state: &State) -> Vec<El> {
     let mut layer = Vec::new();
     for id in &state.shown {
-        let Some(Drawn::View { root, memos }) = state.drawn(id) else {
-            continue;
-        };
-        let Ok(node) = Node::deserialize(&**root) else {
+        let Some(node) = state.root(id) else {
             continue;
         };
         let prefix = state.prefix_of(id);
-        let scope = Scope {
-            state,
-            instance: id,
-            prefix: &prefix,
-            memos,
-            within: None,
-            in_control: false,
-        };
+        let scope = Scope::new(state, id, &prefix);
         overlays_in(&scope, &node, None, &mut layer);
     }
     layer
@@ -61,9 +49,7 @@ fn overlays_in(scope: &Scope, node: &Node, owner: Option<&str>, layer: &mut Vec<
     let b = match node {
         Node::Row(b) | Node::Col(b) | Node::Plain(b) => b,
         Node::Memo { key } => {
-            let inner =
-                (scope.memos.get(key)).and_then(|(_, inner)| Node::deserialize(&**inner).ok());
-            if let Some(inner) = inner {
+            if let Some(inner) = scope.memo(key) {
                 overlays_in(scope, &inner, owner, layer);
             }
             return;
@@ -93,7 +79,7 @@ fn overlays_in(scope: &Scope, node: &Node, owner: Option<&str>, layer: &mut Vec<
                         picks: o.picks(),
                     }),
                     in_control: false,
-                    ..*scope
+                    ..scope.clone()
                 };
                 let close = opener.clone();
                 layer.push(
@@ -103,6 +89,32 @@ fn overlays_in(scope: &Scope, node: &Node, owner: Option<&str>, layer: &mut Vec<
                         .modal(true, move |s: &mut State| s.close_overlay(&close))
                         .focus_return(owner.unwrap_or(&opener)),
                 );
+                overlays_in(&inside, child, None, layer);
+            }
+            Opens::Menu if scope.state.open.contains(&opener) => {
+                let inside = Scope {
+                    within: Some(Within {
+                        opener: opener.clone(),
+                        picks: o.picks(),
+                    }),
+                    in_control: false,
+                    ..scope.clone()
+                };
+                let close = opener.clone();
+                let menu = build(&inside, child)
+                    .modal(true, move |s: &mut State| s.close_overlay(&close))
+                    .focus_return(opener.clone());
+                let state = scope.state;
+                let at = (state.menu.as_ref()).filter(|menu| menu.opener == opener);
+                match at.and_then(|menu| menu.at) {
+                    // At the pointer: kept in the window as any overlay is.
+                    Some([x, y]) => {
+                        let anchor = format!("{opener}-menu-at");
+                        layer.push(el().key(anchor.clone()).absolute(x, y).w(0.0).h(0.0));
+                        layer.push(menu.anchored(&anchor, Side::Bottom, Align::Start, 0.0));
+                    }
+                    None => layer.push(menu.anchored(&opener, side, align, spec.gap)),
+                }
                 overlays_in(&inside, child, None, layer);
             }
             Opens::Press | Opens::Menu => {}

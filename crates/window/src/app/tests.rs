@@ -544,6 +544,8 @@ fn every_node_the_template_draws_is_one_the_window_reads() {
 
 /// What the test helpers of `sdk/view.ts` do, as the window does it, and what its types refuse.
 const VIEW_CHECKS: &str = include_str!("checks.test.tsx");
+/// A clip on a plane that `checks.test.tsx` and the window's tests both drag.
+const BOARD: &str = include_str!("board.tsx");
 
 #[test]
 fn the_test_helpers_change_and_draw_as_the_window_does() {
@@ -551,6 +553,7 @@ fn the_test_helpers_change_and_draw_as_the_window_does() {
     let state = opened(&scratch.path().join("song"));
     let extensions = state.project().root().join("extensions");
     std::fs::write(extensions.join("checks.test.tsx"), VIEW_CHECKS).unwrap();
+    std::fs::write(extensions.join("board.tsx"), BOARD).unwrap();
     run_bun(&state, &["check", "-p", "."]);
     run_bun(&state, &["test", "checks.test.tsx"]);
 }
@@ -1717,7 +1720,7 @@ fn a_tree_that_comes_during_a_drag_leaves_the_drag_where_it_is() {
     window.pointer_down(start.0, start.1);
     window.frame(1.0 / 60.0);
     travel(&mut window, start, (0.0, -2.0), 10);
-    let moved = window.state.lives.dragged(key).get();
+    let moved = window.state.lives.hand(key).moved;
     assert!(moved[1] < -10.0, "{moved:?}");
     // Another control's change draws the view again while the drag goes on.
     let runs = window.state.tools.as_ref().unwrap().view_runs();
@@ -1726,10 +1729,10 @@ fn a_tree_that_comes_during_a_drag_leaves_the_drag_where_it_is() {
         json!({ "label": "Item", "action": "press" }),
     );
     assert!(window.state.tools.as_ref().unwrap().view_runs() > runs);
-    assert_eq!(window.state.lives.dragged(key).get(), moved);
+    assert_eq!(window.state.lives.hand(key).moved, moved);
     window.pointer_up(start.0, start.1 - 20.0);
     redraw(&mut window);
-    assert_eq!(window.state.lives.dragged(key).get(), [0.0; 2]);
+    assert_eq!(window.state.lives.hand(key).moved, [0.0; 2]);
 }
 
 /// A lane on the first track of the project in `scratch` that plays `value` into `target`,
@@ -2118,6 +2121,8 @@ fn code_that_opens_the_window_of_a_child_with_none_has_a_problem() {
 }
 
 mod behaviours;
+mod budget;
 mod frame;
+mod geometry;
 mod projects;
 mod transport;

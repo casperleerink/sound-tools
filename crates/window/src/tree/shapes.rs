@@ -40,7 +40,7 @@ pub(super) fn drawing(scope: &Scope, d: &ShapesNode) -> El {
             shape = shape.fill(vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h]], colour);
         }
     }
-    if let Some([across, down]) = d.units {
+    if let Some([across, down]) = d.units.or_else(|| scope.place_units(d.place.as_ref())) {
         shape = shape.view_box(across, down);
     }
     let mut trim = None;
@@ -59,10 +59,12 @@ pub(super) fn drawing(scope: &Scope, d: &ShapesNode) -> El {
     if let Some(key) = &d.key {
         e = e.key(scope.key(key));
     }
+    // Placed, the plane sizes it.
+    let size = d.place.is_none().then_some((Some(&d.w), Some(&d.h)));
     scope.placed(
         e,
         d.at.as_ref(),
-        (Some(&d.w), Some(&d.h)),
+        size.unwrap_or_default(),
         d.opacity.as_ref(),
     )
 }

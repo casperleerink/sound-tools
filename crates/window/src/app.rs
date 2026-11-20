@@ -91,6 +91,8 @@ pub(crate) struct State {
     /// The JSON Schema of each built-in tool's record, by tool name.
     schemas: HashMap<&'static str, Value>,
     pub(crate) lives: Lives,
+    pub(crate) trees: tree::Trees,
+    pub(crate) planes: tree::Planes,
     pub(crate) playing: bool,
     pub(crate) playhead: Ticks,
     /// Engine time in seconds, which a control loop's clock counts on.
@@ -114,6 +116,8 @@ pub(crate) struct State {
     /// The overlays open now, each inside the one before, by the key of what opened it. How the
     /// composer works, so never saved.
     pub(crate) open: Vec<String>,
+    /// The menu a right press opened, or will once its press is answered.
+    pub(crate) menu: Option<actions::Menu>,
     /// What `--main` shows in place of the project's main instance.
     main: Option<InstanceId>,
     /// What waits for the composer or a thread: questions of code, file dialogs, imports.
@@ -246,6 +250,8 @@ impl State {
             theme,
             schemas,
             lives: Lives::new(),
+            trees: tree::Trees::default(),
+            planes: tree::Planes::default(),
             playing: false,
             playhead: Ticks(0),
             engine_time: 0.0,
@@ -256,6 +262,7 @@ impl State {
             gesture: None,
             dragged: None,
             open: Vec::new(),
+            menu: None,
             facts: HashMap::new(),
             plugin_offers: (0, Vec::new()),
             main,

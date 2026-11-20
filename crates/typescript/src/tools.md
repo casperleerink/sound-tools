@@ -65,7 +65,7 @@ Change them, add yours; `--main gallery --snap g.png --size 1470x1500` shows the
 
 ## Planes: time, pitch, your own units
 
-A box with `plane={{ x: 0.03, y: 12 }}` (points per unit, or a `[from, to]` range it shows) has units of its own; the window scrolls and zooms it. Inside it, at any depth, `place={[start, pitch, length, 1]}` puts a box in those units; `place={[x, y]}` is a mark, its `w`/`h` points centred there. Everything else stays points. Pointers inside it are in its units.
+A box with `plane={{ x: 0.03, y: 12 }}` (points per unit, or a `[from, to]` range it shows) has units of its own; the window scrolls and zooms it. Inside it, at any depth, `place={[start, pitch, length, 1]}` puts a box in those units; `place={[x, y]}` is a mark, its `w`/`h` points centred there; a box without `place` only groups them. Other sizes are points; pointers are in units.
 
 ## What moves every frame
 

@@ -57,7 +57,10 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
         checked: None,
         expanded: None,
         actions: vec!["press".to_string()],
+        place: None,
         target: Target::Dialog(says),
+        menu: None,
+        drag: None,
     };
     vec![
         button(CANCEL, "Cancel", false),

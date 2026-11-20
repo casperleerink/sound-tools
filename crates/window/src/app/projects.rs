@@ -95,7 +95,10 @@ pub(super) fn controls(state: &State) -> Vec<Control> {
                 }
                 .into(),
             ],
+            place: None,
             target: Target::Chrome(Act::Shell(control.act)),
+            menu: None,
+            drag: None,
         })
         .collect()
 }

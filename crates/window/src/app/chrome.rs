@@ -136,7 +136,10 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
         checked: None,
         expanded: None,
         actions: vec!["press".into()],
+        place: None,
         target: Target::Chrome(act),
+        menu: None,
+        drag: None,
     };
     let panel = &state.panel;
     let mut controls = transport::controls(state);

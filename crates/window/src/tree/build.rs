@@ -2,9 +2,7 @@
 
 use std::collections::HashSet;
 
-use rune::{Align, El, Phase, ScrollSpec, col, el, memo, row, text};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use rune::{Align, El, ScrollPos, ScrollSpec, col, el, memo, row, text};
 use sound_core::InstanceId;
 use sound_typescript::live::Num;
 use sound_typescript::next::Drawn;
@@ -13,20 +11,18 @@ use crate::app::State;
 use crate::lives::{Lives, Shown, Shows};
 
 use super::field::{kept, typed};
-use super::gesture::Gesture;
 use super::semantics::{delegates_enter, semantics};
 use super::shapes::drawing;
-use super::{BoxNode, Memos, Node, Scope, Scroll, Size, TextNode, live_place};
+use super::{BoxNode, Node, Place, Scope, Scroll, Size, TextNode, live_place, plane};
 
 /// The name of every binding the views shown now make, of their memos too, whether Rune builds
 /// them again or not: what [`crate::lives::Lives::keep`] keeps.
 pub(crate) fn bound(state: &State) -> HashSet<String> {
     let mut named = HashSet::new();
     for id in &state.shown {
-        if let Some(Drawn::View { root, memos }) = state.drawn(id)
-            && let Ok(node) = Node::deserialize(&**root)
-        {
-            walk(&node, memos, &mut |shows| {
+        if let Some(node) = state.root(id) {
+            let prefix = state.prefix_of(id);
+            walk(&Scope::new(state, id, &prefix), &node, &mut |shows| {
                 named.insert(Lives::name(id, &shows));
             });
         }
@@ -35,20 +31,35 @@ pub(crate) fn bound(state: &State) -> HashSet<String> {
 }
 
 /// The keys of the elements of `node` and its memos that a paint enters, see [`BoxNode::enter`].
-pub(crate) fn enterable(node: &Node, memos: &Memos, keys: &mut Vec<String>) {
+pub(crate) fn enterable(state: &State, id: &InstanceId, node: &Node, keys: &mut Vec<String>) {
     match node {
         Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
             keys.extend(b.key.clone().filter(|_| b.enter));
             for child in &b.children {
-                enterable(child, memos, keys);
+                enterable(state, id, child, keys);
             }
         }
         Node::Memo { key } => {
-            let inner = memos
-                .get(key)
-                .and_then(|(_, inner)| Node::deserialize(&**inner).ok());
-            if let Some(inner) = inner {
-                enterable(&inner, memos, keys);
+            if let Some((_, inner)) = state.memo_of(id, key) {
+                enterable(state, id, &inner, keys);
+            }
+        }
+        Node::Text(_) | Node::Shapes(_) | Node::Field(_) | Node::Icon(_) | Node::Child { .. } => {}
+    }
+}
+
+/// The keys of the boxes of `node` and its memos.
+pub(crate) fn keyed(state: &State, id: &InstanceId, node: &Node, keys: &mut Vec<String>) {
+    match node {
+        Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
+            keys.extend(b.key.clone());
+            for child in &b.children {
+                keyed(state, id, child, keys);
+            }
+        }
+        Node::Memo { key } => {
+            if let Some((_, inner)) = state.memo_of(id, key) {
+                keyed(state, id, &inner, keys);
             }
         }
         Node::Text(_) | Node::Shapes(_) | Node::Field(_) | Node::Icon(_) | Node::Child { .. } => {}
@@ -56,13 +67,28 @@ pub(crate) fn enterable(node: &Node, memos: &Memos, keys: &mut Vec<String>) {
 }
 
 /// Gives `bind` everything `node` binds, and its memos.
-fn walk(node: &Node, memos: &Memos, bind: &mut impl FnMut(Shows)) {
-    let live = match node {
+fn walk(scope: &Scope, node: &Node, bind: &mut impl FnMut(Shows)) {
+    let live: Vec<Shows> = match node {
         Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
+            let plane = b.plane.as_ref().zip(b.key.as_deref());
+            let inside = Scope {
+                plane: plane.map(|(_, key)| scope.key(key)).or(scope.plane.clone()),
+                parent: match plane {
+                    Some(_) => None,
+                    None => b.place.as_ref().map(Place::origin).or(scope.parent.clone()),
+                },
+                ..scope.clone()
+            };
             for child in &b.children {
-                walk(child, memos, bind);
+                walk(&inside, child, bind);
             }
-            live_place(b.at.as_ref(), b.size(), b.opacity.as_ref())
+            let placed = b
+                .place
+                .as_ref()
+                .and_then(|place| scope.placed_shows(place, b.size()));
+            (placed.into_iter())
+                .chain(live_place(b.at.as_ref(), b.size(), b.opacity.as_ref()))
+                .collect()
         }
         Node::Text(t) => {
             if let Some(value) = &t.live {
@@ -78,14 +104,20 @@ fn walk(node: &Node, memos: &Memos, bind: &mut impl FnMut(Shows)) {
             {
                 bind(Shows::Trim(trim.clone()));
             }
-            live_place(d.at.as_ref(), (Some(&d.w), Some(&d.h)), d.opacity.as_ref())
+            let placed = (d.place.as_ref())
+                .and_then(|place| scope.placed_shows(place, (Some(&d.w), Some(&d.h))));
+            let size = d.place.is_none().then_some((Some(&d.w), Some(&d.h)));
+            (placed.into_iter())
+                .chain(live_place(
+                    d.at.as_ref(),
+                    size.unwrap_or_default(),
+                    d.opacity.as_ref(),
+                ))
+                .collect()
         }
         Node::Memo { key } => {
-            let inner = memos
-                .get(key)
-                .and_then(|(_, inner)| Node::deserialize(&**inner).ok());
-            if let Some(inner) = inner {
-                walk(&inner, memos, bind);
+            if let Some(inner) = scope.memo(key) {
+                walk(scope, &inner, bind);
             }
             return;
         }
@@ -106,18 +138,14 @@ pub(crate) fn code_failed(state: &State, id: &InstanceId) -> El {
 /// The view `drawn` of `instance`, with its keys after `prefix`.
 pub(crate) fn view(state: &State, instance: &InstanceId, prefix: &str, drawn: &Drawn) -> El {
     match drawn {
-        Drawn::View { root, memos } => {
-            let scope = Scope {
-                state,
-                instance,
-                prefix,
-                memos,
-                within: None,
-                in_control: false,
-            };
-            match Node::deserialize(&**root) {
-                Ok(node) => build(&scope, &node),
-                Err(error) => failed(state, &format!("its view sent what is no view: {error}")),
+        Drawn::View { .. } => {
+            let scope = Scope::new(state, instance, prefix);
+            match state.read_root(instance) {
+                Some(Ok(node)) => build(&scope, &node),
+                Some(Err(error)) => {
+                    failed(state, &format!("its view sent what is no view: {error}"))
+                }
+                None => el(),
             }
         }
         Drawn::Failed(error) => failed(state, error),
@@ -142,7 +170,13 @@ pub(super) fn build(scope: &Scope, node: &Node) -> El {
         Node::Col(b) => boxed(scope, col(), b),
         Node::Plain(b) => boxed(scope, el(), b),
         Node::Text(t) => label(scope, t),
-        Node::Shapes(shapes) => drawing(scope, shapes),
+        Node::Shapes(shapes) => {
+            let e = drawing(scope, shapes);
+            match &shapes.place {
+                Some(place) => scope.put(e, place, (Some(&shapes.w), Some(&shapes.h))),
+                None => e,
+            }
+        }
         Node::Field(field) => typed(scope, field),
         Node::Icon(icon) => super::icon::drawn(scope, icon),
         Node::Child { path } => match scope.instance.child(path) {
@@ -153,17 +187,11 @@ pub(super) fn build(scope: &Scope, node: &Node) -> El {
             },
             Err(error) => failed(scope.state, &error.to_string()),
         },
-        Node::Memo { key } => match scope.memos.get(key) {
+        Node::Memo { key } => match scope.state.memo_of(scope.instance, key) {
             Some((version, node)) => {
-                // Its controls are listed by the build that made it; Rune keeps that build.
-                let node = node.clone();
-                let built = || match Node::deserialize(&*node) {
-                    Ok(node) => build(scope, &node),
-                    Err(error) => failed(scope.state, &error.to_string()),
-                };
                 // Rune keys a memo's root with the memo's key: the root keeps its own.
-                let root = node.get("key").and_then(Value::as_str).unwrap_or(key);
-                memo(scope.key(root), *version, built)
+                let root = node.key().unwrap_or(key);
+                memo(scope.key(root), version, || build(scope, &node))
             }
             None => el(),
         },
@@ -214,6 +242,10 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
         _ => {}
     }
     // Before `inset`, which pins it to more edges than `at` does.
+    e = match &b.place {
+        Some(place) => scope.put(e, place, b.size()),
+        None => e,
+    };
     e = scope.placed(e, b.at.as_ref(), b.size(), b.opacity.as_ref());
     if let Some([left, top, right, bottom]) = b.inset {
         e = e.pin(left, top, right, bottom);
@@ -224,8 +256,25 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
     if let Some(h) = b.max_h {
         e = e.max_h(h);
     }
+    let mut bars = Vec::new();
     if let Some(scroll) = b.scroll {
-        e = scrolled(e, scroll);
+        let thumbs = [rune::Live::new([0.0; 4]), rune::Live::new([0.0; 4])];
+        e = scrolled(e, scroll).on_scroll_offset({
+            let thumbs = thumbs.clone();
+            move |at: ScrollPos| {
+                for (i, thumb) in thumbs.iter().enumerate() {
+                    thumb.set(thumb_at(&at, i));
+                }
+            }
+        });
+        let colour = theme.color("text-muted");
+        bars.extend(thumbs.iter().map(|thumb| {
+            el().absolute(0.0, 0.0)
+                .live_rect(thumb)
+                .radius(THUMB / 2.0)
+                .fill(colour)
+                .inert()
+        }));
     }
     if b.inert {
         e = e.inert();
@@ -257,65 +306,30 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
     if let Some(shadow) = b.shadow.as_deref().and_then(|name| theme.shadow(name)) {
         e = e.shadow(shadow.y, shadow.blur, theme.color(&shadow.color));
     }
-    e = semantics(scope, e, b, key.as_deref());
-    if let Some(key) = &key {
-        let lives = &scope.state.lives;
-        if let (Some(spec), Some(element)) = (b.drag, &b.key) {
-            let moved = lives.dragged(key);
-            let (instance, element, key) = (scope.instance.clone(), element.clone(), key.clone());
-            e = e.on_drag(
-                move |s: &mut State, d: &mut rune::Drag, tx: &mut rune::Tx| {
-                    if d.phase == Phase::Down {
-                        s.gesture = Some(Gesture::of(&key));
-                        return;
-                    }
-                    let Some(gesture) = s.gesture.as_mut().filter(|gesture| gesture.key == key)
-                    else {
-                        return;
-                    };
-                    gesture.follow(d, tx.mods().shift);
-                    let (far, offset) =
-                        (gesture.far, spec.offset(gesture.moved[0], gesture.moved[1]));
-                    match d.phase {
-                        Phase::Down => {}
-                        Phase::Move => {
-                            moved.set(if far { offset } else { [0.0; 2] });
-                            s.lives.held(&key, far);
-                            s.lives.refresh(s);
-                        }
-                        Phase::Up => {
-                            s.lives.held(&key, false);
-                            s.gesture = None;
-                            // A gesture that once went past the slop is a drag, also when it comes
-                            // back: it never presses.
-                            if !far {
-                                return;
-                            }
-                            s.dragged = Some(key.clone());
-                            if d.cancelled() {
-                                moved.set([0.0; 2]);
-                                return;
-                            }
-                            moved.set(offset);
-                            s.pointed(
-                                &instance,
-                                &element,
-                                "drag",
-                                Some(json!({ "dx": offset[0], "dy": offset[1] })),
-                            );
-                        }
-                    }
-                },
-            );
-        }
+    let plane = b.plane.as_ref().zip(key.as_deref());
+    let here = Scope {
+        plane: plane
+            .map(|(_, key)| key.to_string())
+            .or(scope.plane.clone()),
+        placed: b.place.as_ref().map(Place::origin).or(scope.placed.clone()),
+        menu: (b.opens_menu().then(|| key.clone()).flatten()).or(scope.menu.clone()),
+        ..scope.clone()
+    };
+    e = semantics(&here, e, b, key.as_deref());
+    if let Some((spec, key)) = plane {
+        return plane::plane(&here, e, b, key, spec);
     }
     let inside = Scope {
         in_control: scope.in_control || delegates_enter(b),
-        within: scope.within.clone(),
-        ..*scope
+        parent: b.place.as_ref().map(Place::origin).or(scope.parent.clone()),
+        ..here
     };
+    if inside.plane.is_some() {
+        return e.children(plane::children(&inside, &b.children));
+    }
     let shown = (b.children.iter()).filter(|child| !is_overlay(child) && kept(scope, child));
     e.children(shown.map(|child| build(&inside, child)))
+        .children(bars)
 }
 
 pub(super) fn is_overlay(node: &Node) -> bool {
@@ -336,6 +350,25 @@ pub(crate) fn scrolled(e: El, axes: Scroll) -> El {
 
 /// How far the edge of a scroll fades, in points.
 const FADE: f32 = 24.0;
+/// How thick a scroll bar's thumb is, and how far from the edge.
+const THUMB: f32 = 4.0;
+const THUMB_EDGE: f32 = 2.0;
+
+/// Where the thumb of the scroll bar along axis `i` of a scroll at `at` is, in the points of
+/// what scrolls, so it stays at the edge: nothing when all of it shows.
+fn thumb_at(at: &ScrollPos, i: usize) -> [f32; 4] {
+    let whole = at.max[i] + at.viewport[i];
+    if at.max[i] <= 0.5 || whole <= 0.0 {
+        return [0.0; 4];
+    }
+    let along = at.offset[i] + at.offset[i] / whole * at.viewport[i];
+    let long = at.viewport[i] / whole * at.viewport[i];
+    let across = at.offset[1 - i] + at.viewport[1 - i] - THUMB - THUMB_EDGE;
+    match i {
+        0 => [along, across, long, THUMB],
+        _ => [across, along, THUMB, long],
+    }
+}
 
 fn label(scope: &Scope, t: &TextNode) -> El {
     let theme = &scope.state.theme;

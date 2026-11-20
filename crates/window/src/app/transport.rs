@@ -365,7 +365,10 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
         checked: None,
         expanded: None,
         actions: actions.iter().map(|action| action.to_string()).collect(),
+        place: None,
         target: Target::Chrome(super::Act::Transport(act)),
+        menu: None,
+        drag: None,
     };
     let position = control("position", "Position", "timer", Act::Play, &[]);
     let mut controls = vec![

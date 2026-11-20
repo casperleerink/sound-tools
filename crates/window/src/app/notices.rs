@@ -55,7 +55,10 @@ pub(super) fn controls(state: &State) -> Option<Control> {
         checked: None,
         expanded: None,
         actions: vec!["press".into()],
+        place: None,
         target: Target::Chrome(super::Act::Dismiss),
+        menu: None,
+        drag: None,
     })
 }
 
