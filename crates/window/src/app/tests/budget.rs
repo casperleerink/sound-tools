@@ -80,7 +80,7 @@ fn shown(tool: &str, code: &str) -> (tempfile::TempDir, rune::Runtime<State>) {
 }
 
 /// The middle of what `work` says it took, of 15 runs after 3 to warm up.
-fn measured(mut work: impl FnMut() -> Duration) -> Duration {
+pub(super) fn measured(mut work: impl FnMut() -> Duration) -> Duration {
     for _ in 0..3 {
         work();
     }
@@ -90,7 +90,7 @@ fn measured(mut work: impl FnMut() -> Duration) -> Duration {
 }
 
 /// How long `work` takes on this thread: the other tests running beside it take none of it.
-fn timed(work: impl FnOnce()) -> Duration {
+pub(super) fn timed(work: impl FnOnce()) -> Duration {
     let started = spent();
     work();
     spent().saturating_sub(started)

@@ -57,9 +57,11 @@ test("a track's lanes show under it: a head that says what each moves and what p
   expect(find("point-t00-lane-vol-3840")).toMatchObject({ label: "Point at 2.1, 0 dB", role: "button", checked: false });
   expect(find("point-t00-lane-cut-0")).toMatchObject({ label: "Point at 1.1, 400 Hz" });
   expect(find("Add a lane to Track 1")).toBeDefined();
-  // A flat line has no handle to bend.
-  expect(find("bend-t00-lane-vol-7680")).toBeUndefined();
+  // A line bends from beside a chosen point, and a flat one not at all.
+  expect(find("bend-t00-lane-vol-3840")).toBeUndefined();
+  press("point-t00-lane-vol-7680");
   expect(find("bend-t00-lane-vol-3840")).toBeDefined();
+  expect(find("bend-t00-lane-vol-7680")).toBeUndefined();
 });
 
 test("a lane's menu, from its name or a right press on it, moves its number with an LFO and takes the lane away; an audio track has no envelope", () => {
@@ -141,6 +143,7 @@ test("a drag over a lane chooses the points it covers, they drag as one, delete 
 
 test("a sloped line bends by its handle, and a double click on it straightens it", () => {
   shown();
+  press("point-t00-lane-vol-3840");
   act("bend-t00-lane-vol-0", "drag", { dy: -0.1 });
   expect(pointsOf("t00", "lane-vol")[0]?.curve).toBeLessThan(0);
   press("bend-t00-lane-vol-3840", { clicks: 2 });

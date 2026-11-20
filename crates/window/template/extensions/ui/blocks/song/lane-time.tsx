@@ -1,4 +1,4 @@
-import { h, live, Live, memo, type Color, type Pointer } from "../../../sdk";
+import { h, live, Live, memo, type Color, type Live as LiveValue, type Pointer } from "../../../sdk";
 import { laneValue, roomOf, type AutomationPoint } from "../../../song/lanes";
 import { placeOf } from "../../../song/time";
 import { PLANE, ROW, type Page } from "../../../song/view";
@@ -11,8 +11,8 @@ import { laneItems, laneOf, type LaneRow } from "./lanes";
 const PAD = 0.12;
 /** How tall the line of a band's edge is to grab, in rows. */
 const EDGE = 10 / ROW;
-/** A point's mark and the dot in it, in points. */
-const [MARK, DOT] = [16, 8];
+/** A point's mark, the ring of the background round its dot, and a bend's handle, in points. */
+const [MARK, RING, DOT] = [12, 2, 8];
 
 /**
  * Where a lane's row is in the song's plane: `y` of a place `down` its travel (0 its top, 1 its
@@ -79,8 +79,8 @@ export const LaneTime = ({ page, row }: { page: Page; row: LaneRow }) => {
 
 /**
  * The points of a lane and the line through them: a point drags in time on the snap and in value
- * (finer with Shift), with the others chosen with it; the handle in the middle of a line that
- * slopes bends it, and a double click on it straightens it.
+ * (finer with Shift), with the others chosen with it. A sloped line beside a chosen point has a
+ * handle in its middle that bends it, and a double click on it straightens it.
  */
 const Points = ({ page, row, points, chosen, say }: { page: Page; row: LaneRow; points: readonly AutomationPoint[]; chosen: readonly number[]; say: (tick: number) => string }) => {
   const { travel, colour, unit, id } = laneOf(row);
@@ -96,16 +96,14 @@ const Points = ({ page, row, points, chosen, say }: { page: Page; row: LaneRow; 
       ))}
       {points.slice(0, -1).map((point, index) => {
         const next = points[index + 1]!;
-        if (next.value === point.value) return null;
+        // A line bends from beside a chosen point; a flat one has nothing to bend.
+        if (next.value === point.value || !(chosen.includes(point.tick) || chosen.includes(next.tick))) return null;
         const key = `bend-${id}-${point.tick}`;
         const down = middleOf(point, next, travel);
+        // Faint at rest, whole under the pointer. A drag stays in its bounds, so its place needs no clamp.
         return (
-          <box key={key} label={`Bend the line after the point at ${say(point.tick)}`} role="slider" value={point.curve ?? 0} hoverGroup
-            place={[(point.tick + next.tick) / 2, at.liveY(live.drag(key).dy.over(at.tall).plus(down).clamp(0, 1))]} w={MARK} h={MARK}
-            drag={{ y: [-down * at.tall, (1 - down) * at.tall] }} onDragEnd={(p) => lanes.bend(track, name, point.tick, at.inLane(p))} onPress={(p) => p.clicks === 2 && lanes.straighten(track, name, point.tick)}>
-            <box at={[(MARK - DOT) / 2, (MARK - DOT) / 2]} w={DOT} h={DOT} radius="full" fill={colour} opacity={0.35} />
-            <box reveal at={[(MARK - DOT) / 2, (MARK - DOT) / 2]} w={DOT} h={DOT} radius="full" fill={colour} />
-          </box>
+          <box key={key} label={`Bend the line after the point at ${say(point.tick)}`} role="slider" value={point.curve ?? 0} place={[(point.tick + next.tick) / 2, live.drag(key).dy.plus(at.y(down))]} w={DOT} h={DOT} radius="full" fill={`${colour}/35` as Color} hover={colour}
+            drag={{ y: [-down * at.tall, (1 - down) * at.tall] }} onDragEnd={(p) => lanes.bend(track, name, point.tick, at.inLane(p))} onPress={(p) => p.clicks === 2 && lanes.straighten(track, name, point.tick)} />
         );
       })}
       {points.map((point) => {
@@ -117,26 +115,29 @@ const Points = ({ page, row, points, chosen, say }: { page: Page; row: LaneRow; 
         const moved = live.drag(together ? `points-${id}` : key);
         const [earliest, latest] = roomOf(points, together ? chosen : [point.tick]);
         const [top, bottom] = together ? [Math.min(...downs), Math.max(...downs)] : [down, down];
-        const dragged = moved.dy.over(at.tall).plus(down).clamp(0, 1);
-        const played = liveValueAt(dragged.negate().plus(1), travel);
-        // A lane holds no silence: its volume's bottom is -100 dB.
-        const value = travel.scale === "fader" ? played.max(-100) : played;
-        const size = isChosen ? DOT + 2 : DOT;
+        // Each point is a few hundred bytes of the tree: only a chosen one says what it holds as it drags.
         return (
-          <box key={key} label={`Point at ${say(point.tick)}, ${shown(laneValue(travel, 1 - down), unit)}`} role="button" checked={isChosen} value={point.value} hoverGroup
-            place={[moved.dx.plus(point.tick).clamp(point.tick + earliest, point.tick + latest), at.liveY(dragged)]} w={MARK} h={MARK}
+          <box key={key} label={`Point at ${say(point.tick)}, ${shown(laneValue(travel, 1 - down), unit)}`} role="button" checked={isChosen} value={point.value}
+            place={[moved.dx.plus(point.tick), moved.dy.plus(at.y(down))]} w={MARK} h={MARK} radius="full" fill={isChosen ? "text" : colour} border="background" borderSides={[RING, RING, RING, RING]} hover="text/40"
             drag={{ x: [earliest, latest], y: [-top * at.tall, (1 - bottom) * at.tall], ...(snap > 0 ? { snap: [snap, 0] as [number, number] } : {}), ...(together ? { id: `points-${id}` } : {}) }}
             onPress={(p) => lanes.pressPoint(track, name, point.tick, p)} onDragEnd={(p) => lanes.movePoint(track, name, point.tick, at.inLane(p))}>
-            <box reveal at={[0, 0]} w={MARK} h={MARK} radius="full" fill={`${colour}/30` as Color} />
-            <box at={[(MARK - size) / 2, (MARK - size) / 2]} w={size} h={size} radius="full" fill={isChosen ? "text" : colour} border={isChosen ? colour : undefined} />
-            <row reveal at={[MARK + 2, -4]} h={22} px={2} align="center" radius="md" fill="raised" border="border-strong" inert>
-              {unit === undefined ? <text style="number" color="text" live={value} digits={2} /> : <text style="number" color="text" live={value} unit={unit} />}
-            </row>
+            {isChosen && (
+              <row at={[MARK + 2, -5]} h={22} px={2} align="center" radius="md" fill="raised" border="border-strong" inert>
+                <Readout lane={laneOf(row)} down={moved.dy.over(at.tall).plus(down)} />
+              </row>
+            )}
           </box>
         );
       })}
     </box>
   );
+};
+
+/** What a chosen point holds `down` its lane as it drags, in its unit: a lane holds no silence, its volume's bottom is -100 dB. */
+const Readout = ({ lane: { travel, unit }, down }: { lane: ReturnType<typeof laneOf>; down: LiveValue }) => {
+  const played = liveValueAt(down.clamp(0, 1).negate().plus(1), travel);
+  const value = travel.scale === "fader" ? played.max(-100) : played;
+  return unit === undefined ? <text style="number" color="text" live={value} digits={2} /> : <text style="number" color="text" live={value} unit={unit} />;
 };
 
 /**
