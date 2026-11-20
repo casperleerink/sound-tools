@@ -126,7 +126,6 @@ fn power_off_on_an_effect_that_mutes_lets_the_track_sound() {
 /// The rack keeps its focused Add effect in view as effects come before it, and a wheel that
 /// scrolls it away leaves it there.
 #[test]
-#[ignore = "missing: the focus leaves Add effect for the synth's card when an effect joins (tpl-fix, rack.tsx; or win-sweep)"]
 fn the_rack_keeps_the_focused_add_effect_in_view_as_effects_are_added_and_a_wheel_leaves_it() {
     let (_scratch, mut window) = with_effects(&[]);
     window.update(|_, tx| tx.focus("add-effect", false));
@@ -151,6 +150,8 @@ fn the_rack_keeps_the_focused_add_effect_in_view_as_effects_are_added_and_a_whee
             .background(|project| project.apply_outside_changes(&changed).unwrap());
         for _ in 0..20 {
             redraw(&mut window);
+            // As the app's poll does after each frame.
+            window.update(crate::app::frame::keep_focus_in_view);
         }
         assert_eq!(
             super::focused(&window).as_deref(),

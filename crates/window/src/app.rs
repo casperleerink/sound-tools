@@ -137,6 +137,8 @@ pub(crate) struct State {
     /// Events of the project a run without a window took while it waited for Bun, which the
     /// next poll gives the rest of the window.
     heard: Vec<sound_core::ProjectEvent>,
+    /// New trees came since the last frame, see [`frame::keep_focus_in_view`].
+    trees_moved: bool,
     /// The offers of the plugins of this computer, and the scan they were made for.
     plugin_offers: (u64, Vec<sound_typescript::devices::Offer>),
     /// The overlays open now, each inside the one before, by the key of what opened it. How the
@@ -326,6 +328,7 @@ impl State {
             facts: BTreeMap::new(),
             facts_read: 0.0,
             heard: Vec::new(),
+            trees_moved: false,
             plugin_offers: (0, Vec::new()),
             main,
             waiting: host::Waiting::default(),

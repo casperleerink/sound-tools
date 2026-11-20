@@ -119,7 +119,8 @@ const Devices = ({ page, each }: { page: Page; each: Channel }) => {
           <text style="heading" color="text-muted">No devices yet</text>
         </col>
       )}
-      <col h={HEADER} justify="center">
+      {/* Keyed, so the focus stays on Add effect as effects come before it. */}
+      <col key="add-effect-place" h={HEADER} justify="center">
         <Button id="add-effect" label="Add effect" text="Add effect" icon="plus" variant="ghost" size="sm">
           <MenuList id="add-effect" label="Add effect" items={offered(song.catalog, "audio", null, (key) => effects.add(key))} w={280} search />
         </Button>

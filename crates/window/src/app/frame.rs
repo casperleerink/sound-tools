@@ -112,9 +112,10 @@ impl State {
     }
 
     /// New trees came: what drags moved is where the records say now, but a drag that goes on.
-    fn trees_came(&self) {
+    fn trees_came(&mut self) {
         let held = self.gesture.as_ref().and_then(tree::Gesture::dragging);
         self.lives.drop_drags(self, held);
+        self.trees_moved = true;
     }
 
     pub(crate) fn settle(&mut self) -> bool {
@@ -140,6 +141,7 @@ pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
         };
     }
     let (mut changed, next) = frame(state, seconds);
+    keep_focus_in_view(state, tx);
     changed |= state.planes.focus(tx.focused());
     state.open_file_dialogs(tx);
     if let Some(size) = state.panel.widen.take() {
@@ -151,6 +153,17 @@ pub(crate) fn poll(state: &mut State, seconds: f64, tx: &mut Tx) -> bool {
     }
     tx.instant();
     changed
+}
+
+/// What came before the focused element in new trees moved it: it stays in view, where a
+/// wheel need not keep it.
+pub(crate) fn keep_focus_in_view(state: &mut State, tx: &mut Tx) {
+    if std::mem::take(&mut state.trees_moved)
+        && let Some(focused) = tx.focused()
+    {
+        let focused = focused.to_string();
+        tx.scroll_into_view(focused);
+    }
 }
 
 /// One frame `seconds` after the start. Whether what the window shows changed, and, in a
