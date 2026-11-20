@@ -5,6 +5,7 @@ import { builtInNumbers, type FilledStateOfTool, type Pointer } from "../sdk";
 import { envelope, lfo } from "../lfo";
 import { freeName, splitTarget, type Mover } from "../track";
 import { isRow, nameFrom, type Child, type Draft, type Song } from "./model";
+import { positionOf, valueOf } from "../ui/value";
 import { nearestOf } from "./time";
 
 export type AutomationPoint = FilledStateOfTool<"lane">["points"][number];
@@ -13,25 +14,10 @@ type Scale = FilledStateOfTool<"lane">["scale"];
 /** How a number spreads over the height of its lane, as its knob or fader travels it. */
 export type Travel = { min: number; max: number; scale: Scale };
 
-/** The fader's scale: 0 dB at 0.8 of the travel and +6 dB at the top, a power law on the amplitude. */
-const FADER = { unity: 0.8, decade: 61.94, top: 6 } as const;
-
-/** Where `value` sits along `travel`: 0 at `min` and 1 at `max`. A fader's is a volume in dB whatever its ends. */
-export function positionOf({ min, max, scale }: Travel, value: number): number {
-  if (scale === "log") return Math.log(value / min) / Math.log(max / min);
-  if (scale === "fader") return Math.min(FADER.unity * 10 ** (value / FADER.decade), 1);
-  return (value - min) / (max - min);
-}
-/** The value at `position` along `travel`: a fader gives -Infinity at 0. */
-export function valueAt({ min, max, scale }: Travel, position: number): number {
-  if (scale === "log") return min * (max / min) ** position;
-  if (scale === "fader") return position <= 0 ? -Infinity : Math.min(FADER.decade * Math.log10(position / FADER.unity), FADER.top);
-  return min + position * (max - min);
-}
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
 /** The value a lane holds `up` its travel, 0 to 1: a lane holds no -inf, so a volume's bottom is -100 dB. */
 export const laneValue = (travel: Travel, up: number) => {
-  const value = valueAt(travel, clamp(up, 0, 1));
+  const value = valueOf(clamp(up, 0, 1), travel);
   return travel.scale === "fader" ? Math.max(value, -100) : value;
 };
 
@@ -45,8 +31,8 @@ export function laneAt(points: readonly { tick: number; value: number; curve?: n
   const [a, b] = [points[after - 1]!, points[after]!];
   const travel = { min: 1, max: 2, scale };
   const part = b.tick === a.tick ? 1 : bent((tick - a.tick) / (b.tick - a.tick), a.curve ?? 0);
-  const [from, to] = [positionOf(travel, a.value), positionOf(travel, b.value)];
-  return valueAt(travel, from + (to - from) * part);
+  const [from, to] = [positionOf(a.value, travel), positionOf(b.value, travel)];
+  return valueOf(from + (to - from) * part, travel);
 }
 
 /** Sorted, one a tick: the last given wins. */
@@ -226,7 +212,7 @@ export const laneEdits = (song: Song) => {
       const range = travel(track, lane);
       const [earliest, latest] = between(track, lane, tick);
       const to = clamp(tick + Math.round(p.dx), earliest, latest);
-      const value = laneValue(range, positionOf(range, point.value) - p.dy);
+      const value = laneValue(range, positionOf(point.value, range) - p.dy);
       editPoints(song, added ? "Add a point" : "Move a point", track, lane, (all) => all.map((each) => (each.tick === tick ? { ...each, tick: to, value } : each)));
       choose(track, lane, to);
     },
@@ -247,7 +233,7 @@ export const laneEdits = (song: Song) => {
       const [point, after] = [points[index], points[index + 1]];
       if (!point || !after) return;
       const range = travel(track, lane);
-      const [from, to] = [positionOf(range, point.value), positionOf(range, after.value)];
+      const [from, to] = [positionOf(point.value, range), positionOf(after.value, range)];
       const middle = from + (to - from) * bent(0.5, point.curve ?? 0) - p.dy;
       const done = clamp((middle - from) / (to - from), 0.01, 0.99);
       const curve = clamp(Math.log(Math.log(done) / Math.log(0.5)) / Math.log(4), -1, 1);
@@ -262,7 +248,7 @@ export const laneEdits = (song: Song) => {
       const range = travel(track, lane);
       update(end === "low" ? "Change the low" : "Change the high", (draft) => {
         const child = rowIn(draft, track)?.children.find((each) => each.name === lane);
-        if (child?.tool === "lfo" || child?.tool === "envelope") child.state[end] = laneValue(range, positionOf(range, child.state[end]) - p.dy);
+        if (child?.tool === "lfo" || child?.tool === "envelope") child.state[end] = laneValue(range, positionOf(child.state[end], range) - p.dy);
       });
     },
   };

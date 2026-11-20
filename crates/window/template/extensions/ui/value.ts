@@ -2,8 +2,8 @@
 // is typed: typed text is read in what the control shows.
 import { Live, type Unit } from "../sdk";
 
-/** `log` spreads it in octaves, as a frequency. `step`: whole steps from `min`. */
-export type Scale = "linear" | "log";
+/** `log` spreads it in octaves, as a frequency; `fader` a volume in dB as a mixer's fader does. `step`: whole steps from `min`. */
+export type Scale = "linear" | "log" | "fader";
 export type Range = { min: number; max: number; scale?: Scale; step?: number };
 
 const clamp = (at: number) => Math.min(Math.max(at, 0), 1);
@@ -12,9 +12,22 @@ const KEY_STEP = 0.02;
 /** `value` without the noise of binary fractions: 0.1 * 3 is 0.3, and 3e-7 stays 3e-7. */
 const clean = (value: number) => Number(value.toPrecision(12));
 
+/** The fader's law: 0 dB at 0.8 of the travel and +6 dB at the top, a power law on the amplitude, whatever its ends. */
+const FADER = { unity: 0.8, decade: 61.94, top: 6 } as const;
+
+/** Where `value` is on the travel: 0 at `min`, 1 at `max`, and past them beyond, but a fader's, which stops at its top. */
+export const positionOf = (value: number, { min, max, scale }: Range): number => {
+  if (scale === "fader") return Math.min(FADER.unity * 10 ** (value / FADER.decade), 1);
+  return scale === "log" ? Math.log(value / min) / Math.log(max / min) : (value - min) / (max - min || 1);
+};
+/** The value at `position` of the travel, also past its ends: a fader gives -Infinity at 0. */
+export const valueOf = (position: number, { min, max, scale }: Range): number => {
+  if (scale === "fader") return position <= 0 ? -Infinity : Math.min(FADER.decade * Math.log10(position / FADER.unity), FADER.top);
+  return scale === "log" ? min * (max / min) ** position : min + position * (max - min);
+};
+
 /** Where `value` is on the travel, 0 to 1. */
-export const travelled = (value: number, { min, max, scale }: Range): number =>
-  clamp(scale === "log" ? Math.log(value / min) / Math.log(max / min) : (value - min) / (max - min || 1));
+export const travelled = (value: number, range: Range): number => clamp(positionOf(value, range));
 
 /** The highest whole step from `min` that is not past `max`. */
 const top = ({ min, max, step }: Range) => (step ? min + Math.floor((max - min) / step + 1e-9) * step : max);
@@ -31,20 +44,22 @@ export const stepped = (value: number, by: number, range: Range): number =>
   range.step ? fitted(value + by * range.step, range) : valueAt(travelled(value, range) + by * KEY_STEP, range);
 
 /** The value at `at` on the travel. */
-export const valueAt = (at: number, range: Range): number => {
-  const { min, max, scale } = range;
-  return fitted(scale === "log" ? min * (max / min) ** clamp(at) : min + clamp(at) * (max - min), range);
-};
+export const valueAt = (at: number, range: Range): number => fitted(valueOf(clamp(at), range), range);
 
 /** {@link travelled} of a live value, such as what a lane plays. */
-export const liveTravelled = (value: Live, { min, max, scale }: Range): Live =>
+export const liveTravelled = (value: Live, { min, max, scale }: Range): Live => {
+  if (scale === "fader") return Live.of(10).pow(value.over(FADER.decade)).times(FADER.unity).clamp(0, 1);
   // `decibels` is 20 log10: a ratio in dB over the range's, a place on a log scale.
-  (scale === "log" ? value.over(min).decibels().over(20 * Math.log10(max / min)) : value.minus(min).over(max - min || 1)).clamp(0, 1);
+  return (scale === "log" ? value.over(min).decibels().over(20 * Math.log10(max / min)) : value.minus(min).over(max - min || 1)).clamp(0, 1);
+};
 
 /** {@link valueAt} as a live value, for what shows while a drag goes on: exactly what a release there sets. */
 export const liveValueAt = (at: Live, range: Range): Live => {
   const { min, max, scale, step } = range;
-  const value = scale === "log" ? Live.of(max / min).pow(at).times(min) : at.times(max - min).plus(min);
+  const value =
+    scale === "fader" ? at.over(FADER.unity).decibels().times(FADER.decade / 20).clamp(min, Math.min(max, FADER.top))
+    : scale === "log" ? Live.of(max / min).pow(at).times(min)
+    : at.times(max - min).plus(min);
   if (!step) return value;
   // A live value's numbers are 32-bit: a step below 1 as a whole number of them per unit, so
   // -96 + 960 / 10 is 0, where 960 * 0.1 would leave a millionth.
