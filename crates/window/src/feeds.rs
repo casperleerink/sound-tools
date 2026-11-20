@@ -28,8 +28,8 @@ pub(crate) struct Feeds {
     last: BTreeMap<(InstanceId, String), f32>,
     /// How many numbers each list read this frame gave.
     lists: RefCell<BTreeMap<(InstanceId, String), usize>>,
-    /// Whether a list drew anew this frame.
-    drew: Cell<bool>,
+    /// How many drawings of lists drew anew this frame.
+    drew: Cell<usize>,
 }
 
 impl Feeds {
@@ -40,7 +40,7 @@ impl Feeds {
             numbers: RefCell::default(),
             last: BTreeMap::new(),
             lists: RefCell::default(),
-            drew: Cell::new(false),
+            drew: Cell::new(0),
         }
     }
 
@@ -54,7 +54,7 @@ impl Feeds {
         self.readings.next_frame(seconds as f32);
         self.last = std::mem::take(self.numbers.get_mut());
         self.lists.get_mut().clear();
-        self.drew.set(false);
+        self.drew.set(0);
     }
 
     /// The number feed `name` of the instance at `path` inside `instance` (itself when left
@@ -124,7 +124,7 @@ impl Feeds {
         let (w, h, rgba) = listed.raster(&state.theme, &lists);
         pixels.set(w, h, rgba);
         *last = lists;
-        self.drew.set(true);
+        self.drew.set(self.drew.get() + 1);
     }
 
     fn read(
@@ -140,7 +140,8 @@ impl Feeds {
     /// list drew anew.
     pub(crate) fn moved(&self) -> bool {
         let numbers = self.numbers.borrow();
-        self.drew.get() || (numbers.iter()).any(|(key, number)| self.last.get(key) != Some(number))
+        self.drew.get() > 0
+            || (numbers.iter()).any(|(key, number)| self.last.get(key) != Some(number))
     }
 
     /// What the views read this frame, as `<instance> <name>`, for the agent's tree: each number,
@@ -159,8 +160,8 @@ impl Feeds {
 
 #[cfg(test)]
 impl Feeds {
-    /// Whether a list drew anew in the last frame.
-    pub(crate) fn drew(&self) -> bool {
+    /// How many drawings of lists drew anew in the last frame.
+    pub(crate) fn drew(&self) -> usize {
         self.drew.get()
     }
 }

@@ -1,6 +1,6 @@
 // What the test helpers of `sdk/view.ts` do, as the window does it, and what its types refuse.
 import { expect, test } from "bun:test";
-import { act, find, h, input, live, number, press, render, text, tool, type Card, type Pointer } from "./sdk";
+import { act, find, h, input, live, number, press, render, text, tool, type Card, type Pointer, type Self } from "./sdk";
 
 const counter = tool({
   name: "counter", title: "Counter", when: "Never", doc: "Counts.", state: { count: number({ min: 0, max: 100, default: 0 }) }, sound: () => input,
@@ -112,4 +112,12 @@ export const wrong = [
   <shapes place={[0, 0, 10, 10]} w={10} h={10} />,
   // @ts-expect-error: a feed is one a tool publishes
   <box opacity={live.feed("peek")} />,
+  // @ts-expect-error: a list feed is drawn by a shapes, not a number
+  <box opacity={live.feed("response")} />,
+  // @ts-expect-error: a number feed is no list to draw
+  <shapes w={10} h={10} lines={[{ color: "text", width: 1, points: live.feed("peak") }]} />,
+  <shapes w={10} h={10} units={[10, [18, -18]]} lines={[{ color: "text", width: 1, points: live.feed("response"), fill: "text/10" }]} />,
+  <box opacity={live.feed("sounding.60")} />,
 ];
+// A region's facts are typed: how long it plays, while its file is there.
+export const seconds = (self: Self<"region">): number | null | undefined => self.facts.seconds;

@@ -4,11 +4,12 @@
 
 import type theme from "../theme.json";
 import type { Clock, Offer as Offered } from "./clock";
+import type { ToolFacts, ToolFeeds } from "./feeds";
 import type { Fields, Inputs, Note, Unit, ValuesOf } from "./fields";
 import type { IconName } from "./icons";
 import type { Tools } from "./records";
 import { registry, type ChildTools, type Context, type FilledStateOfTool, type OwnedChild, type ProjectTool, type ToolSpec } from "./tools";
-import { Live, splitPath, type Num } from "./values";
+import { Live, splitPath, type LiveNode, type Num } from "./values";
 
 // Design tokens: every name comes from theme.json, so a misspelled one is a type error.
 type Theme = typeof theme;
@@ -22,17 +23,10 @@ export type Space = NumberOf<keyof Theme["space"]>;
 export type Radius = keyof Theme["radius"];
 export type Shadow = keyof Theme["shadow"];
 
-/**
- * What tools publish for `live.feed`, by name: a number, or a list for the `points` or `rects` of
- * a `shapes`. Rust will write this beside `records.ts` from the feeds it registers; until then a
- * new feed is named here.
- */
-export interface Feeds {
-  /** The loudest sample since the last frame, 0 to 1 and above when it clips. */
-  peak: number;
-  /** 1 while the key (60 is middle C) sounds: what a clip, a key or code plays. */
-  [sounding: `sounding.${number}`]: number;
-}
+/** The names of the feeds of any tool whose value is `V`: a number or a list. */
+type FeedNames<V> = { [T in keyof ToolFeeds]: { [N in keyof ToolFeeds[T]]: ToolFeeds[T][N] extends V ? N : never }[keyof ToolFeeds[T]] }[keyof ToolFeeds] & string;
+/** A list feed, which only the `points` or `rects` of a `shapes` draw. */
+export type FeedList = { readonly node: LiveNode; readonly list: true };
 
 /**
  * Where live values start: numbers the window works out every frame without running the view.
@@ -49,8 +43,15 @@ export const live = {
   bpm: new Live({ op: "bpm" }),
   /** A number field of the record as it plays (what a lane or a drag's `plays` puts in it, else the record), or of an instance inside as `"t01/mix.gain_db"`. */
   field: (name: string): Live => new Live({ op: "value", ...splitPath(name), fraction: false }),
-  /** What the instance at `path` inside this one publishes as `name`, or this one when left out: `live.feed("peak", "t01/mix")`, `live.feed("sounding.60")`. */
-  feed: (name: keyof Feeds & string, path = ""): Live => new Live({ op: "feed", name, ...(path === "" ? {} : { path }) }),
+  /**
+   * What the instance at `path` inside this one publishes as `name`, or this one when left out:
+   * a number, `live.feed("peak", "t01/mix")`, one of a list, `live.feed("sounding.60")`, or a
+   * list for a `shapes`, `live.feed("response")`. `sdk/feeds.ts` names each tool's.
+   */
+  feed: ((name: string, path = "") => new Live({ op: "feed", name, ...(path === "" ? {} : { path }) })) as {
+    (name: FeedNames<number> | `${FeedNames<number[]>}.${number}`, path?: string): Live;
+    (name: FeedNames<number[]>, path?: string): FeedList;
+  },
   /** What the plane `key` of this view shows now, in its units, and how far it is zoomed: 1 as it opened. */
   plane: (key: string) => ({ left: planePart(key, "left"), right: planePart(key, "right"), top: planePart(key, "top"), bottom: planePart(key, "bottom"), zoom: planePart(key, "zoom") }),
   /** The drag `id` (an element's key, or its `drag.id`) now, in its units: how far it moved, where it began (`x`, `y`), 1 while it is and while Alt is held; 0 once its record took it. */
@@ -208,9 +209,9 @@ export type TextProps = TextLook &
     | { live: Num; digits?: number; unit?: never; children?: never }
   );
 /** Line segments, `points` four numbers each (x1 y1 x2 y2), or a list feed: its numbers are heights, evenly from the left edge to the right, drawn as they change. Segments end to end draw as one line; `fill` closes it and fills it, or under an open line the area below. */
-export type Lines = { color: Color; width: number; points: number[] | Live; fill?: Color };
+export type Lines = { color: Color; width: number; points: number[] | FeedList; fill?: Color };
 /** Filled rectangles, `rects` four numbers each (x y w h), or a list feed. */
-export type Rects = { color: Color; rects: number[] | Live };
+export type Rects = { color: Color; rects: number[] | FeedList };
 type Span = number | [from: number, to: number];
 /**
  * Its points are in `units` [across, down] when given, stretched to `w` × `h`: each a length from
@@ -266,11 +267,6 @@ export type FieldInfo = { name: string; label: string } & (
   | { kind: "list"; item: FieldInfo; maxItems: number | null }
   | { kind: "map"; item: FieldInfo }
 );
-/** What built-in tools tell of an instance besides its title and fields. Rust will write this beside `records.ts`; until then a tool's facts are named here. */
-interface ToolFacts {
-  region: { seconds: number; missing: boolean };
-  recorder: { taking: { from: number } | null };
-}
 /** What the window knows of an instance of the tool `T` that no record holds and that rarely changes: its title, the fields of its record, and more of some tools. A change runs the view. */
 export type Facts<T = unknown> = { title: string; fields: FieldInfo[] } & (T extends keyof ToolFacts ? ToolFacts[T] : {});
 /** A child as a view gets it: with its facts. */

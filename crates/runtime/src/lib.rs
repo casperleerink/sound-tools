@@ -223,21 +223,18 @@ pub fn tool_schemas() -> Result<Vec<ToolSchema>> {
     Ok(registry.tool_schemas())
 }
 
-/// What the views of the built-in tools read, for their types in the code of a project: every
-/// feed, and the JSON Schema of the facts of each tool that adds some (`*`: of every instance).
-pub fn feeds_and_facts(
-    plugins: Plugins,
-) -> Result<(
-    Vec<sound_core::feeds::FeedName>,
-    Vec<(&'static str, serde_json::Value)>,
-)> {
+/// What the code of a project reads of the built-in tools, for the types of its SDK: their
+/// records, every feed, and the JSON Schema of the facts of each tool that adds some (`*`: of
+/// every instance).
+pub fn built_in() -> Result<sound_typescript::BuiltIn> {
     let mut registry = Registry::new();
-    register_extensions(&mut registry, Some(plugins))?;
+    register_extensions(&mut registry, Some(read_only_plugins()?))?;
     sound_typescript::register_feeds(&mut registry);
-    Ok((
-        sound_core::feeds::names(&registry),
-        sound_core::facts::describe(&registry),
-    ))
+    Ok(sound_typescript::BuiltIn {
+        schemas: registry.tool_schemas(),
+        feeds: sound_core::feeds::names(&registry),
+        facts: sound_core::facts::describe(&registry),
+    })
 }
 
 /// Opens the project with its lock. The app passes [`playing_plugins`]; a test passes a host
@@ -284,7 +281,7 @@ pub(crate) fn load_tools(folder: &Path, make_tools_folder: bool) -> Result<Optio
     if let Err(error) = templates::update(folder) {
         eprintln!("error: {error:#}");
     }
-    Ok(Extensions::load(folder, &tool_schemas()?, true))
+    Ok(Extensions::load(folder, &built_in()?, true))
 }
 
 /// [`open_with_extensions`] with the tools of the project loaded already, see
@@ -387,7 +384,7 @@ pub fn open_read_only_at(
         ..OFFLINE
     });
     // A runtime that holds the project may be writing its log.
-    let extensions = Extensions::load(folder, &tool_schemas()?, false);
+    let extensions = Extensions::load(folder, &built_in()?, false);
     let (registry, extensions) = registry_of(folder, plugins, extensions)?;
     let mut project = Project::open_read_only(folder, registry, control)?;
     if let Some(extensions) = &extensions {
