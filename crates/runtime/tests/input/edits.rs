@@ -263,3 +263,28 @@ impl Opened {
         });
     }
 }
+
+/// A press counts from the record its view drew with.
+const COUNTER: &str = r#"import { h, number, tool } from "./sdk";
+export const counter = tool({
+  name: "counter", title: "Counter", when: "Never", doc: "Counts presses.",
+  state: { count: number({ min: 0, max: 100, default: 0 }) },
+  view: (self, { update }) => (
+    <box key="count" label="Count" w={20} h={20}
+      onPress={() => update("Count", ({ state }) => void (state.count = self.state.count + 1))} />
+  ),
+});
+"#;
+
+/// A handler reads the record as it is when it runs, also when its view drew the same tree
+/// again and the window kept the handler it had.
+#[test]
+fn a_press_on_a_view_that_drew_the_same_tree_again_reads_the_record_as_it_is() {
+    let mut opened = open_files(&[
+        ("extensions/counter.tsx", COUNTER),
+        ("state/counter.json", r#"{"tool": "counter", "state": {}}"#),
+    ]);
+    opened.press("counter", "count");
+    opened.press("counter", "count");
+    opened.until("two presses", |opened| opened.record("counter")["count"] == 2);
+}
