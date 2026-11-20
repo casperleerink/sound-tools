@@ -201,3 +201,11 @@ fn a_new_project_takes_a_free_name_and_opens_where_it_was_made() {
     assert!(made.join(runtime::PROJECT_FILE).is_file());
     assert!(matches!(window.state.shell().dialog, None::<Dialog>));
 }
+
+#[test]
+fn the_new_project_names_its_place_as_open_recent_does() {
+    let scratch = tempfile::tempdir().unwrap();
+    let mut window = window(&scratch.path().join("support"));
+    chord(&mut window, 'n');
+    assert_eq!(said(&window, "project-place-words"), "In ~");
+}
