@@ -6,6 +6,10 @@ import { editsOf } from "./edits";
 import { chosenEffect } from "./effects";
 import { itemAt, rowOfKey, type Song } from "./model";
 import { noteCommand, openClip, type NoteCommand } from "./notes";
+import { stepOf } from "./time";
+
+/** How far up or down an arrow moves a chosen point: a hundredth of its lane's travel. */
+const POINT_STEP = 0.01;
 
 /** An action of the song. `run` says `false` when there was nothing for it to do. */
 const on = (keys: readonly ActionKey[], title: string, run: (song: Song) => boolean | void): Action<Song> => ({ title, keys, run });
@@ -62,11 +66,13 @@ export const actions: Record<string, Action<Song>> = {
     if (!song.memory.mark) return false;
     editsOf(song).marks.remove(song.memory.mark);
   }),
-  delete_point: on(["backspace", "delete"], "Remove the chosen automation point", (song) => {
-    const point = song.memory.point;
-    if (!point) return false;
-    editsOf(song).lanes.removePoint(point.track, point.lane, point.tick);
-  }),
+  delete_point: on(["backspace", "delete"], "Remove the chosen automation points", (song) => editsOf(song).lanes.removeChosen()),
+  point_left: on(["left"], "Move the chosen automation points earlier", (song) => editsOf(song).lanes.nudge(-stepOf(song.memory.snap), 0)),
+  point_right: on(["right"], "Move the chosen automation points later", (song) => editsOf(song).lanes.nudge(stepOf(song.memory.snap), 0)),
+  point_up: on(["up"], "Move the chosen automation points up", (song) => editsOf(song).lanes.nudge(0, -POINT_STEP)),
+  point_down: on(["down"], "Move the chosen automation points down", (song) => editsOf(song).lanes.nudge(0, POINT_STEP)),
+  point_up_more: on(["shift-up"], "Move the chosen automation points up more", (song) => editsOf(song).lanes.nudge(0, -10 * POINT_STEP)),
+  point_down_more: on(["shift-down"], "Move the chosen automation points down more", (song) => editsOf(song).lanes.nudge(0, 10 * POINT_STEP)),
   audio_louder: on(["alt-up"], "Turn the chosen audio clips up", (song) => editsOf(song).regions.step(1)),
   audio_softer: on(["alt-down"], "Turn the chosen audio clips down", (song) => editsOf(song).regions.step(-1)),
 

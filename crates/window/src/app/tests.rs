@@ -2121,6 +2121,7 @@ mod frame;
 mod geometry;
 mod history;
 mod input;
+mod lanes;
 mod menu_settings;
 mod mixer;
 mod plays;

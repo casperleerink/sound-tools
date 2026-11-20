@@ -1,10 +1,11 @@
 // The automation of a track: lanes under it, each a line of points, an LFO or an envelope that
 // moves a number of the track's fader or of one of its devices over the song.
 // A lane's plane: x in ticks of the song, y down its travel, 0 its top (`max`) and 1 its bottom.
-import { builtInNumbers, type FilledStateOfTool, type Pointer } from "../sdk";
-import { envelope, lfo } from "../lfo";
+import { builtInNumbers, type FilledStateOfTool, type Pointer, type Unit } from "../sdk";
+import { ENVELOPE, envelope, lfo } from "../lfo";
 import { freeName, splitTarget, type Mover } from "../track";
-import { isRow, nameFrom, type Child, type Draft, type Song } from "./model";
+import { isRow, mixOf, nameFrom, words, type Child, type Draft, type Song } from "./model";
+import { positionOf, valueOf } from "../ui/value";
 import { nearestOf } from "./time";
 
 export type AutomationPoint = FilledStateOfTool<"lane">["points"][number];
@@ -13,25 +14,10 @@ type Scale = FilledStateOfTool<"lane">["scale"];
 /** How a number spreads over the height of its lane, as its knob or fader travels it. */
 export type Travel = { min: number; max: number; scale: Scale };
 
-/** The fader's scale: 0 dB at 0.8 of the travel and +6 dB at the top, a power law on the amplitude. */
-const FADER = { unity: 0.8, decade: 61.94, top: 6 } as const;
-
-/** Where `value` sits along `travel`: 0 at `min` and 1 at `max`. A fader's is a volume in dB whatever its ends. */
-export function positionOf({ min, max, scale }: Travel, value: number): number {
-  if (scale === "log") return Math.log(value / min) / Math.log(max / min);
-  if (scale === "fader") return Math.min(FADER.unity * 10 ** (value / FADER.decade), 1);
-  return (value - min) / (max - min);
-}
-/** The value at `position` along `travel`: a fader gives -Infinity at 0. */
-export function valueAt({ min, max, scale }: Travel, position: number): number {
-  if (scale === "log") return min * (max / min) ** position;
-  if (scale === "fader") return position <= 0 ? -Infinity : Math.min(FADER.decade * Math.log10(position / FADER.unity), FADER.top);
-  return min + position * (max - min);
-}
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
 /** The value a lane holds `up` its travel, 0 to 1: a lane holds no -inf, so a volume's bottom is -100 dB. */
 export const laneValue = (travel: Travel, up: number) => {
-  const value = valueAt(travel, clamp(up, 0, 1));
+  const value = valueOf(clamp(up, 0, 1), travel);
   return travel.scale === "fader" ? Math.max(value, -100) : value;
 };
 
@@ -45,8 +31,8 @@ export function laneAt(points: readonly { tick: number; value: number; curve?: n
   const [a, b] = [points[after - 1]!, points[after]!];
   const travel = { min: 1, max: 2, scale };
   const part = b.tick === a.tick ? 1 : bent((tick - a.tick) / (b.tick - a.tick), a.curve ?? 0);
-  const [from, to] = [positionOf(travel, a.value), positionOf(travel, b.value)];
-  return valueAt(travel, from + (to - from) * part);
+  const [from, to] = [positionOf(a.value, travel), positionOf(b.value, travel)];
+  return valueOf(from + (to - from) * part, travel);
 }
 
 /** Sorted, one a tick: the last given wins. */
@@ -95,6 +81,73 @@ export function travelOf(row: Child, target: string): Travel {
   const values = lane?.tool === "lane" ? lane.state.points.map((point) => point.value) : [];
   return { min: Math.min(0, ...values), max: Math.max(1, ...values), scale: "linear" };
 }
+
+/** The unit a lane's number shows in, by its name as the window's cards tell it: a 0 to 1 number is a share. */
+export function unitOf(target: string, { min, max, scale }: Travel): Unit | undefined {
+  const [, number] = splitTarget(target);
+  if (scale === "fader") return "db";
+  const named = /_(hz|db|ms|seconds|percent)$/.exec(number)?.[1] as Unit | undefined;
+  if (named) return named;
+  if (number.split(".").at(-1) === "pan") return "pan";
+  return min === 0 && max === 1 ? "percent" : undefined;
+}
+
+/** A number a new lane of a track can move: what it is, what the menu calls it, the device it is of, and where it is now. */
+export type Movable = { target: string; text: string; group: string; value: number };
+
+/** The places of `pattern` in `state`: each `*` is every item of the list or key of the map there. */
+function expand(pattern: string, state: unknown): string[] {
+  const [head = "", ...rest] = pattern.split(".");
+  if (rest.length === 0) return [head];
+  const inner = (state as Record<string, unknown> | undefined)?.[head];
+  if (rest[0] !== "*") return expand(rest.join("."), inner).map((tail) => `${head}.${tail}`);
+  const keys = Object.keys((inner as object | undefined) ?? {});
+  return keys.flatMap((key) => expand(rest.slice(1).join("."), (inner as Record<string, unknown>)[key]).map((tail) => `${head}.${key}.${tail}`));
+}
+const numberIn = (state: unknown, path: string): unknown => path.split(".").reduce<unknown>((at, step) => (at as Record<string, unknown> | undefined)?.[step], state);
+
+/**
+ * What a new lane of `row` can move, a group a device: the track's volume and pan, its
+ * instrument's numbers, then each effect's in the chain's order; those a lane moves already left
+ * out. A plugin's numbers are not known here.
+ */
+export function movablesOf(row: Child): Movable[] {
+  if (!isRow(row)) return [];
+  const gain = mixOf(row)?.state.gain_db;
+  const own: Movable[] = [
+    { target: "mix.gain_db", text: "Volume", group: "Track", value: gain === "-inf" ? -100 : (gain ?? 0) },
+    { target: "mix.pan", text: "Pan", group: "Track", value: mixOf(row)?.state.pan ?? 0 },
+  ];
+  const chain = row.children.find((child) => child.name === "chain");
+  const effects = chain?.tool === "chain" ? chain.state.order.flatMap((name) => chain.children.filter((each) => each.name === name).map((each) => ({ path: `chain/${name}`, device: each }))) : [];
+  const synth = row.children.find((child) => child.name === "synth");
+  const devices = [...(synth ? [{ path: "synth", device: synth }] : []), ...effects];
+  const numbers = devices.flatMap(({ path, device }) =>
+    Object.entries(builtInNumbers[String(device.tool)] ?? {}).flatMap(([pattern, known]) =>
+      expand(pattern, device.state).map((number) => {
+        const target = `${path}.${number}`;
+        const held = numberIn(device.state, number);
+        const value = typeof held === "number" ? held : (known.default ?? laneValue(travelOf(row, target), 0.5));
+        // An item of a list counts from 1, a key of a map is as it is: `bands.0.gain_db` is `Bands 1 gain`.
+        const parts = number.split(".").map((part, at, all) => (/^\d+$/.test(part) && Array.isArray(numberIn(device.state, all.slice(0, at).join("."))) ? String(Number(part) + 1) : part));
+        return { target, text: words(parts.join(" ")), group: words(device.name), value };
+      }),
+    ),
+  );
+  const taken = new Set(row.state.automation.map((each) => each.target));
+  return [...own, ...numbers].filter((each) => !taken.has(each.target));
+}
+
+/** How far the points at `ticks` of `points` may move in time: one alone stays between its neighbours, many stay after 0. */
+export function roomOf(points: readonly { tick: number }[], ticks: readonly number[]): [earliest: number, latest: number] {
+  if (ticks.length !== 1) return [-Math.min(...ticks), FAR];
+  const index = points.findIndex((point) => point.tick === ticks[0]);
+  const tick = points[index]?.tick;
+  if (tick === undefined) return [0, 0];
+  return [(points[index - 1]?.tick ?? -1) + 1 - tick, (points[index + 1]?.tick ?? FAR) - 1 - tick];
+}
+/** Further than any song goes, in ticks: a bound a drag can be given. */
+const FAR = 1e12;
 
 /** The track or audio track `name` of a draft. */
 const rowIn = (draft: Draft, name: string) => {
@@ -148,16 +201,24 @@ export const laneEdits = (song: Song) => {
     const target = targetOf(track, lane);
     return owner && target ? travelOf(owner, target) : { min: 0, max: 1, scale: "linear" as const };
   };
-  const choose = (track: string, lane: string, tick: number) => {
+  const choose = (track: string, lane: string, ticks: number[]) => {
     memory.selected = [];
     memory.mark = null;
-    memory.point = { track, lane, tick };
+    memory.point = { track, lane, ticks };
   };
-  /** The ticks the point at `tick` may move to: it does not pass its neighbours. */
-  const between = (track: string, lane: string, tick: number) => {
+  const chosenIn = (track: string, lane: string) => (memory.point?.track === track && memory.point.lane === lane ? memory.point.ticks : []);
+  /** The points at `ticks` moved by `dx` ticks and `dy` down the travel, as one step, and chosen. */
+  const shift = (track: string, lane: string, ticks: readonly number[], dx: number, dy: number) => {
     const points = pointsOf(track, lane);
-    const index = points.findIndex((point) => point.tick === tick);
-    return [(points[index - 1]?.tick ?? -1) + 1, (points[index + 1]?.tick ?? 1e12) - 1] as const;
+    const [earliest, latest] = roomOf(points, ticks);
+    const by = clamp(Math.round(dx), earliest, latest);
+    const range = travel(track, lane);
+    const moved = points.filter((point) => ticks.includes(point.tick)).map((point) => ({ ...point, tick: point.tick + by, value: laneValue(range, positionOf(point.value, range) - dy) }));
+    if (moved.length === 0) return false;
+    // The moved points last: one that lands on another takes its place.
+    editPoints(song, moved.length > 1 ? "Move points" : "Move a point", track, lane, (all) => [...all.filter((point) => !ticks.includes(point.tick)), ...moved]);
+    choose(track, lane, moved.map((point) => point.tick));
+    return true;
   };
   return {
     /** Shows or hides the lanes of `track`. */
@@ -204,41 +265,63 @@ export const laneEdits = (song: Song) => {
         row.children.splice(row.children.findIndex((child) => child.name === lane), 1);
         const name = freeName(row.children.map((child) => child.name), `${PREFIX[tool]}-${nameFrom(target)}`);
         if (tool === "lane") row.children.push({ name: name as `lane-${string}`, tool: "lane", state: { points: [{ tick: 0, value: held }], scale: range.scale } });
-        else if (tool === "lfo") row.children.push({ name: name as `lfo-${string}`, tool: lfo, state: { low, high, scale } });
+        else if (tool === "lfo") row.children.push({ name: name as `lfo-${string}`, tool: lfo, state: { shape: "sine", rate: "1/4", low, high, scale } });
         else {
           const owner = draft.children.find((child) => child.name === track);
-          if (owner?.tool === "track") owner.children.push({ name: name as `env-${string}`, tool: envelope, state: { low, high, scale } });
+          const times = Object.fromEntries(Object.entries(ENVELOPE).map(([field, spec]) => [field, spec.default])) as Record<keyof typeof ENVELOPE, number>;
+          if (owner?.tool === "track") owner.children.push({ name: name as `env-${string}`, tool: envelope, state: { ...times, low, high, scale } });
         }
         row.state.automation = row.state.automation.map((each) => (each.lane === lane ? { ...each, lane: name } : each));
       });
     },
-    /** A press on an empty lane: a point there, on the snap unless cmd is held, chosen. Its drag then moves it with `move(…, true)`. */
+    /** A double click on a lane: a point there, on the snap unless cmd is held, chosen. */
     addPoint(track: string, lane: string, p: Pick<Pointer, "x" | "y" | "cmd">) {
       const tick = p.cmd ? Math.max(Math.round(p.x), 0) : nearestOf(p.x, memory.snap);
       editPoints(song, "Add a point", track, lane, (all) => [...all, { tick, value: laneValue(travel(track, lane), 1 - p.y) }]);
-      choose(track, lane, tick);
+      choose(track, lane, [tick]);
       return tick;
     },
-    /** The point at `tick` dragged by `p`, between its neighbours, chosen; `added` when the same press added it, so both are one undo step. */
-    movePoint(track: string, lane: string, tick: number, p: Pick<Pointer, "dx" | "dy">, added = false) {
-      const point = pointsOf(track, lane).find((each) => each.tick === tick);
-      if (!point) return;
-      const range = travel(track, lane);
-      const [earliest, latest] = between(track, lane, tick);
-      const to = clamp(tick + Math.round(p.dx), earliest, latest);
-      const value = laneValue(range, positionOf(range, point.value) - p.dy);
-      editPoints(song, added ? "Add a point" : "Move a point", track, lane, (all) => all.map((each) => (each.tick === tick ? { ...each, tick: to, value } : each)));
-      choose(track, lane, to);
+    /** A press on the point at `tick`: alt removes it, shift adds it to the chosen ones or lets it go, else it is chosen alone. */
+    pressPoint(track: string, lane: string, tick: number, p: Pick<Pointer, "shift" | "alt">) {
+      if (p.alt) return this.removePoint(track, lane, tick);
+      const chosen = chosenIn(track, lane);
+      if (!p.shift) return choose(track, lane, [tick]);
+      choose(track, lane, chosen.includes(tick) ? chosen.filter((each) => each !== tick) : [...chosen, tick]);
+    },
+    /** The point at `tick` dragged by `p`: with the others chosen in its lane when it is one of them, else alone between its neighbours. */
+    movePoint(track: string, lane: string, tick: number, p: Pick<Pointer, "dx" | "dy">) {
+      const chosen = chosenIn(track, lane);
+      shift(track, lane, chosen.includes(tick) ? chosen : [tick], p.dx, p.dy);
+    },
+    /** The chosen points moved by `dx` ticks and `dy` of the travel, by the keys: false while none is chosen. */
+    nudge(dx: number, dy: number) {
+      const point = memory.point;
+      return point !== null && shift(point.track, point.lane, point.ticks, dx, dy);
+    },
+    /** A drag over a lane: the points it covers are chosen, with those chosen already when shift is held. */
+    choosePoints(track: string, lane: string, p: Pick<Pointer, "x" | "dx" | "shift">) {
+      const [from, to] = [Math.min(p.x, p.x + p.dx), Math.max(p.x, p.x + p.dx)];
+      const covered = pointsOf(track, lane).filter((point) => point.tick >= from && point.tick <= to).map((point) => point.tick);
+      choose(track, lane, [...new Set([...(p.shift ? chosenIn(track, lane) : []), ...covered])]);
     },
     /** An alt-drag on the lane: the points it covers go. */
     erase(track: string, lane: string, p: Pick<Pointer, "x" | "dx">) {
       const [from, to] = [Math.min(p.x, p.x + p.dx), Math.max(p.x, p.x + p.dx)];
       editPoints(song, "Erase points", track, lane, (all) => all.filter((point) => point.tick < from || point.tick > to));
     },
-    /** An alt-click on a point, or delete on the chosen one: it goes, and the last point takes the lane along. */
+    /** An alt-click on a point: it goes, and the last point takes the lane along. */
     removePoint(track: string, lane: string, tick: number) {
-      if (memory.point?.track === track && memory.point.lane === lane && memory.point.tick === tick) memory.point = null;
+      const chosen = chosenIn(track, lane);
+      if (chosen.includes(tick)) choose(track, lane, chosen.filter((each) => each !== tick));
       editPoints(song, "Remove a point", track, lane, (all) => all.filter((point) => point.tick !== tick));
+    },
+    /** Delete: the chosen points go. False while none is chosen. */
+    removeChosen() {
+      const point = memory.point;
+      if (!point || point.ticks.length === 0) return false;
+      memory.point = { ...point, ticks: [] };
+      editPoints(song, point.ticks.length > 1 ? "Remove points" : "Remove a point", point.track, point.lane, (all) => all.filter((each) => !point.ticks.includes(each.tick)));
+      return true;
     },
     /** The handle in the middle of the line from the point at `tick` dragged by `dy`: the curve whose middle is where it was let go. */
     bend(track: string, lane: string, tick: number, p: Pick<Pointer, "dy">) {
@@ -247,7 +330,7 @@ export const laneEdits = (song: Song) => {
       const [point, after] = [points[index], points[index + 1]];
       if (!point || !after) return;
       const range = travel(track, lane);
-      const [from, to] = [positionOf(range, point.value), positionOf(range, after.value)];
+      const [from, to] = [positionOf(point.value, range), positionOf(after.value, range)];
       const middle = from + (to - from) * bent(0.5, point.curve ?? 0) - p.dy;
       const done = clamp((middle - from) / (to - from), 0.01, 0.99);
       const curve = clamp(Math.log(Math.log(done) / Math.log(0.5)) / Math.log(4), -1, 1);
@@ -257,12 +340,19 @@ export const laneEdits = (song: Song) => {
     straighten(track: string, lane: string, tick: number) {
       editPoints(song, "Straighten a line", track, lane, (all) => all.map((each) => (each.tick === tick ? { tick: each.tick, value: each.value } : each)));
     },
+    /** A field of the LFO or the envelope that moves the number of `lane`: its shape or rate, or a time or the sustain. */
+    tune(track: string, lane: string, field: "shape" | "rate" | keyof typeof ENVELOPE, value: string | number) {
+      update(`Change the ${words(field).toLowerCase()}`, (draft) => {
+        const child = rowIn(draft, track)?.children.find((each) => each.name === lane);
+        if (child?.tool === "lfo" || child?.tool === "envelope") (child.state as Record<string, unknown>)[field] = value;
+      });
+    },
     /** The low or the high line of an LFO's or an envelope's band dragged by `dy`. */
     band(track: string, lane: string, end: "low" | "high", p: Pick<Pointer, "dy">) {
       const range = travel(track, lane);
       update(end === "low" ? "Change the low" : "Change the high", (draft) => {
         const child = rowIn(draft, track)?.children.find((each) => each.name === lane);
-        if (child?.tool === "lfo" || child?.tool === "envelope") child.state[end] = laneValue(range, positionOf(range, child.state[end]) - p.dy);
+        if (child?.tool === "lfo" || child?.tool === "envelope") child.state[end] = laneValue(range, positionOf(child.state[end], range) - p.dy);
       });
     },
   };

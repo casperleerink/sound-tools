@@ -25,7 +25,7 @@ test("delete takes the chosen notes first, then the chosen mark, point and clips
   f.memory.selected = ["t00/c00"];
   f.memory.notes = ["0:60:960:100"];
   f.memory.mark = { kind: "section", bar: 2, tick: BAR };
-  f.memory.point = { track: "t00", lane: "lane-pan", tick: BEAT };
+  f.memory.point = { track: "t00", lane: "lane-pan", ticks: [BEAT] };
   expect(press(f.song, "delete")).toBe("delete_notes");
   expect(press(f.song, "delete")).toBe("delete_mark");
   expect(press(f.song, "delete")).toBe("delete_point");
@@ -88,4 +88,20 @@ test("shift-enter makes the open editor large and puts it back, with no undo ste
   press(f.song, "shift-enter");
   expect(f.memory.editorLarge).toBe(true);
   expect(f.steps).toEqual([]);
+});
+
+test("the arrows move the chosen points of a lane: in time by the snap, up and down by a hundredth of the travel", () => {
+  const f = song();
+  f.memory.below = { kind: "track", name: "t00" };
+  f.memory.point = { track: "t00", lane: "lane-pan", ticks: [0] };
+  expect(press(f.song, "right")).toBe("point_right");
+  expect(press(f.song, "up")).toBe("point_up");
+  expect(press(f.song, "shift-up")).toBe("point_up_more");
+  const lane = (f.self.children[0] as any).children.find((each: { name: string }) => each.name === "lane-pan");
+  // Pan runs from -1 to 1: a hundredth of it is 0.02, ten of them 0.2.
+  expect(lane.state.points[0].tick).toBe(f.memory.snap);
+  expect(Math.round(lane.state.points[0].value * 100) / 100).toBe(0.22);
+  expect(f.memory.point?.ticks).toEqual([f.memory.snap]);
+  f.memory.point = null;
+  expect(press(f.song, "up")).toBe("track_above");
 });

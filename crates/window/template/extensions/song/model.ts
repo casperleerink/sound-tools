@@ -39,9 +39,10 @@ export type Memory = {
   renamingSection: { bar: number; tick: number } | null;
   /** The clip whose menu a key asked for, which the timeline opens. */
   menu: string | null;
-  /** The chosen mark of the ruler, point of a lane and effect of a panel: delete and the keys act on it. */
+  /** The chosen mark of the ruler, points of a lane and effect of a panel: delete and the keys act on it. */
   mark: Mark | null;
-  point: { track: string; lane: string; tick: number } | null;
+  /** The lane open for editing, whose points take the pointer, and its chosen points. */
+  point: { track: string; lane: string; ticks: number[] } | null;
   effect: { track: string; name: string } | null;
   /** The tracks whose automation lanes show under them. */
   lanes: string[];
