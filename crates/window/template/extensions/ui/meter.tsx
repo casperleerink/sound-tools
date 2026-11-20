@@ -1,13 +1,11 @@
-import { h, live, type Live } from "../sdk";
+import { h, live, Live } from "../sdk";
 import { liveLevel, travelled, VOLUME } from "./value";
 
-// The window publishes the level of each channel of every instance; the SDK's `Feeds` names only `peak` yet.
-declare module "../sdk/view" {
-  interface Feeds {
-    peak_left: number;
-    peak_right: number;
-  }
-}
+/**
+ * The loudest sample of a channel of `path` since the last frame. The window reads no feed by its
+ * name yet, so not `live.feed("peak_left", path)`: what it read before feeds, a peak of a channel.
+ */
+const channelPeak = (path: string, channel: 0 | 1) => new Live({ op: "peak", name: path, channel });
 
 /** How fast a bar falls, in its height a second; how long the peak line stays before it falls. */
 const [FALL, HOLD] = [0.6, 1.5];
@@ -20,9 +18,8 @@ const KEPT = 1e9;
 const clears = new Map<string, number>();
 export const clearsOf = (id: string) => clears.get(id) ?? 0;
 
-/** The loudest `feed` of `path` since the meter `id` was last clicked: a new value each click, so the window holds it anew. */
-const kept = (id: string, feed: "peak" | "peak_left" | "peak_right", path: string): Live =>
-  live.feed(feed, path).max(-clearsOf(id)).hold(KEPT);
+/** The loudest of `path` since the meter `id` was last clicked: a new value each click, so the window holds it anew. */
+const kept = (id: string, path: string): Live => live.feed("peak", path).max(-clearsOf(id)).hold(KEPT);
 
 /**
  * The level of the instance at `path`, a bar a channel filling a well from the bottom, on the
@@ -34,8 +31,8 @@ export const Meter = ({ id, label, path, w, h: height }: { id: string; label: st
   const gap = w < 8 ? 1 : 2;
   const bar = (w - gap) / 2;
   const clip = Math.min(bar * 2 + gap, 4);
-  const channel = (feed: "peak_left" | "peak_right", x: number) => {
-    const level = liveLevel(live.feed(feed, path));
+  const channel = (side: 0 | 1, x: number) => {
+    const level = liveLevel(channelPeak(path, side));
     const filled = level.fall(FALL).times(height - clip - 1);
     const peak = level.hold(HOLD).fall(FALL).times(height - clip - 1);
     const green = filled.min(HOT * (height - clip - 1));
@@ -49,16 +46,16 @@ export const Meter = ({ id, label, path, w, h: height }: { id: string; label: st
   };
   return (
     <box key={id} label={label} role="meter" value={live.feed("peak", path).decibels()} w={w} h={height} radius="sm" clip onPress={() => clear(id)}>
-      {channel("peak_left", 0)}
-      {channel("peak_right", bar + gap)}
-      <box at={[0, 0]} w={w} h={clip} radius="sm" fill="danger" opacity={kept(id, "peak", path).gt(1)} />
+      {channel(0, 0)}
+      {channel(1, bar + gap)}
+      <box at={[0, 0]} w={w} h={clip} radius="sm" fill="danger" opacity={kept(id, path).gt(1)} />
     </box>
   );
 };
 
 /** The loudest the meter `id` heard since it was clicked, in dB: red once it clipped, none in silence. A click lets go of it. */
 export const Peak = ({ id, label, path, w }: { id: string; label: string; path: string; w: number }) => {
-  const loudest = kept(id, "peak", path);
+  const loudest = kept(id, path);
   return (
     <row key={`${id}-peak`} label={label} role="button" w={w} justify="end" onPress={() => clear(id)}>
       <text style="number" color="text-secondary" live={loudest.decibels()} digits={1} opacity={loudest.gt(0.001).times(loudest.le(1))} />

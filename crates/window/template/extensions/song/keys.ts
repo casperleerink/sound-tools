@@ -32,6 +32,7 @@ export const actions: Record<string, Action<Song>> = {
   next_mark: on(["alt-shift-right"], "Go to the next section, tempo or time signature change", (song) => editsOf(song).marks.step(1)),
   previous_mark: on(["alt-shift-left"], "Go to the section, tempo or time signature change before", (song) => editsOf(song).marks.step(-1)),
   back: on(["escape"], "Let go of what is chosen, or close what is open", back),
+  mixer: on(["m"], "Show or hide the mixer", (song) => editsOf(song).tracks.toggleMixer()),
 
   select_all_notes: notes(["cmd-a"], "Choose all notes", "all"),
   add_note: notes(["n"], "Add a note after the chosen ones, or at the playhead", "add"),
