@@ -71,6 +71,13 @@ impl State {
             }
             Target::Chrome(act) => act.run(self, value)?,
             Target::Dialog(says) => self.answer_dialog(*says),
+            Target::View(press) if action == "drop" => {
+                let value = value.unwrap_or_default();
+                let files = serde_json::from_value(value["files"].clone())
+                    .context("a drop takes { \"files\": [\"/a/file.wav\"] }")?;
+                let at = ["x", "y"].map(|axis| value[axis].as_f64().unwrap_or(0.0) as f32);
+                self.drop_files(&press.instance, &press.element, files, at);
+            }
             Target::View(press) => {
                 let value = match action {
                     "drag" => value.or_else(|| Some(json!({ "dx": 0, "dy": 0 }))),

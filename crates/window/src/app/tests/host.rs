@@ -445,7 +445,7 @@ fn a_question_of_code_is_the_windows_dialog_and_its_answer_runs_the_view_again()
 }
 
 /// A short WAV file of silence, 16-bit mono at 48 kHz.
-fn wav(path: &Path) {
+pub(super) fn wav(path: &Path) {
     let samples = 4800_u32;
     let data = samples * 2;
     let mut bytes = Vec::new();

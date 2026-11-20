@@ -292,7 +292,12 @@ impl Pointer {
 
 /// Where the window point `window` is in the units of `plane`, else `local`, points in the
 /// element.
-fn units(state: &State, plane: Option<&str>, window: [f32; 2], local: [f32; 2]) -> [f32; 2] {
+pub(super) fn units(
+    state: &State,
+    plane: Option<&str>,
+    window: [f32; 2],
+    local: [f32; 2],
+) -> [f32; 2] {
     plane.map_or(local, |plane| state.planes.units(plane, window))
 }
 

@@ -16,6 +16,7 @@ use crate::app::State;
 use crate::lives::Shows;
 
 mod build;
+mod drop;
 mod field;
 mod gesture;
 mod icon;
@@ -94,9 +95,9 @@ pub(crate) struct BoxNode {
     /// The names of its `actions`.
     #[serde(default)]
     pub(crate) actions: Vec<String>,
-    /// It has `onDrop`: not honoured yet.
-    #[serde(default, rename = "drop")]
-    _drop: bool,
+    /// It has `onDrop`: files from the system.
+    #[serde(default)]
+    pub(crate) drop: bool,
     pub(crate) drag: Option<DragSpec>,
     pub(crate) plane: Option<PlaneSpec>,
     pub(crate) place: Option<Place>,

@@ -46,6 +46,7 @@ pub(super) fn semantics(scope: &Scope, mut e: El, b: &BoxNode, key: Option<&str>
         within: scope.within.clone(),
     };
     e = pointer(scope, e, b, &key, &press);
+    e = super::drop::target(scope, e, b, &press);
     if b.press || opens {
         let press = press.clone();
         e = e.focusable(true).on_press(move |s: &mut State| {
