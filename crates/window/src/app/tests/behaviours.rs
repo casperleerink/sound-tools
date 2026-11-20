@@ -44,3 +44,27 @@ fn an_icon_without_a_file_is_a_problem_until_the_file_comes_and_the_code_loads()
         std::fs::read_to_string(state.project.root().join("extensions/sdk/icons.ts")).unwrap();
     assert!(names.contains("\"sparkle\""), "{names}");
 }
+
+const GROWS: &str = r#"import { h, input, live, tool } from "./sdk";
+export const grows = tool({
+  name: "grows", title: "Grows", when: "Never", doc: "Grows.", state: {}, sound: () => input,
+  view: () => (
+    <box w={200} h={40}>
+      <shapes key="grows" w={live.elapsed.times(60).min(180)} h={40} units={[4, 1]} lines={[{ color: "text", width: 1, points: [0, 1, 2, 0, 2, 0, 4, 1], fill: "text/10" }]} />
+    </box>
+  ),
+});
+"#;
+
+#[test]
+fn a_shape_with_a_live_width_grows_every_frame_and_runs_no_view() {
+    let (_scratch, folder) = with_tools(&[("grows", GROWS)]);
+    let mut window = laid_out(opened(&folder));
+    let runs = window.state.tools.as_ref().unwrap().view_runs();
+    drawn_frame(&mut window, 0.5);
+    let early = width(&window, "t00/chain/grows:grows");
+    drawn_frame(&mut window, 1.5);
+    let later = width(&window, "t00/chain/grows:grows");
+    assert!(early > 0.0 && later > early, "{early} {later}");
+    assert_eq!(window.state.tools.as_ref().unwrap().view_runs(), runs);
+}

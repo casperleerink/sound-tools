@@ -78,7 +78,7 @@ fn walk(node: &Node, memos: &Memos, bind: &mut impl FnMut(Shows)) {
             {
                 bind(Shows::Trim(trim.clone()));
             }
-            live_place(d.at.as_ref(), (None, None), d.opacity.as_ref())
+            live_place(d.at.as_ref(), (Some(&d.w), Some(&d.h)), d.opacity.as_ref())
         }
         Node::Memo { key } => {
             let inner = memos

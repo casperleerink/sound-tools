@@ -265,8 +265,8 @@ pub(crate) struct ShapesNode {
     key: Option<String>,
     at: Option<[Num; 2]>,
     opacity: Option<Num>,
-    w: f32,
-    h: f32,
+    w: Num,
+    h: Num,
     units: Option<[f32; 2]>,
     trim: Option<[Num; 2]>,
     #[serde(default)]
@@ -295,6 +295,7 @@ pub(crate) struct Lines {
     color: String,
     width: f32,
     points: Vec<f32>,
+    fill: Option<String>,
 }
 
 #[derive(Deserialize)]

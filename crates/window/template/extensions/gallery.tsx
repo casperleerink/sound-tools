@@ -212,15 +212,11 @@ const Grid = ({ children }: { children?: Child }) => (
   </row>
 );
 
-/** A low pass curve, the one bright line of the display, with a soft fill under it. */
+/** A low pass curve, the one bright line of the display, filled softly below. */
 const Curve = () => {
   const [w, tall] = [displayWidth(4), DISPLAY_HEIGHT];
   const points: number[] = [];
-  const rects: number[] = [];
   const y = (x: number) => tall * 0.35 + Math.max(0, x - w * 0.55) ** 2 / 90;
-  for (let x = 0; x < w; x += 4) {
-    points.push(x, y(x), x + 4, y(x + 4));
-    rects.push(x, y(x), 4, tall - y(x));
-  }
-  return <shapes at={[0, 0]} w={w} h={tall} rects={[{ color: "text/5", rects }]} lines={[{ color: "text", width: 1.5, points }]} />;
+  for (let x = 0; x < w; x += 4) points.push(x, y(x), x + 4, y(x + 4));
+  return <shapes at={[0, 0]} w={w} h={tall} lines={[{ color: "text", width: 1.5, points, fill: "text/5" }]} />;
 };
