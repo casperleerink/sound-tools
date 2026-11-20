@@ -216,8 +216,9 @@ type Span = number | [from: number, to: number];
 /**
  * Its points are in `units` [across, down] when given, stretched to `w` × `h`: each a length from
  * 0, or its ends, as `[18, -18]` puts 18 at the top; across, the part of a list feed it shows.
- * Else in the units of the plane when placed; else points. Widths stay in points. `trim` [from,
- * to], 0 to 1: only that part of its lines' length draws, end to end, such as the arc of a knob.
+ * Else in the units of the plane when placed; else points. Placed, a list feed reads only what
+ * the plane shows. Widths stay in points. `trim` [from, to], 0 to 1: only that part of its
+ * lines' length draws, end to end, such as the arc of a knob.
  */
 export type ShapesProps = { key?: string; at?: [Num, Num]; units?: [Span, Span]; lines?: Lines[]; rects?: Rects[]; opacity?: Num; trim?: [Num, Num] } & (
   | { w: Num; h: Num; place?: [x: Num, y: Num] }

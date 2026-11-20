@@ -96,7 +96,7 @@ pub(crate) fn sdk_feeds(feeds: &[FeedName], facts: &[(&'static str, Value)]) -> 
         let name = type_name(schema.tool, "Facts");
         text.push_str(&format!("  {}: {name};\n", property_name(schema.tool)));
     }
-    text.push_str("}\n\n/**\n * The feeds of each built-in tool by its name, `\"*\"` those of every instance: a number, or a\n * list (`number[]`) for the `points` or `rects` of a `shapes`.\n */\nexport interface ToolFeeds {\n");
+    text.push_str("}\n\n/**\n * The feeds of each built-in tool by its name, `\"*\"` those of every instance: a number, or a\n * list (`number[]`) for a `shapes`: in `lines` its numbers are heights, evenly across, as a\n * curve's are; in `rects`, four numbers each (x y w h).\n */\nexport interface ToolFeeds {\n");
     let mut tools: Vec<&str> = feeds.iter().map(|feed| feed.tool).collect();
     tools.dedup();
     for tool in tools {
