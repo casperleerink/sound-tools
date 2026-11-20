@@ -107,6 +107,19 @@ pub(crate) fn app_key_of(state: &State, name: &str) -> Option<String> {
 /// A chord of the keymap as this system draws a key: `cmd-shift-z` is `⇧⌘Z` on a Mac and
 /// `Ctrl+Shift+Z` elsewhere.
 pub(crate) fn key_label(chord: &str) -> String {
+    parsed(chord).map_or_else(|| shortcuts::drawn(chord), |parsed| parsed.label())
+}
+
+/// A chord of the keymap as this system draws its keycaps: ⌥, ⌘ and Z on a Mac; Ctrl, Alt and Z
+/// elsewhere.
+pub(crate) fn key_caps(chord: &str) -> Vec<String> {
+    parsed(chord).map_or_else(
+        || vec![shortcuts::drawn(chord)],
+        |parsed| parsed.keycaps_on(rune::KeyPlatform::current()),
+    )
+}
+
+fn parsed(chord: &str) -> Option<rune::Chord> {
     let mut rest = chord;
     let mut parts = Vec::new();
     for (prefix, held) in [
@@ -122,10 +135,7 @@ pub(crate) fn key_label(chord: &str) -> String {
         }
     }
     parts.push(rest);
-    match rune::Chord::parse(&parts.join("+")) {
-        Ok(parsed) => parsed.label(),
-        Err(_) => shortcuts::drawn(chord),
-    }
+    rune::Chord::parse(&parts.join("+")).ok()
 }
 
 /// A key as the keymap and the SDK name it: `a`, `space`, `left`, `?`. `None` for one they do
@@ -165,6 +175,17 @@ fn held_of(name: &str, mods: Mods) -> Held {
         shift: mods.shift && !symbol,
     }
 }
+
+/// The main modifier as Rune sends it, which `held_of` reads: ⌘ on macOS, Ctrl elsewhere. Rune
+/// never sends `cmd` alone.
+#[cfg(test)]
+pub(crate) const MAIN_MODIFIER: Mods = Mods {
+    cmd: true,
+    logo: cfg!(target_os = "macos"),
+    ctrl: !cfg!(target_os = "macos"),
+    shift: false,
+    alt: false,
+};
 
 /// Who hears a key, nearest first: an instance, and whether only what runs everywhere.
 type Chain = Vec<(InstanceId, bool)>;

@@ -10,6 +10,7 @@ use super::super::keys::Keys;
 use super::super::menu::{Pick, picks};
 use super::super::settings::{DeviceList, Section};
 use super::*;
+use crate::app::MAIN_MODIFIER;
 use crate::shell::Projects;
 
 fn window_of(state: State) -> rune::Runtime<State> {
@@ -38,9 +39,8 @@ fn without_agent(mut state: State) -> State {
 /// `c` with cmd, and shift when `shift`.
 fn chord(window: &mut rune::Runtime<State>, c: char, shift: bool) {
     let mods = Mods {
-        cmd: true,
         shift,
-        ..Mods::default()
+        ..MAIN_MODIFIER
     };
     window.key(KeyEvent {
         key: Key::Command(c),

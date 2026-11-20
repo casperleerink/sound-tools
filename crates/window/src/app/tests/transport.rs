@@ -4,6 +4,7 @@ use rune::{Key, KeyEvent, Mods};
 use sound_core::Ticks;
 
 use super::*;
+use crate::app::MAIN_MODIFIER;
 
 fn window() -> (tempfile::TempDir, rune::Runtime<State>) {
     let scratch = new_project();
@@ -29,9 +30,8 @@ fn undo_label(state: &State) -> Option<String> {
 
 fn chord(window: &mut rune::Runtime<State>, key: Key, shift: bool) {
     let mods = Mods {
-        cmd: true,
         shift,
-        ..Mods::default()
+        ..MAIN_MODIFIER
     };
     window.key(KeyEvent { key, mods });
     redraw(window);

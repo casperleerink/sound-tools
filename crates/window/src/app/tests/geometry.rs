@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use sound_core::InstanceId;
 
 use super::{BOARD, act, key, laid_out, opened, redraw, travel, with_tools};
-use crate::app::State;
+use crate::app::{MAIN_MODIFIER, State};
 use crate::controls;
 
 /// Clips on a plane with a ruler that shares its time, a far clip, a menu and the plane's
@@ -133,10 +133,7 @@ fn a_drag_lands_where_the_test_helpers_land_it() {
     // 13 points on a plane of a tenth of a point a unit: 130 units, the start lands on 240s.
     drag(&mut window, "t00/chain/board:clip", (13.0, 0.0));
     assert_eq!(start(&window), 720);
-    window.physical_input(rune::PhysicalInput::Modifiers(rune::Mods {
-        cmd: true,
-        ..rune::Mods::default()
-    }));
+    window.physical_input(rune::PhysicalInput::Modifiers(MAIN_MODIFIER));
     drag(&mut window, "t00/chain/board:clip", (13.0, 0.0));
     assert_eq!(start(&window), 850);
     window.physical_input(rune::PhysicalInput::Modifiers(rune::Mods::default()));
@@ -314,10 +311,7 @@ fn a_pinch_zooms_about_the_pointer_and_builds_again_in_rust_only() {
     assert_eq!(view_runs(&window), runs);
     assert!(window.state.planes.builds.get() > builds);
     // Cmd and the wheel zoom too, within the plane's zoom.
-    let cmd = rune::Mods {
-        cmd: true,
-        ..rune::Mods::default()
-    };
+    let cmd = MAIN_MODIFIER;
     for _ in 0..20 {
         wheel(&mut window, at, [0.0, 400.0], cmd);
     }
@@ -375,10 +369,7 @@ fn the_keys_scroll_and_zoom_a_plane_that_has_them() {
     assert_eq!(left(&window), 0.0);
     window.key(rune::KeyEvent {
         key: rune::Key::Text("=".into()),
-        mods: rune::Mods {
-            cmd: true,
-            ..rune::Mods::default()
-        },
+        mods: MAIN_MODIFIER,
     });
     redraw(&mut window);
     let view = window.state.planes.view(&format!("{PREFIX}song")).unwrap();

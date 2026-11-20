@@ -8,6 +8,7 @@ use rune::{Key, KeyEvent, Mods};
 
 use super::start::{Start, on_key, poll, view};
 use super::{Dialog, Host};
+use crate::app::MAIN_MODIFIER;
 
 /// The start state with `support` as the machine's support folder.
 fn window(support: &Path) -> rune::Runtime<Start> {
@@ -34,10 +35,7 @@ fn press(window: &mut rune::Runtime<Start>, key: Key) {
 }
 
 fn chord(window: &mut rune::Runtime<Start>, c: char) {
-    let mods = Mods {
-        cmd: true,
-        ..Mods::default()
-    };
+    let mods = MAIN_MODIFIER;
     window.key(KeyEvent {
         key: Key::Command(c),
         mods,

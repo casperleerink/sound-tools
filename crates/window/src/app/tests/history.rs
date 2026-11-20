@@ -345,6 +345,12 @@ fn work_taken_back_shows_between_changes_and_a_press_goes_there() {
         .find(|e| e.key.as_deref() == Some(&taken_back));
     let help = format!("{:?}", help.unwrap());
     assert!(help.contains("This undo keeps work as a version"), "{help}");
+    // Its key as this system draws it.
+    let caps = match cfg!(target_os = "macos") {
+        true => "version: ⌥ ⌘ Z",
+        false => "version: Ctrl Alt Z",
+    };
+    assert!(help.contains(caps), "{help}");
     press(&mut window, &taken_back);
     assert_eq!(current(&window), undone_tip);
 }

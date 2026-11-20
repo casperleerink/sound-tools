@@ -11,6 +11,7 @@ use sound_agent::{
 };
 
 use super::*;
+use crate::app::MAIN_MODIFIER;
 use crate::sidebar;
 
 /// A window on a new project with the sidebar in `scene`, open.
@@ -56,10 +57,7 @@ fn sent(commands: &Receiver<Command>) -> Vec<Command> {
 }
 
 fn chord(window: &mut rune::Runtime<State>, c: char) {
-    let mods = Mods {
-        cmd: true,
-        ..Mods::default()
-    };
+    let mods = MAIN_MODIFIER;
     window.key(KeyEvent {
         key: Key::Command(c),
         mods,

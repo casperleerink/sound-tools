@@ -5,10 +5,11 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use rune::{El, Key, KeyEvent, Mods};
+use rune::{El, Key, KeyEvent};
 
 use super::super::panel::{LeftPanel, PanelTab, Tab};
 use super::*;
+use crate::app::MAIN_MODIFIER;
 
 /// An agent that works while `busy`, has a composer, and keeps what it was asked.
 #[derive(Default)]
@@ -52,10 +53,7 @@ fn framed(
 
 /// cmd and the key `c`.
 fn chord(window: &mut rune::Runtime<State>, c: char) {
-    let mods = Mods {
-        cmd: true,
-        ..Mods::default()
-    };
+    let mods = MAIN_MODIFIER;
     window.key(KeyEvent {
         key: Key::Command(c),
         mods,

@@ -3,6 +3,7 @@
 use rune::{FileDialogKind, Key, KeyEvent, Mods};
 
 use super::*;
+use crate::app::MAIN_MODIFIER;
 use crate::app::frame::poll;
 use crate::app::keys::{on_focus, on_key_up};
 
@@ -60,8 +61,7 @@ pub(super) fn event(chord: &str) -> KeyEvent {
             break;
         };
         match which {
-            0 if cfg!(target_os = "macos") => (mods.cmd, mods.logo) = (true, true),
-            0 => (mods.cmd, mods.ctrl) = (true, true),
+            0 => (mods.cmd, mods.logo, mods.ctrl) = (true, MAIN_MODIFIER.logo, MAIN_MODIFIER.ctrl),
             1 => mods.ctrl = true,
             2 => mods.alt = true,
             _ => mods.shift = true,
@@ -739,17 +739,27 @@ fn a_key_a_tool_took_comes_up_to_it_and_cmd_or_losing_the_window_lets_go_of_it()
     // A key it does not take is the window's: `d` is nothing here.
     keys(&mut window, "d");
     assert_eq!(did(&window.state, "holder"), "a↓ a↑");
-    // Cmd going down lets go: macOS sends no key up under it. A key with cmd only goes down.
+    // Cmd going down lets go on macOS, which sends no key up under it; elsewhere the up comes.
+    // A key with cmd only goes down.
     window.key(event("a"));
     redraw(&mut window);
     window.key(event("cmd-c"));
     redraw(&mut window);
-    assert_eq!(did(&window.state, "holder"), "a↓ a↑ a↓ a↑ cmd-c↓");
+    let mac = cfg!(target_os = "macos");
+    if !mac {
+        window.key_up(event("a"));
+        redraw(&mut window);
+    }
+    let let_go = match mac {
+        true => "a↓ a↑ a↓ a↑ cmd-c↓",
+        false => "a↓ a↑ a↓ cmd-c↓ a↑",
+    };
+    assert_eq!(did(&window.state, "holder"), let_go);
     window.key(event("b"));
     redraw(&mut window);
     window.update(|state, tx| on_focus(state, false, tx));
     redraw(&mut window);
-    assert_eq!(did(&window.state, "holder"), "a↓ a↑ a↓ a↑ cmd-c↓ b↓ b↑");
+    assert_eq!(did(&window.state, "holder"), format!("{let_go} b↓ b↑"));
     // Its up went already: the system's late one is nobody's.
     window.update(|state, tx| {
         assert!(!on_key_up(state, &event("b"), tx));

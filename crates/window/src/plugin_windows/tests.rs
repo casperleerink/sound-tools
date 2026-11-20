@@ -321,20 +321,7 @@ fn a_key_reaches_the_plugin_as_the_host_names_it() {
         }
     }
     // ⌘ on macOS and Ctrl elsewhere are the command key; the host's `control` is the other.
-    let command = if cfg!(target_os = "macos") {
-        Mods {
-            cmd: true,
-            logo: true,
-            ..Mods::default()
-        }
-    } else {
-        Mods {
-            cmd: true,
-            ctrl: true,
-            ..Mods::default()
-        }
-    };
-    let modifiers = keystroke(&event(R::Command('w'), command))
+    let modifiers = keystroke(&event(R::Command('w'), crate::app::MAIN_MODIFIER))
         .unwrap()
         .modifiers;
     assert_eq!(

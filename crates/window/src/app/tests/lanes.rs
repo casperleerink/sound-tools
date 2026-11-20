@@ -266,6 +266,6 @@ fn sixty_four_lanes_of_two_hundred_points_scroll_and_zoom_without_the_view() {
         "Bun ran the view"
     );
     eprintln!("64 lanes of 200 points: scroll {scroll:?}, zoom {zoom:?} a frame");
-    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame took {scroll:?}");
-    assert!(zoom < ZOOM, "a zoom frame took {zoom:?}");
+    assert!(scroll < SCROLL_AND_PLAY, "a scroll frame cost {scroll:?}");
+    assert!(zoom < ZOOM, "a zoom frame cost {zoom:?}");
 }

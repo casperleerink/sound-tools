@@ -18,6 +18,7 @@ use serde_json::Value;
 use sound_core::{Line, PointId, Project};
 
 use super::State;
+use super::keys::key_caps;
 use super::panel::{PanelTab, Tab};
 use crate::controls::{Control, Target};
 use read::{Card, Entry, MORE, SHOWN, Shown};
@@ -837,7 +838,7 @@ impl<'a> Rows<'a> {
         match keys.keys("app.undo_keeping_version").first() {
             Some(key) => row
                 .help(format!("{words} This undo keeps work as a version:"))
-                .help_keys(caps(key)),
+                .help_keys(key_caps(key)),
             None => row.help(words),
         }
     }
@@ -932,17 +933,4 @@ fn dot(color: Color, size: f32) -> El {
         .radius(size / 2.0)
         .fill(color)
         .a11y_hidden()
-}
-
-/// The keycaps of a key of the keymap: `cmd-alt-z` is ⌘ ⌥ Z.
-fn caps(key: &str) -> Vec<String> {
-    (key.split('-'))
-        .map(|part| match part {
-            "cmd" => "⌘".into(),
-            "alt" => "⌥".into(),
-            "shift" => "⇧".into(),
-            "ctrl" => "⌃".into(),
-            other => other.to_uppercase(),
-        })
-        .collect()
 }
