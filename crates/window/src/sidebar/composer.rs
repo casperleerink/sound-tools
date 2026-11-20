@@ -1,7 +1,9 @@
 //! The composer: the line about going back, the files it attaches, the field, the two pills
 //! and the button that sends, or stops the agent while it works.
 
-use rune::{ClipboardContent, El, Key, KeyEvent, TextEdit, Tx, col, el, icon, row, text, text_input};
+use rune::{
+    ClipboardContent, El, Key, KeyEvent, TextEdit, Tx, col, el, icon, row, text, text_input,
+};
 use sound_agent::{Arrow, COMPOSER_PLACEHOLDER};
 
 use super::thread::press;
@@ -15,7 +17,10 @@ const SEND: &str = "agent-send";
 pub(super) fn view(state: &State, sidebar: &Sidebar) -> El {
     let theme = &state.theme;
     let kit = &theme.kit;
-    let went_back = sidebar.chat.went_back_line().map(|line| went_back(theme, line));
+    let went_back = sidebar
+        .chat
+        .went_back_line()
+        .map(|line| went_back(theme, line));
     let field = text_input(&sidebar.composer, theme.text("body"))
         .key(COMPOSER)
         .label(COMPOSER_PLACEHOLDER)
@@ -67,7 +72,11 @@ pub(super) fn view(state: &State, sidebar: &Sidebar) -> El {
             s.handled();
         })
         .children(chips)
-        .child(el().w_full().min_h(44.0).child(rune::auto_grow(field, 1, 8)))
+        .child(
+            el().w_full()
+                .min_h(44.0)
+                .child(rune::auto_grow(field, 1, 8)),
+        )
         .child(bottom);
     col()
         .w_full()
@@ -106,7 +115,9 @@ fn recall(s: &mut State, key: &KeyEvent, _: &mut Tx) -> bool {
             Arrow::Up => !before.contains('\n'),
             Arrow::Down => !after.contains('\n'),
         };
-        let recalled = edge.then(|| sidebar.chat.recall(&edit.text, arrow)).flatten();
+        let recalled = edge
+            .then(|| sidebar.chat.recall(&edit.text, arrow))
+            .flatten();
         recalled.map(|text| sidebar.set_composer(&text)).is_some()
     });
     let recalled = recalled.unwrap_or(false);

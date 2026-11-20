@@ -73,7 +73,12 @@ fn open_saving(
 ) {
     let waker = sound_agent::Waker::new(|| {});
     let settings = AgentSettings::new(None, waker.clone());
-    let chat = Chat::new(agents(settings, waker.clone()), &state.project, threads, waker);
+    let chat = Chat::new(
+        agents(settings, waker.clone()),
+        &state.project,
+        threads,
+        waker,
+    );
     let woken = Arc::default();
     state.panel.agent = Some(Box::new(Sidebar::new(chat, woken, Arc::new(|| {}))));
     state.show_tab(Tab::Agent);
@@ -143,8 +148,18 @@ pub(crate) fn started() -> AgentEvent {
                 "Opus 5.5 · Best for everyday, complex tasks",
                 "Opus 5.5",
             ),
-            model("sonnet", "Sonnet 5.5", "Most efficient for simpler tasks", "Sonnet 5.5"),
-            model("haiku", "Haiku 4.5", "Fastest for quick answers", "Haiku 4.5"),
+            model(
+                "sonnet",
+                "Sonnet 5.5",
+                "Most efficient for simpler tasks",
+                "Sonnet 5.5",
+            ),
+            model(
+                "haiku",
+                "Haiku 4.5",
+                "Fastest for quick answers",
+                "Haiku 4.5",
+            ),
         ],
     }
 }
@@ -161,13 +176,21 @@ fn two_turns(chat: &mut Chat, project: &mut Project) {
         [
             started(),
             AgentEvent::TurnStarted,
-            started_step("read", "Read state/song/piano/verse.json", StepKind::Read {
-                path: "state/song/piano/verse.json".into(),
-            }),
+            started_step(
+                "read",
+                "Read state/song/piano/verse.json",
+                StepKind::Read {
+                    path: "state/song/piano/verse.json".into(),
+                },
+            ),
             done("read", StepOutcome::Done),
-            started_step("write", "Wrote state/song/bass/clip-005.json", StepKind::Change {
-                path: "state/song/bass/clip-005.json".into(),
-            }),
+            started_step(
+                "write",
+                "Wrote state/song/bass/clip-005.json",
+                StepKind::Change {
+                    path: "state/song/bass/clip-005.json".into(),
+                },
+            ),
             done("write", StepOutcome::Done),
             AgentEvent::TextDone {
                 text: ANSWER.into(),
@@ -178,7 +201,12 @@ fn two_turns(chat: &mut Chat, project: &mut Project) {
         ],
         project,
     );
-    chat.begin_at("Check that the project still builds", Vec::new(), ago(4), project);
+    chat.begin_at(
+        "Check that the project still builds",
+        Vec::new(),
+        ago(4),
+        project,
+    );
     chat.receive(
         [
             AgentEvent::TurnStarted,
@@ -270,9 +298,13 @@ fn problems(state: &mut State) {
             [
                 started(),
                 AgentEvent::TurnStarted,
-                started_step("edit", "Edited state/song/drums/clip-001.json", StepKind::Change {
-                    path: "state/song/drums/clip-001.json".into(),
-                }),
+                started_step(
+                    "edit",
+                    "Edited state/song/drums/clip-001.json",
+                    StepKind::Change {
+                        path: "state/song/drums/clip-001.json".into(),
+                    },
+                ),
                 done("edit", StepOutcome::Done),
                 AgentEvent::StepStarted {
                     id: step("test"),
@@ -350,7 +382,10 @@ fn attachments(state: &mut State) {
         let (thread, commands) = Thread::without_agent(None);
         std::mem::forget(commands);
         chat.connect(thread);
-        let names = vec!["Groove sketch.png".to_string(), "Vocal take 3.wav".to_string()];
+        let names = vec![
+            "Groove sketch.png".to_string(),
+            "Vocal take 3.wav".to_string(),
+        ];
         let message = "Make the bass follow this groove, and tune it to the take";
         chat.begin_at(message, names, ago(9), project);
         chat.receive(
@@ -366,7 +401,9 @@ fn attachments(state: &mut State) {
             ],
             project,
         );
-        chat.attach_picture(include_bytes!("../../../../tooling/icon/sound-tools-512.png").to_vec());
+        chat.attach_picture(
+            include_bytes!("../../../../tooling/icon/sound-tools-512.png").to_vec(),
+        );
     });
     sidebar(state, |sidebar| {
         sidebar.set_composer("And this one?");
@@ -404,7 +441,10 @@ fn instructions(state: &mut State) {
         // Read in the background: the picture waits for it.
         for _ in 0..200 {
             chat.poll(project);
-            if chat.instructions().is_some_and(|shown| shown.text().is_some()) {
+            if chat
+                .instructions()
+                .is_some_and(|shown| shown.text().is_some())
+            {
                 break;
             }
             std::thread::sleep(Duration::from_millis(5));
@@ -416,7 +456,9 @@ fn instructions(state: &mut State) {
 }
 
 fn no_agent(state: &mut State) {
-    open(state, |settings, waker| Agents::with_programs(Vec::new(), settings, waker));
+    open(state, |settings, waker| {
+        Agents::with_programs(Vec::new(), settings, waker)
+    });
 }
 
 fn looking(state: &mut State) {
@@ -432,7 +474,11 @@ fn services() -> Vec<Service> {
         Service::example("Anthropic", Some("Anthropic (Claude Pro/Max)"), None),
         Service::example("GitHub Copilot", Some("GitHub Copilot"), None),
         Service::example("OpenAI", Some("Sign in with ChatGPT"), Some(SignedIn::Here)),
-        Service::example("OpenRouter", Some("Sign in with OpenRouter"), Some(SignedIn::Here)),
+        Service::example(
+            "OpenRouter",
+            Some("Sign in with OpenRouter"),
+            Some(SignedIn::Here),
+        ),
         Service::example("DeepSeek", None, None),
         Service::example("Google", None, Some(SignedIn::Elsewhere)),
         Service::example("Groq", None, None),
@@ -449,10 +495,13 @@ fn settings_signed_in(state: &mut State) {
         };
         Agents::with_programs(both(), settings, waker)
             .with_services(services())
-            .with_setup(Provider::Claude, Setup::Ready {
-                account,
-                reason: None,
-            })
+            .with_setup(
+                Provider::Claude,
+                Setup::Ready {
+                    account,
+                    reason: None,
+                },
+            )
     });
     sidebar(state, |sidebar| sidebar.shows_settings = true);
 }

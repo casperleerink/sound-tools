@@ -1,7 +1,9 @@
 //! The composer's two pills and what they open: the model picker and the access menu; and
 //! **New** beside the panel's tabs, with its menu of recent threads and instructions.
 
-use rune::{Align, El, Key, KeyEvent, ScrollSpec, Side, TextEdit, Tx, col, icon, row, text, text_input};
+use rune::{
+    Align, El, Key, KeyEvent, ScrollSpec, Side, TextEdit, Tx, col, icon, row, text, text_input,
+};
 use rune_kit::{Button, ButtonVariant, ControlSize, MenuEntry, MenuItem, Placement};
 use sound_agent::{
     Chat, INSTRUCTIONS, NEW, NEW_MENU, NEW_THREAD, OPEN_RECENT, Provider, SEARCH_MODELS, Scope,
@@ -44,7 +46,13 @@ fn pill(theme: &Theme, key: &str, label: String, mark: Option<El>, open: bool, m
         })
         .on_press_tx(move |s: &mut State, tx: &mut Tx| press(s, Act::Menu(menu), tx))
         .children(mark)
-        .child(text(label).font(theme.text("label")).color(muted).truncate().shrink())
+        .child(
+            text(label)
+                .font(theme.text("label"))
+                .color(muted)
+                .truncate()
+                .shrink(),
+        )
         .child(icon(&icons::CHEVRON_DOWN, 12.0).color(theme.color("text-muted")));
     theme.kit.interactive(e).shrink()
 }
@@ -53,9 +61,18 @@ fn pill(theme: &Theme, key: &str, label: String, mark: Option<El>, open: bool, m
 pub(super) fn model_pill(state: &State, sidebar: &Sidebar) -> El {
     let theme = &state.theme;
     let chat = &sidebar.chat;
-    let logo = chat.model_provider().map(|provider| icon(icons::logo(provider), 14.0));
+    let logo = chat
+        .model_provider()
+        .map(|provider| icon(icons::logo(provider), 14.0));
     let open = sidebar.menu == Some(Menu::Model);
-    pill(theme, MODEL_PILL, chat.model_label(), logo, open, Menu::Model)
+    pill(
+        theme,
+        MODEL_PILL,
+        chat.model_label(),
+        logo,
+        open,
+        Menu::Model,
+    )
 }
 
 /// How much the agent may do without asking. It always says so, so it is never a surprise.
@@ -64,7 +81,14 @@ pub(super) fn access_pill(state: &State, sidebar: &Sidebar) -> El {
     let mode = sidebar.chat.approval_mode();
     let mark = icon(icons::named(mode.icon()), 14.0).color(theme.color("text-secondary"));
     let open = sidebar.menu == Some(Menu::Access);
-    pill(theme, ACCESS_PILL, mode.label().into(), Some(mark), open, Menu::Access)
+    pill(
+        theme,
+        ACCESS_PILL,
+        mode.label().into(),
+        Some(mark),
+        open,
+        Menu::Access,
+    )
 }
 
 /// **New** beside the tabs, with its menu, while there is a thread to leave.
@@ -247,7 +271,12 @@ fn picker(state: &State, sidebar: &Sidebar) -> El {
                         .grow(1.0)
                         .shrink()
                         .min_w(0.0)
-                        .child(text(model.name).font(theme.text("body")).color(theme.color("text")).truncate())
+                        .child(
+                            text(model.name)
+                                .font(theme.text("body"))
+                                .color(theme.color("text"))
+                                .truncate(),
+                        )
                         .children(second),
                 )
                 .child(check);
@@ -376,7 +405,12 @@ pub(super) fn controls(sidebar: &Sidebar) -> Vec<Control> {
     if chat.has_composer() {
         controls.push(Control {
             expanded: Some(menu == Some(Menu::Model)),
-            ..control(MODEL_PILL, chat.model_label(), "button", Act::Menu(Menu::Model))
+            ..control(
+                MODEL_PILL,
+                chat.model_label(),
+                "button",
+                Act::Menu(Menu::Model),
+            )
         });
         controls.push(Control {
             expanded: Some(menu == Some(Menu::Access)),
@@ -407,22 +441,34 @@ pub(super) fn controls(sidebar: &Sidebar) -> Vec<Control> {
             )
         })),
         Some(Menu::New | Menu::Recent) => {
-            controls.push(control("agent-new-thread", NEW_THREAD, "menuitem", Act::NewThread));
+            controls.push(control(
+                "agent-new-thread",
+                NEW_THREAD,
+                "menuitem",
+                Act::NewThread,
+            ));
             if !chat.recent_threads().is_empty() {
                 controls.push(Control {
                     expanded: Some(menu == Some(Menu::Recent)),
-                    ..control("agent-open-recent", OPEN_RECENT, "menuitem", Act::Menu(Menu::Recent))
+                    ..control(
+                        "agent-open-recent",
+                        OPEN_RECENT,
+                        "menuitem",
+                        Act::Menu(Menu::Recent),
+                    )
                 });
             }
             if menu == Some(Menu::Recent) {
-                controls.extend((chat.recent_threads().iter().enumerate()).map(|(index, thread)| {
-                    control(
-                        format!("agent-recent-{index}"),
-                        thread.title.clone(),
-                        "menuitem",
-                        Act::OpenRecent(index),
-                    )
-                }));
+                controls.extend((chat.recent_threads().iter().enumerate()).map(
+                    |(index, thread)| {
+                        control(
+                            format!("agent-recent-{index}"),
+                            thread.title.clone(),
+                            "menuitem",
+                            Act::OpenRecent(index),
+                        )
+                    },
+                ));
             }
             for scope in [Scope::Project, Scope::AllProjects] {
                 if chat.can_open_instructions(scope) {

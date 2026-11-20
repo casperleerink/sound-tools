@@ -76,7 +76,11 @@ pub(crate) fn open(
         let (waker, woken) = (waker.clone(), woken.clone());
         Arc::new(move || {
             woken.store(true, Ordering::Relaxed);
-            if let Some(wake) = waker.lock().unwrap_or_else(PoisonError::into_inner).as_ref() {
+            if let Some(wake) = waker
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_ref()
+            {
                 wake();
             }
         })
@@ -133,7 +137,11 @@ impl Sidebar {
         }
         let woken = self.woken.swap(false, Ordering::Relaxed);
         let pages = self.chat.poll(project);
-        self.pages.extend(pages.into_iter().filter(|page| sound_agent::link_opens(page)));
+        self.pages.extend(
+            pages
+                .into_iter()
+                .filter(|page| sound_agent::link_opens(page)),
+        );
         let mut changed = woken;
         changed |= self.follow_instructions();
         changed |= self.settings.follow(self.chat.agents());
@@ -170,7 +178,8 @@ impl Sidebar {
             .filter_map(|attached| Some(attached.picture()?.bytes.as_slice()))
             .collect();
         let same = pictures.len() == self.thumbs.len()
-            && (pictures.iter().zip(&self.thumbs)).all(|(bytes, (at, _))| bytes.as_ptr() as usize == *at);
+            && (pictures.iter().zip(&self.thumbs))
+                .all(|(bytes, (at, _))| bytes.as_ptr() as usize == *at);
         if same {
             return;
         }
@@ -487,10 +496,14 @@ impl Sidebar {
                 Some(Focus::Key(menus::ACCESS_PILL))
             }
             Act::Setup(provider, button) => {
-                self.settings.press(self.chat.agents_mut(), provider, button);
+                self.settings
+                    .press(self.chat.agents_mut(), provider, button);
                 None
             }
-            Act::CopyDetails(provider) => self.settings.copy(self.chat.agents(), provider).map(Focus::Copy),
+            Act::CopyDetails(provider) => self
+                .settings
+                .copy(self.chat.agents(), provider)
+                .map(Focus::Copy),
             Act::AskTheAgent => None,
         }
     }
@@ -517,7 +530,12 @@ pub(crate) fn controls(state: &State) -> Vec<Control> {
     };
     let mut controls = Vec::new();
     if state.main().is_none() {
-        controls.push(control("ask-the-agent", ASK_THE_AGENT, "button", Act::AskTheAgent));
+        controls.push(control(
+            "ask-the-agent",
+            ASK_THE_AGENT,
+            "button",
+            Act::AskTheAgent,
+        ));
     }
     if !state.panel.open || state.panel.tab != crate::app::Tab::Agent {
         return controls;

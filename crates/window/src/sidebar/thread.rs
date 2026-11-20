@@ -9,8 +9,8 @@ use rune::{
 };
 use rune_kit::{Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Markdown};
 use sound_agent::{
-    APPROVAL_ANSWERS, Below, Chat, Entry, FIX_THEM, Footer, Meta, NEW_THREAD, OPEN_SETTINGS,
-    Shows, StepShown, TRY_AGAIN, TurnShown,
+    APPROVAL_ANSWERS, Below, Chat, Entry, FIX_THEM, Footer, Meta, NEW_THREAD, OPEN_SETTINGS, Shows,
+    StepShown, TRY_AGAIN, TurnShown,
 };
 use sound_core::Project;
 
@@ -56,7 +56,8 @@ pub(super) fn body(state: &State, sidebar: &Sidebar) -> El {
                     120.0,
                     |_: &State, index| format!("agent-entry-{index}").into(),
                     |state: &State, index| {
-                        super::sidebar(state).map_or_else(el, |sidebar| entry(state, sidebar, index))
+                        super::sidebar(state)
+                            .map_or_else(el, |sidebar| entry(state, sidebar, index))
                     },
                 );
             let thread = col()
@@ -70,10 +71,20 @@ pub(super) fn body(state: &State, sidebar: &Sidebar) -> El {
                 Footer::Composer => composer::view(state, sidebar),
                 Footer::CannotContinue { say } => cannot_continue(theme, say),
             };
-            col().grow(1.0).min_h(0.0).w_full().child(thread).child(footer)
+            col()
+                .grow(1.0)
+                .min_h(0.0)
+                .w_full()
+                .child(thread)
+                .child(footer)
         }
     };
-    col().key("agent").grow(1.0).min_h(0.0).w_full().child(shown)
+    col()
+        .key("agent")
+        .grow(1.0)
+        .min_h(0.0)
+        .w_full()
+        .child(shown)
 }
 
 /// One entry of the thread, with its room around it.
@@ -230,9 +241,15 @@ fn meta_line(theme: &Theme, index: usize, meta: Meta, open: bool) -> El {
         None => words.wrap(),
     };
     let summary = summary.map(|summary| text(summary).font(font).color(ink).truncate().shrink());
-    let content = row().gap(theme.space(1)).min_w(0.0).child(words).children(summary);
+    let content = row()
+        .gap(theme.space(1))
+        .min_w(0.0)
+        .child(words)
+        .children(summary);
     if !opens {
-        return row().key(format!("agent-worked-for-{index}")).child(content);
+        return row()
+            .key(format!("agent-worked-for-{index}"))
+            .child(content);
     }
     let chevron = if open {
         &icons::CHEVRON_DOWN
@@ -242,12 +259,25 @@ fn meta_line(theme: &Theme, index: usize, meta: Meta, open: bool) -> El {
     let body = row()
         .gap(theme.space(1))
         .min_w(0.0)
-        .child(icon(chevron, 12.0).color(ink).mt(2.0).group_color(theme.color("text")))
+        .child(
+            icon(chevron, 12.0)
+                .color(ink)
+                .mt(2.0)
+                .group_color(theme.color("text")),
+        )
         .child(content);
     let act = Act::Steps(index);
     let label = line;
     row().child(
-        quiet(theme, format!("agent-worked-for-{index}"), label, ink, body, act).expanded(open),
+        quiet(
+            theme,
+            format!("agent-worked-for-{index}"),
+            label,
+            ink,
+            body,
+            act,
+        )
+        .expanded(open),
     )
 }
 
@@ -331,8 +361,7 @@ fn shimmer(theme: &Theme, words: String) -> El {
     const WIDTH: f32 = 280.0;
     let font = theme.text("body");
     let slide = |from: f32, to: f32| {
-        rune::LoopSpec::slide(SWEEP, [from, 0.0], [to, 0.0])
-            .easing(rune::Easing::LINEAR)
+        rune::LoopSpec::slide(SWEEP, [from, 0.0], [to, 0.0]).easing(rune::Easing::LINEAR)
     };
     let (from, to) = (-1.0, WIDTH / BAND);
     let lit = el()
@@ -340,7 +369,12 @@ fn shimmer(theme: &Theme, words: String) -> El {
         .w(WIDTH)
         .h_full()
         .looping(slide(-from, -to))
-        .child(text(words.clone()).font(font).color(theme.color("text")).a11y_hidden());
+        .child(
+            text(words.clone())
+                .font(font)
+                .color(theme.color("text"))
+                .a11y_hidden(),
+        );
     let band = el()
         .absolute(0.0, 0.0)
         .w(BAND)
@@ -353,7 +387,12 @@ fn shimmer(theme: &Theme, words: String) -> El {
         .shrink()
         .min_w(0.0)
         .clip_soft(0.0)
-        .child(text(words).font(font).color(theme.color("focus")).truncate())
+        .child(
+            text(words)
+                .font(font)
+                .color(theme.color("focus"))
+                .truncate(),
+        )
         .child(band)
 }
 
@@ -373,11 +412,28 @@ fn below_line(theme: &Theme, index: usize, below: Below<'_>) -> El {
             };
             let body = row()
                 .gap(theme.space(1))
-                .child(icon(chevron, 12.0).color(peach).mt(2.0).group_color(theme.color("text")))
-                .child(text(line.clone()).font(font).color(peach).group_color(theme.color("text")));
+                .child(
+                    icon(chevron, 12.0)
+                        .color(peach)
+                        .mt(2.0)
+                        .group_color(theme.color("text")),
+                )
+                .child(
+                    text(line.clone())
+                        .font(font)
+                        .color(peach)
+                        .group_color(theme.color("text")),
+                );
             let act = Act::Problems(index);
-            let toggle =
-                quiet(theme, format!("agent-problems-{index}"), line, peach, body, act).expanded(open);
+            let toggle = quiet(
+                theme,
+                format!("agent-problems-{index}"),
+                line,
+                peach,
+                body,
+                act,
+            )
+            .expanded(open);
             let lines = lines.into_iter().flatten().map(|line| {
                 text(line)
                     .font(font)
@@ -402,16 +458,18 @@ fn action(theme: &Theme, key: &str, (name, label): (&str, &str), act: Act) -> El
     let body = row()
         .gap(theme.space(1))
         .items_center()
-        .child(icon(icons::named(name), 12.0).color(muted).group_color(theme.color("text")))
+        .child(
+            icon(icons::named(name), 12.0)
+                .color(muted)
+                .group_color(theme.color("text")),
+        )
         .child(
             text(label)
                 .font(theme.text("label").lh(SMALL_LINE))
                 .color(muted)
                 .group_color(theme.color("text")),
         );
-    row().child(
-        quiet(theme, key.into(), label.into(), muted, body, act).items_center(),
-    )
+    row().child(quiet(theme, key.into(), label.into(), muted, body, act).items_center())
 }
 
 /// The question the agent waits on, as the last thing of the thread. Nothing is modal: music
@@ -445,20 +503,23 @@ fn approval(theme: &Theme, words: &[sound_agent::Span], command: Option<&str>) -
             .radius(kit.radius.md)
             .fill(theme.color("well"))
     });
-    let answers = APPROVAL_ANSWERS.iter().enumerate().map(|(place, (answer, label))| {
-        let variant = match place {
-            0 => ButtonVariant::Submit,
-            1 => ButtonVariant::Neutral,
-            _ => ButtonVariant::Ghost,
-        };
-        let act = Act::Answer(*answer);
-        Button::new(*label)
-            .variant(variant)
-            .control_size(ControlSize::Large)
-            .on_press_tx(move |s: &mut State, tx: &mut Tx| press(s, act, tx))
-            .build(kit)
-            .key(approval_key(place))
-    });
+    let answers = APPROVAL_ANSWERS
+        .iter()
+        .enumerate()
+        .map(|(place, (answer, label))| {
+            let variant = match place {
+                0 => ButtonVariant::Submit,
+                1 => ButtonVariant::Neutral,
+                _ => ButtonVariant::Ghost,
+            };
+            let act = Act::Answer(*answer);
+            Button::new(*label)
+                .variant(variant)
+                .control_size(ControlSize::Large)
+                .on_press_tx(move |s: &mut State, tx: &mut Tx| press(s, act, tx))
+                .build(kit)
+                .key(approval_key(place))
+        });
     col()
         .key("agent-approval")
         .role("group")
@@ -663,7 +724,11 @@ fn instructions(state: &State, sidebar: &Sidebar) -> El {
 }
 
 fn instructions_edit(s: &mut State) -> &mut TextEdit {
-    match s.panel.agent_mut::<Sidebar>().and_then(|sidebar| sidebar.instructions.as_mut()) {
+    match s
+        .panel
+        .agent_mut::<Sidebar>()
+        .and_then(|sidebar| sidebar.instructions.as_mut())
+    {
         Some(edit) => edit,
         // Only the sidebar draws the field, and only while the instructions show.
         None => Box::leak(Box::default()),
@@ -682,7 +747,11 @@ pub(super) fn working_elapsed(chat: &Chat, project: &Project) -> Option<String> 
         return None;
     }
     let last = chat.conversation().entries().len().checked_sub(1)?;
-    Some(chat.turn(last, project, SystemTime::now())?.working?.elapsed)
+    Some(
+        chat.turn(last, project, SystemTime::now())?
+            .working?
+            .elapsed,
+    )
 }
 
 /// The controls of the thread for `--tree` and `--act`, and the one in place of the composer.

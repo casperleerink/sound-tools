@@ -37,7 +37,9 @@ fn connect(window: &mut rune::Runtime<State>) -> Receiver<Command> {
 
 fn feed(window: &mut rune::Runtime<State>, events: impl IntoIterator<Item = AgentEvent>) {
     let events: Vec<AgentEvent> = events.into_iter().collect();
-    sidebar::chat(&mut window.state, |chat, project| chat.receive(events, project));
+    sidebar::chat(&mut window.state, |chat, project| {
+        chat.receive(events, project)
+    });
     redraw(window);
 }
 
@@ -85,13 +87,20 @@ fn typed(window: &mut rune::Runtime<State>, words: &str) {
 /// What the composer says now.
 fn composer(window: &rune::Runtime<State>) -> String {
     let controls = chrome_controls(&window.state);
-    let field = controls.iter().find(|control| control.key == "agent-composer");
+    let field = controls
+        .iter()
+        .find(|control| control.key == "agent-composer");
     let value = field.and_then(|field| field.value.clone());
-    value.and_then(|value| value.as_str().map(str::to_string)).unwrap_or_default()
+    value
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 /// Frames until `done`: the chat's background work hands in what it read.
-fn until(window: &mut rune::Runtime<State>, mut done: impl FnMut(&mut rune::Runtime<State>) -> bool) {
+fn until(
+    window: &mut rune::Runtime<State>,
+    mut done: impl FnMut(&mut rune::Runtime<State>) -> bool,
+) {
     let start = Instant::now();
     while !done(window) {
         assert!(start.elapsed() < Duration::from_secs(10), "it never came");
@@ -134,7 +143,10 @@ fn return_sends_what_was_typed_and_the_composer_keeps_the_keys() {
     assert_eq!(composer(&window), "");
     assert_eq!(focused(&window).as_deref(), Some("agent-composer"));
     // While it works, the button stops it.
-    assert_eq!(control(&chrome_controls(&window.state), "Stop").key, "agent-send");
+    assert_eq!(
+        control(&chrome_controls(&window.state), "Stop").key,
+        "agent-send"
+    );
 }
 
 #[test]
@@ -145,9 +157,12 @@ fn up_and_down_in_the_composer_go_through_the_messages_sent() {
     for message in ["First", "Second"] {
         typed(&mut window, message);
         key(&mut window, Key::Enter);
-        feed(&mut window, [AgentEvent::TurnEnded {
-            outcome: TurnOutcome::Completed,
-        }]);
+        feed(
+            &mut window,
+            [AgentEvent::TurnEnded {
+                outcome: TurnOutcome::Completed,
+            }],
+        );
     }
     key(&mut window, Key::Up);
     assert_eq!(composer(&window), "Second");
@@ -179,9 +194,12 @@ fn a_closed_panel_shows_the_agent_at_work_on_its_icon() {
     assert!(window.find("left-panel-busy").is_none());
     begin(&mut window, "Make the drums swing", 3);
     assert!(window.find("left-panel-busy").is_some());
-    feed(&mut window, [AgentEvent::TurnEnded {
-        outcome: TurnOutcome::Completed,
-    }]);
+    feed(
+        &mut window,
+        [AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Completed,
+        }],
+    );
     assert!(window.find("left-panel-busy").is_none());
 }
 
@@ -207,17 +225,26 @@ fn the_question_of_the_agent_is_answered_by_label_and_goes() {
     let (_scratch, mut window) = window("agent-empty");
     let commands = connect(&mut window);
     begin(&mut window, "Check that the project still builds", 2);
-    feed(&mut window, [AgentEvent::ApprovalRequested {
-        id: ApprovalId("build".into()),
-        title: "Run `cargo build`".into(),
-        command: Some("cargo build".into()),
-    }]);
+    feed(
+        &mut window,
+        [AgentEvent::ApprovalRequested {
+            id: ApprovalId("build".into()),
+            title: "Run `cargo build`".into(),
+            command: Some("cargo build".into()),
+        }],
+    );
     assert!(window.find("agent-approval").is_some());
-    act(&mut window.state, json!({ "label": "Allow for this thread", "action": "press" }));
-    assert_eq!(sent(&commands), [Command::Answer(
-        ApprovalId("build".into()),
-        ApprovalAnswer::AllowForThread
-    )]);
+    act(
+        &mut window.state,
+        json!({ "label": "Allow for this thread", "action": "press" }),
+    );
+    assert_eq!(
+        sent(&commands),
+        [Command::Answer(
+            ApprovalId("build".into()),
+            ApprovalAnswer::AllowForThread
+        )]
+    );
     redraw(&mut window);
     assert!(window.find("agent-approval").is_none());
 }
@@ -244,11 +271,14 @@ fn try_again_sends_the_failed_message_again() {
     let (_scratch, mut window) = window("agent-empty");
     let commands = connect(&mut window);
     begin(&mut window, "Make the drums swing", 2);
-    feed(&mut window, [AgentEvent::TurnEnded {
-        outcome: TurnOutcome::Failed {
-            message: "Claude is busy. Try again in a moment.".into(),
-        },
-    }]);
+    feed(
+        &mut window,
+        [AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Failed {
+                message: "Claude is busy. Try again in a moment.".into(),
+            },
+        }],
+    );
     // The thread scrolls to its end first.
     for _ in 0..30 {
         redraw(&mut window);
@@ -271,9 +301,17 @@ fn the_window_list_asks_the_agent_over_the_instructions_and_keeps_the_draft() {
     let commands = connect(&mut window);
     chord(&mut window, 'l');
     typed(&mut window, "A draft");
-    act(&mut window.state, json!({ "label": "Recent threads and instructions", "action": "press" }));
-    act(&mut window.state, json!({ "label": "This project", "action": "press" }));
-    until(&mut window, |window| window.find("agent-instructions-page").is_some());
+    act(
+        &mut window.state,
+        json!({ "label": "Recent threads and instructions", "action": "press" }),
+    );
+    act(
+        &mut window.state,
+        json!({ "label": "This project", "action": "press" }),
+    );
+    until(&mut window, |window| {
+        window.find("agent-instructions-page").is_some()
+    });
 
     click(&mut window, "problems");
     click(&mut window, "problems-ask");
@@ -316,15 +354,26 @@ fn a_pasted_picture_is_a_chip_text_pastes_as_text_and_the_x_gives_the_keys_back(
     };
     assert_eq!(message.attachments.len(), 1);
     let first = entries(&mut window).remove(0);
-    assert!(first.contains(r#"attachments: ["Vocal take 3.wav"]"#), "{first}");
+    assert!(
+        first.contains(r#"attachments: ["Vocal take 3.wav"]"#),
+        "{first}"
+    );
 }
 
 #[test]
 fn return_adds_a_line_to_the_instructions_and_escape_closes_them_on_the_composer() {
     let (_scratch, mut window) = window("agent-empty");
-    act(&mut window.state, json!({ "label": "Recent threads and instructions", "action": "press" }));
-    act(&mut window.state, json!({ "label": "This project", "action": "press" }));
-    until(&mut window, |window| window.find("agent-instructions").is_some());
+    act(
+        &mut window.state,
+        json!({ "label": "Recent threads and instructions", "action": "press" }),
+    );
+    act(
+        &mut window.state,
+        json!({ "label": "This project", "action": "press" }),
+    );
+    until(&mut window, |window| {
+        window.find("agent-instructions").is_some()
+    });
     redraw(&mut window);
     assert_eq!(focused(&window).as_deref(), Some("agent-instructions"));
     typed(&mut window, "Keep the strings");
@@ -332,9 +381,14 @@ fn return_adds_a_line_to_the_instructions_and_escape_closes_them_on_the_composer
     typed(&mut window, "out of the intro.");
     key(&mut window, Key::Escape);
     assert_eq!(focused(&window).as_deref(), Some("agent-composer"));
-    let file = window.state.project.root().join(sound_core::INSTRUCTIONS_FILE);
+    let file = window
+        .state
+        .project
+        .root()
+        .join(sound_core::INSTRUCTIONS_FILE);
     until(&mut window, |_| {
-        std::fs::read_to_string(&file).is_ok_and(|text| text == "Keep the strings\nout of the intro.\n")
+        std::fs::read_to_string(&file)
+            .is_ok_and(|text| text == "Keep the strings\nout of the intro.\n")
     });
 }
 
@@ -343,10 +397,15 @@ fn the_keys_pick_a_model_in_the_picker_and_escape_goes_back_to_the_pill() {
     let (_scratch, mut window) = window("agent-empty");
     feed(&mut window, [sidebar::started()]);
     click(&mut window, "agent-model");
-    until(&mut window, |window| focused(window).as_deref() == Some("agent-model-search"));
+    until(&mut window, |window| {
+        focused(window).as_deref() == Some("agent-model-search")
+    });
     typed(&mut window, "ha");
     key(&mut window, Key::Enter);
-    assert_eq!(control(&chrome_controls(&window.state), "Haiku 4.5").key, "agent-model");
+    assert_eq!(
+        control(&chrome_controls(&window.state), "Haiku 4.5").key,
+        "agent-model"
+    );
     assert_eq!(focused(&window).as_deref(), Some("agent-model"));
 
     click(&mut window, "agent-model");
@@ -374,7 +433,10 @@ fn every_control_the_sidebar_lists_is_in_the_window() {
         let (_scratch, window) = window(scene);
         for control in chrome_controls(&window.state) {
             // A menu keys its own rows: an agent finds them by label.
-            let menu = matches!(control.role.as_deref(), Some("menuitem" | "menuitemcheckbox"));
+            let menu = matches!(
+                control.role.as_deref(),
+                Some("menuitem" | "menuitemcheckbox")
+            );
             assert!(
                 menu || window.find(&control.key).is_some(),
                 "{scene}: {} is listed but not drawn",
@@ -393,10 +455,15 @@ fn new_while_the_last_thread_loads_wins_over_it() {
     let mut window = keyed(state);
     let _commands = connect(&mut window);
     begin(&mut window, "Make the drums swing", 2);
-    feed(&mut window, [AgentEvent::TurnEnded {
-        outcome: TurnOutcome::Completed,
-    }]);
-    until(&mut window, |window| !sidebar::chat(&mut window.state, |chat, _| chat.is_saving()));
+    feed(
+        &mut window,
+        [AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Completed,
+        }],
+    );
+    until(&mut window, |window| {
+        !sidebar::chat(&mut window.state, |chat, _| chat.is_saving())
+    });
     drop(window);
 
     let mut state = opened(&scratch.path().join("song"));
@@ -404,8 +471,13 @@ fn new_while_the_last_thread_loads_wins_over_it() {
     // Before any frame, so before the last thread is in.
     act(&mut state, json!({ "label": "New", "action": "press" }));
     let mut window = keyed(state);
-    until(&mut window, |window| !sidebar::chat(&mut window.state, |chat, _| chat.is_loading()));
-    assert!(entries(&mut window).is_empty(), "the thread that loaded came back");
+    until(&mut window, |window| {
+        !sidebar::chat(&mut window.state, |chat, _| chat.is_loading())
+    });
+    assert!(
+        entries(&mut window).is_empty(),
+        "the thread that loaded came back"
+    );
 }
 
 #[test]
@@ -415,23 +487,46 @@ fn a_recent_thread_removed_meanwhile_says_so() {
     let mut state = opened(&scratch.path().join("song"));
     sidebar::signed_in_saving(&mut state, Some(threads.clone()));
     let mut window = keyed(state);
-    until(&mut window, |window| !sidebar::chat(&mut window.state, |chat, _| chat.is_loading()));
+    until(&mut window, |window| {
+        !sidebar::chat(&mut window.state, |chat, _| chat.is_loading())
+    });
     let _commands = connect(&mut window);
     begin(&mut window, "Make the drums swing", 2);
-    feed(&mut window, [AgentEvent::TurnEnded {
-        outcome: TurnOutcome::Completed,
-    }]);
-    act(&mut window.state, json!({ "label": "New", "action": "press" }));
-    until(&mut window, |window| !sidebar::chat(&mut window.state, |chat, _| chat.is_saving()));
+    feed(
+        &mut window,
+        [AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Completed,
+        }],
+    );
+    act(
+        &mut window.state,
+        json!({ "label": "New", "action": "press" }),
+    );
+    until(&mut window, |window| {
+        !sidebar::chat(&mut window.state, |chat, _| chat.is_saving())
+    });
     std::fs::remove_dir_all(&threads).unwrap();
 
-    act(&mut window.state, json!({ "label": "Recent threads and instructions", "action": "press" }));
-    act(&mut window.state, json!({ "label": "Open recent", "action": "press" }));
-    act(&mut window.state, json!({ "label": "Make the drums swing", "action": "press" }));
-    until(&mut window, |window| !sidebar::chat(&mut window.state, |chat, _| chat.is_loading()));
+    act(
+        &mut window.state,
+        json!({ "label": "Recent threads and instructions", "action": "press" }),
+    );
+    act(
+        &mut window.state,
+        json!({ "label": "Open recent", "action": "press" }),
+    );
+    act(
+        &mut window.state,
+        json!({ "label": "Make the drums swing", "action": "press" }),
+    );
+    until(&mut window, |window| {
+        !sidebar::chat(&mut window.state, |chat, _| chat.is_loading())
+    });
     let entries = entries(&mut window);
     assert!(
-        entries.iter().any(|entry| entry.contains("That thread is not saved any more")),
+        entries
+            .iter()
+            .any(|entry| entry.contains("That thread is not saved any more")),
         "{entries:?}"
     );
 }
@@ -441,27 +536,36 @@ fn a_step_that_runs_shows_its_words_on_the_working_line() {
     let (_scratch, mut window) = window("agent-empty");
     let _commands = connect(&mut window);
     begin(&mut window, "Build the drums", 2);
-    feed(&mut window, [AgentEvent::StepStarted {
-        id: StepId("read".into()),
-        title: "Read state/song/song.json".into(),
-        running_title: "Reading state/song/song.json".into(),
-        request_title: "Read state/song/song.json".into(),
-        command: None,
-        kind: StepKind::Read {
-            path: "state/song/song.json".into(),
-        },
-    }]);
-    let working = window.elements().into_iter().find(|element| element.key.as_deref() == Some("agent-working-1"));
-    assert!(working.is_some());
-    feed(&mut window, [
-        AgentEvent::StepDone {
+    feed(
+        &mut window,
+        [AgentEvent::StepStarted {
             id: StepId("read".into()),
-            outcome: StepOutcome::Done,
-        },
-        AgentEvent::TurnEnded {
-            outcome: TurnOutcome::Completed,
-        },
-    ]);
+            title: "Read state/song/song.json".into(),
+            running_title: "Reading state/song/song.json".into(),
+            request_title: "Read state/song/song.json".into(),
+            command: None,
+            kind: StepKind::Read {
+                path: "state/song/song.json".into(),
+            },
+        }],
+    );
+    let working = window
+        .elements()
+        .into_iter()
+        .find(|element| element.key.as_deref() == Some("agent-working-1"));
+    assert!(working.is_some());
+    feed(
+        &mut window,
+        [
+            AgentEvent::StepDone {
+                id: StepId("read".into()),
+                outcome: StepOutcome::Done,
+            },
+            AgentEvent::TurnEnded {
+                outcome: TurnOutcome::Completed,
+            },
+        ],
+    );
     assert!(window.find("agent-working-1").is_none());
     assert!(window.find("agent-worked-for-1").is_some());
 }

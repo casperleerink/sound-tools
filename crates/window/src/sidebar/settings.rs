@@ -44,7 +44,8 @@ impl Page {
     pub(super) fn press(&mut self, agents: &mut Agents, provider: Provider, place: usize) {
         let sections = agents.sections(&self.services.text);
         let section = sections.iter().find(|section| section.provider == provider);
-        let Some(button) = section.and_then(|section| buttons(&section.body).into_iter().nth(place))
+        let Some(button) =
+            section.and_then(|section| buttons(&section.body).into_iter().nth(place))
         else {
             return;
         };
@@ -58,7 +59,9 @@ impl Page {
     /// The details of why `provider`'s sign-in ended, for whoever helps.
     pub(super) fn copy(&mut self, agents: &Agents, provider: Provider) -> Option<String> {
         let sections = agents.sections(&self.services.text);
-        let section = sections.iter().find(|section| section.provider == provider)?;
+        let section = sections
+            .iter()
+            .find(|section| section.provider == provider)?;
         let details = reason(&section.body)?.details.clone()?;
         self.copied = Some(provider);
         Some(details)
@@ -83,7 +86,8 @@ fn buttons(body: &Body) -> Vec<&sound_agent::Button> {
         Body::Ready { sign_out, .. } => vec![sign_out],
         Body::Services(services) => {
             let mut all = rows(&services.signed_in);
-            if let Some(PanelBody::Steps(steps)) = services.panel.as_ref().map(|panel| &panel.body) {
+            if let Some(PanelBody::Steps(steps)) = services.panel.as_ref().map(|panel| &panel.body)
+            {
                 all.extend(of_steps(steps));
             }
             all.extend(rows(&services.listed));
@@ -123,36 +127,44 @@ pub(crate) fn agents_settings(state: &State, sidebar: &Sidebar) -> El {
             .font(theme.text("body"))
             .color(muted)
     });
-    let cards = agents.sections(&page.services.text).into_iter().map(|section| {
-        let provider = section.provider;
-        let mut places = 0..;
-        let body = body(theme, page, provider, &section.body, &mut places);
-        col()
-            .key(format!("agent-setup-{}", provider.name().to_lowercase()))
-            .w_full()
-            .gap(theme.space(3))
-            .items_start()
-            .padding(20.0)
-            .radius(theme.kit.radius.lg)
-            .border(1.0, theme.color("border-strong"))
-            .child(
-                row()
-                    .gap(theme.space(2))
-                    .items_center()
-                    .child(icon(icons::logo(provider), 16.0))
-                    .child(
-                        text(provider.name())
-                            .font(theme.kit.ty.ui_medium)
-                            .color(theme.color("text")),
-                    ),
-            )
-            .child(body)
-    });
+    let cards = agents
+        .sections(&page.services.text)
+        .into_iter()
+        .map(|section| {
+            let provider = section.provider;
+            let mut places = 0..;
+            let body = body(theme, page, provider, &section.body, &mut places);
+            col()
+                .key(format!("agent-setup-{}", provider.name().to_lowercase()))
+                .w_full()
+                .gap(theme.space(3))
+                .items_start()
+                .padding(20.0)
+                .radius(theme.kit.radius.lg)
+                .border(1.0, theme.color("border-strong"))
+                .child(
+                    row()
+                        .gap(theme.space(2))
+                        .items_center()
+                        .child(icon(icons::logo(provider), 16.0))
+                        .child(
+                            text(provider.name())
+                                .font(theme.kit.ty.ui_medium)
+                                .color(theme.color("text")),
+                        ),
+                )
+                .child(body)
+        });
     col()
         .key("agent-agents-section")
         .w_full()
         .gap(theme.space(4))
-        .child(text(AGENTS_INTRO).font(theme.text("body")).color(muted).wrap())
+        .child(
+            text(AGENTS_INTRO)
+                .font(theme.text("body"))
+                .color(muted)
+                .wrap(),
+        )
         .children(looking)
         .children(cards)
 }
@@ -173,7 +185,11 @@ fn body(
         } => col()
             .w_full()
             .gap(theme.space(2))
-            .children(reason.as_ref().map(|reason| reason_line(theme, page, provider, reason)))
+            .children(
+                reason
+                    .as_ref()
+                    .map(|reason| reason_line(theme, page, provider, reason)),
+            )
             .child(
                 row()
                     .w_full()
@@ -218,7 +234,11 @@ fn body(
                     .padding(theme.space(3))
                     .radius(theme.kit.radius.md)
                     .fill(theme.color("fill"))
-                    .child(text(panel.title.clone()).font(theme.kit.ty.ui_medium).color(theme.color("text")))
+                    .child(
+                        text(panel.title.clone())
+                            .font(theme.kit.ty.ui_medium)
+                            .color(theme.color("text")),
+                    )
                     .child(inner)
             });
             let search = text_input(&page.services, theme.text("body"))
@@ -436,7 +456,11 @@ fn service_row(
                 .grow(1.0)
                 .shrink()
                 .min_w(0.0)
-                .child(text(service.name.clone()).font(theme.text("body")).color(theme.color("text")))
+                .child(
+                    text(service.name.clone())
+                        .font(theme.text("body"))
+                        .color(theme.color("text")),
+                )
                 .children(about),
         )
         .child(row().gap(theme.space(2)).children(buttons))
@@ -477,7 +501,12 @@ pub(super) fn controls(agents: &Agents, page: &Page) -> Vec<Control> {
             } else {
                 COPY_DETAILS
             };
-            controls.push(control(copy_key(provider), label, "button", Act::CopyDetails(provider)));
+            controls.push(control(
+                copy_key(provider),
+                label,
+                "button",
+                Act::CopyDetails(provider),
+            ));
         }
     }
     controls
