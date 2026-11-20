@@ -26,7 +26,6 @@ filter.workspace = true
 gate.workspace = true
 instrument.workspace = true
 limiter.workspace = true
-metronome.workspace = true
 midi.workspace = true
 modulation.workspace = true
 pitch-correction.workspace = true
@@ -67,7 +66,7 @@ serde_json.workspace = true
 [dev-dependencies]
 sound-dsp.workspace = true
 hound.workspace = true
-rusty_mp3.workspace = true
+metronome.workspace = true
 sha2.workspace = true
 test-clap-plugin.workspace = true
 test-plugin-support.workspace = true

@@ -30,6 +30,8 @@ allow = [
   "Unicode-3.0",
   # File-level copyleft. Fine as an unmodified dependency.
   "MPL-2.0",
+  # Boost: permissive. clipboard-win, through Rune on Windows.
+  "BSL-1.0",
   # Public domain dedications. notify 8; midly.
   "CC0-1.0",
   "Unlicense",
@@ -46,8 +48,6 @@ multiple-versions = "allow"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# gpui and the forks it pins.
-allow-git = ["https://github.com/gfx-rs/wgpu"]
-
+# gpui, and Rune with the forks it pins.
 [sources.allow-org]
 github = ["zed-industries", "anomalyco"]

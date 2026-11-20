@@ -5228,7 +5228,6 @@ dependencies = [
  "pitch-correction",
  "plugin-host",
  "reverb",
- "rusty_mp3",
  "sampler",
  "saturator",
  "serde",
@@ -5960,7 +5959,6 @@ dependencies = [
  "sound-core",
  "sound-dsp",
  "sound-media",
- "tempfile",
  "unicode-segmentation",
 ]
 

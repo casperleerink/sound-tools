@@ -10,15 +10,14 @@ publish = false
 
 # Every dependency, internal or external, is declared here once. Members write `foo.workspace = true`.
 [workspace.dependencies]
-# Zed stable v1.26.2. Keep the rev and rust-toolchain.toml in step with Zed's pin.
-# `wayland` and `x11` are the window systems of Linux. Without them Linux opens no window.
-# `version` picks gpui from a test crate of the same name in Zed's repo.
-# Rune, the window gpui gives way to (`crates/window`). Its patches below are at the same rev.
-# `tooling`: `--snap`, `--tree` and `--script` in release builds, which agents check with.
+# The window (`crates/window`). Its patches below are at the same rev. `tooling`: `--snap`,
+# `--tree` and `--script` in release builds, which agents check with. `native-file-dialog`: the
+# system's Open and Save.
 rune = { git = "https://github.com/anomalyco/rune", rev = "7a92d24d63d9be8480e3e475489d2a4d0ed48c8d", default-features = false, features = ["accessibility", "dbus", "metal-backend", "native-file-dialog", "svg", "tooling"] }
 rune-kit = { git = "https://github.com/anomalyco/rune", rev = "7a92d24d63d9be8480e3e475489d2a4d0ed48c8d", features = ["markdown"] }
+# Only sound-agent, plugin-host and sound-ui, which draw with it: it goes when they are free.
+# `version` picks gpui from a test crate of the same name in Zed's repo.
 gpui = { git = "https://github.com/zed-industries/zed", version = "0.2", rev = "c4273271092b0287f7d181f616bd5171e0a2f70c" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "c4273271092b0287f7d181f616bd5171e0a2f70c", features = ["runtime_shaders", "font-kit", "wayland", "x11"] }
 analyzer = { path = "extensions/analyzer" }
 compressor = { path = "extensions/compressor" }
 delay = { path = "extensions/delay" }
@@ -48,7 +47,6 @@ sound-notes = { path = "crates/notes" }
 sound-signals = { path = "crates/signals" }
 sound-typescript = { path = "crates/typescript" }
 sound-ui = { path = "crates/ui" }
-sound-window = { path = "crates/window" }
 tone = { path = "extensions/tone" }
 utility = { path = "extensions/utility" }
 vocoder = { path = "extensions/vocoder" }
@@ -57,12 +55,6 @@ anyhow = "1"
 # Real-time priority for the audio thread of a plugin in a process of its own: what cpal uses
 # for its own thread, at the version it pulls in. MPL-2.0.
 audio_thread_priority = { version = "0.35.1", default-features = false }
-# For the window's measurements, at gpui's rev: Zed's allocation counter, which counts through
-# `criterion`'s measurement trait, and the macOS text system, which `gpui_platform` makes only on
-# the main thread.
-bench_metrics = { git = "https://github.com/zed-industries/zed", rev = "c4273271092b0287f7d181f616bd5171e0a2f70c" }
-criterion = "0.8"
-gpui_apple = { git = "https://github.com/zed-industries/zed", rev = "c4273271092b0287f7d181f616bd5171e0a2f70c", features = ["font-kit"] }
 # The pictures sent to the agent of the sidebar. The version usvg uses for gpui. MIT OR Apache-2.0.
 base64 = "0.22"
 cargo_metadata = "0.23"
@@ -80,7 +72,7 @@ clack-plugin = "0.2"
 cpal = { version = "0.18", features = ["realtime"] }
 # The chat example of the agent crate: ctrl-c stops the turn instead of the program.
 ctrlc = "3.5"
-# The icon of the Windows program, in crates/runtime/build.rs. The version gpui uses. MIT.
+# The icon of the Windows program, in crates/window/build.rs. MIT.
 embed-resource = "3.0.11"
 # `canonicalize` without the `\\?\` prefix Windows adds, which cmd, Explorer and people do not
 # read. The same as std elsewhere.
@@ -184,15 +176,13 @@ codegen-units = 16
 debug = 0
 codegen-units = 16
 
-# Fast proc macros make derive-heavy extension builds faster. Fast gpui, layout and SVG keep debug UI usable.
+# Fast proc macros make derive-heavy extension builds faster. Fast Rune, layout and SVG keep debug UI usable.
 # Every crate with DSP code also gets opt-level 3: unoptimized audio glitches and hides real problems.
 [profile.dev.package]
 syn = { opt-level = 3 }
 quote = { opt-level = 3 }
 proc-macro2 = { opt-level = 3 }
 serde_derive = { opt-level = 3 }
-gpui_macros = { opt-level = 3 }
-gpui = { opt-level = 3 }
 taffy = { opt-level = 3 }
 resvg = { opt-level = 3 }
 rune = { opt-level = 3 }
@@ -241,8 +231,7 @@ wavetable = { opt-level = 3 }
 # a large part of a second.
 realfft = { opt-level = 3 }
 rustfft = { opt-level = 3 }
-# Writing a PNG of the window, in the snapshots and `--screenshot`: unoptimized it takes most
-# of a second.
+# Writing a PNG of the window, in `--snap`: unoptimized it takes most of a second.
 png = { opt-level = 3 }
 fdeflate = { opt-level = 3 }
 flate2 = { opt-level = 3 }
@@ -265,14 +254,3 @@ inherits = "release"
 lto = false
 codegen-units = 16
 debug = "full"
-
-# The window's measurements, `tooling/perf/ui.py`. gpui finds an element by its test name only
-# with its debug assertions on, and its macros must match.
-[profile.perf]
-inherits = "release-fast"
-
-[profile.perf.package.gpui]
-debug-assertions = true
-
-[profile.perf.package.gpui_macros]
-debug-assertions = true

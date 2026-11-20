@@ -32,13 +32,13 @@ if [[ ! -x "$iscc" ]]; then
   exit 1
 fi
 
-cargo build --release -p runtime --locked
+cargo build --release -p sound-window --locked
 target="$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
 # JSON writes each backslash of C:\a\target twice. Bash takes C:/a/target.
 target="${target//\\\\//}"
 
 scratch="$(mktemp -d)"
-cp "$target/release/runtime.exe" "$scratch/sound-tools.exe"
+cp "$target/release/sound-tools.exe" "$scratch/sound-tools.exe"
 tooling/fetch-bun.sh "$scratch" "$scratch"
 cp LICENSE "$scratch/"
 "$scratch/sound-tools.exe" --version

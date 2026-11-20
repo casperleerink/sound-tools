@@ -55,9 +55,12 @@ class Build:
         print(f"building {ref} ({self.sha})", file=sys.stderr, flush=True)
         # One target folder for all commits: dependencies build once, each commit links its own.
         target = ROOT / "target"
-        subprocess.run(["cargo", "build", "--release", "-p", "runtime", "--locked"], cwd=self.source, check=True,
+        # The program is `sound-tools` of crates/window; before it, `runtime` of crates/runtime.
+        package, program = ("runtime", "runtime") if (self.source / "crates/runtime/src/main.rs").exists() \
+            else ("sound-window", "sound-tools")
+        subprocess.run(["cargo", "build", "--release", "-p", package, "--locked"], cwd=self.source, check=True,
                        env=dict(os.environ, CARGO_TARGET_DIR=str(target)))
-        shutil.copy(target / "release/runtime", self.runtime)
+        shutil.copy(target / "release" / program, self.runtime)
 
     def __str__(self):
         return f"{self.ref} ({self.sha[:7]})"

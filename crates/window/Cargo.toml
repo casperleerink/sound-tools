@@ -7,6 +7,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+# rune-kit draws the shell, which comes next.
+[package.metadata.cargo-shear]
+ignored = ["rune-kit"]
+
 [[bin]]
 name = "sound-tools"
 path = "src/main.rs"
