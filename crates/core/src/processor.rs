@@ -642,6 +642,24 @@ impl EventOutputs<'_> {
         }
     }
 
+    /// What this block sent to `port` so far, sorted by offset from the block's start: a
+    /// processor that shows what it sends, such as the notes a player plays, reads it back. An
+    /// undeclared port gives none and counts in `EngineStatus::port_misuses`.
+    pub fn sent<E: Event>(&self, port: EventOutput<E>) -> &[Timed<E>] {
+        let buffer = self.buffers.get(port.index).and_then(EventPort::typed::<E>);
+        match buffer {
+            Some(buffer) => {
+                let from = buffer
+                    .events
+                    .partition_point(|timed| timed.offset < self.start);
+                let to = (buffer.events)
+                    .partition_point(|timed| timed.offset < self.start + self.frames);
+                buffer.events.get(from..to).unwrap_or_default()
+            }
+            None => misused(self.misuses),
+        }
+    }
+
     /// Counts an event that the processor did not send because a fixed list of its own was
     /// full, for example its list of held notes. It shows up in
     /// `EngineStatus::event_overflows`, like an event that a full buffer dropped.

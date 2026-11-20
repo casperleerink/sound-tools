@@ -178,6 +178,30 @@ impl<'a> FeedContext<'a> {
         self.instance
     }
 
+    /// What the feed `name` of each instance right inside this one gives this frame, for a feed
+    /// that gathers its children's, such as the keys down on what a track plays.
+    pub fn of_children(&self, name: &str) -> Vec<Feed> {
+        let request = FeedRequest {
+            tick: self.tick,
+            points: self.points,
+            range: self.range,
+        };
+        let children = (self.project.instances.keys())
+            .filter(|id| id.parent().as_ref() == Some(self.instance));
+        children
+            .filter_map(|child| {
+                read(
+                    self.project,
+                    self.readings,
+                    self.sources,
+                    child,
+                    name,
+                    request,
+                )
+            })
+            .collect()
+    }
+
     /// The largest value of each channel of the peaks the instance keeps as `name` since the
     /// last frame. Every feed of a frame gets the same values.
     pub fn peaks(&self, name: &str) -> [f32; 2] {

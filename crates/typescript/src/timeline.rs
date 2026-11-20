@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sound_core::{
-    BehaviourContext, BehaviourError, EventInput, EventOutput, InputEndpoint, JsonTool,
+    BehaviourContext, BehaviourError, EventInput, EventOutput, EventTap, InputEndpoint, JsonTool,
     JsonToolDoc, OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, State, Ticks,
     ToolSchema, Watch,
 };
@@ -22,7 +22,7 @@ use sound_notes::{
 use sound_signals::Number;
 
 use crate::recorder::MAX_WAITING;
-use crate::tools::key;
+use crate::tools::{SOUNDING_TAP, key};
 
 pub(crate) const NAME: &str = "timeline";
 /// Its input of launches, which a performer reaches as a number input.
@@ -218,7 +218,8 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
     let record = record(state).map_err(BehaviourError::Other)?;
     let pattern = round(&record).map_err(BehaviourError::Other)?;
     let lanes = lanes(&record, &pattern).map_err(BehaviourError::Other)?;
-    let node = context.processor(PROCESSOR, Timeline::new)?;
+    let sounding = context.tap::<NoteEvent>(SOUNDING_TAP);
+    let node = context.processor(PROCESSOR, || Timeline::new(sounding))?;
     // Only a loop shows what plays: a song of many timelines keeps no watches it never reads.
     let shown = record.looped.then(|| TimelineWatches {
         playing: context.watch("playing"),
@@ -286,6 +287,8 @@ pub(crate) struct Timeline {
     heard: Option<bool>,
     /// Launches performers sent for frames of engine time still to come.
     waiting: Schedule<bool>,
+    /// Where it says which keys it plays down.
+    sounding: EventTap<NoteEvent>,
 }
 
 pub(crate) enum TimelineUpdate {
@@ -304,8 +307,9 @@ impl Timeline {
     pub(crate) const LAUNCH: EventInput<Number> = EventInput::new(0);
     pub(crate) const NOTES: EventOutput<NoteEvent> = NotePlayer::NOTES;
 
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(sounding: EventTap<NoteEvent>) -> Self {
         Self {
+            sounding,
             player: NotePlayer::default(),
             inner: PlayerWatches::default(),
             shown: None,
@@ -394,6 +398,7 @@ impl Processor for Timeline {
             }
         }
         self.player.process(context);
+        crate::next::sounds(&self.sounding, context.event_outputs.sent(Self::NOTES));
         if let Some(shown) = &self.shown {
             let playing = self.inner.playing.get() != NO_PATTERN;
             shown.playing.set(if playing { 1.0 } else { 0.0 });

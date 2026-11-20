@@ -16,12 +16,12 @@ use std::time::{Duration, Instant};
 
 use notify::RecommendedWatcher;
 use serde_json::{Map, Value, json};
-use sound_core::EventTap;
-use sound_core::feeds::FeedContext;
+use sound_core::feeds::{Feed, FeedContext};
 use sound_core::{
     Changes, GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEdit, ProjectEvent, Sections,
     TempoMap, Ticks,
 };
+use sound_core::{EventTap, Timed};
 use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
 
@@ -1860,13 +1860,31 @@ impl Keys {
     }
 }
 
-/// The feed `sounding` of every instance, see [`crate::register_feeds`].
+/// The feed `sounding` of every instance, see [`crate::register_feeds`]: the keys down on what
+/// it plays, or on one that plays none of its own, such as a track, on what its children play.
 pub(crate) fn sounding(context: &FeedContext<'_>) -> Vec<f32> {
-    let tap = context.tap::<NoteEvent>(SOUNDING_TAP);
-    let down = context.kept("sounding", |keys: &mut Keys| keys.follow_tap(tap));
+    let Some(tap) = context.tap::<NoteEvent>(SOUNDING_TAP) else {
+        let mut keys = vec![0.0_f32; 128];
+        for feed in context.of_children("sounding") {
+            if let Feed::List(down) = feed {
+                (keys.iter_mut().zip(down)).for_each(|(key, down)| *key = (*key).max(down));
+            }
+        }
+        return keys;
+    };
+    let down = context.kept("sounding", |keys: &mut Keys| keys.follow_tap(Some(tap)));
     (0..128)
         .map(|pitch| f32::from(u8::from(down & (1 << pitch) != 0)))
         .collect()
+}
+
+/// Writes into `sounding` the notes of `events` that move a key. Realtime safe.
+pub(crate) fn sounds(sounding: &EventTap<NoteEvent>, events: &[Timed<NoteEvent>]) {
+    for timed in events {
+        if let NoteEvent::On { .. } | NoteEvent::Off { .. } | NoteEvent::AllOff = timed.event {
+            sounding.write(std::iter::once((0, timed.event)));
+        }
+    }
 }
 
 /// A tree as Bun `bun` sends it, with the memos the window kept from `before` that it still

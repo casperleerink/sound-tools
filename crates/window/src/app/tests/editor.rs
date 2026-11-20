@@ -214,3 +214,20 @@ fn two_thousand_notes_of_the_editor_scroll_play_zoom_and_drag_within_their_budge
     assert!(play < super::budget::FRAME, "a play frame took {play:?}");
     assert!(zoom < super::budget::FRAME, "a zoom frame took {zoom:?}");
 }
+
+/// While the clip plays, the piano keys of the notes it holds down light: the track sounds what
+/// its clips and its input play.
+#[test]
+fn the_piano_keys_light_while_the_track_sounds_them() {
+    let (_scratch, mut window) = editor();
+    let lit = |window: &rune::Runtime<State>| {
+        let feeds = window.state.report()["feeds"].clone();
+        (feeds.as_object().unwrap().iter())
+            .filter(|(name, value)| name.contains(" sounding.") && value.as_f64() == Some(1.0))
+            .count()
+    };
+    assert_eq!(lit(&window), 0);
+    let end = window.state.last + 0.6;
+    played_until(&mut window, end);
+    assert!(lit(&window) > 0, "{}", window.state.report()["feeds"]);
+}
