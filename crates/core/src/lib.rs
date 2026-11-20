@@ -68,6 +68,7 @@ pub use project::{
     ProjectError, ProjectEvent, ProjectFile, RUN_LONGEST, RUN_QUIET, RecordSchema, RecordStamp,
     Registry, RegistryError, SavedConnection, SavedDestination, SavedSource, State, StorageError,
     ToolRegistration, ToolSchema, facts, feeds, parse_state, ranges, type_doc, unit_of,
+    write_atomically,
 };
 pub use scope::Scope;
 pub use sections::{Section, SectionError, SectionName, Sections};

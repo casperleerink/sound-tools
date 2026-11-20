@@ -45,7 +45,7 @@ pub use registry::{
     ToolRegistration, ToolSchema, parse_state,
 };
 pub use runs::{RUN_LONGEST, RUN_QUIET};
-pub use storage::StorageError;
+pub use storage::{StorageError, write_atomically};
 pub use watcher::GROUPING_WINDOW;
 
 use binding::{BindError, Bindings};
