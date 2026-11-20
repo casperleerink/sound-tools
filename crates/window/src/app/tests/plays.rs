@@ -102,7 +102,7 @@ fn a_knob_plays_as_it_drags_and_its_release_is_one_step_named_by_the_code() {
     assert!((kept - turned).abs() < 0.01, "{kept} {turned}");
     assert_eq!(played(&window.state), kept);
     let label = window.state.project().undo_label();
-    assert_eq!(label.as_deref(), Some("Change Cutoff"));
+    assert_eq!(label.as_deref(), Some("Change cutoff"));
     window.state.undo().unwrap();
     assert_eq!(
         (played(&window.state), window.state.project().undo_label()),

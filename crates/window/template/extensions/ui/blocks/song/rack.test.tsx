@@ -46,7 +46,7 @@ const chain = (self: unknown, name = "t00") =>
 
 test("a track shows its instrument, then its effects in order, each in a frame with its title", () => {
   rack(rich());
-  expect(["slot-instrument", "slot-comp", "slot-eq", "slot-dly"].map((key) => find(key)).map((slot) => slot && "label" in slot && slot.label)).toEqual(["Synth", "Compressor", "EQ", "Delay"]);
+  expect(["slot-instrument", "slot-comp", "slot-eq", "slot-dly"].map((key) => find(key)).map((slot) => slot && "label" in slot && slot.label)).toEqual(["Device Synth", "Device Compressor", "Device EQ", "Device Delay"]);
   expect(find("slot-instrument-power")).toBeUndefined();
   expect(find("Turn EQ on")).toMatchObject({ checked: false });
 });
@@ -95,18 +95,18 @@ test("a pick in an effect's title menu replaces it where it is and lets go of it
 
 test("an effect dragged onto another goes before it; onto the instrument, first; onto Add effect, last", () => {
   const shown = rack(rich());
-  act("slot-dly", "drag", { dx: -400, over: "slot-comp-title" });
+  act("slot-dly-header", "drag", { dx: -400, over: "slot-comp-title" });
   expect(chain(shown.self).order).toEqual(["dly", "comp", "eq"]);
-  act("slot-comp", "drag", { dx: 400, over: "add-effect" });
+  act("slot-comp-header", "drag", { dx: 400, over: "add-effect" });
   expect(chain(shown.self).order).toEqual(["dly", "eq", "comp"]);
-  act("slot-comp", "drag", { dx: -400, over: "slot-instrument" });
+  act("slot-comp-header", "drag", { dx: -400, over: "slot-instrument" });
   expect(chain(shown.self).order).toEqual(["comp", "dly", "eq"]);
-  expect(act("slot-dly", "drag", { dx: 40, over: "slot-dly" })).toEqual([]);
+  expect(act("slot-dly-header", "drag", { dx: 40, over: "slot-dly" })).toEqual([]);
 });
 
-test("a press on an effect chooses it, which its frame shows", () => {
+test("a press on an effect's header chooses it, which its frame shows", () => {
   const { memory } = rack(rich());
-  press("slot-eq");
+  press("slot-eq-header");
   expect(memory.effect).toEqual({ track: "t00", name: "eq" });
   expect(find("slot-eq")).toMatchObject({ border: "text-muted" });
   expect(find("slot-comp")).toMatchObject({ border: "border-strong" });
@@ -138,7 +138,7 @@ test("a return's panel takes effects and Pre fader, and with none says so", () =
 
 test("the master's panel is its strip and its limiter, which power turns off", () => {
   rack(rich(), "master");
-  expect(find("slot-limit")).toMatchObject({ label: "Limiter" });
+  expect(find("slot-limit")).toMatchObject({ label: "Device Limiter" });
   expect(find("add-effect")).toBeUndefined();
   expect(press("Turn Limiter off")).toEqual([[["state", "limit_off"], true]]);
 });
@@ -146,9 +146,9 @@ test("the master's panel is its strip and its limiter, which power turns off", (
 test("an audio track shows its region chosen alone, else asks for one", () => {
   const self = song([tapeOf("audio-1", [chainOf([]), regionOf("r1", 0, 4), regionOf("r2", 0)])]);
   rack(self, "audio-1");
-  expect(find("clip-empty")).toMatchObject({ label: "Clip" });
+  expect(find("clip-empty")).toMatchObject({ label: "Device Clip" });
   rack(self, "audio-1", (memory) => (memory.selected = ["audio-1/r1"]));
-  expect(find("slot-region")).toMatchObject({ label: "r1.wav" });
+  expect(find("slot-region")).toMatchObject({ label: "Device r1.wav" });
   expect(act("Gain of r1.wav", "set", -6)).toEqual([[["children", 0, "children", 2, "state", "gain_db"], -6]]);
   rack(self, "audio-1", (memory) => (memory.selected = ["audio-1/r1", "audio-1/r2"]));
   expect(find("slot-region")).toBeUndefined();

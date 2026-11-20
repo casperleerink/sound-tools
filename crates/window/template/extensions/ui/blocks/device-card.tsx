@@ -91,7 +91,7 @@ const Tabs = ({ id, title, sections, page, onPage }: { id: string; title: string
 );
 
 export type FrameProps = {
-  /** The key of the slot: a press on it chooses it, a drag carries it. */
+  /** The key of the slot: a drag of its header carries it, a press on it chooses it. */
   id: string;
   title: string;
   /** The title as a menu: another device in its place, or what to do with it. */
@@ -115,9 +115,10 @@ export type FrameProps = {
  * own code draws none of this, so every device looks alike in a rack.
  */
 export const Frame = ({ id, title, menu, on = true, onPower, onRemove, end, chosen = false, onChoose, drag, onDragEnd, children }: FrameProps) => (
-  <col key={id} label={title} role="group" radius="lg" fill="surface" border={chosen ? "text-muted" : "border-strong"} hoverGroup
-    {...(drag ? { drag, onDragEnd, opacity: live.drag(id).active.times(-0.5).plus(1) } : {})} {...(onChoose ? { onPress: onChoose } : {})}>
-    <row key={`${id}-header`} label={`${title} header`} role="toolbar" group h={HEADER} px={1} gap={1} align="center">
+  <col key={id} label={`Device ${title}`} role="group" radius="lg" fill="surface" border={chosen ? "text-muted" : "border-strong"} hoverGroup
+    {...(drag ? { opacity: live.drag(id).active.times(-0.5).plus(1) } : {})}>
+    <row key={`${id}-header`} label={`Choose ${title}`} role="toolbar" group h={HEADER} px={1} gap={1} align="center"
+      {...(drag ? { drag: { ...drag, id }, onDragEnd } : {})} {...(onChoose ? { onPress: onChoose } : {})}>
       {menu ? (
         <Picker id={`${id}-title`} label={menu.label} groups={menu.groups} notes={menu.notes}>
           <text style="heading" color={on ? "text" : "text-muted"} truncate>{title}</text>

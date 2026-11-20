@@ -14,11 +14,11 @@ use crate::controls;
 mod host;
 
 /// What the live texts of the views show, but the values of the controls a drag turns, such
-/// as the template's faders and knobs.
+/// as the template's faders and knobs, and the loudest a strip played, which a click lets go of.
 fn shown_texts(state: &State) -> Vec<String> {
     let texts = state.lives.texts().into_iter();
     texts
-        .filter(|(shows, _)| !shows.contains("Drag"))
+        .filter(|(shows, _)| !shows.contains("Drag") && !shows.contains("Max"))
         .map(|(_, text)| text)
         .collect()
 }
@@ -1062,7 +1062,7 @@ fn a_card_of_fields_shows_a_few_and_grows_wider_not_taller_when_expanded() {
             .count()
     };
     let (few, closed) = (shown(&window), card(&window));
-    assert_eq!(few, 4);
+    assert_eq!(few, 6);
     act(
         &mut window.state,
         json!({ "label": "More of Compressor", "action": "press" }),
@@ -1618,7 +1618,10 @@ fn enter_on_a_fader_types_its_value_and_the_keys_stay_with_it() {
     let scratch = new_project();
     let mut window = laid_out(opened(&scratch.path().join("song")));
     let gain = |state: &State| record(state, "song/t00/mix.json")["state"]["gain_db"].clone();
-    tab_to(&mut window, "fader-t00");
+    // The strip is one stop of Tab, its meter first; the arrows walk it.
+    tab_to(&mut window, "meter-t00");
+    key(&mut window, rune::Key::Right);
+    assert_eq!(focused(&window).as_deref(), Some("fader-t00"));
     key(&mut window, rune::Key::Enter);
     assert_eq!(window.state.open, ["fader-t00-value"]);
     for typed in ["-", "1", "2"] {
@@ -2119,5 +2122,7 @@ mod frame;
 mod geometry;
 mod plays;
 mod projects;
+mod rack;
 mod sidebar;
 mod transport;
+
