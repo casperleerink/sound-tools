@@ -21,7 +21,7 @@ const dashed = (end: number, dashes = 12) =>
   Array.from({ length: dashes }, (_, at) => [at / dashes, (at + 0.5) / dashes].flatMap((x) => [x, 1 + (end - 1) * x])).flat();
 
 /**
- * The reverb: its tail as it falls, the highs falling sooner as a dashed line, the early
+ * The reverb: its tail as it falls over a quiet fill, the highs falling sooner as a dashed line, the early
  * reflections as marks, a handle at its start (the pre-delay) and its end (the decay); then size,
  * damping, width and mix; behind More the cuts, diffusion, freeze, pre-delay and decay.
  */
@@ -42,7 +42,7 @@ export const card: Card<"reverb", { expanded: boolean }> = (self, ctx) => {
     return <box at={[start.plus(after).times(w), height.negate().plus(1).times(tall)]} w={1} h={height.times(tall)} fill="text-muted" opacity={after.lt(length)} />;
   });
   const line = (part: typeof length, points: number[], bright: boolean) => (
-    <shapes at={[start.times(w), (1 - TOP) * tall]} w={part.times(w)} h={TOP * tall} units={[[0, 1], [1, 0]]} lines={[{ color: bright ? "text" : "text-secondary", width: bright ? 1.5 : 1, points }]} />
+    <shapes at={[start.times(w), (1 - TOP) * tall]} w={part.times(w)} h={TOP * tall} units={[[0, 1], [1, 0]]} lines={[bright ? { color: "text", width: 1.5, points, fill: "text/6" } : { color: "text-secondary", width: 1, points }]} />
   );
   const display = (
     <Display>
