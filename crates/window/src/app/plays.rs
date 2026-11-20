@@ -69,8 +69,15 @@ pub(crate) fn let_go(state: &mut State) -> bool {
     true
 }
 
-/// Each frame: a drag let go ends once the code answered its release.
+/// Each frame: a drag let go ends once the code answered its release. One whose record was
+/// deleted ended in the session; its element went with it, and Rune lets go of no element
+/// that is gone.
 pub(crate) fn settle(state: &mut State) {
+    if state.plays.drag.is_some() && !state.session.gesture_open() {
+        state.plays = Playing::default();
+        defer(state, false);
+        return;
+    }
     if state.plays.let_go && state.tools.as_ref().is_none_or(Tools::answered) {
         let update = state.tools.as_mut().and_then(Tools::take_update);
         ended(state, update.as_deref());

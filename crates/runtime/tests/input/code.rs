@@ -41,8 +41,8 @@ fn a_save_in_a_folder_made_after_the_project_opened_is_heard() {
     let mut opened = open_watched(folder);
     // The watcher needs a moment before it sees changes.
     std::thread::sleep(Duration::from_millis(200));
-    let at = |level: f32| move |opened: &mut crate::support::Opened| {
-        (opened.loudest(4_800) - level).abs() < 0.02
+    let at = |level: f32| {
+        move |opened: &mut crate::support::Opened| (opened.loudest(4_800) - level).abs() < 0.02
     };
     opened.until("the hum at its level", at(0.5));
 
@@ -131,7 +131,11 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
         opened.record("heard")["last"] == 64
     });
 
-    write(opened.folder.path(), "extensions/stuck.ts", &noted("stuck", false));
+    write(
+        opened.folder.path(),
+        "extensions/stuck.ts",
+        &noted("stuck", false),
+    );
     opened.tools.code_changed();
     opened.until("the fix", |opened| problems(opened).is_empty());
     opened.play_midi(65);
@@ -209,7 +213,11 @@ fn a_tool_gone_from_the_code_is_a_problem_and_its_records_play_on() {
     let mut opened = open(folder, Devices::default());
     assert!((opened.loudest(4_800) - 0.5).abs() < 0.02);
 
-    write(&root, "extensions/hum.ts", &hum("lib/level").replace("\"hum\"", "\"drone\""));
+    write(
+        &root,
+        "extensions/hum.ts",
+        &hum("lib/level").replace("\"hum\"", "\"drone\""),
+    );
     opened.tools.code_changed();
     opened.until("the problem of the gone tool", |opened| {
         problems(opened).iter().any(|problem| {

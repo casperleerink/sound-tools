@@ -273,3 +273,41 @@ fn an_update_of_a_band_a_lane_holds_writes_into_the_lane_while_it_plays() {
         serde_json::from_str(&window.state.project().state_json(&eq).unwrap()).unwrap();
     assert_eq!(record["bands"][0]["gain_db"], 0.0);
 }
+
+/// An agent deletes the device whose knob the hand drags: its drag ends with it, the let-go
+/// asks nothing of the code, and undo waits for no drag.
+#[test]
+fn a_device_deleted_while_its_knob_drags_ends_the_drag() {
+    let scratch = new_project();
+    let mut window = laid_out(opened(&scratch.path().join("song")));
+    let at = grab_and_turn(&mut window, 10, 1.0 / 60.0);
+    let record = window
+        .state
+        .project()
+        .root()
+        .join("state/song/t00/synth.json");
+    std::fs::remove_file(&record).unwrap();
+    (window.state.session).background(|project| project.apply_outside_changes(&[record]).unwrap());
+    // As a frame of a window polls: a run without one waits for Bun first, which takes the
+    // events of the project before the session sees them.
+    window.state.poll_session();
+    wait(&mut window, 1.0 / 60.0);
+    assert_eq!(window.state.project().tool_of(&synth()), None);
+    let_go(&mut window, at);
+    wait(&mut window, 1.0 / 60.0);
+    assert!(window.state.plays.idle());
+    let label = window.state.project().undo_label();
+    window.state.undo().unwrap();
+    assert_eq!(window.state.session.notice(), None);
+    assert_ne!(window.state.project().undo_label(), label);
+    // The code hears the records again: its views follow them.
+    act(
+        &mut window.state,
+        json!({ "label": "Mute Track 2", "action": "toggle" }),
+    );
+    let controls = crate::controls::collect(&window.state).controls;
+    let mute = controls
+        .iter()
+        .find(|control| control.label == "Mute Track 2");
+    assert_eq!(mute.and_then(|mute| mute.checked), Some(true));
+}
