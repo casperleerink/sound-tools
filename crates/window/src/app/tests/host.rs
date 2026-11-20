@@ -874,3 +874,66 @@ fn notes_code_exports_are_written_where_the_composer_says() {
         labels(&window.state)
     );
 }
+
+/// Counts what its code hears, notes and keys, in its memory; a press on its page keeps the
+/// count in its record.
+const EAR: &str = r#"import { h, note, number, sine, tool } from "./sdk";
+export const ear = tool({
+  name: "ear", title: "Ear", when: "Never", doc: "Counts the notes and keys it hears.",
+  voices: 4, sound: () => sine(note.freq).times(note.gate).times(0.1),
+  state: { heard: number({ min: 0, max: 100, default: 0 }) },
+  memory: () => ({ heard: 0 }),
+  keys: ["b"],
+  onNotes: ({ memory }, event) => { if (event.type === "noteOn") memory.heard += 1; },
+  onKey: ({ memory }, key) => { if (key.down) memory.heard += 1; },
+  view: (_, { memory, update }) => <box key="keep" w={120} h={20} label="Keep" onPress={() => update("Keep the count", (part) => void (part.state.heard = memory.heard))} />,
+});
+"#;
+
+/// The page draws again after its code hears a note or a key, and a press on it still runs.
+#[test]
+fn a_page_still_takes_presses_after_its_code_hears_a_note_and_a_key() {
+    let files = [
+        ("extensions/ear.tsx", EAR),
+        ("state/ear.json", r#"{"tool": "ear", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "ear");
+    let heard = |window: &rune::Runtime<State>| record_of(&window.state, "ear")["heard"].clone();
+    (window.state.session).select(Some(InstanceId::new("ear").unwrap()), None);
+    keys(&mut window, "cmd-k a");
+    for _ in 0..5 {
+        redraw(&mut window);
+    }
+    act(
+        &mut window.state,
+        json!({ "label": "Keep", "action": "press" }),
+    );
+    redraw(&mut window);
+    assert_eq!(heard(&window), 1);
+    keys(&mut window, "b");
+    act(
+        &mut window.state,
+        json!({ "label": "Keep", "action": "press" }),
+    );
+    redraw(&mut window);
+    assert_eq!(heard(&window), 2);
+}
+
+/// The agent adds the tool the window shows, and its page opens: the focus stays where the
+/// composer had it.
+#[test]
+fn a_page_that_opens_leaves_the_focus_where_it_is() {
+    let (_scratch, mut window) = page(&[("extensions/ear.tsx", EAR)], "ear");
+    assert!(window.find("keep").is_none());
+    focus(&mut window, "play");
+    let root = window.state.project().root().to_path_buf();
+    let record = root.join("state/ear.json");
+    std::fs::write(&record, r#"{"tool": "ear", "state": {}}"#).unwrap();
+    (window.state.session).background(|project| project.apply_outside_changes(&[record]).unwrap());
+    for _ in 0..5 {
+        polled(&mut window);
+        redraw(&mut window);
+    }
+    assert!(window.find("keep").is_some(), "the page did not open");
+    assert_eq!(focused(&window).as_deref(), Some("play"));
+}
