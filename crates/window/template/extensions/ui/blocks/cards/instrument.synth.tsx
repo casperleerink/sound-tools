@@ -1,4 +1,4 @@
-import { h, live, type Card } from "../../../sdk";
+import { h, live, type Card, type Live, type Node } from "../../../sdk";
 import theme from "../../../theme.json";
 import { Cell } from "../../cell";
 import { Choice } from "../../choice";
@@ -7,7 +7,7 @@ import { Display, drawingOf } from "../../display";
 import { cardBinder } from "../../field";
 import { Handle } from "../../handle";
 import { Knob } from "../../knob";
-import { shown, travelled, type Range } from "../../value";
+import { liveTravelled, shown, travelled, type Range } from "../../value";
 import { DeviceCard } from "../device-card";
 
 /**
@@ -38,6 +38,11 @@ export const card: Card<"instrument.synth"> = (self, ctx) => {
   const [attack, decay, sustain, release] = [field.number("attack_seconds", "Attack"), field.number("decay_seconds", "Decay"), field.number("sustain", "Sustain"), field.number("release_seconds", "Release")];
   const peak = travelled(attack.value, attack);
   const held = peak + travelled(decay.value, decay) + HOLD;
+  // Where the decay and the release start as they play: a handle dragged moves those after it.
+  const livePeak = liveTravelled(live.field("attack_seconds"), attack);
+  const liveHeld = livePeak.plus(liveTravelled(live.field("decay_seconds"), decay)).plus(HOLD);
+  /** `handle`, laid from its stage's start `at` in the record, moved along while it plays at `start`. */
+  const following = (start: Live, at: number, handle: Node) => <box at={[start.minus(at).times(w / (RIGHT - LEFT)), 0]} w={w} h={tall}>{handle}</box>;
   const top = (1 - LEVEL[1]) / (LEVEL[0] - LEVEL[1]);
   const bottom = -LEVEL[1] / (LEVEL[0] - LEVEL[1]);
   // Expanded, the knobs say the times; else a handle says its own while pointed at.
@@ -46,10 +51,12 @@ export const card: Card<"instrument.synth"> = (self, ctx) => {
     <Display strip={<Choice {...field.choice("waveform", "Waveform")} />}>
       <Curve heights={live.feed("envelope")} w={w} h={tall} across={[LEFT, RIGHT]} range={LEVEL} />
       <Handle id="attack" label={`${field.title} attack point`} w={w} h={tall} x={{ ...attack, travel: stage(attack, 0) }} y={top} caption={say(`Attack ${shown(attack.value, "seconds")}`)} />
-      <Handle id="decay" label={`${field.title} decay and sustain`} w={w} h={tall} x={{ ...decay, travel: stage(decay, peak) }} y={{ ...sustain, travel: { min: LEVEL[1], max: LEVEL[0] } }}
-        caption={say(`Decay ${shown(decay.value, "seconds")} · Sustain ${shown(sustain.value, "percent")}`)}
-        onChange={(seconds, level) => field.change("Change decay and sustain", { decay_seconds: seconds, sustain: level })} />
-      <Handle id="release" label={`${field.title} release point`} w={w} h={tall} x={{ ...release, travel: stage(release, held) }} y={bottom} caption={say(`Release ${shown(release.value, "seconds")}`)} />
+      {following(livePeak, peak,
+        <Handle id="decay" label={`${field.title} decay and sustain`} w={w} h={tall} x={{ ...decay, travel: stage(decay, peak) }} y={{ ...sustain, travel: { min: LEVEL[1], max: LEVEL[0] } }}
+          caption={say(`Decay ${shown(decay.value, "seconds")} · Sustain ${shown(sustain.value, "percent")}`)}
+          onChange={(seconds, level) => field.change("Change decay and sustain", { decay_seconds: seconds, sustain: level })} />)}
+      {following(liveHeld, held,
+        <Handle id="release" label={`${field.title} release point`} w={w} h={tall} x={{ ...release, travel: stage(release, held) }} y={bottom} caption={say(`Release ${shown(release.value, "seconds")}`)} />)}
     </Display>
   );
   // The character is the filter's, so it sits under the filter's two knobs.
