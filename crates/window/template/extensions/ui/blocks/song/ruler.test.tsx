@@ -79,3 +79,11 @@ test("zoomed out, every second, fourth, eighth … bar number shows, 40 points a
   const zoomOf = (bars: number) => 40 / (bars * BAR * 0.025);
   expect([1, 2, 3, 5, 9].map((bar) => needs.get(bar))).toEqual([null, zoomOf(1), zoomOf(2), zoomOf(4), null]);
 });
+
+test("the tempo lane leaves the key `tempo` to the transport's tempo", () => {
+  const f = fakeSong({ children: [] });
+  f.memory.tempoLane = true;
+  ruler(f);
+  expect(find("Tempo lane")).toBeDefined();
+  expect(find("tempo")).toBeUndefined();
+});

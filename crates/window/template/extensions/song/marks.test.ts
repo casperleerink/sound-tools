@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { editsOf } from "./edits";
 import { clipOf, fakeSong, trackOf } from "./fake";
-import { marksOf, withoutSignature, withSignature } from "./marks";
+import { marksOf, shadedParts, withoutSignature, withSignature } from "./marks";
 import { BAR, BEAT } from "./time";
 
 test("the ruler's menu adds a tempo change at the tempo there, chosen with the playhead on it", () => {
@@ -106,4 +106,11 @@ test("L repeats what the chosen clips span, on beats; with none chosen it turns 
   marks.repeatChosen();
   expect([f.clock.repeat, f.memory.repeatRange]).toEqual([null, { from: BEAT, to: BAR + 2 * BEAT }]);
   expect(f.steps).toEqual([]);
+});
+
+test("every other part of the song is shaded from the second, the bars before the first section a part", () => {
+  const runs = [{ signature: "4/4", bars: 1 }];
+  expect(shadedParts([], runs, 64 * BAR)).toEqual([]);
+  expect(shadedParts([{ bar: 5, name: "Verse" }, { bar: 9, name: "Chorus" }, { bar: 13, name: "Bridge" }], runs, 64 * BAR)).toEqual([[4 * BAR, 8 * BAR], [12 * BAR, 64 * BAR]]);
+  expect(shadedParts([{ bar: 1, name: "Intro" }, { bar: 3, name: "Verse" }], runs, 16 * BAR)).toEqual([[2 * BAR, 16 * BAR]]);
 });

@@ -2,6 +2,7 @@ import { h, live, memo, type Color } from "../../../sdk";
 import type { Mark } from "../../../song/model";
 import { barNear, nearestOf } from "../../../song/time";
 import { ACROSS, GUTTER, HEAD, PLANE, TEMPO, type Page } from "../../../song/view";
+import { Shades } from "./shades";
 import { bpmText, pointed, TimeMenu } from "./time-menu";
 
 /** The room above the fastest tempo and under the slowest, and the least tempos the lane's height spans. */
@@ -32,8 +33,9 @@ export const TempoLane = ({ page }: { page: Page }) => {
         </row>
       </row>
       <box w={GUTTER} />
-      <box key="tempo" label="Tempo lane" grow={1} h="full" plane={{ x: PLANE }}
+      <box key="tempo-changes" label="Tempo lane" grow={1} h="full" plane={{ x: PLANE }}
         onPress={(p) => (p.right ? pointed(page, p.x) : p.clicks === 2 ? edits.marks.addTempo(nearestOf(p.x, memory.snap)) : edits.marks.press({ x: p.x, clicks: 1 }))}>
+        <Shades page={page} id="tempo" tall={tall} />
         {memo("tempo-line", [changes, end, memory.mark], () => (
           <box>
             <shapes place={[0, 0, end, tall]} lines={[{ color: "text-secondary", width: 1.5, points: changes.flatMap((change, index) => {

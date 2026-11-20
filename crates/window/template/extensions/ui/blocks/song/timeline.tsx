@@ -13,6 +13,7 @@ import { EmptyState } from "../empty-state";
 import { DIM, renders } from "./heads";
 import { LaneTimes } from "./lanes";
 import { lostOf, RegionHandles, RegionWave, trimsOf, type Region } from "./regions";
+import { Shades } from "./shades";
 import { Take } from "./takes";
 
 export type TimelineProps = { page: Page };
@@ -64,6 +65,7 @@ export const Timeline = ({ page }: TimelineProps) => {
             if (d.audio.length > 0) edits.clips.dropAudio(d.audio, at);
           }}>
           <box place={[0, 0, end, height + 1]} />
+          <Shades page={page} id="timeline" tall={height} />
           <Grid runs={song.clock.tempo_map.time_signatures} tempo={tempo} end={end} height={height} />
           {rows.map((row) =>
             row.kind === "track" ? <TrackTime page={page} row={row} tempo={tempo} chosen={chosen} bounds={bounds} hint={hinted === row.track.name ? "Double-click to add a clip" : row.track.tool === "tape" ? "Drop an audio file here" : ""} /> : null,

@@ -26,6 +26,15 @@ export function marksOf({ tempo_map, sections }: Piece): Mark[] {
   return [...named, ...signatures, ...tempos].sort((a, b) => a.tick - b.tick);
 }
 
+/** The parts of the song every other of which is a shade lighter, from the second: [from, to] ticks, the bars before the first section a part too. */
+export function shadedParts(sections: readonly Section[], runs: Runs, end: number): [number, number][] {
+  const starts = barStarts(runs, end);
+  const edges = sections.map((section) => starts[section.bar - 1] ?? end);
+  if (edges[0] !== 0) edges.unshift(0);
+  edges.push(end);
+  return edges.slice(0, -1).flatMap((from, index) => (index % 2 === 1 ? [[from, edges[index + 1]!] as [number, number]] : []));
+}
+
 /** The time signatures with a change at bar `bar` to the one that plays there: the run it is in, cut in two, so nothing moves. */
 export function withSignature(runs: Runs, bar: number): TempoMap["time_signatures"] {
   const all = runs.length > 0 ? runs : [{ signature: "4/4", bars: 1 }];

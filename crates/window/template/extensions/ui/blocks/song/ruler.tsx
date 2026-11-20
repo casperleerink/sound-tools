@@ -5,6 +5,7 @@ import { barAt, barNear, barStarts, BAR, BEAT, beatRuns, SNAPS, type Runs } from
 import { ACROSS, GUTTER, HEAD, PLANE, RULER, ZOOM, type Page } from "../../../song/view";
 import { Select } from "../../select";
 import { Toggle } from "../../toggle";
+import { Shades } from "./shades";
 import { TempoLane } from "./tempo-lane";
 import { after, bpmText, pointed, TimeMenu } from "./time-menu";
 
@@ -50,6 +51,7 @@ const Bars = ({ page }: RulerProps) => {
   return (
     <box key="ruler" label="Ruler" grow={1} h={RULER} plane={{ x: PLANE }} drag={{ x: true, snap: [BEAT, 1], from: [0, 0] }}
       onPress={(p) => (p.right ? pointed(page, p.x) : edits.marks.press(p))} onDragEnd={(p) => edits.marks.loop(p)}>
+      <Shades page={page} id="ruler" tall={RULER} />
       {memo("ruler-bars", [runs, end], () => <Grid runs={runs} end={end} />)}
       {memo("ruler-sections", [clock.sections, runs, end, memory.mark, memory.renamingSection], () => <Sections page={page} />)}
       {memo("ruler-marks", [runs, clock.tempo_map.tempo_changes, memory.mark, memory.tempoLane, memory.snap], () => <Changes page={page} />)}
