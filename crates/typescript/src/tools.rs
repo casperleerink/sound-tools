@@ -1690,9 +1690,28 @@ fn is_region(name: &str, port: &str, context: &BehaviourContext<'_>) -> bool {
     port == AUDIO_OUTPUT && context.child_tool(name) == Some(region::NAME)
 }
 
+/// `a` before `b`, a run of digits read as a number: `take-9` before `take-10`.
+fn by_number(a: &str, b: &str) -> std::cmp::Ordering {
+    fn runs(name: &str) -> impl Iterator<Item = (usize, &str)> {
+        let mut rest = name;
+        std::iter::from_fn(move || {
+            let digits = rest.starts_with(|c: char| c.is_ascii_digit());
+            let end = (rest.find(|c: char| c.is_ascii_digit() != digits)).unwrap_or(rest.len());
+            let (run, after) = rest.split_at(end);
+            rest = after;
+            match digits {
+                true => Some(run.trim_start_matches('0')).map(|number| (number.len(), number)),
+                false => (!run.is_empty()).then_some((0, run)),
+            }
+        })
+    }
+    runs(a).cmp(runs(b)).then_with(|| a.cmp(b))
+}
+
 /// One player for the regions that play into each place, by that place: where one ends and the
-/// next starts they crossfade, and where they overlap the last by name is heard. A region whose
-/// file is not read yet is left out: it runs again when it is, and so does this.
+/// next starts they crossfade, and where they overlap the last by name is heard, a number in it
+/// as a number. A region whose file is not read yet is left out: it runs again when it is, and
+/// so does this.
 fn region_players(
     declaration: &Declaration,
     context: &mut BehaviourContext<'_>,
@@ -1721,6 +1740,8 @@ fn region_players(
         players.insert(to.clone(), OutputEndpoint::new(player, AudioPlayer::OUTPUT));
         let mut files = Vec::new();
         let mut regions = Vec::new();
+        let mut children = Vec::from_iter(children);
+        children.sort_by(|a, b| by_number(a, b));
         for name in children {
             let Some(region) = records.get(name).cloned() else {
                 continue;
