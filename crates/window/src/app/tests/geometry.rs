@@ -200,7 +200,7 @@ fn a_right_press_opens_the_menu_at_the_pointer_after_its_press_and_a_pick_closes
     redraw(&mut window);
     assert_eq!(heard(&window.state), "200 10 0 0 1 true ");
     let song = format!("{PREFIX}song");
-    assert_eq!(window.state.open, [song.clone()]);
+    assert_eq!(window.state.open, std::slice::from_ref(&song));
     redraw(&mut window);
     let [mx, my, ..] = rect(&window, "pick");
     assert!(

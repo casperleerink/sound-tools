@@ -1,9 +1,9 @@
 //! What a frame of the window costs with many things placed, measured: scrolling, playing,
 //! zooming and dragging run no view in Bun, and stay within their budgets.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use super::{frame, laid_out, opened, redraw, with_tools};
+use super::{frame, laid_out, redraw, with_tools};
 use crate::app::State;
 
 /// 64 tracks with 500 clips, each a box with its name, a drag and a place that follows it, a
@@ -109,8 +109,8 @@ fn spent() -> Duration {
 
 #[cfg(not(unix))]
 fn spent() -> Duration {
-    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-    START.get_or_init(Instant::now).elapsed()
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed()
 }
 
 fn view_runs(window: &rune::Runtime<State>) -> u64 {
