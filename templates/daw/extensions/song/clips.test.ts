@@ -180,6 +180,16 @@ test("audio dropped lands at the nearest beat on the audio track under it, chose
   expect(f.steps).toEqual(["Add audio"]);
 });
 
+test("audio dropped on a song with no audio track makes one for each file, named after it, in one step", () => {
+  const f = fakeSong({ state: { order: ["t00"] }, children: [trackOf("t00")] });
+  editsOf(f.song).clips.dropAudio(["assets/audio/kick.wav", "assets/audio/Snare Hit.aif"], { x: 2 * BEAT, y: 0.5 });
+  expect(f.self.state.order).toEqual(["t00", "audio-1", "audio-2"]);
+  expect([row(f.self, "audio-1").state.title, row(f.self, "audio-2").state.title]).toEqual(["kick", "Snare Hit"]);
+  expect(items(f.self, "audio-2")[0]!.state).toMatchObject({ asset: "assets/audio/Snare Hit.aif", start: 2 * BEAT });
+  expect(f.memory.selected).toEqual(["audio-1/region", "audio-2/region"]);
+  expect(f.steps).toEqual(["Add audio"]);
+});
+
 test("a region is as long as its file plays at the tempo where it is", () => {
   const f = fakeSong({ children: [tapeOf("audio-1", [{ ...regionOf("r", 4 * BEAT), facts: { seconds: 2 } }])] }, { piece: { tempo_map: { time_signatures: [], tempo_changes: [{ tick: 0, bpm: 120 }, { tick: 4 * BEAT, bpm: 60 }] } } });
   expect(lengthAt(f.song, "audio-1/r")).toBe(2 * BEAT);

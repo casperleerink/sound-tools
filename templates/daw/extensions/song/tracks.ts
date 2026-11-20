@@ -30,6 +30,28 @@ export function addInstrumentTrack(draft: Draft, title: string, clips: { name: s
   return name;
 }
 
+/** The first free name of an audio track: `audio-1`, then `audio-2`. */
+const audioName = (names: readonly string[]) => {
+  let number = 1;
+  while (names.includes(`audio-${number}`)) number++;
+  return `audio-${number}` as const;
+};
+
+/** Adds an audio track called `title` after the others, with `regions` on it, in the next colour: its name. */
+export function addAudioTrack(draft: Draft, title: string, regions: { name: string; state: StateOfTool<"region"> }[] = []): string {
+  const rows = rowsOf(draft.children, draft.state.order).map((each) => each.name);
+  const name = audioName(draft.children.map((child) => child.name));
+  draft.children.push({
+    name, tool: tape, state: { colour: PALETTE[rows.length % PALETTE.length]!.colour, title },
+    children: [
+      { name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} },
+      ...sendsInto(draft), ...regions.map((region) => ({ ...region, tool: "region" as const })),
+    ],
+  });
+  draft.state.order = [...rows, name];
+  return name;
+}
+
 /** What a track is: one of notes, one of sound, or a return the sends of the others play into. */
 export type TrackKind = "instrument" | "audio" | "return";
 
@@ -67,13 +89,6 @@ export function cannotRender(each: Child | undefined): string | undefined {
 }
 
 /** What a view and the keys do to the tracks of the song: each change one undo step. */
-/** The first free name of an audio track: `audio-1`, then `audio-2`. */
-const audioName = (names: readonly string[]) => {
-  let number = 1;
-  while (names.includes(`audio-${number}`)) number++;
-  return `audio-${number}` as const;
-};
-
 export const trackEdits = (song: Song) => {
   const { memory, update } = song;
   const rows = () => rowsOf(song.children, song.state.order);
@@ -86,16 +101,12 @@ export const trackEdits = (song: Song) => {
     /** Adds a track of `kind` after the others; a new return gets a silent send from every track, and the returns open. */
     add(kind: TrackKind) {
       const names = song.children.map((child) => child.name);
-      const colour = PALETTE[rows().length % PALETTE.length]!.colour;
       const returns = song.children.filter((child) => child.tool === "bus").length;
       update(kind === "instrument" ? "Add a track" : kind === "audio" ? "Add an audio track" : "Add a return", (draft) => {
         if (kind === "instrument") {
           addInstrumentTrack(draft, `Track ${rows().filter((each) => each.tool === "track").length + 1}`);
         } else if (kind === "audio") {
-          const name = audioName(names);
-          const audio = rows().filter((each) => each.tool === "tape").length + 1;
-          draft.children.push({ name, tool: tape, state: { colour, title: `Audio ${audio}` }, children: [{ name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }, ...sendsInto(draft)] });
-          draft.state.order = [...rows().map((each) => each.name), name];
+          addAudioTrack(draft, `Audio ${rows().filter((each) => each.tool === "tape").length + 1}`);
         } else {
           const name = [..."abcdefghijklmnopqrstuvwxyz"].map((letter) => `ret-${letter}` as const).find((each) => !names.includes(each)) ?? (freeName(names, "ret-z") as `ret-${string}`);
           draft.children.push({ name, tool: bus, state: { title: `Return ${returns + 1}`, colour: PALETTE[(returns + 3) % PALETTE.length]!.colour }, children: [{ name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }] });

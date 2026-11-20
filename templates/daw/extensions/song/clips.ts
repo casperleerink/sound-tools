@@ -6,7 +6,7 @@ import { freeName, splitTarget } from "../track";
 import { emptied, laid, laneAt, lift, type AutomationPoint } from "./lanes";
 import { itemAt, itemsOf, nameFrom, rowOfKey, rowsOf, type Child, type Draft, type RowKind, type Song } from "./model";
 import { BAR, barAt, BEAT, cellOf, stepOf, ticksAcross } from "./time";
-import { addInstrumentTrack } from "./tracks";
+import { addAudioTrack, addInstrumentTrack } from "./tracks";
 
 type Clip = FilledStateOfTool<"timeline">;
 type Region = FilledStateOfTool<"region">;
@@ -447,16 +447,19 @@ export const clipEdits = (song: Song) => {
       memory.renamingClip = null;
       editClips(song, "Rename a clip", [key], (clip) => (clip.title = title.trim()));
     },
-    /** Audio files dropped at `x` on row `y`: regions on that audio track, else the first, at the nearest beat. */
+    /** Audio files dropped at `x` on row `y`, at the nearest beat: regions on that audio track, else the first; with none, each on a new audio track named after it. */
     dropAudio(audio: readonly string[], p: Pick<Pointer, "x" | "y">) {
+      if (audio.length === 0) return;
       const all = rows();
       const owner = all[Math.floor(p.y)]?.tool === "tape" ? all[Math.floor(p.y)] : all.find((row) => row.tool === "tape");
-      if (!owner || audio.length === 0) return;
       const start = Math.max(Math.round(p.x / BEAT) * BEAT, 0);
       const added: string[] = [];
-      song.update("Add audio", ({ children }) => {
-        const tape = children.find((child) => child.name === owner.name);
-        if (tape?.tool !== "tape") return;
+      song.update("Add audio", (draft) => {
+        const tape = draft.children.find((child) => child.name === owner?.name);
+        if (tape?.tool !== "tape") {
+          for (const file of audio) added.push(`${addAudioTrack(draft, file.replace(/^.*\//, "").replace(/\.[^.]*$/, ""), [{ name: "region", state: { asset: file, start } }])}/region`);
+          return;
+        }
         for (const file of audio) {
           const name = freeName(tape.children.map((child) => child.name), "region");
           tape.children.push({ name, tool: "region", state: { asset: file, start } });
