@@ -218,6 +218,13 @@ impl PanelTab for Sidebar {
         self.chat.has_composer().then(|| COMPOSER.into())
     }
 
+    fn typing(&self) -> bool {
+        let settings = self.shows_settings && self.settings.typing();
+        let instructions = self.instructions.as_ref().is_some_and(|edit| edit.focused);
+        let search = self.menu == Some(Menu::Model) && self.search.focused;
+        self.composer.focused || instructions || search || settings
+    }
+
     fn busy(&self) -> bool {
         self.chat.is_working()
     }

@@ -219,6 +219,21 @@ fn a_turn_that_changes_two_files_is_one_undo_step() {
     assert!(!root.join("state/bass.json").exists() && !root.join("state/lead.json").exists());
 }
 
+/// The composer is a text field: a key it does not take is no shortcut of the window, but the
+/// panel's own keys work from inside it.
+#[test]
+fn a_key_the_composer_does_not_take_is_no_shortcut() {
+    let (_scratch, mut window) = window("agent-empty");
+    chord(&mut window, 'l');
+    assert_eq!(focused(&window).as_deref(), Some("agent-composer"));
+    chord(&mut window, 'k');
+    assert!(!window.state.session.transport().keys);
+    chord(&mut window, 'b');
+    assert!(!window.state.panel.open);
+    chord(&mut window, 'k');
+    assert!(window.state.session.transport().keys);
+}
+
 #[test]
 fn a_closed_panel_shows_the_agent_at_work_on_its_icon() {
     let (_scratch, mut window) = window("agent-empty");

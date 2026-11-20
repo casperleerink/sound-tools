@@ -266,9 +266,15 @@ impl State {
 }
 
 pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
-    // What a field passes on is typing, never a shortcut.
+    // What a field passes on is typing, never a shortcut. A field of the left panel, such as
+    // the composer, still has the panel's keys, which Rune gives no element around a field.
     if state.typing_now() {
-        return false;
+        let in_panel = (state.panel.agent.as_ref()).is_some_and(|agent| agent.typing());
+        let done = in_panel && panel_key(state, key, true, tx);
+        if done {
+            state.handled();
+        }
+        return done;
     }
     // A dialog keeps every key until it closes: its own buttons take theirs.
     if !state.waiting.asked.is_empty() || state.shell.dialog.is_some() {

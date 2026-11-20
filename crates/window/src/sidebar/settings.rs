@@ -28,6 +28,10 @@ pub(crate) struct Page {
 }
 
 impl Page {
+    pub(super) fn typing(&self) -> bool {
+        self.services.focused || self.answer.focused
+    }
+
     /// Follows the agents: a new question of a sign-in empties the field and gives it the keys.
     pub(super) fn follow(&mut self, agents: &Agents) -> bool {
         let asked = agents.text_question().map(|(_, id, _)| id.to_string());

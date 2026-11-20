@@ -36,6 +36,10 @@ pub(crate) trait PanelTab: Any {
     fn focus(&self) -> Option<String> {
         None
     }
+    /// One of its text fields has the keys: none of them is a shortcut then.
+    fn typing(&self) -> bool {
+        false
+    }
     /// It works, or waits on the composer: the panel says so, also while closed.
     fn busy(&self) -> bool {
         false
