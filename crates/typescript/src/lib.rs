@@ -22,7 +22,7 @@ mod lane;
 pub mod live;
 mod meter;
 pub mod next;
-mod path;
+pub mod path;
 mod project;
 mod readout;
 mod recorder;

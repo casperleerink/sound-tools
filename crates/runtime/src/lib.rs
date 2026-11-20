@@ -7,6 +7,7 @@ pub mod cli;
 pub mod log_file;
 pub mod recorder;
 pub mod report;
+pub mod session;
 pub mod templates;
 pub mod update;
 
@@ -631,6 +632,9 @@ pub fn tick(
     // A tool of the project that owns children, whose behaviour Bun answered.
     let declared = sound_typescript::take_declared(project.assets());
     errors.extend(rebind(project, &declared));
+    // A sample, a region's file or its periods that were read on a thread of their own.
+    let read = sound_typescript::take_read(project.assets());
+    errors.extend(rebind(project, &read));
     sound_typescript::forget_gone(project);
     // The main-thread callbacks the plugins ask for, and the state they say changed.
     let mut problems = plugins.poll(project);

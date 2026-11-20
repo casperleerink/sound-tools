@@ -20,11 +20,11 @@ use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEdit, Pro
 use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
 
-pub use crate::bun::Waker;
 use crate::bun::{
-    Answer, Bun, Clock, Event, Played, RecordEdit, Request, Runs, Skipped, Telling, Transport,
-    TransportOp, record_key,
+    Answer, Bun, Event, Played, RecordEdit, Request, Runs, Skipped, Telling, TransportOp,
+    record_key,
 };
+pub use crate::bun::{Clock, Transport, Waker};
 use crate::project::{
     changes_of, control_update, every_instance, find, played, told_to_bun, watch,
 };
@@ -98,7 +98,7 @@ pub struct Tools {
     changed_records: BTreeSet<InstanceId>,
     shown: BTreeSet<InstanceId>,
     cards: BTreeMap<InstanceId, Value>,
-    /// The numbers a lane moves of each shown instance, see [`holds`].
+    /// The numbers a lane moves of each shown instance.
     holds: BTreeMap<InstanceId, Vec<String>>,
     told_shown: bool,
     drawn: HashMap<InstanceId, Drawn>,
@@ -1085,37 +1085,6 @@ impl Tools {
             });
         }
     }
-}
-
-/// The numbers a lane moves of each instance of `shown` and of each instance inside it, as code
-/// names them: `cutoff_hz` of its own, `t01/mix.gain_db` of one inside. Their controls show what
-/// plays, and are not the composer's to change. One pass over the project, whatever `shown` is.
-pub fn holds(project: &Project, shown: &BTreeSet<InstanceId>) -> BTreeMap<InstanceId, Vec<String>> {
-    let mut holds: BTreeMap<InstanceId, Vec<String>> = BTreeMap::new();
-    let mut values = Vec::new();
-    for (inner, _) in project.instances() {
-        let Some(lanes) = project.lanes(inner) else {
-            continue;
-        };
-        values.clear();
-        lanes.values_at(Ticks(0), &mut values);
-        for owner in std::iter::once(inner.clone()).chain(inner.ancestors()) {
-            if !shown.contains(&owner) {
-                continue;
-            }
-            let path = match owner == *inner {
-                true => String::new(),
-                false => format!("{}.", &inner.as_str()[owner.as_str().len() + 1..]),
-            };
-            let held = holds.entry(owner).or_default();
-            held.extend(values.iter().map(|(name, _)| format!("{path}{name}")));
-        }
-    }
-    for held in holds.values_mut() {
-        held.sort();
-        held.dedup();
-    }
-    holds
 }
 
 /// The keys down on the sound of a tool of the project, followed from what its keys did.
