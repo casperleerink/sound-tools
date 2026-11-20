@@ -163,7 +163,8 @@ impl Planes {
     }
 
     /// Takes the plane `key` as its view now gives it, keeping where it is.
-    fn ensure(&self, key: &str, spec: &PlaneSpec, prefix: &str) {
+    /// `given` is its size in points where its view says it, which layout confirms later.
+    fn ensure(&self, key: &str, spec: &PlaneSpec, prefix: &str, given: [Option<f32>; 2]) {
         let axis = |spec: &Option<AxisSpec>| match spec {
             None => Axis::Points,
             Some(AxisSpec::Scale(scale)) => Axis::Scale(scale.max(f32::EPSILON)),
@@ -191,6 +192,12 @@ impl Planes {
         if let Some([low, high]) = camera.zoom_range {
             camera.zoom = camera.zoom.clamp(low, high);
         }
+        for (size, given) in camera.size.iter_mut().zip(given) {
+            if *size == 0.0 {
+                *size = given.unwrap_or_default();
+            }
+        }
+        camera.open();
     }
 
     /// The plane `key` is `size` points: a range shows where it opens, once.
@@ -201,14 +208,7 @@ impl Planes {
         };
         let resized = camera.size != size;
         camera.size = size;
-        if !camera.opened && size[0] > 0.0 {
-            camera.opened = true;
-            for i in 0..2 {
-                if let Axis::Range(from, _) = camera.axes[i] {
-                    camera.at[i] = from;
-                }
-            }
-        }
+        camera.open();
         drop(cameras);
         self.sync();
         resized
@@ -390,6 +390,27 @@ impl Planes {
     }
 }
 
+impl Camera {
+    /// Once its size is known: a range shows where it opens.
+    fn open(&mut self) {
+        if self.opened || self.size[0] <= 0.0 {
+            return;
+        }
+        self.opened = true;
+        for i in 0..2 {
+            if let Axis::Range(from, _) = self.axes[i] {
+                self.at[i] = from;
+            }
+        }
+    }
+}
+
+/// The size in points the view gives `b`, where it gives one.
+fn given(b: &BoxNode) -> [Option<f32>; 2] {
+    let (w, h) = b.size();
+    [w, h].map(|size| size.and_then(Num::fixed))
+}
+
 /// The plane whose camera `key` has on axis `i`: itself, or the one it shares that axis with.
 fn owner<'a>(cameras: &'a HashMap<String, Camera>, key: &'a str, i: usize) -> Option<&'a str> {
     let mut key = key;
@@ -550,7 +571,7 @@ pub(super) fn plane(scope: &Scope, e: El, b: &BoxNode, key: &str, spec: &PlaneSp
     let planes = &scope.state.planes;
     #[cfg(test)]
     planes.builds.set(planes.builds.get() + 1);
-    planes.ensure(key, spec, scope.prefix);
+    planes.ensure(key, spec, scope.prefix, given(b));
     planes
         .found
         .borrow_mut()
@@ -709,6 +730,47 @@ impl Planes {
         (self.cameras.borrow().get(key)).map_or(0.0, |camera| laid(camera.size)[0] / 2.0)
     }
 
+    /// Takes the planes the views shown now draw, before they are built: a plane that moves
+    /// with another finds its camera there.
+    pub(crate) fn discover(&self, state: &State) {
+        for id in &state.shown {
+            if let Some(root) = state.root(id) {
+                self.find(state, id, &state.prefix_of(id), &root);
+            }
+        }
+    }
+
+    fn find(&self, state: &State, id: &InstanceId, prefix: &str, node: &Node) {
+        match node {
+            Node::Row(b) | Node::Col(b) | Node::Plain(b) => {
+                if let (Some(spec), Some(key)) = (&b.plane, &b.key) {
+                    let key = format!("{prefix}{key}");
+                    self.ensure(&key, spec, prefix, given(b));
+                    let scope = Scope {
+                        plane: Some(key.clone()),
+                        ..Scope::new(state, id, prefix)
+                    };
+                    let mut extent = None;
+                    b.children
+                        .iter()
+                        .for_each(|child| span(&scope, child, &mut extent));
+                    if let Some(camera) = self.cameras.borrow_mut().get_mut(&key) {
+                        camera.extent = extent;
+                    }
+                }
+                for child in &b.children {
+                    self.find(state, id, prefix, child);
+                }
+            }
+            Node::Memo { key } => {
+                if let Some((_, inner)) = state.memo_of(id, key) {
+                    self.find(state, id, prefix, &inner);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// What a view places outside a plane, as problems of the project.
     pub(crate) fn misplaced(&self, state: &State) -> Option<Vec<Problem>> {
         let mut problems = Vec::new();
@@ -818,15 +880,7 @@ fn gather(scope: &Scope, node: &Node, into: &mut Gathered) {
         return;
     };
     let rect = scope.rect(place, size);
-    // A mark spans its point: a playhead at the start lets the plane begin there.
-    let [x, y, w, h] = match place {
-        Place::Box(_) => rect,
-        Place::Mark(_) => [rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0, 0.0, 0.0],
-    };
-    into.extent = Some(match into.extent {
-        Some([l, t, r, b]) => [l.min(x), t.min(y), r.max(x + w), b.max(y + h)],
-        None => [x, y, x + w, y + h],
-    });
+    spanned(&mut into.extent, place, rect);
     let plane = scope.plane.clone().unwrap_or_default();
     let key = key.map(|key| scope.key(key));
     let planes = &scope.state.planes;
@@ -873,6 +927,43 @@ fn version_of(scope: &Scope, node: &Node) -> usize {
             .tools
             .as_ref()
             .map_or(0, |tools| tools.view_runs() as usize)
+}
+
+/// What a plane spans with `place` at `rect` too. A mark spans its point: a playhead at the
+/// start lets the plane begin there.
+fn spanned(extent: &mut Option<[f32; 4]>, place: &Place, rect: [f32; 4]) {
+    let [x, y, w, h] = match place {
+        Place::Box(_) => rect,
+        Place::Mark(_) => [rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0, 0.0, 0.0],
+    };
+    *extent = Some(match *extent {
+        Some([l, t, r, b]) => [l.min(x), t.min(y), r.max(x + w), b.max(y + h)],
+        None => [x, y, x + w, y + h],
+    });
+}
+
+/// What the placed elements of `node` span in the plane of `scope`.
+fn span(scope: &Scope, node: &Node, extent: &mut Option<[f32; 4]>) {
+    match node {
+        Node::Row(b) | Node::Col(b) | Node::Plain(b) if b.overlay.is_none() => match &b.place {
+            Some(place) => spanned(extent, place, scope.rect(place, b.size())),
+            None => b
+                .children
+                .iter()
+                .for_each(|child| span(scope, child, extent)),
+        },
+        Node::Shapes(d) => {
+            if let Some(place) = &d.place {
+                spanned(extent, place, scope.rect(place, (None, None)));
+            }
+        }
+        Node::Memo { key } => {
+            if let Some(inner) = scope.memo(key) {
+                span(scope, &inner, extent);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Notes where the keyed elements of `node`, placed at `rect` in `plane`, are.

@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use rune::{Align, El, ScrollSpec, col, el, memo, row, text};
+use rune::{Align, El, ScrollPos, ScrollSpec, col, el, memo, row, text};
 use sound_core::InstanceId;
 use sound_typescript::live::Num;
 use sound_typescript::next::Drawn;
@@ -255,8 +255,25 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
     if let Some(h) = b.max_h {
         e = e.max_h(h);
     }
+    let mut bars = Vec::new();
     if let Some(scroll) = b.scroll {
-        e = scrolled(e, scroll);
+        let thumbs = [rune::Live::new([0.0; 4]), rune::Live::new([0.0; 4])];
+        e = scrolled(e, scroll).on_scroll_offset({
+            let thumbs = thumbs.clone();
+            move |at: ScrollPos| {
+                for (i, thumb) in thumbs.iter().enumerate() {
+                    thumb.set(thumb_at(&at, i));
+                }
+            }
+        });
+        let colour = theme.color("text-muted");
+        bars.extend(thumbs.iter().map(|thumb| {
+            el().absolute(0.0, 0.0)
+                .live_rect(thumb)
+                .radius(THUMB / 2.0)
+                .fill(colour)
+                .inert()
+        }));
     }
     if b.inert {
         e = e.inert();
@@ -311,6 +328,7 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
     }
     let shown = (b.children.iter()).filter(|child| !is_overlay(child));
     e.children(shown.map(|child| build(&inside, child)))
+        .children(bars)
 }
 
 pub(super) fn is_overlay(node: &Node) -> bool {
@@ -331,6 +349,25 @@ pub(crate) fn scrolled(e: El, axes: Scroll) -> El {
 
 /// How far the edge of a scroll fades, in points.
 const FADE: f32 = 24.0;
+/// How thick a scroll bar's thumb is, and how far from the edge.
+const THUMB: f32 = 4.0;
+const THUMB_EDGE: f32 = 2.0;
+
+/// Where the thumb of the scroll bar along axis `i` of a scroll at `at` is, in the points of
+/// what scrolls, so it stays at the edge: nothing when all of it shows.
+fn thumb_at(at: &ScrollPos, i: usize) -> [f32; 4] {
+    let whole = at.max[i] + at.viewport[i];
+    if at.max[i] <= 0.5 || whole <= 0.0 {
+        return [0.0; 4];
+    }
+    let along = at.offset[i] + at.offset[i] / whole * at.viewport[i];
+    let long = at.viewport[i] / whole * at.viewport[i];
+    let across = at.offset[1 - i] + at.viewport[1 - i] - THUMB - THUMB_EDGE;
+    match i {
+        0 => [along, across, long, THUMB],
+        _ => [across, along, THUMB, long],
+    }
+}
 
 fn label(scope: &Scope, t: &TextNode) -> El {
     let theme = &scope.state.theme;

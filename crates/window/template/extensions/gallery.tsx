@@ -1,4 +1,4 @@
-import { h, input, Live, tool, type Child } from "./sdk";
+import { h, input, live, Live, tool, type Child } from "./sdk";
 import { Button } from "./ui/button";
 import { Cell } from "./ui/cell";
 import { Display, displayWidth, DISPLAY_HEIGHT } from "./ui/display";
@@ -40,6 +40,8 @@ type Memory = {
   chosen: boolean;
   steps: Step[][];
   cells: boolean[][];
+  clips: Clip[];
+  clip: string;
 };
 
 const pattern = (on: number[]): Step[] => Array.from({ length: 16 }, (_, i) => ({ on: on.includes(i), velocity: on.includes(i) ? 0.5 + (i % 4) * 0.15 : 0.8 }));
@@ -62,6 +64,8 @@ export const gallery = tool({
     chosen: true,
     steps: [pattern([0, 4, 8, 12]), pattern([4, 12]), pattern([0, 2, 4, 6, 8, 10, 12, 14])],
     cells: Array.from({ length: 4 }, (_, r) => Array.from({ length: 12 }, (_, c) => (r + c) % 5 === 0)),
+    clips: [{ name: "Intro", start: 0, row: 0, length: 2 * BAR }, { name: "Verse", start: 2 * BAR, row: 1, length: 4 * BAR }, { name: "Bass", start: BAR, row: 2, length: 3 * BAR }, { name: "Hook", start: 7 * BAR, row: 0, length: 2 * BAR }],
+    clip: "Verse",
   }),
   view: (_, { memory, play }) => {
     const flip = (name: string) => () => (memory.toggles[name] = !memory.toggles[name]);
@@ -187,6 +191,9 @@ export const gallery = tool({
               <PaintGrid id="cells" label="Cell" cells={memory.cells} onPaint={(r, c, on) => memory.cells[r] && (memory.cells[r][c] = on)} onToggle={(r, c) => memory.cells[r] && (memory.cells[r][c] = !memory.cells[r][c])} />
             </Section>
           </row>
+          <Section title="Clips in time">
+            <Clips memory={memory} />
+          </Section>
           <row gap={8}>
             <Panel title="Panel" end={<Button id="panel-add" label="Add a device" glyph="+" size="sm" variant="ghost" />}>
               <text style="body" color="text-secondary">A surface with a title, for a part of a page.</text>
@@ -221,4 +228,52 @@ const Curve = () => {
     rects.push(x, y(x), 4, tall - y(x));
   }
   return <shapes at={[0, 0]} w={w} h={tall} rects={[{ color: "text/5", rects }]} lines={[{ color: "text", width: 1.5, points }]} />;
+};
+
+const [BAR, ROW] = [3840, 28];
+type Clip = { name: string; start: number; row: number; length: number };
+
+/**
+ * Clips in time on a plane: they drag along bars and rows onto sixteenths (Cmd: free), the wheel
+ * scrolls, a pinch or Cmd-wheel zooms, the ruler moves with them, a right press opens a menu of
+ * the clip pressed. The primitives only: a timeline block builds on them.
+ */
+const Clips = ({ memory }: { memory: Memory }) => {
+  const item = (text: string, run: () => void) => (
+    <row key={`clips-${text}`} label={text} role="menuitem" w="full" h={28} px={2} align="center" radius="md" hover="fill" onPress={run}>
+      <text style="label" color="text">{text}</text>
+    </row>
+  );
+  const chosen = () => memory.clips.find((clip) => clip.name === memory.clip);
+  return (
+    <col w={480} radius="md" border="border" clip>
+      <box key="clips-ruler" label="Ruler" w={480} h={20} fill="surface" plane={{ x: "clips" }}>
+        {Array.from({ length: 16 }, (_, bar) => (
+          <box place={[bar * BAR, 0, BAR, 20]} px={1} border="border" borderSides={[0, 0, 0, 1]}>
+            <text style="label" color="text-muted">{bar + 1}</text>
+          </box>
+        ))}
+      </box>
+      <box key="clips" label="Clips" w={480} h={ROW * 4} fill="well" plane={{ x: 0.025, y: ROW, zoom: [0.25, 4] }}>
+        {memory.clips.map((clip) => {
+          const moved = live.drag(`clip-${clip.name}`);
+          return (
+            <box key={`clip-${clip.name}`} label={`Clip ${clip.name}`} place={[moved.dx.plus(clip.start), moved.dy.plus(clip.row), clip.length, 1]}
+              radius="sm" fill={clip.name === memory.clip ? "selected" : "blue/40"} border={clip.name === memory.clip ? "focus" : "blue"}
+              drag={{ x: [-clip.start, 15 * BAR], y: [-clip.row, 3 - clip.row], snap: [BAR / 4, 1] }}
+              onPress={() => (memory.clip = clip.name)} onDragEnd={(p) => Object.assign(clip, { start: clip.start + p.dx, row: clip.row + p.dy })}>
+              <text at={[6, 6]} style="label" color="text" truncate>{clip.name}</text>
+            </box>
+          );
+        })}
+        <col overlay={{ open: "menu" }} role="menu" group label="Clip menu" w={160} pad={1} radius="lg" fill="raised" border="border-strong" shadow="md">
+          {item("Duplicate", () => {
+            const clip = chosen();
+            if (clip) memory.clips.push({ ...clip, name: `${clip.name} 2`, start: clip.start + clip.length });
+          })}
+          {item("Delete", () => (memory.clips = memory.clips.filter((clip) => clip.name !== memory.clip)))}
+        </col>
+      </box>
+    </col>
+  );
 };

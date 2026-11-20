@@ -27,6 +27,7 @@ impl State {
         let changed = self.show_named(settle);
         self.trees.keep(self);
         self.lives.keep(&tree::bound(self));
+        self.planes.discover(self);
         if let Some(problems) = self.planes.misplaced(self) {
             self.project.set_problems_in(tree::MISPLACED, problems);
         }
