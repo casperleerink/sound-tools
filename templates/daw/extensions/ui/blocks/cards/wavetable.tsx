@@ -72,7 +72,7 @@ const stacked = (columns: [Node, Node?][]): Node[] => [...columns.map(([top]) =>
 export const card: Card<"wavetable", { expanded: boolean; lfo: number; page: number; envelope: number }> = (self, ctx) => {
   const field = binder(self, ctx);
   const { memory, update } = ctx;
-  const state = self.state as unknown as State;
+  const { state } = self;
   const expanded = memory.expanded ?? false;
   const number = (path: PathsOf<State, number>, text: string, object = "") => ({ ...field.number(path, object ? `${object} ${text.toLowerCase()}` : text), text });
   const choice = (path: PathsOf<State, string | number>, text: string, object = "") => field.choice(path, object ? `${object} ${text.toLowerCase()}` : text);
@@ -236,7 +236,7 @@ const Matrix = ({ field, routes, most, update }: { field: Binder<State>; routes:
   return (
     <col key="routes" label={`${field.title} routes`} w={360} h={2 * theme.size.row} gap={1} scroll="y">
       {routes.map((route, at) => {
-        const amount = field.number(`matrix[${at}].amount` as never, `Route ${at + 1} amount`);
+        const amount = field.number(`matrix[${at}].amount`, `Route ${at + 1} amount`);
         return (
           <row h={24} gap={1} align="center">
             <Select {...field.choice(`matrix[${at}].source`, `Route ${at + 1} source`)} w={96} menuW={200} />

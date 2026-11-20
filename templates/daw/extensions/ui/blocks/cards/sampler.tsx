@@ -59,8 +59,8 @@ export const card: Card<"sampler", { expanded: boolean }> = (self, ctx) => {
   // So every record the card writes plays.
   const trims = (moved: "start" | "end" | "loop", to: number) =>
     update(`Change ${moved === "loop" ? "loop start" : moved}`, (draft) => {
-      const into = draft.state as unknown as Record<string, number | undefined>;
-      let [from, until, loop] = [into.start_seconds ?? 0, into.end_seconds ?? length, into.loop_start_seconds];
+      const into = draft.state;
+      let [from, until, loop] = [into.start_seconds, into.end_seconds ?? length, into.loop_start_seconds ?? undefined];
       if (moved === "start") from = Math.min(Math.max(to, 0), Math.max(until - SHORTEST, 0));
       if (moved === "end") until = Math.min(Math.max(to, from + SHORTEST), length);
       if (moved === "loop") loop = to;
@@ -196,7 +196,7 @@ export const card: Card<"sampler", { expanded: boolean }> = (self, ctx) => {
       more={[
         <Knob {...startAt} disabled={!plays} />, <Knob {...endAt} disabled={!plays} />,
         <col w={2 * CELL} gap={1}><row>{toggle("loop", "Loop", 1)}<Knob {...loopAt} disabled={!plays || !state.loop} /></row>{toggle("reverse", "Reverse", 2)}</col>,
-        <Knob {...attack} unit="seconds" />, <Knob {...sustain} unit="percent" />, <Knob {...decay} unit="seconds" />, <Knob {...field.number("tune" as never, "Tune")} unit="semitones" bipolar />,
+        <Knob {...attack} unit="seconds" />, <Knob {...sustain} unit="percent" />, <Knob {...decay} unit="seconds" />, <Knob {...field.number("tune", "Tune")} unit="semitones" bipolar />,
       ]}
       expanded={expanded} onExpand={() => (memory.expanded = !expanded)} />
   );
