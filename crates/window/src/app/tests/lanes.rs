@@ -287,3 +287,31 @@ fn sixty_four_lanes_of_two_hundred_points_scroll_and_zoom_without_the_view() {
     assert!(scroll < FRAME, "a scroll frame cost {scroll:?}");
     assert!(zoom < FRAME, "a zoom frame cost {zoom:?}");
 }
+
+/// What a new lane offers comes from the facts of each device, an effect in the chain as well
+/// as the instrument: the numbers a lane moves, not those it cannot, such as a pad's pitch.
+#[test]
+fn a_new_lane_offers_the_numbers_a_lane_moves_of_the_instrument_and_each_effect() {
+    let scratch = new_project();
+    lanes_shown(&scratch);
+    let track = scratch.path().join("song/state/song/t00");
+    let pads = json!({ "tool": "drum-pad", "state": { "pads": { "36": { "volume_db": -3.0 } } } });
+    std::fs::write(track.join("synth.json"), pads.to_string()).unwrap();
+    let eq = json!({ "tool": "eq", "state": { "bands": [{}, { "gain_db": -4.0 }] } });
+    std::fs::write(track.join("chain/eq.json"), eq.to_string()).unwrap();
+    let chain = json!({ "tool": "chain", "state": { "order": ["eq"] } });
+    std::fs::write(track.join("chain/instance.json"), chain.to_string()).unwrap();
+    let mut window = laid_out(opened(&scratch.path().join("song")));
+    for _ in 0..30 {
+        redraw(&mut window);
+    }
+    let (x, y) = window.find("add-lane-t00").expect("an Add lane");
+    window.pointer_down(x, y);
+    window.pointer_up(x, y);
+    redraw(&mut window);
+    let offers = |target: &str| window.find(&format!("add-lane-t00-{target}")).is_some();
+    assert!(offers("synth.pads.36.volume_db"));
+    assert!(!offers("synth.pads.36.pitch_semitones"));
+    assert!(offers("chain/eq.bands.1.gain_db"));
+    assert!(offers("chain/eq.output_gain_db"));
+}

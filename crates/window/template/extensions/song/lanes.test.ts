@@ -109,16 +109,21 @@ test("an audio track has no envelope", () => {
   expect(child(f, "audio-1", "lane-vol").tool).toBe("lane");
 });
 
+/** A number field as the facts give it: `lane` when a lane can move it. */
+const number = (name: string, lane: boolean, more: object = {}) => ({ kind: "number", name, label: name, min: -3, max: 3, scale: "linear", integer: !lane, lane, unit: null, default: 0, ...more }) as const;
+const facts = (...fields: object[]) => ({ title: "", fields });
+
 test("a new lane offers the track's volume and pan, then each device's numbers in the chain's order, at their values, but what a lane moves", () => {
   const chain = {
     name: "chain", tool: "chain", state: { order: ["eq", "filter"] },
     children: [
-      { name: "filter", tool: "filter", state: { cutoff_hz: 500 }, children: [] },
-      { name: "eq", tool: "eq", state: { bands: [{ frequency_hz: 100, gain_db: 3, q: 1 }] }, children: [] },
+      { name: "filter", tool: "filter", state: { cutoff_hz: 500 }, children: [], facts: facts(number("cutoff_hz", true)) },
+      { name: "eq", tool: "eq", state: { bands: [{ frequency_hz: 100, gain_db: 3, q: 1 }] }, children: [], facts: facts({ kind: "list", name: "bands", label: "Bands", item: { kind: "group", name: "", label: "", fields: [number("gain_db", true)] } }) },
     ],
   };
-  const row = trackOf("t00", [{ name: "synth", tool: "instrument.synth", state: {}, children: [] }, chain, laneOf("lane-pan", [{ tick: 0, value: 0 }])], [{ lane: "lane-pan", target: "mix.pan" }]);
-  const offered = movablesOf(fakeSong({ children: [row] }).song.children[0]!);
+  const synth = { name: "synth", tool: "instrument.synth", state: {}, children: [], facts: facts(number("cutoff_hz", true, { default: 2000 })) };
+  const row = trackOf("t00", [synth, chain, laneOf("lane-pan", [{ tick: 0, value: 0 }])], [{ lane: "lane-pan", target: "mix.pan" }]);
+  const offered = movablesOf(fakeSong({ children: [row as never] }).song.children[0]!);
   expect(offered[0]).toEqual({ target: "mix.gain_db", text: "Volume", group: "Track", value: 0 });
   expect(offered.some((each) => each.target === "mix.pan")).toBe(false);
   expect([...new Set(offered.map((each) => each.group))]).toEqual(["Track", "Synth", "Eq", "Filter"]);
@@ -127,10 +132,9 @@ test("a new lane offers the track's volume and pan, then each device's numbers i
   expect(offered.find((each) => each.target === "chain/filter.cutoff_hz")).toMatchObject({ value: 500 });
 });
 
-test("a new lane offers what the facts of a device say a lane moves: no whole numbers, and a plugin's parameters that take any value", () => {
-  const number = (name: string, integer: boolean) => ({ kind: "number", name, label: name, min: -3, max: 3, scale: "linear", integer, unit: null, default: 0 }) as const;
-  const synth = { name: "synth", tool: "wavetable", state: { osc_1: { octave: 1, position: 0.5 } }, children: [], facts: { title: "Wavetable", fields: [{ kind: "group", name: "osc_1", label: "Osc 1", fields: [number("octave", true), number("position", false)] }] } };
-  const plugin = { name: "synth", tool: "plugin", state: { parameters: {} }, children: [], facts: { title: "Plugin", fields: [], parameters: [{ id: 7, name: "Brightness", min: 0, max: 1, default: 0.25 }, { id: 8, name: "Mode", min: 0, max: 2, default: 0, steps: 3 }] } };
+test("a new lane offers what the facts of a device say a lane moves, of its fields and a plugin's parameters", () => {
+  const synth = { name: "synth", tool: "wavetable", state: { osc_1: { octave: 1, position: 0.5 } }, children: [], facts: facts({ kind: "group", name: "osc_1", label: "Osc 1", fields: [number("octave", false), number("position", true)] }) };
+  const plugin = { name: "synth", tool: "plugin", state: { parameters: {} }, children: [], facts: { title: "Plugin", fields: [], parameters: [{ id: 7, name: "Brightness", min: 0, max: 1, default: 0.25, lane: true }, { id: 8, name: "Mode", min: 0, max: 2, default: 0, steps: 3, lane: false }] } };
   const offered = (device: object) => movablesOf(fakeSong({ children: [trackOf("t00", [device as never])] }).song.children[0]!).map((each) => each.target);
   expect(offered(synth)).toContain("synth.osc_1.position");
   expect(offered(synth)).not.toContain("synth.osc_1.octave");

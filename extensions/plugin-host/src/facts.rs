@@ -56,6 +56,8 @@ struct ParameterFacts {
     names: Vec<StepFacts>,
     /// A lane may move it.
     automatable: bool,
+    /// A lane of the track can move it: it takes any value in its range.
+    lane: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -102,6 +104,7 @@ impl Facts {
                     })
                     .collect(),
                 automatable: parameter.automatable,
+                lane: parameter.takes_lane(),
             })
             .collect();
         let texts = match status {

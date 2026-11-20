@@ -1,7 +1,7 @@
 // The automation of a track: lanes under it, each a line of points, an LFO or an envelope that
 // moves a number of the track's fader or of one of its devices over the song.
 // A lane's plane: x in ticks of the song, y down its travel, 0 its top (`max`) and 1 its bottom.
-import { builtInNumbers, type Facts, type FieldInfo, type FilledStateOfTool, type Pointer, type Unit } from "../sdk";
+import { type Facts, type FieldInfo, type FilledStateOfTool, type Pointer, type Unit } from "../sdk";
 import { ENVELOPE, envelope, lfo } from "../lfo";
 import { freeName, splitTarget, type Mover } from "../track";
 import { isRow, mixOf, nameFrom, words, type Child, type Draft, type Song } from "./model";
@@ -91,31 +91,29 @@ export function unitOf(target: string, { min, max, scale }: Travel): Unit | unde
 /** A number a new lane of a track can move: what it is, what the menu calls it, the device it is of, and where it is now. */
 export type Movable = { target: string; text: string; group: string; value: number };
 
-/** A device as a track holds it, and its facts where the window told them. */
+/** A device as a track holds it, and its facts as the window told them. */
 type Device = { name: string; tool: unknown; state: unknown; children: readonly Device[]; facts?: Facts & Partial<Pick<Facts<"plugin">, "parameters">> };
 /** A number of a device a lane can move, by its path in the record, and how far it goes. */
 type Known = { number: string; min?: number; max?: number; scale: Scale; default?: number };
+/** `lane`: whether a lane can move a number, which the device says in its facts. */
+type Laned = { lane?: boolean };
 
-/**
- * The numbers of `device` a lane can move: from its facts, the fields that take any value in a
- * range and a plugin's parameters that do, else from what the built-in tools say.
- */
+/** The numbers of `device` a lane can move, as its facts say: its fields' and a plugin's parameters. */
 function numbersOf(device: Device): Known[] {
   const facts = device.facts;
-  const parameters = (facts?.parameters ?? []).filter((parameter) => parameter.steps == null)
+  const parameters = (facts?.parameters ?? []).filter((parameter) => (parameter as Laned).lane === true)
     .map((parameter): Known => ({ number: `parameters.${parameter.id}.value`, min: parameter.min, max: parameter.max, scale: "linear", default: parameter.default }));
-  if (facts && (facts.fields.length > 0 || parameters.length > 0)) return [...fieldNumbers(facts.fields, device.state, ""), ...parameters];
-  return Object.entries(builtInNumbers[String(device.tool)] ?? {}).flatMap(([pattern, known]) => expand(pattern, device.state).map((number) => ({ ...known, number })));
+  return [...fieldNumbers(facts?.fields ?? [], device.state, ""), ...parameters];
 }
 
-/** The numbers among `fields` of `state`, by their paths after `prefix`, but the whole ones a lane cannot move. */
+/** The numbers among `fields` of `state` a lane can move, by their paths after `prefix`. */
 function fieldNumbers(fields: readonly FieldInfo[], state: unknown, prefix: string): Known[] {
   return fields.flatMap((field) => itemNumbers(field, (state as Record<string, unknown> | undefined)?.[field.name], `${prefix}${field.name}`));
 }
 function itemNumbers(field: FieldInfo, value: unknown, path: string): Known[] {
   switch (field.kind) {
     case "number":
-      return field.integer ? [] : [{ number: path, min: field.min, max: field.max, scale: field.scale, default: field.default }];
+      return (field as Laned).lane === true ? [{ number: path, min: field.min, max: field.max, scale: field.scale, default: field.default }] : [];
     case "group":
       return fieldNumbers(field.fields, value, `${path}.`);
     case "list":
@@ -126,15 +124,6 @@ function itemNumbers(field: FieldInfo, value: unknown, path: string): Known[] {
   }
 }
 
-/** The places of `pattern` in `state`: each `*` is every item of the list or key of the map there. */
-function expand(pattern: string, state: unknown): string[] {
-  const [head = "", ...rest] = pattern.split(".");
-  if (rest.length === 0) return [head];
-  const inner = (state as Record<string, unknown> | undefined)?.[head];
-  if (rest[0] !== "*") return expand(rest.join("."), inner).map((tail) => `${head}.${tail}`);
-  const keys = Object.keys((inner as object | undefined) ?? {});
-  return keys.flatMap((key) => expand(rest.slice(1).join("."), (inner as Record<string, unknown>)[key]).map((tail) => `${head}.${key}.${tail}`));
-}
 const numberIn = (state: unknown, path: string): unknown => path.split(".").reduce<unknown>((at, step) => (at as Record<string, unknown> | undefined)?.[step], state);
 
 /**
