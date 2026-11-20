@@ -73,6 +73,7 @@ pub(super) fn event(chord: &str) -> KeyEvent {
         "up" => Key::Up,
         "enter" => Key::Enter,
         "escape" => Key::Escape,
+        "f10" => Key::Function(10),
         letter if mods.cmd => Key::Command(letter.chars().next().unwrap()),
         letter => Key::Text(letter.into()),
     };
@@ -1047,4 +1048,66 @@ fn the_arrows_move_along_steps_and_space_or_enter_turns_the_one_they_are_on() {
     assert_eq!(record_of(&window.state, "kit")["on"][5], true);
     keys(&mut window, "enter");
     assert_eq!(record_of(&window.state, "kit")["on"][5], false);
+}
+
+/// Counts the left and the right presses of its box, and its drags.
+const PRESSES: &str = r#"import { h, number, tool } from "./sdk";
+export const presses = tool({
+  name: "presses", title: "Presses", when: "Never", doc: "Counts presses.",
+  state: { count: number({ min: 0, max: 100, default: 0 }), rights: number({ min: 0, max: 100, default: 0 }), dragged: number({ min: 0, max: 100, default: 0 }) },
+  view: (self, { update }) => (
+    <col>
+      <box key="tap" label="Tap" w={120} h={40} onPress={(p) => update("Count", (part) => void (p.right ? (part.state.rights = self.state.rights + 1) : (part.state.count = self.state.count + 1)))} />
+      <box key="drag" label="Drag" w={120} h={40} drag={{ y: true }} onDragEnd={() => update("Drag", (part) => void (part.state.dragged = self.state.dragged + 1))} />
+    </col>
+  ),
+});
+"#;
+
+/// The other buttons neither click a press the left holds nor end it, and a move with the
+/// right held keeps it: the left's release is its one press; the middle is not heard while
+/// the left holds a drag. A right press, and Shift-F10 on it, is its right press.
+#[test]
+fn the_other_buttons_neither_click_nor_end_a_press_the_left_holds() {
+    use rune::PointerButton::{Middle, Secondary};
+    let files = [
+        ("extensions/presses.tsx", PRESSES),
+        ("state/presses.json", r#"{"tool": "presses", "state": {}}"#),
+    ];
+    let (_scratch, mut window) = page(&files, "presses");
+    let count = |window: &rune::Runtime<State>, field: &str| {
+        record_of(&window.state, "presses")[field].clone()
+    };
+    let (x, y) = window.find("tap").unwrap();
+    window.pointer_down(x, y);
+    window.button_down(x, y, Secondary);
+    window.pointer_move(x + 1.0, y);
+    window.button_up(x, y, Secondary);
+    redraw(&mut window);
+    assert_eq!(count(&window, "count"), Value::Null);
+    window.pointer_up(x + 1.0, y);
+    redraw(&mut window);
+    assert_eq!(count(&window, "count"), 1);
+    // A right press alone is no left press.
+    let rights = count(&window, "rights").as_u64().unwrap_or(0);
+    window.button_down(x, y, Secondary);
+    window.button_up(x, y, Secondary);
+    redraw(&mut window);
+    assert_eq!(count(&window, "count"), 1);
+    assert_eq!(count(&window, "rights"), rights + 1);
+    focus(&mut window, "tap");
+    keys(&mut window, "shift-f10");
+    assert_eq!(count(&window, "rights"), rights + 2);
+
+    let (x, y) = window.find("drag").unwrap();
+    window.pointer_down(x, y);
+    window.pointer_move(x, y - 20.0);
+    window.button_down(x, y - 20.0, Middle);
+    window.button_up(x, y - 20.0, Middle);
+    window.pointer_up(x, y - 20.0);
+    redraw(&mut window);
+    assert_eq!(
+        (count(&window, "count"), count(&window, "dragged")),
+        (json!(1), json!(1))
+    );
 }
