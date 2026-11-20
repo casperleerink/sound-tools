@@ -298,3 +298,42 @@ fn the_heads_of_the_tracks_scroll_with_the_timeline() {
     assert!(moved > 50.0, "{moved}");
     assert_eq!(head_before - head(&window), moved);
 }
+
+/// The track the song chooses is what the keyboard plays, and a chosen clip is the selection
+/// that Export selection exports.
+#[test]
+fn a_track_the_song_chooses_plays_the_keyboard_and_a_chosen_clip_is_the_selection() {
+    let (_scratch, mut window) = song();
+    let selected = |window: &rune::Runtime<State>| {
+        let selected = window
+            .state
+            .session
+            .selected()
+            .map(|id| id.as_str().to_string());
+        (selected, window.state.session.selected_span().is_some())
+    };
+    super::act(
+        &mut window.state,
+        serde_json::json!({ "label": "Choose Track 2", "action": "press" }),
+    );
+    redraw(&mut window);
+    let (track, span) = selected(&window);
+    assert!(
+        track
+            .as_deref()
+            .is_some_and(|id| id.starts_with("song/t01")),
+        "{track:?}"
+    );
+    assert!(!span);
+    super::act(
+        &mut window.state,
+        serde_json::json!({ "label": "Clip Bass", "action": "press" }),
+    );
+    redraw(&mut window);
+    let (clip, span) = selected(&window);
+    assert!(
+        clip.as_deref().is_some_and(|id| id.starts_with("song/t00")),
+        "{clip:?}"
+    );
+    assert!(span);
+}
