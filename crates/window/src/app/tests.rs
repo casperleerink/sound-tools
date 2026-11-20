@@ -4,7 +4,12 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+use serde_json::json;
+
+use super::frame::{frame, run_loops};
+use super::headless::copy_folder;
 use super::*;
+use crate::controls;
 
 /// What the live texts of the views show, but the values of the controls a drag turns, such
 /// as the template's faders and knobs.
