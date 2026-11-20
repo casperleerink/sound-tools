@@ -25,9 +25,9 @@ MAC = platform.system() == "Darwin"
 # ru_maxrss is bytes on macOS and kilobytes on Linux.
 MAXRSS_BYTES = 1 if MAC else 1024
 LIBPROC = ctypes.CDLL("/usr/lib/libproc.dylib") if MAC else None
-# `ri_lifetime_max_phys_footprint` of `rusage_info_v4` in <sys/resource.h>: after a uuid of 16
-# bytes, the 29th number.
-RUSAGE_INFO_V4, LIFETIME_MAX_FOOTPRINT = 4, 16 + 28 * 8
+# `ri_phys_footprint` and `ri_lifetime_max_phys_footprint` of `rusage_info_v4` in
+# <sys/resource.h>: after a uuid of 16 bytes, the 8th and the 29th number.
+RUSAGE_INFO_V4, FOOTPRINT, LIFETIME_MAX_FOOTPRINT = 4, 16 + 7 * 8, 16 + 28 * 8
 SECONDS = 3.0
 # Where the song draws, in points, in the default window of 1470 x 920: the timeline starts
 # right of the track heads, a row is 64 high, and a bar is 48 wide at the zoom a song opens at.
@@ -36,8 +36,8 @@ TIMELINE, FIRST_ROW, BAR_POINTS, TICKS_PER_BAR = 184, 124, 48, 1920
 TRACKS, CLIPS, CLIP_BARS = 64, 500, 2
 # The lanes: 2 tracks of 32 lanes on a wavetable's numbers, 200 points each, all shown.
 LANE_TRACKS, LANES, POINTS = 2, 32, 200
-# A leak shows as memory that grows while the big song plays, scrolls and zooms: the peak after
-# LONG virtual seconds against the peak after SHORT.
+# A leak shows as memory that grows while the big song plays, scrolls and zooms: what it holds
+# after SHORT seconds against what it holds after LONG, in one run.
 SHORT, LONG = 10, 120
 COLOURS = ["blue", "green", "purple", "orange", "pink", "teal", "yellow", "red"]
 
@@ -69,14 +69,28 @@ def run(program, *arguments, check=True):
     return text, (usage.ru_utime + usage.ru_stime, peak), peak + bun[0]
 
 
-def footprint(pid):
-    """The most memory `pid` held, in MB, as macOS counts it and `/usr/bin/time -l` says: what is
-    resident and what is compressed. A machine short of memory compresses, which the resident
-    size leaves out."""
+def footprint(pid, at=LIFETIME_MAX_FOOTPRINT):
+    """The most memory `pid` held, or what it holds now with `at=FOOTPRINT`, in MB, as macOS
+    counts it and `/usr/bin/time -l` says: what is resident and what is compressed. A machine
+    short of memory compresses, which the resident size leaves out."""
     info = ctypes.create_string_buffer(512)
     if LIBPROC.proc_pid_rusage(pid, RUSAGE_INFO_V4, info) != 0:
         return None
-    return int.from_bytes(info.raw[LIFETIME_MAX_FOOTPRINT:LIFETIME_MAX_FOOTPRINT + 8], "little") / 2**20
+    return int.from_bytes(info.raw[at:at + 8], "little") / 2**20
+
+
+def held_at_marks(program, project, events):
+    """What `sound-tools` holds now, in MB, as its script passes each mark, by the mark's name."""
+    script = ROOT / "leak.json"
+    script.write_text(json.dumps(events))
+    process = subprocess.Popen([program, project, "--script", script, "--realtime"], env=ENV,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    held = {}
+    for line in process.stdout:
+        if line.startswith("rune-mark "):
+            held[line.split()[1]] = footprint(process.pid, FOOTPRINT)
+    process.wait()
+    return held
 
 
 def sample_bun(pid, ended, peak):
@@ -197,7 +211,8 @@ def played_moving(seconds):
         back = 1 if k % 4 < 2 else -1
         wheel = {"dx": 0, "dy": -20 * back, "cmd": True} if k % 2 else {"dx": -60 * back, "dy": 0}
         moves.append({"t": 0.5 + k, "type": "wheel", "key": "song", **wheel})
-    return [{"t": 0.2, "type": "tap", "key": "play"}, *moves, {"t": seconds, "type": "mark", "name": "end"}]
+    return [{"t": 0.2, "type": "tap", "key": "play"}, *moves, {"t": SHORT, "type": "mark", "name": "short"},
+            {"t": seconds, "type": "mark", "name": "end"}]
 
 
 FRAMES = re.compile(r"rune: (\d+) frames at .* frame cpu mean ([0-9.]+) ms p50 ([0-9.]+) p95 ([0-9.]+) max ([0-9.]+)")
@@ -225,7 +240,7 @@ def measure(program, project, name, events, runs):
 def played(program, project, seconds, runs):
     """The app's own `--play`: the song from the start on the offline engine, one picture at the end."""
     picture = ROOT / f"{project.name}-play-{seconds}.png"
-    rows = [run(program, project, "--snap", picture, "--play", seconds) for _ in range(runs)]
+    rows = [run(program, project, "--snap", picture, "--play", seconds, "--realtime") for _ in range(runs)]
     return {"cpu s": statistics.median(cpu for _, (cpu, _), _ in rows),
             "MB": statistics.median(mb for _, (_, mb), _ in rows),
             "with Bun MB": statistics.median(total for _, _, total in rows)}
@@ -252,8 +267,9 @@ def show(report, against):
                 cells.append(cell)
             print(f"| {project} | {name} | " + " | ".join(cells) + " |")
     leak = report["leak"]
-    print(f"\nThe big song playing, scrolled and zoomed: {leak['short MB']:.0f} MB after {SHORT} s, "
-          f"{leak['long MB']:.0f} MB after {LONG} s ({leak['grew'] * 100:+.1f}%).")
+    if leak["grew"] is not None:
+        print(f"\nThe big song playing, scrolled and zoomed holds {leak['short MB']:.0f} MB after {SHORT} s and "
+              f"{leak['long MB']:.0f} MB after {LONG} s ({leak['grew'] * 100:+.1f}%).")
 
 
 def main():
@@ -279,8 +295,9 @@ def main():
             results["--play 60"] = played(program, folder, 60, arguments.runs)
         report["projects"][project] = results
     print("measuring a leak", file=sys.stderr, flush=True)
-    short, long = (measure(program, ROOT / "big", f"playing {s} s", played_moving(s), 1)["MB"] for s in (SHORT, LONG))
-    report["leak"] = {"short MB": short, "long MB": long, "grew": (long - short) / short}
+    held = held_at_marks(program, ROOT / "big", played_moving(LONG)) if MAC else {}
+    short, long = held.get("short"), held.get("end")
+    report["leak"] = {"short MB": short, "long MB": long, "grew": (long - short) / short if short and long else None}
     against = json.loads(arguments.against.read_text()) if arguments.against.exists() else None
     show(report, against)
     out = BASELINE if arguments.save else ROOT / f"{time.strftime('%Y%m%d-%H%M%S')}.json"
