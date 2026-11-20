@@ -7,10 +7,6 @@ publish.workspace = true
 [lints]
 workspace = true
 
-# rune-kit draws the shell, which comes next.
-[package.metadata.cargo-shear]
-ignored = ["rune-kit"]
-
 [[bin]]
 name = "sound-tools"
 path = "src/main.rs"
@@ -24,6 +20,7 @@ rune-kit.workspace = true
 runtime = { path = "../runtime" }
 serde.workspace = true
 serde_json.workspace = true
+sound-agent.workspace = true
 sound-core.workspace = true
 sound-typescript.workspace = true
 tempfile.workspace = true

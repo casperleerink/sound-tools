@@ -38,10 +38,11 @@ const HEADLESS: [&str; 7] = [
     "--snap", "--tree", "--script", "--video", "--out", "--strip", "--html",
 ];
 
-const FONTS: [&[u8]; 3] = [
+const FONTS: [&[u8]; 4] = [
     include_bytes!("../assets/fonts/InterDisplay-Regular.ttf"),
     include_bytes!("../assets/fonts/InterDisplay-Medium.ttf"),
     include_bytes!("../assets/fonts/InterDisplay-SemiBold.ttf"),
+    include_bytes!("../assets/fonts/InterDisplay-Italic.ttf"),
 ];
 
 /// Gives a window program the terminal that started it, so `--version` and the other forms
@@ -151,14 +152,17 @@ fn window(arguments: &[String]) -> Result<()> {
             .transpose()?,
         act: act.map(|path| controls::read_steps(&path)).transpose()?,
     })?;
+    // The window is named after its project; Rune keeps the title for as long as the app runs.
+    let title: &'static str = Box::leak(state.name.clone().into_boxed_str());
     let spec = rune::AppSpec {
+        min_size: Some(app::MIN_SIZE),
         poll: Some(app::poll),
         setup: Some(app::setup),
         on_key: Some(app::on_key),
         fonts: &FONTS,
         families: ("Inter Display", "ui-monospace"),
         ..rune::AppSpec::new(
-            "Sound Tools",
+            title,
             (1470.0, 920.0),
             || unreachable!("the state is made before"),
             app::view,
@@ -167,8 +171,11 @@ fn window(arguments: &[String]) -> Result<()> {
     rune::App::new(spec)
         .chrome(rune::Chrome {
             traffic_lights: Some(app::WINDOW_BUTTONS),
+            drag_regions: true,
             ..rune::Chrome::DEFAULT
         })
+        // Every control is a stop of Tab, whatever the system's keyboard setting.
+        .tab_visits_controls(true)
         .args(rune_arguments)
         .init(move || state)
         .run();

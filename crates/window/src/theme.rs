@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use rune::{Color, TextStyle};
+use rune_kit::{Kit, PaletteFocus, PaletteSeed, Radius, StateColors, Type};
 use serde::Deserialize;
 
 /// The template's theme, for a project without one of its own.
@@ -17,6 +18,13 @@ pub(crate) struct Theme {
     space: HashMap<String, f32>,
     radius: HashMap<String, f32>,
     shadow: HashMap<String, ShadowToken>,
+    /// The tokens as rune-kit reads them, for the app's own chrome: made once they are read.
+    #[serde(skip, default = "no_kit")]
+    pub(crate) kit: Kit,
+}
+
+fn no_kit() -> Kit {
+    Kit::neutral(true)
 }
 
 #[derive(Deserialize)]
@@ -55,14 +63,75 @@ impl Theme {
             .ok()
             .map(|json| serde_json::from_str(&json));
         let fallback = || serde_json::from_str(TEMPLATE_THEME).unwrap_or_else(|_| Theme::empty());
-        match own {
+        let (mut theme, problem) = match own {
             Some(Ok(theme)) => (theme, None),
             Some(Err(error)) => (
                 fallback(),
                 Some(format!("its design tokens do not read: {error}")),
             ),
             None => (fallback(), None),
+        };
+        theme.kit = theme.make_kit();
+        (theme, problem)
+    }
+
+    /// rune-kit's tokens from these, so the chrome and the project's views look like one app.
+    fn make_kit(&self) -> Kit {
+        let c = |name| self.color(name);
+        let seed = PaletteSeed {
+            bg: c("background"),
+            fg: c("text"),
+            accent: c("focus"),
+        };
+        let mut kit = Kit::from_palette_focus(seed, PaletteFocus::Custom(c("focus")));
+        let palette = &mut kit.c;
+        (palette.layer_01, palette.layer_02, palette.bg_deep) =
+            (c("surface"), c("raised"), c("well"));
+        (palette.bg_button_neutral, palette.surface_raised) = (c("surface"), c("surface"));
+        (palette.text_muted, palette.text_faint) = (c("text-secondary"), c("text-muted"));
+        (palette.icon_muted, palette.icon_faint) = (c("text-secondary"), c("text-muted"));
+        (palette.border_muted, palette.border_base) = (c("border"), c("border-strong"));
+        (palette.hover, palette.pressed) = (c("fill"), c("fill-strong"));
+        for (role, hue) in [
+            (&mut palette.success, "green"),
+            (&mut palette.warning, "warning"),
+            (&mut palette.danger, "danger"),
+            (&mut palette.info, "blue"),
+        ] {
+            *role = StateColors {
+                fg: c(hue),
+                icon: c(hue),
+                ..*role
+            };
         }
+        let t = |name| self.text(name);
+        let medium = |name| TextStyle {
+            weight: 500.0,
+            ..t(name)
+        };
+        kit.ty = Type {
+            ui: t("body"),
+            ui_medium: medium("body"),
+            ui_compact: t("body").lh(16.0),
+            small: t("label"),
+            small_medium: medium("label"),
+            body: t("body"),
+            body_medium: t("heading"),
+            text_small: t("label"),
+            text_small_medium: medium("label"),
+            text_xsmall: t("label"),
+            text_xsmall_medium: medium("label"),
+            mono: t("label").mono(),
+        };
+        let r = |name, or| self.radius(name).unwrap_or(or);
+        kit.radius = Radius {
+            xs: r("sm", 4.0) / 2.0,
+            sm: r("sm", 4.0),
+            md: r("md", 6.0),
+            lg: r("lg", 8.0),
+            xl: r("lg", 8.0) + 2.0,
+        };
+        kit
     }
 
     fn empty() -> Theme {
@@ -72,6 +141,7 @@ impl Theme {
             space: HashMap::new(),
             radius: HashMap::new(),
             shadow: HashMap::new(),
+            kit: no_kit(),
         }
     }
 

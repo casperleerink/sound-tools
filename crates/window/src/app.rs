@@ -1,4 +1,4 @@
-//! The window of one project: a title row (its name, play and stop, where it plays), and the
+//! The window of one project: a title row (its name, the side panel, play and stop), and the
 //! view of its main instance filling the rest. In a run without a window the engine plays
 //! offline, a step per frame, and Bun answers before each frame, so a run is always the same.
 
@@ -23,10 +23,12 @@ mod chrome;
 mod frame;
 mod headless;
 mod keys;
+mod panel;
+mod problems;
 
 use headless::copied;
 
-pub(crate) use chrome::{WINDOW_BUTTONS, view};
+pub(crate) use chrome::{Act, MIN_SIZE, WINDOW_BUTTONS, controls as chrome_controls, view};
 pub(crate) use frame::{poll, setup};
 pub(crate) use keys::on_key;
 
@@ -64,7 +66,7 @@ enum Sound {
 }
 
 pub(crate) struct State {
-    name: String,
+    pub(crate) name: String,
     pub(crate) project: Project,
     sound: Sound,
     plugins: Plugins,
@@ -108,6 +110,9 @@ pub(crate) struct State {
     _copy: Option<tempfile::TempDir>,
     // The areas of the window's chrome follow, a field each. An area is a module of `app` that
     // owns its state: `open` makes it, `chrome::view` draws it, `keys::on_key` gives it keys.
+    pub(crate) panel: panel::LeftPanel,
+    /// The list of the files that are not live is open.
+    problems_open: bool,
 }
 
 impl State {
@@ -205,6 +210,14 @@ impl State {
             fields: RefCell::default(),
             waker,
             first: headless.then(|| (act.unwrap_or_default(), play)),
+            panel: panel::LeftPanel::new(
+                Some(panel::LeftPanel::waiting_agent()),
+                (!headless)
+                    .then(runtime::app::support_folder)
+                    .and_then(Result::ok)
+                    .map(|support| runtime::app::left_panel_file(&support)),
+            ),
+            problems_open: false,
             last: 0.0,
             _copy: copy,
         })

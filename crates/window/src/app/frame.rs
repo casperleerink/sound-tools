@@ -146,6 +146,10 @@ pub(crate) fn frame(state: &mut State, seconds: f64) -> (bool, Option<Duration>)
         state.notice = Some(error.to_string());
     }
     let events = state.project.drain_events();
+    // The list of the files that are not live goes with the last of them.
+    if state.problems_open && state.files_not_live() == 0 {
+        state.problems_open = false;
+    }
     changed |= !events.is_empty();
     if let Some(tools) = &mut state.tools {
         let drawn = tools.poll(&mut state.project, &events);
