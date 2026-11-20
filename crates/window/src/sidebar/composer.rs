@@ -150,6 +150,9 @@ fn paste(s: &mut State, content: &ClipboardContent, _: &mut Tx) -> bool {
     taken
 }
 
+/// Not "Stop", which the transport's button is.
+const STOP: &str = "Stop the agent";
+
 /// Sends while there is something to send; stops the agent while it works: one turn at a time.
 fn send_button(theme: &Theme, sidebar: &Sidebar) -> El {
     let chat = &sidebar.chat;
@@ -157,7 +160,7 @@ fn send_button(theme: &Theme, sidebar: &Sidebar) -> El {
     let ready = chat.can_send(&sidebar.composer.text);
     let (label, glyph, fill, ink, act) = match working {
         true => (
-            "Stop",
+            STOP,
             &icons::SQUARE,
             theme.color("text"),
             theme.color("background"),
@@ -310,7 +313,7 @@ pub(super) fn controls(sidebar: &Sidebar) -> Vec<Control> {
         ..control(COMPOSER, COMPOSER_PLACEHOLDER, "textbox", Act::Send)
     });
     match chat.is_working() {
-        true => controls.push(control(SEND, "Stop", "button", Act::Stop)),
+        true => controls.push(control(SEND, STOP, "button", Act::Stop)),
         false if chat.can_send(&sidebar.composer.text) => {
             controls.push(control(SEND, "Send", "button", Act::Send));
         }

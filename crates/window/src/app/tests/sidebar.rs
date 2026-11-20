@@ -145,7 +145,7 @@ fn return_sends_what_was_typed_and_the_composer_keeps_the_keys() {
     // While it works, the button stops it.
     let controls = chrome_controls(&window.state);
     let send = controls.iter().find(|control| control.key == "agent-send");
-    assert_eq!(send.map(|send| send.label.as_str()), Some("Stop"));
+    assert_eq!(send.map(|send| send.label.as_str()), Some("Stop the agent"));
 }
 
 #[test]
