@@ -220,13 +220,13 @@ const Changes = ({ page }: RulerProps) => {
  * press turns it on or off, its body drags it, its ends stretch it, on beats: none is a step of undo.
  */
 const Repeat = ({ page }: RulerProps) => {
-  const { clock, memory } = page.song;
-  const range = clock.repeat ?? memory.repeatRange;
+  const { memory } = page.song;
+  const range = memory.repeatRange;
   if (!range) return null;
   const marks = page.edits.marks;
   const { from, to } = range;
   const [moving, starting, ending] = [live.drag("repeat"), live.drag("repeat-start"), live.drag("repeat-end")];
-  const on = clock.repeat !== null;
+  const on = memory.repeating;
   const band: Color = on ? "text" : "text-muted";
   const toggle = () => marks.toggleRepeat();
   const step = (part: "move" | "start" | "end") => ({ increment: (by: number) => marks.moveRepeat(part, { dx: by * BEAT }), decrement: (by: number) => marks.moveRepeat(part, { dx: -by * BEAT }), toggle });

@@ -1,6 +1,7 @@
 // The marks of the ruler: sections, time signature changes and tempo changes, and the range the
 // song repeats. Marks are in `project.json`, so each change is one undo step of the clock; the
-// repeat is not saved and is no undo step. The ruler's plane: x in ticks of the song.
+// repeat is not saved and is no undo step. Its range and whether it repeats are kept in memory
+// too: a view that read the clock's would run again at every play and pause. The ruler's plane: x in ticks of the song.
 import type { Pointer, Section, TempoMap } from "../sdk";
 import { lengthAt } from "./clips";
 import { itemAt, type Mark, type Song } from "./model";
@@ -66,6 +67,11 @@ const bpmAt = (changes: readonly { tick: number; bpm: number }[], tick: number) 
 export const markEdits = (song: Song) => {
   const { clock, memory } = song;
   const runs = () => clock.tempo_map.time_signatures;
+  /** Repeats `range` or keeps it to show, off. */
+  const repeat = (range: { from: number; to: number }, on: boolean) => {
+    [memory.repeatRange, memory.repeating] = [range, on];
+    clock.setRepeat(on ? range : null);
+  };
   const choose = (mark: Mark) => {
     memory.selected = [];
     memory.point = null;
@@ -205,34 +211,32 @@ export const markEdits = (song: Song) => {
         return start === undefined ? [] : [{ from: start, to: start + lengthAt(song, key) }];
       });
       if (spans.length === 0) {
-        if (!clock.repeat && !memory.repeatRange) return false;
-        edits.toggleRepeat();
-        return true;
+        return edits.toggleRepeat();
       }
       const from = Math.floor(Math.min(...spans.map((each) => each.from)) / BEAT) * BEAT;
       const to = Math.ceil(Math.max(...spans.map((each) => each.to)) / BEAT) * BEAT;
-      clock.setRepeat({ from, to: Math.max(to, from + BEAT) });
+      repeat({ from, to: Math.max(to, from + BEAT) }, true);
       return true;
     },
     /** A drag across the ruler from `x`: it repeats that range, on beats. */
     loop(p: Pick<Pointer, "x" | "dx">) {
       const [from, to] = [Math.max(Math.round(Math.min(p.x, p.x + p.dx) / BEAT) * BEAT, 0), Math.round(Math.max(p.x, p.x + p.dx) / BEAT) * BEAT];
-      if (to > from) clock.setRepeat({ from, to });
+      if (to > from) repeat({ from, to }, true);
     },
     /** A click on the repeat's bar: it repeats, or plays on and keeps its range. */
-    toggleRepeat() {
-      if (clock.repeat) memory.repeatRange = { ...clock.repeat };
-      clock.setRepeat(clock.repeat ? null : memory.repeatRange);
+    toggleRepeat(): boolean {
+      if (!memory.repeatRange) return false;
+      repeat(memory.repeatRange, !memory.repeating);
+      return true;
     },
     /** A drag of the repeat's bar by `dx` on beats: its body moves it, an end stretches it, at least a beat. */
     moveRepeat(part: "move" | "start" | "end", p: Pick<Pointer, "dx">) {
-      const range = clock.repeat ?? memory.repeatRange;
+      const range = memory.repeatRange;
       if (!range) return;
       const { from, to } = range;
       const moved = Math.max(from + p.dx, 0) - from;
       const [start, end] = part === "move" ? [from + moved, to + moved] : part === "start" ? [Math.min(Math.max(from + p.dx, 0), to - BEAT), to] : [from, Math.max(to + p.dx, from + BEAT)];
-      if (clock.repeat) clock.setRepeat({ from: start, to: end });
-      else memory.repeatRange = { from: start, to: end };
+      repeat({ from: start, to: end }, memory.repeating);
     },
   };
   return edits;

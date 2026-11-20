@@ -43,6 +43,8 @@ export const TempoLane = ({ page }: { page: Page }) => {
             }) }]} />
             {changes.map((change, index) => {
               const [y, to] = [yOf(change.bpm), changes[index + 1]?.tick ?? end];
+              // Not under its own pill, which says it while it is chosen.
+              if (memory.mark?.kind === "tempo" && memory.mark.tick === change.tick) return null;
               return (
                 <box place={[change.tick, y > 16 ? y - 15 : y + 2, to - change.tick, 14]} clip inert>
                   <text at={[view.left.minus(change.tick).max(0).times(view.zoom.times(ACROSS)).plus(12), -1]} style="label" color="text-muted">{bpmText(change.bpm)}</text>
@@ -69,7 +71,7 @@ export const TempoLane = ({ page }: { page: Page }) => {
             <box key={key} label={first ? "Tempo at the start" : `Tempo at bar ${bar}`} role="slider" value={change.bpm} hoverGroup place={[moved.dx.plus(change.tick), moved.dy.plus(yOf(change.bpm))]} w={15} h={15}
               drag={first ? { y: true } : { x: [1 - change.tick, 1e7], y: true, ...(memory.snap > 0 ? { snap: [memory.snap, 0] as [number, number], from: [change.tick, 0] as [number, number] } : {}) }}
               onPress={(p) => (p.right ? pointed(page, p.x, first ? null : mark) : first ? edits.marks.press({ x: 0, clicks: 1 }) : p.alt ? edits.marks.remove(mark) : edits.marks.pressMark(mark, p))}
-              onDragEnd={(p) => edits.marks.moveMark(mark, first ? 0 : p.dx, Math.round((change.bpm - p.dy * perPoint) * 10) / 10)}
+              onDragEnd={(p) => edits.marks.moveMark(mark, first ? 0 : p.dx, p.dy === 0 ? undefined : Math.round(change.bpm - p.dy * perPoint))}
               actions={{ increment: set, decrement: (by) => set(-by) }}>
               <box at={[3, 3]} w={9} h={9} radius="full" fill={chosen ? ink : "background"} border={ink} />
               {chosen ? pill : <box reveal>{pill}</box>}
