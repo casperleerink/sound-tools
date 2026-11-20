@@ -127,14 +127,21 @@ pub(super) fn typed(scope: &Scope, f: &FieldNode) -> El {
 }
 
 /// Whether `node`, in the open overlay of `scope`, shows: an item of a menu or list shows only
-/// while its label has what the overlay's search field says.
+/// while its label has what the overlay's search field says, and a group of items, such as one
+/// under a heading, only while one of them shows.
 pub(super) fn kept(scope: &Scope, node: &Node) -> bool {
-    match (
-        scope.within.as_ref().filter(|within| within.picks),
-        item(node),
-    ) {
-        (Some(within), Some((_, label))) => {
-            (scope.state.search_of(&within.opener)).is_none_or(|search| has(label, &search))
+    let Some(within) = scope.within.as_ref().filter(|within| within.picks) else {
+        return true;
+    };
+    let Some(search) = scope.state.search_of(&within.opener) else {
+        return true;
+    };
+    match (item(node), node) {
+        (Some((_, label)), _) => has(label, &search),
+        (None, Node::Row(b) | Node::Col(b) | Node::Plain(b)) if b.overlay.is_none() => {
+            let mut items = Vec::new();
+            items_in(b, &mut items);
+            items.is_empty() || items.iter().any(|(_, label)| has(label, &search))
         }
         _ => true,
     }

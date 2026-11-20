@@ -53,6 +53,8 @@ export const actions: Record<string, Action<Song>> = {
   notes_right: notes(["right"], "Move the chosen notes later", "right"),
   notes_up: notes(["up"], "Move the chosen notes up", "up"),
   notes_down: notes(["down"], "Move the chosen notes down", "down"),
+  notes_shorter: notes(["shift-left"], "Make the chosen notes shorter", "shorter"),
+  notes_longer: notes(["shift-right"], "Make the chosen notes longer", "longer"),
   notes_up_octave: notes(["shift-up"], "Move the chosen notes up an octave", "octave-up"),
   notes_down_octave: notes(["shift-down"], "Move the chosen notes down an octave", "octave-down"),
 

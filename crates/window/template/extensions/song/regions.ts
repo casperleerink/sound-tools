@@ -26,7 +26,17 @@ export const regionEdits = (song: Song) => {
   const fadeMs = (region: Region, ticks: number, seconds: number, other: number) =>
     clamp(Math.round(secondsBetween(changes(), region.start, region.start + Math.max(ticks, 0)) * 1000), 0, Math.max(seconds * 1000 - other, 0));
   const fadeTicks = (region: Region, ms: number) => ticksAcross(changes(), region.start, ms / 1000);
-  return {
+  /** The ticks `seconds` take up to `tick`, through each tempo before it; at most `tick`. */
+  const ticksBefore = (tick: number, seconds: number) => {
+    let [low, high] = [0, tick];
+    for (let i = 0; i < 48; i++) {
+      const middle = (low + high) / 2;
+      if (secondsBetween(changes(), middle, tick) > seconds) low = middle;
+      else high = middle;
+    }
+    return tick - high;
+  };
+  const edits = {
     /** A drag of its left edge by `dx`: it starts later or earlier, what it plays of its file with it. */
     trimStart(key: string, p: Pick<Pointer, "dx">) {
       edit("Trim a region", [key], (region) => {
@@ -63,5 +73,32 @@ export const regionEdits = (song: Song) => {
       edit("Change gain", keys, (region) => (region.gain_db = gainOf(Math.max(region.gain_db, GAIN[0]) + by)));
       return true;
     },
+    /** A knob of its card: its gain in dB. */
+    setGain(key: string, db: number) {
+      edit("Change gain", [key], (region) => (region.gain_db = gainOf(db)));
+    },
+    /** A knob of its card: a fade `ms` long, at most what plays (`seconds`, when known) less the other fade. */
+    setFade(key: string, which: "in" | "out", ms: number, seconds: number | null) {
+      edit(which === "in" ? "Change fade in" : "Change fade out", [key], (region) => {
+        const other = which === "in" ? region.fade_out_ms : region.fade_in_ms;
+        const fade = clamp(Math.round(ms), 0, seconds === null ? Infinity : Math.max(seconds * 1000 - other, 0));
+        if (which === "in") region.fade_in_ms = fade;
+        else region.fade_out_ms = fade;
+      });
+    },
+    /** A knob of its card: where in its file it starts, in seconds. What it plays stays where it was in time: it starts that much later or earlier. */
+    setStart(key: string, at: number) {
+      const region = itemAt(song.children, key);
+      if (region?.tool !== "region") return;
+      const { start, file_start_seconds, file_end_seconds } = region.state;
+      const to = clamp(at, 0, file_end_seconds === null ? Infinity : file_end_seconds - 0.05);
+      const later = to - file_start_seconds;
+      edits.trimStart(key, { dx: later >= 0 ? ticksAcross(changes(), start, later) : -ticksBefore(start, -later) });
+    },
+    /** A knob of its card: where in its file it ends, in seconds. */
+    setEnd(key: string, at: number) {
+      edit("Trim a region", [key], (region) => (region.file_end_seconds = Math.max(at, region.file_start_seconds + 0.05)));
+    },
   };
+  return edits;
 };

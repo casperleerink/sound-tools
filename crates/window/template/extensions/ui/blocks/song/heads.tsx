@@ -195,7 +195,7 @@ const MasterRow = ({ page }: { page: Page }) => {
       onPress={() => latest(page).edits.tracks.openMaster()}>
       <box w={8} h={8} radius="full" border="text-secondary" />
       <row grow={1}><text style="heading" color="text">Master</text></row>
-      <Toggle id="mixer-toggle" label={mixer ? "Hide the mixer" : "Show the mixer"} icon="sliders-horizontal" on={mixer} tip={mixer ? "Hide the mixer" : "Show the mixer"} onToggle={() => latest(page).edits.tracks.toggleMixer()} />
+      <Toggle id="mixer-toggle" label={mixer ? "Hide the mixer" : "Show the mixer"} icon="sliders-horizontal" on={mixer} tip={mixer ? "Hide the mixer" : "Show the mixer"} keys={keysOf(page.song.shortcut("mixer"))} onToggle={() => latest(page).edits.tracks.toggleMixer()} />
     </row>
   );
 };

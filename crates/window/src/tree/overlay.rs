@@ -118,8 +118,10 @@ fn overlays_in(scope: &Scope, node: &Node, owner: Option<&str>, layer: &mut Vec<
                 overlays_in(&inside, child, None, layer);
             }
             Opens::Press | Opens::Menu => {}
+            // Keyed, so a tip that comes or goes before an open overlay is not taken for it.
             Opens::Hover => layer.push(
-                el().anchored(&opener, side, align, spec.gap)
+                el().key(format!("{opener}-tip"))
+                    .anchored(&opener, side, align, spec.gap)
                     .hover_group_shared(opener)
                     .inert()
                     .child(build(scope, child).group_opacity(0.0, 1.0)),

@@ -58,9 +58,11 @@ fn the_generic_card_of_every_built_in_device_has_a_control_for_each_value_of_its
     }
     let facts = state.facts_now(&ids.iter().cloned().collect::<BTreeSet<_>>());
     state.settle();
-    let keys: Vec<String> = (controls::collect(&state).controls.into_iter())
-        .map(|control| control.key)
-        .collect();
+    let keys = |state: &State| -> Vec<String> {
+        (controls::collect(state).controls.into_iter())
+            .map(|control| control.key)
+            .collect()
+    };
     for (id, tool) in ids.iter().zip(&tools) {
         let record: Value = serde_json::from_str(&state.project().state_json(id).unwrap()).unwrap();
         let fields = facts[id].to_value()["fields"].clone();
@@ -71,9 +73,29 @@ fn the_generic_card_of_every_built_in_device_has_a_control_for_each_value_of_its
         for path in &paths {
             // A knob's or switch's key is its path; a choice side by side has one an option.
             let key = format!("{prefix}{path}");
-            let shown =
-                (keys.iter()).any(|shown| *shown == key || shown.starts_with(&format!("{key}-")));
-            assert!(shown, "{tool} has no control of {path}");
+            let shown = |keys: &[String]| {
+                (keys.iter()).any(|shown| *shown == key || shown.starts_with(&format!("{key}-")))
+            };
+            if !shown(&keys(&state)) {
+                // A value of an item of a list or a map shows once the card's chooser picks it.
+                let parts: Vec<&str> = path.split('.').collect();
+                let chooser = |n: usize| format!("{prefix}{}", parts[..n].join("."));
+                let item = |n: usize| format!("{}-{}", chooser(n), parts[n]);
+                let at = (1..parts.len())
+                    .find(|&n| {
+                        let keys = keys(&state);
+                        keys.contains(&chooser(n)) || keys.contains(&item(n))
+                    })
+                    .unwrap_or_else(|| panic!("{tool} has no control of {path}"));
+                let item = item(at);
+                if !keys(&state).contains(&item) {
+                    act(&mut state, json!({ "key": chooser(at), "action": "press" }));
+                    state.settle();
+                }
+                act(&mut state, json!({ "key": item, "action": "press" }));
+                state.settle();
+            }
+            assert!(shown(&keys(&state)), "{tool} has no control of {path}");
         }
         if tool == "eq" {
             assert!(paths.contains(&"bands.3.gain_db".to_string()), "{paths:?}");
