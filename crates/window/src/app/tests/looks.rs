@@ -1,5 +1,6 @@
 //! The looks `--tree` warns of: a background flush with one edge of its frame but a little in
-//! from the edges beside it, as the mixer's chosen name once stood.
+//! from the edges beside it, as the mixer's chosen name once stood, and a background over a
+//! border around it, as the mixer once lay over the line above it.
 
 use serde_json::json;
 
@@ -37,11 +38,45 @@ export const columns = tool({
 });
 "#;
 
+/// Lines that boxes without keys draw, and what lies over them: the space under the tracks as
+/// it was, its line under the mixer that fills it; a card whose header has a fill on hover.
+/// Then what is right: a button's line round its own words, a light that fills a pad while it
+/// sounds, rows that scroll under the top of their list, and a line drawn over what fills it.
+const LINES: &str = r#"import { boolean, h, input, tool } from "./sdk";
+export const lines = tool({
+  name: "lines", title: "Lines", when: "Never", doc: "Lines.", sound: () => input,
+  state: { on: boolean({ default: false }) },
+  view: () => (
+    <col pad={2} gap={2}>
+      <box w={300} h={60} border="border-strong" borderSides={[1, 0, 0, 0]}>
+        <col key="mixer" w="full" h="full" fill="background" />
+      </box>
+      <col w={300} h={60} radius="lg" fill="surface" border="border-strong">
+        <row key="header" h={32} radius="md" hover="fill" />
+      </col>
+      <row key="button" h={28} pad={[2, 0]} align="center" radius="md" border="border" hover="fill">
+        <text>Play</text>
+      </row>
+      <box w={60} h={60} radius="md" fill="fill" border="text-secondary" clip>
+        <box key="light" at={[0, 0]} w={60} h={60} fill="sound/24" inert />
+      </box>
+      <col w={300} h={60} border="border" borderSides={[1, 0, 1, 0]} scroll="y">
+        <row key="row" w="full" h={28} fill="selected" />
+        <row w="full" h={60} />
+      </col>
+      <box w={300} h={60}>
+        <col key="under" w="full" h="full" fill="background" />
+        <box inset={[0, 0, 0, null]} h={1} fill="border-strong" inert />
+      </box>
+    </col>
+  ),
+});
+"#;
+
 fn seen(window: &rune::Runtime<State>) -> Vec<String> {
-    let elements = window.elements().into_iter();
-    let shown: Vec<Seen> = elements
-        .filter(|element| !element.moving && !element.exiting)
+    let shown: Vec<Seen> = (window.elements().into_iter())
         .map(|element| Seen {
+            moving: element.moving || element.exiting,
             path: element.path,
             key: element.key,
             label: element.label,
@@ -52,19 +87,37 @@ fn seen(window: &rune::Runtime<State>) -> Vec<String> {
     mistakes(&shown, &paints(&window.state))
 }
 
-fn columns() -> Vec<String> {
-    let (_scratch, folder) = with_tools(&[("columns", COLUMNS)]);
-    seen(&laid_out(opened(&folder)))
+/// What the warnings say of the view of `tool`, by the key in it of what each names.
+fn said_of(tool: &str, view: &str) -> Vec<(String, String)> {
+    let (_scratch, folder) = with_tools(&[(tool, view)]);
+    let prefix = format!("`t00/chain/{tool}:");
+    let said = seen(&laid_out(opened(&folder)));
+    (said.into_iter())
+        .map(|line| {
+            let key = (line.strip_prefix(&prefix))
+                .and_then(|rest| rest.split_once('`'))
+                .map_or_else(String::new, |(key, _)| key.to_string());
+            (key, line)
+        })
+        .collect()
+}
+
+fn flush(tool_said: Vec<(String, String)>) -> Vec<(String, String)> {
+    (tool_said.into_iter())
+        .filter(|(_, line)| line.contains("touches the"))
+        .collect()
 }
 
 #[test]
 fn a_name_flush_with_the_top_of_its_column_but_in_from_its_sides_is_named_with_its_room() {
-    let said = columns();
+    let said = flush(said_of("columns", COLUMNS));
     let of = |key: &str| {
-        said.iter()
-            .find(|line| line.starts_with(&format!("`t00/chain/columns:{key}`")))
+        (said.iter())
+            .find(|(named, _)| named == key)
+            .map(|(_, line)| line)
+            .unwrap_or_else(|| panic!("{said:#?}"))
     };
-    let chosen = of("chosen").unwrap_or_else(|| panic!("{said:#?}"));
+    let chosen = of("chosen");
     assert!(
         chosen.contains("its background touches the top edge"),
         "{chosen}"
@@ -73,7 +126,7 @@ fn a_name_flush_with_the_top_of_its_column_but_in_from_its_sides_is_named_with_i
         chosen.contains("4 points in from the left and right edges"),
         "{chosen}"
     );
-    let hovered = of("hovered").unwrap_or_else(|| panic!("{said:#?}"));
+    let hovered = of("hovered");
     assert!(
         hovered.contains("its hover background touches the top edge"),
         "{hovered}"
@@ -82,20 +135,64 @@ fn a_name_flush_with_the_top_of_its_column_but_in_from_its_sides_is_named_with_i
 
 #[test]
 fn a_name_that_reaches_every_edge_or_has_room_all_round_is_not_named() {
-    let said = columns();
-    assert_eq!(said.len(), 2, "{said:#?}");
+    let said = flush(said_of("columns", COLUMNS));
+    let named: Vec<&str> = said.iter().map(|(key, _)| key.as_str()).collect();
+    assert_eq!(named, ["chosen", "hovered"], "{said:#?}");
+}
+
+#[test]
+fn a_background_over_the_line_of_a_box_without_a_key_is_named_with_the_side() {
+    let said = said_of("lines", LINES);
+    let of = |key: &str| -> Vec<&str> {
+        (said.iter())
+            .filter(|(named, _)| named == key)
+            .map(|(_, line)| line.as_str())
+            .collect()
+    };
+    let mixer = of("mixer");
+    assert_eq!(mixer.len(), 1, "{said:#?}");
     assert!(
-        !said
-            .iter()
-            .any(|line| line.contains(":edge`") || line.contains(":room`")),
+        mixer[0].contains("its background lies over the top line of the box at")
+            && mixer[0].contains("all along it"),
+        "{}",
+        mixer[0]
+    );
+    let header = of("header").join("\n");
+    for side in ["top", "right", "left"] {
+        assert!(
+            header.contains(&format!("its hover background lies over the {side} line")),
+            "{header}"
+        );
+    }
+    assert!(
+        header.contains("pokes over the rounded top left, top right corners"),
+        "{header}"
+    );
+}
+
+#[test]
+fn a_control_round_its_own_content_a_light_a_scrolled_row_or_a_line_drawn_over_is_not_named() {
+    let said = said_of("lines", LINES);
+    let named: Vec<&str> = said.iter().map(|(key, _)| key.as_str()).collect();
+    assert!(
+        named.iter().all(|key| ["mixer", "header"].contains(key)),
         "{said:#?}"
     );
 }
 
+/// Frames until what opened or moved has come to rest: what still moves is not checked.
+fn settle(window: &mut rune::Runtime<State>) {
+    redraw(window);
+    for _ in 0..4 {
+        window.frame(0.5);
+    }
+}
+
 /// The template's pages as the composer opens them: the song with every effect's card and each
-/// instrument's, the mixer with a strip chosen, the note editor, the open menus, the gallery.
+/// instrument's and a return, a track's lanes, the master and a return chosen, the mixer with a
+/// strip chosen, the note editor, the open menus, the gallery.
 #[test]
-fn the_template_has_no_background_flush_with_one_edge_and_in_from_the_next() {
+fn the_template_has_no_mistakes_in_its_looks() {
     let scratch = new_project();
     let folder = scratch.path().join("song");
     let song = folder.join("state/song");
@@ -132,6 +229,19 @@ fn the_template_has_no_background_flush_with_one_edge_and_in_from_the_next() {
         std::fs::write(song.join(format!("{track}/synth.json")), record).unwrap();
     }
     let mut window = laid_out(opened(&folder));
+    act(
+        &mut window.state,
+        json!({ "key": "add-track-kind", "action": "open" }),
+    );
+    act(
+        &mut window.state,
+        json!({ "key": "add-track-kind-Return track", "action": "press" }),
+    );
+    act(
+        &mut window.state,
+        json!({ "key": "track-t00", "action": "press" }),
+    );
+    settle(&mut window);
     let mut said = Vec::new();
     let mut look = |window: &rune::Runtime<State>, scene: &str| {
         said.extend(
@@ -142,12 +252,15 @@ fn the_template_has_no_background_flush_with_one_edge_and_in_from_the_next() {
     };
     look(&window, "song");
     let steps = [
+        ("lanes", json!({ "key": "lanes-t00", "action": "press" })),
         (
             "wavetable",
             json!({ "key": "track-t01", "action": "press" }),
         ),
         ("sampler", json!({ "key": "track-t02", "action": "press" })),
         ("drum pad", json!({ "key": "track-t03", "action": "press" })),
+        ("master", json!({ "key": "master", "action": "press" })),
+        ("return", json!({ "key": "track-ret-a", "action": "press" })),
         (
             "note editor",
             json!({ "key": "clip-t00/bass", "action": "press", "value": { "clicks": 2 } }),
@@ -160,7 +273,7 @@ fn the_template_has_no_background_flush_with_one_edge_and_in_from_the_next() {
     ];
     for (scene, step) in steps {
         act(&mut window.state, step);
-        redraw(&mut window);
+        settle(&mut window);
         look(&window, scene);
     }
     act(&mut window.state, json!({ "action": "song.mixer" }));
@@ -174,6 +287,9 @@ fn the_template_has_no_background_flush_with_one_edge_and_in_from_the_next() {
         json!({ "key": "snap", "action": "open" }),
         json!({ "key": "colour-t00", "action": "open" }),
         json!({ "key": "slot-instrument-title", "action": "open" }),
+        json!({ "key": "slot-compressor-sidechain", "action": "open" }),
+        json!({ "key": "t00/chain/eq:bands[0].shape", "action": "open" }),
+        json!({ "key": "t00/synth:cutoff_hz-value", "action": "open" }),
         json!({ "key": "t00/synth:card-more", "action": "press" }),
         json!({ "key": "track-t00", "action": "menu" }),
         json!({ "key": "clip-t00/bass", "action": "menu" }),
@@ -181,12 +297,12 @@ fn the_template_has_no_background_flush_with_one_edge_and_in_from_the_next() {
     for menu in menus {
         let scene = format!("menu of {}", menu["key"]);
         act(&mut window.state, menu);
-        redraw(&mut window);
+        settle(&mut window);
         look(&window, &scene);
         key(&mut window, rune::Key::Escape);
     }
     window.state.main = Some(sound_core::InstanceId::new("gallery").unwrap());
-    redraw(&mut window);
+    settle(&mut window);
     look(&window, "gallery");
     assert!(said.is_empty(), "{said:#?}");
 }
