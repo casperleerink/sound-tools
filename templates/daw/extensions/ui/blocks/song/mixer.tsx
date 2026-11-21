@@ -12,8 +12,10 @@ export type MixerProps = { page: Page };
 
 /** The room over and under the strips, between their parts, a strip's name, a row of sends, and the column of the returns' names left of the sends. */
 const [PAD, GAP, NAME, SEND, NAMES] = [8, 4, 28, 28, 88];
+/** The room inside a column's edge, the same on every side: its chosen name stands clear of it. */
+const INSET = 4;
 /** What a column holds over its fader: its name; and under it, its value line. */
-const OVER = NAME + GAP;
+const OVER = INSET + NAME + GAP;
 /** A strip with the room around it. */
 const COLUMN = STRIP + 4;
 const UNDER = VALUE_LINE;
@@ -27,7 +29,7 @@ const UNDER = VALUE_LINE;
 export const Mixer = ({ page }: MixerProps) => {
   const sent = page.returns.filter((back) => page.tracks.some((each) => sendsOf(each).includes(`send-${back.name}`)));
   // The faders take the room the sends leave; with more sends than fit, the mixer scrolls.
-  const fader = Math.max(MIXER - 2 * PAD - OVER - UNDER - sent.length * (GAP + SEND), SHORTEST_FADER);
+  const fader = Math.max(MIXER - 2 * PAD - OVER - UNDER - INSET - sent.length * (GAP + SEND), SHORTEST_FADER);
   const sends = (each: Each) => sent.map((back) => [back.name, sendsOf(each).includes(`send-${back.name}`) ? (sendOf(page, each.name, back.name).value) : null] as const);
   const column = (each: Each | undefined) => {
     const name = each?.name ?? "master";
@@ -36,7 +38,7 @@ export const Mixer = ({ page }: MixerProps) => {
       page.song.state.solo.includes(name), page.song.memory.armed.includes(name), page.song.held(`${name}/mix.gain_db`), page.song.held(`${name}/mix.pan`), sent.map((back) => page.song.held(`${name}/send-${back.name}.gain_db`)).join(), clearsOf(`meter-${name}`), sent.length];
     return memo(`mixer-${name}`, deps, () => <Column page={page} each={each} sent={sent} fader={fader} />);
   };
-  const tall = 2 * PAD + OVER + fader + UNDER + sent.length * (GAP + SEND);
+  const tall = 2 * PAD + OVER + fader + UNDER + INSET + sent.length * (GAP + SEND);
   return (
     <col key="mixer" label="Mixer" w="full" h="full" fill="background" scroll="y">
       <row w="full" h={tall} align="start">
@@ -73,7 +75,7 @@ const Column = ({ page, each, sent, fader }: { page: Page; each: Each | undefine
   const chosen = page.song.memory.track === name;
   const press = (clicks: number) => (each ? (clicks === 2 ? page.edits.tracks.openPanel(each.name) : choose(page.song, [], each.name)) : clicks === 2 && page.edits.tracks.openMaster());
   return (
-    <col w={COLUMN} pad={[1, 0]} gap={1} radius="lg" fill="background" border="border-strong">
+    <col w={COLUMN} pad={1} gap={1} radius="lg" fill="background" border="border-strong">
       <row key={`strip-name-${name}`} label={`Choose ${title} strip`} role="tab" value={chosen} h={NAME} pad={[2, 0]} gap={2} align="center" radius="md" fill={chosen ? "selected" : undefined} hover="fill" onPress={(p) => press(p.clicks)}>
         <Dot color={each && (muted(each) ? "text-muted" : colourOf(each))} />
         <text style="heading" color={chosen ? "text" : "text-secondary"} truncate>{title}</text>
