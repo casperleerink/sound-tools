@@ -1,6 +1,5 @@
 //! An LFO, for a processor that moves one of its values up and down over time: the cutoff of a
-//! filter, the delay of a chorus. Next to [`Smoothed`](sound_core::Smoothed), a helper a processor
-//! uses per block or per frame.
+//! filter, the delay of a chorus.
 
 use std::f32::consts::TAU;
 

@@ -2,8 +2,6 @@
 //! the drive of a filter, the warp of an oscillator. A bend makes harmonics far above the top
 //! of the hearing range, and at the sample rate those fold back into it as tones that are not
 //! in tune with anything. At four times the rate they are taken away first, on the way down.
-//! Next to [`Smoothed`](sound_core::Smoothed), a helper a processor uses per frame. The core itself
-//! bends nothing.
 //!
 //! Each stage is a half band filter: a linear phase FIR filter whose cutoff is a quarter of its
 //! own rate, a windowed sinc (Kaiser window). Every other tap of it is zero and the middle one
