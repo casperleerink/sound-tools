@@ -220,8 +220,16 @@ impl State {
         let mut chosen_input = None;
         let opened = match headless {
             true => {
-                let plugins =
-                    Plugins::listing(Vec::new(), ScanCommand::this_program()?, ScanCache::none());
+                // Found as `--inspect` finds them, and never loaded. A test looks in no folder
+                // of this computer and leaves its scan cache alone.
+                let plugins = match cfg!(test) {
+                    true => Plugins::listing(
+                        Vec::new(),
+                        ScanCommand::this_program()?,
+                        ScanCache::none(),
+                    ),
+                    false => runtime::plugins_for_inspecting()?,
+                };
                 let (control, engine) = Engine::new(runtime::OFFLINE);
                 let engine = Box::new(engine);
                 anyhow::Ok((
