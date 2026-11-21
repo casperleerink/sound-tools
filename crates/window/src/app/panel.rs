@@ -280,7 +280,7 @@ pub(super) fn view(state: &State) -> Option<El> {
             .key("left-panel")
             .w(WIDTH)
             .h_full()
-            .border_sides([1.0, 1.0, 0.0, 0.0], theme.color("border"))
+            .border_sides([0.0, 1.0, 0.0, 0.0], theme.color("border"))
             .on_key(|s: &mut State, key: &KeyEvent, tx: &mut Tx| {
                 let done = super::keys::panel_key(s, key, true, tx);
                 if done {
