@@ -101,10 +101,11 @@ export const song = tool({
   },
 });
 
-/** What shows under the tracks, `tall` points, under a line. */
+/** What shows under the tracks, `tall` points, under a line: drawn over it, as a border would lie under what fills it. */
 const Below = ({ h: tall, children }: { h: number; children?: Child }) => (
-  <box w="full" h={tall} border="border-strong" borderSides={[1, 0, 0, 0]}>
+  <box w="full" h={tall}>
     {children}
+    <box inset={[0, 0, 0, null]} h={1} fill="border-strong" inert />
   </box>
 );
 
