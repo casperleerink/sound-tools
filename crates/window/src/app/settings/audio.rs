@@ -86,14 +86,9 @@ pub(super) fn view(state: &State, page: &Page) -> El {
         );
     };
     let card = |output: bool, title: &str, glyph: &'static Icon| {
-        let rows = rows(state, devices, output);
-        let last = rows.len().saturating_sub(1);
-        let rows = rows
-            .into_iter()
-            .enumerate()
-            .map(|(index, (name, picked, note))| {
-                device_row(state, output, index, &name, picked, note, index < last)
-            });
+        let rows = rows(state, devices, output).into_iter().enumerate().map(
+            |(index, (name, picked, note))| device_row(state, output, index, &name, picked, note),
+        );
         col()
             .w_full()
             .gap(2.0)
@@ -124,7 +119,7 @@ pub(super) fn view(state: &State, page: &Page) -> El {
                     .label(title)
                     .focus_group()
                     .w_full()
-                    .children(rows),
+                    .children(theme.lined(rows)),
             )
     };
     col()
@@ -141,7 +136,6 @@ fn device_row(
     name: &str,
     picked: bool,
     note: Option<String>,
-    line: bool,
 ) -> El {
     let theme = &state.theme;
     let accent = theme.color("focus");
@@ -179,9 +173,6 @@ fn device_row(
                 .min_w(0.0)
                 .a11y_hidden(),
         );
-    if line {
-        e = e.border_sides([0.0, 0.0, 1.0, 0.0], theme.color("border-strong"));
-    }
     if let Some(note) = note {
         e = e.description(note.clone()).child(
             text(note)
