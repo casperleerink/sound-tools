@@ -237,7 +237,8 @@ fn window(arguments: &[String], last: bool) -> Result<()> {
 }
 
 /// Adds what the window knows to the tree Rune wrote: every control with its label, role,
-/// value or state and actions, where the piece plays, and the feeds the views read.
+/// value or state and actions, where the piece plays, the feeds the views read, and the
+/// mistakes in the looks of the views.
 fn add_report(path: &std::path::Path) -> Result<()> {
     let report = app::REPORT
         .lock()
@@ -253,6 +254,7 @@ fn add_report(path: &std::path::Path) -> Result<()> {
     if let Some(tree) = tree.as_object_mut() {
         tree.extend(report);
     }
+    tree::looks::warn_in(&mut tree);
     std::fs::write(path, serde_json::to_string_pretty(&tree)?)?;
     Ok(())
 }

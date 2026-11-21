@@ -37,6 +37,11 @@ impl State {
             return changed;
         }
         self.lives.keep(&tree::bound(self));
+        if self.headless() {
+            *tree::looks::SHOWN
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(tree::looks::paints(self));
+        }
         tree::report_missing(self);
         self.planes.discover(self);
         if let Some(problems) = self.planes.misplaced(self) {
