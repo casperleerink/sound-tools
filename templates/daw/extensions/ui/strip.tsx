@@ -4,7 +4,7 @@ import { muted, titleOf } from "../song/model";
 import { panOf, volumeOf, type Page } from "../song/view";
 import { Fader, LINE_HEIGHT, UNDER } from "./fader";
 import { Knob } from "./knob";
-import { Meter, Peak } from "./meter";
+import { Peak } from "./meter";
 import { Toggle } from "./toggle";
 
 /**
@@ -14,17 +14,19 @@ import { Toggle } from "./toggle";
  */
 export type StripProps = { page: Page; name: string; height: number; full?: boolean; children?: Child };
 
-/** How wide a strip is, and a full one; the shortest its fader is, beside the pan and the switches; what is under the fader. */
-export const [STRIP, FULL_STRIP, SHORTEST_FADER, VALUE_LINE] = [96, 128, 128, UNDER + LINE_HEIGHT];
-/** The room left of the meter (px 2), a meter, the room after it and after the fader, the column beside it; the loudest number under the meter. */
-const [LEFT, METER, GAP, SIDE, PEAK, CELL] = [8, 10, 4, 32, 34, theme.size.cell];
-/** Where the value line starts, from the strip's left: after the loudest number. */
-const LINE_AT = 40;
+/** How wide a strip is, and a full one; the shortest its fader is, beside the pan and the switches. */
+export const [STRIP, FULL_STRIP, SHORTEST_FADER] = [80, 114, 128];
+/** The room left of the fader (px 2), the column beside it, the cell beside it in a full strip. */
+const [LEFT, SIDE, CELL] = [8, 32, theme.size.cell];
+/** Under the fader: its value line, as wide as "−12.5 dB", and under that the loudest number, as wide as "−12.5". */
+const [LINE, LOUDEST, PEAK] = [52, 16, 34];
+/** What is under the fader of a strip: its value line and the loudest number. */
+export const UNDER_FADER = UNDER + LINE_HEIGHT + LOUDEST;
 
 /**
  * The channel of a track, a return or the master: its fader over the level of each channel,
- * beside its pan, mute and solo (an audio track's arm too), and under them the loudest it played
- * and its volume, typed with a click. The numbers at rest (0 dB, centre) show only under the
+ * beside its pan, mute and solo (an audio track's arm too), and under them its volume, typed with
+ * a click, and under that the loudest it played. The numbers at rest (0 dB, centre) show only under the
  * pointer, but in a full strip. Its controls are one stop of Tab, which the arrows walk.
  */
 export const Strip = ({ page, name, height, full = false, children }: StripProps) => {
@@ -46,16 +48,13 @@ export const Strip = ({ page, name, height, full = false, children }: StripProps
     ),
   ];
   return (
-    <row key={`strip-${name}`} label={`${title} strip`} role="group" group hoverGroup w={full ? FULL_STRIP : STRIP} h={height + VALUE_LINE} pad={[2, 0]} gap={1}>
-      <box w={METER} h={height}>
-        <Meter {...meter} label={`Level ${title}`} w={METER} h={height} />
-        {!full && (
-          <box at={[GAP - LEFT, height + UNDER]} w={PEAK} h={LINE_HEIGHT}>
-            <Peak {...meter} label={`Loudest ${title}`} w={PEAK} />
-          </box>
-        )}
-      </box>
-      <Fader {...volume} line={full ? undefined : { x: LEFT + METER + GAP - LINE_AT, w: STRIP - LINE_AT - GAP, quiet: true }} />
+    <row key={`strip-${name}`} label={`${title} strip`} role="group" group hoverGroup w={full ? FULL_STRIP : STRIP} h={height + UNDER_FADER - (full ? LOUDEST : 0)} pad={[2, 0]} justify="between">
+      <Fader {...volume} meter={{ ...meter, label: `Level ${title}` }} line={{ x: LEFT, w: LINE, quiet: !full }} />
+      {!full && (
+        <box at={[(LINE - PEAK) / 2, height + UNDER + LINE_HEIGHT]} w={PEAK} h={LOUDEST}>
+          <Peak {...meter} label={`Loudest ${title}`} w={PEAK} />
+        </box>
+      )}
       {full ? (
         <col w={CELL} h={height} gap={1} align="center">
           <Knob {...pan} text="Pan" />

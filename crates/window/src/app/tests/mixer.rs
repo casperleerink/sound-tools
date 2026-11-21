@@ -54,14 +54,16 @@ fn wait(window: &mut rune::Runtime<State>, seconds: f64) {
     window.frame(seconds);
 }
 
-/// Grabs the fader, pulls it down 6 points `steps` times, a frame of `seconds` after each, and lets go.
+/// Grabs the fader on its left level bar, pulls it down 6 points `steps` times, a frame of
+/// `seconds` after each, and lets go.
 fn pull_down(
     window: &mut rune::Runtime<State>,
     steps: usize,
     seconds: f64,
     during: impl Fn(&State),
 ) {
-    let (x, mut y) = window.find(FADER).unwrap_or_else(|| panic!("no {FADER}"));
+    let (middle, mut y) = window.find(FADER).unwrap_or_else(|| panic!("no {FADER}"));
+    let x = middle - 4.0;
     window.pointer_down(x, y);
     wait(window, seconds);
     for _ in 0..steps {
@@ -95,7 +97,7 @@ fn a_mixer_fader_plays_as_it_drags_and_is_one_step_of_undo() {
     });
     let kept = saved(&window.state).as_f64().unwrap();
     assert!(kept < -3.0, "{kept}");
-    assert_eq!(played(&window.state), json!(kept));
+    assert_eq!(played(&window.state).as_f64(), Some(kept));
     let changed = window.state.project().undo_label();
     assert_eq!(changed.as_deref(), Some("Change the volume"));
     window.state.undo().unwrap();

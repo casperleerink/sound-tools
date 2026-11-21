@@ -6,17 +6,16 @@ import { Button } from "../../button";
 import { Dot } from "../../dot";
 import { Knob } from "../../knob";
 import { clearsOf } from "../../meter";
-import { SHORTEST_FADER, STRIP, Strip, VALUE_LINE } from "../../strip";
+import { SHORTEST_FADER, STRIP, Strip, UNDER_FADER } from "../../strip";
 
 export type MixerProps = { page: Page };
 
 /** The room over and under the strips, between their parts, a strip's name, a row of sends, and the column of the returns' names left of the sends. */
 const [PAD, GAP, NAME, SEND, NAMES] = [8, 4, 28, 28, 88];
-/** What a column holds over its fader: its name; and under it, its value line. */
+/** What a column holds over its fader: its name. */
 const OVER = NAME + GAP;
 /** A strip with the room around it. */
-const COLUMN = STRIP + 4;
-const UNDER = VALUE_LINE;
+const COLUMN = STRIP + 8;
 
 /**
  * A strip per track, which scroll, then pinned at the right behind a line the returns' and the
@@ -27,7 +26,7 @@ const UNDER = VALUE_LINE;
 export const Mixer = ({ page }: MixerProps) => {
   const sent = page.returns.filter((back) => page.tracks.some((each) => sendsOf(each).includes(`send-${back.name}`)));
   // The faders take the room the sends leave; with more sends than fit, the mixer scrolls.
-  const fader = Math.max(MIXER - 2 * PAD - OVER - UNDER - sent.length * (GAP + SEND), SHORTEST_FADER);
+  const fader = Math.max(MIXER - 2 * PAD - OVER - UNDER_FADER - sent.length * (GAP + SEND), SHORTEST_FADER);
   const sends = (each: Each) => sent.map((back) => [back.name, sendsOf(each).includes(`send-${back.name}`) ? (sendOf(page, each.name, back.name).value) : null] as const);
   const column = (each: Each | undefined) => {
     const name = each?.name ?? "master";
@@ -36,13 +35,13 @@ export const Mixer = ({ page }: MixerProps) => {
       page.song.state.solo.includes(name), page.song.memory.armed.includes(name), page.song.held(`${name}/mix.gain_db`), page.song.held(`${name}/mix.pan`), sent.map((back) => page.song.held(`${name}/send-${back.name}.gain_db`)).join(), clearsOf(`meter-${name}`), sent.length];
     return memo(`mixer-${name}`, deps, () => <Column page={page} each={each} sent={sent} fader={fader} />);
   };
-  const tall = 2 * PAD + OVER + fader + UNDER + sent.length * (GAP + SEND);
+  const tall = 2 * PAD + OVER + fader + UNDER_FADER + sent.length * (GAP + SEND);
   return (
     <col key="mixer" label="Mixer" w="full" h="full" fill="background" scroll="y">
       <row w="full" h={tall} align="start">
         {sent.length > 0 && (
           <col w={NAMES} pad={[3, 0]} gap={1}>
-            <box h={PAD + OVER + fader + UNDER} />
+            <box h={PAD + OVER + fader + UNDER_FADER} />
             {sent.map((back) => <row h={SEND} align="center"><text style="label" color="text-secondary" truncate>{titleOf(back)}</text></row>)}
           </col>
         )}

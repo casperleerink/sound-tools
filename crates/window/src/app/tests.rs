@@ -1839,9 +1839,9 @@ fn enter_on_a_fader_types_its_value_and_the_keys_stay_with_it() {
     let scratch = new_project();
     let mut window = laid_out(opened(&scratch.path().join("song")));
     let gain = |state: &State| record(state, "song/t00/mix.json")["state"]["gain_db"].clone();
-    // The strip is one stop of Tab, its meter first; the arrows walk it.
+    // The strip is one stop of Tab, the meter over its fader first; the arrows walk it.
     tab_to(&mut window, "meter-t00");
-    key(&mut window, rune::Key::Right);
+    key(&mut window, rune::Key::Down);
     assert_eq!(focused(&window).as_deref(), Some("fader-t00"));
     key(&mut window, rune::Key::Enter);
     assert_eq!(window.state.open, ["fader-t00-value"]);

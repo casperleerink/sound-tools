@@ -6,7 +6,7 @@ import { fakeSong, trackOf } from "../../../song/fake";
 import { song } from "../../../song";
 import { MIXER, pageOf } from "../../../song/view";
 import { Mixer } from "./mixer";
-import { SHORTEST_FADER, VALUE_LINE } from "../../strip";
+import { SHORTEST_FADER, UNDER_FADER } from "../../strip";
 import { travelled, VOLUME } from "../../value";
 
 type Song = Self<typeof song>;
@@ -55,7 +55,7 @@ test("a strip per track in their order in the part that scrolls; the returns and
   const scrolled = find("mixer-tracks");
   // Placed in the plane in their order, a strip's width apart.
   const placed = (scrolled as { children: { place: number[]; children: { key: string }[] }[] }).children.map((each) => [each.children[0]!.key, each.place[0]]);
-  expect(placed).toEqual([["mixer-t01", 4], ["mixer-t00", 108]]);
+  expect(placed).toEqual([["mixer-t01", 4], ["mixer-t00", 96]]);
   expect([find("strip-name-t00", scrolled), find("strip-name-ret-a", scrolled), find("strip-name-master", scrolled)]).toMatchObject([{}, undefined, undefined]);
   expect([find("strip-name-ret-a"), find("strip-name-master")]).toMatchObject([{ label: "Choose Reverb strip" }, { label: "Choose Master strip" }]);
   expect(find("mixer")).toMatchObject({ h: "full", scroll: "y" });
@@ -134,7 +134,7 @@ test("the faders take the height the sends leave, never shorter than the column 
   const sends = (count: number) => Object.fromEntries([..."abcdefgh"].slice(0, count).map((letter) => [`ret-${letter}`, -6]));
   const height = (count: number) => {
     mixer(songOf([track("t00", "Drums", fader(), sends(count)), ...[..."abcdefgh"].slice(0, count).map((letter) => back(`ret-${letter}`, letter))]));
-    return (find("fader-t00") as { h: number }).h - VALUE_LINE;
+    return (find("strip-t00") as { h: number }).h - UNDER_FADER;
   };
   const [none, two, eight] = [height(0), height(2), height(8)];
   expect(none).toBeLessThan(MIXER);

@@ -1,9 +1,11 @@
 import { h, live, type Drag, type Live, type Pointer } from "../sdk";
+import { Bars, CLIP, ClipLight, meterOf, type MeterOf } from "./meter";
 import { Tooltip } from "./tooltip";
 import { TypeIn } from "./type-in";
 import { fitted, liveShownAt, liveTravelled, liveValueAt, stepped, travelled, valueAt, VOLUME, type Range } from "./value";
 
-const [CAP, TARGET, TRACK, LINE] = [10, 28, 4, 20];
+/** The handle's height; how wide the fader is; its track without a meter; the level bars with one; the value line. */
+const [CAP, TARGET, TRACK, BARS, LINE] = [6, 28, 4, 12, 20];
 /** The marks beside the track, in dB: unity brighter. */
 const MARKS = [6, 0, -6, -12, -24, -48];
 
@@ -18,14 +20,18 @@ export type FaderProps = Partial<Range> & {
   height: number;
   /** What a lane plays into it, when one does: it shows that, with a dot and a tip that say why. */
   held?: Live;
+  /** The level its handle moves over, on its scale. */
+  meter?: MeterOf;
   onChange: (db: number) => void;
 };
 
 /** What a fader and its value line share: one drag, one value. */
-const faderOf = ({ id, path, value, height, held, onChange, ...given }: FaderProps) => {
+const faderOf = ({ id, path, value, height, held, meter, onChange, ...given }: FaderProps) => {
   const range: Range = { ...VOLUME, ...given };
   const set = (to: number) => onChange(fitted(to, range));
-  const travel = height - CAP;
+  // A meter's clip light sits over the travel.
+  const top = meter ? CLIP + 1 : 0;
+  const travel = height - top - CAP;
   const at = travelled(value, range);
   // A drag from the value line moves it too.
   const movedAt = live.drag(id).dy.plus(live.drag(`${id}-value`).dy).over(-travel).plus(at);
@@ -33,7 +39,7 @@ const faderOf = ({ id, path, value, height, held, onChange, ...given }: FaderPro
   const drag: Drag = { y: [-(1 - at) * travel, at * travel], ...(path === undefined ? {} : { plays: { [path]: liveValueAt(movedAt, range) } }) };
   const dragEnd = ({ dy }: Pointer) => set(valueAt(at - dy / travel, range));
   const actions = { set, increment: (by: number) => set(stepped(value, by, range)), decrement: (by: number) => set(stepped(value, -by, range)), reset: () => set(0) };
-  return { range, set, travel, shownAt, readout: held ?? liveShownAt(movedAt, range), drag, dragEnd, actions };
+  return { range, set, top, travel, shownAt, readout: held ?? liveShownAt(movedAt, range), drag, dragEnd, actions };
 };
 
 /** Where its value line is under it: from `x` points left of the fader's own left, `w` wide; `quiet`, it shows at 0 dB only under the pointer. */
@@ -43,14 +49,17 @@ export const [UNDER, LINE_HEIGHT] = [4, LINE + 4];
 
 /**
  * A volume fader `height` points tall, on the fader's scale: silence at the bottom, 0 dB well up,
- * and its value line under it, which a click or Enter types into (`-inf` silences it). Drag
- * anywhere on it (with Shift, ten times finer), arrows step it, a double click or Backspace sets
- * 0 dB. `onChange` hears the new dB when it is let go; the sound of `path` follows the drag. While
- * a lane plays into it, `held`, it shows that, with a dot and a tip that say why.
+ * its handle over the level bars of `meter` when given, and its value line under it, which a click
+ * or Enter types into (`-inf` silences it). Drag anywhere on it (with Shift, ten times finer),
+ * arrows step it, a double click or Backspace sets 0 dB. `onChange` hears the new dB when it is let
+ * go; the sound of `path` follows the drag. While a lane plays into it, `held`, it shows that, with
+ * a dot and a tip that say why. A click on the meter's clip light lets go of it.
  */
 export const Fader = (props: FaderProps & { line?: ValueLine }) => {
-  const { id, label, value, height, held, line = { x: (64 - TARGET) / 2, w: 64 } } = props;
-  const { range, set, travel, shownAt, readout, drag, dragEnd, actions } = faderOf(props);
+  const { id, label, value, height, held, meter, line = { x: (64 - TARGET) / 2, w: 64 } } = props;
+  const { range, set, top, travel, shownAt, readout, drag, dragEnd, actions } = faderOf(props);
+  // Its own part, under the meter's clip light.
+  const tall = height - top;
   const y = (db: number) => (1 - travelled(db, range)) * travel + CAP / 2;
   const mark = (db: number) => <box at={[0, y(db)]} w={TARGET} h={1} fill={db === 0 ? "text-muted" : "border-strong"} />;
   const typed = (
@@ -58,17 +67,24 @@ export const Fader = (props: FaderProps & { line?: ValueLine }) => {
       <text style="number" color={value === 0 && !held ? "text-secondary" : "text"} live={readout} unit="db" />
     </TypeIn>
   );
+  // The meter is over the slider, not in it, so a click and the keys reach it.
   return (
-    <box key={id} label={label} role="slider" value={held ?? (value === -Infinity ? "-inf" : value)} w={TARGET} h={height + UNDER + LINE_HEIGHT} drag={drag} onDragEnd={dragEnd} actions={actions}>
-      {MARKS.filter((db) => db <= range.max && db >= range.min).map(mark)}
-      <box at={[(TARGET - TRACK) / 2, 0]} w={TRACK} h={height} radius="full" fill="well" />
-      <box at={[(TARGET - TRACK) / 2, shownAt.negate().plus(1).times(travel).plus(CAP / 2)]} w={TRACK} h={shownAt.times(travel)} radius="full" fill="fill-strong" />
-      <box at={[2, shownAt.negate().plus(1).times(travel)]} w={TARGET - 4} h={CAP} radius="sm" fill={held ? "text-secondary" : "text"} shadow="sm">
-        <box at={[4, CAP / 2 - 0.5]} w={TARGET - 12} h={1} fill="text-inverse" />
+    <col w={TARGET} h={height + UNDER + LINE_HEIGHT}>
+      {meter && (
+        <box {...meterOf(meter)} w={TARGET} h={top}>
+          <ClipLight id={meter.id} path={meter.path} at={[(TARGET - BARS) / 2, 0]} w={BARS} h={CLIP} />
+        </box>
+      )}
+      <box key={id} label={label} role="slider" value={held ?? (value === -Infinity ? "-inf" : value)} w={TARGET} h={tall + UNDER + LINE_HEIGHT} drag={drag} onDragEnd={dragEnd} actions={actions}>
+        {MARKS.filter((db) => db <= range.max && db >= range.min).map(mark)}
+        {meter
+          ? <Bars path={meter.path} at={[(TARGET - BARS) / 2, CAP / 2]} w={BARS} h={travel} />
+          : <box at={[(TARGET - TRACK) / 2, 0]} w={TRACK} h={tall} radius="full" fill="well" />}
+        <box at={[0, shownAt.negate().plus(1).times(travel)]} w={TARGET} h={CAP} radius="full" fill={held ? "text-secondary" : "text"} shadow="sm" />
+        {held && <box at={[TARGET - 4, 0]} w={4} h={4} radius="full" fill="text-secondary" />}
+        <box at={[-line.x, tall + UNDER]} w={line.w} h={LINE_HEIGHT} {...(line.quiet && value === 0 && !held ? { reveal: true } : {})}>{typed}</box>
+        {held && <Tooltip text="A lane of the track plays this value" side="bottom" />}
       </box>
-      {held && <box at={[TARGET - 4, 0]} w={4} h={4} radius="full" fill="text-secondary" />}
-      <box at={[-line.x, height + UNDER]} w={line.w} h={LINE_HEIGHT} {...(line.quiet && value === 0 && !held ? { reveal: true } : {})}>{typed}</box>
-      {held && <Tooltip text="A lane of the track plays this value" side="bottom" />}
-    </box>
+    </col>
   );
 };
