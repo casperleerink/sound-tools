@@ -272,6 +272,11 @@ impl SimulatedInput {
         })
     }
 
+    /// It goes away, as an interface that is unplugged: what it captured stays to be read.
+    pub(crate) fn unplug(&self) {
+        *self.writer.lock().unwrap() = None;
+    }
+
     /// The threads it closed on, one for each time it closed.
     pub(crate) fn closed_on(&self) -> Vec<ThreadId> {
         self.closed.lock().unwrap().clone()

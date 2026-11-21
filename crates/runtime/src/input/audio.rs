@@ -407,12 +407,9 @@ impl Input {
 
     /// The input went away, such as an interface that was unplugged. Everything is disarmed:
     /// arming again opens the default input the system has then. A take that records sound
-    /// ends and says so itself; the recorder writes the last of it before the input closes.
+    /// keeps what came until then; the recorder writes the last of it before the input closes.
     fn input_gone(&mut self) {
-        if !self.hold.audio {
-            self.happened
-                .push(Happened::Notice("The audio input went away.".to_string()));
-        }
+        (self.happened).push(Happened::Notice("The audio input went away.".to_string()));
         self.armed.clear();
     }
 }

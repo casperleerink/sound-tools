@@ -192,6 +192,29 @@ fn a_recorder_records_the_input_and_the_keyboard_where_they_were_heard() {
     assert_eq!(studio.notices, [] as [String; 0]);
 }
 
+/// An input that goes away during a take says so, and the take keeps what it recorded until
+/// then.
+#[test]
+fn an_input_that_goes_away_during_a_take_says_so_and_keeps_what_came() {
+    let (mut studio, input) = open_studio(false);
+    studio.press("studio", "arm");
+    studio.until("the input opens", |_| {
+        input.openings.load(Ordering::Relaxed) == 1
+    });
+    studio.start_playing();
+    studio.record_for(&input, 24_000);
+    assert!(studio.input.is_recording());
+    input.unplug();
+    studio.record_for(&input, 24_000);
+    studio.press("studio", "done");
+    studio.until("the take kept", |studio| {
+        studio.record_for(&input, 2_048);
+        !studio.made("region").is_empty()
+    });
+    let went = "The audio input went away.".to_string();
+    assert!(studio.notices.contains(&went), "{:?}", studio.notices);
+}
+
 /// While a recorder is armed the input is open, and its level is there for a meter of its
 /// channels at every poll.
 #[test]
