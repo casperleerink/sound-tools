@@ -1,9 +1,6 @@
-//! The state variable filter of the built-in Filter effect, the Synth and the Wavetable: low, band,
-//! high pass and notch, at 12 or 24 dB per octave, with resonance. The EQ and the filters of a
-//! tool's sound mix its raw outputs in the shapes of [`SvfShape`], and the Utility in its own
-//! ([`SvfSection::band_and_low`]). Next to
-//! [`Smoothed`](sound_core::Smoothed), a helper a processor uses per frame. The core itself filters
-//! nothing.
+//! A state variable filter: low, band, high pass and notch, at 12 or 24 dB per octave, with
+//! resonance. An EQ and the filters of a tool's sound mix its raw outputs in the shapes of
+//! [`SvfShape`] instead.
 //!
 //! Each section is the state variable filter in its trapezoidal form (Simper, "Solving the
 //! continuous SVF equations using trapezoidal integration and equivalent currents", 2013). It

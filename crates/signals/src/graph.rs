@@ -303,7 +303,7 @@ fn error<T>(message: impl Into<String>) -> Result<T, GraphError> {
 }
 
 impl Graph {
-    /// The names of the fields and inputs it reads.
+    /// The names of the fields and controls it reads.
     pub fn params(&self) -> std::collections::BTreeSet<&str> {
         (self.nodes.iter())
             .filter_map(|node| match node {

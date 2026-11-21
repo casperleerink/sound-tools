@@ -1,11 +1,6 @@
-//! Runs compiled [`Code`] over a span of frames of a block, for both channels, with the memory
-//! of every feedback, `phasor`, `delay`, filter, envelope and buffer of the code: the memory of
-//! one voice. Made on the control thread, where it allocates all of it; running it allocates
-//! nothing.
-//!
-//! What every voice shares, the values of the record and of the interface and the transport,
-//! the processor works out once per block as a [`Block`]. The note of a voice is the same over
-//! the span the voice plays: the processor splits a block where a note comes or goes.
+//! Runs compiled [`Code`] over a span of frames of a block, for both channels, with all the
+//! memory of one voice. Made on the control thread, where it allocates all of it; running it
+//! allocates nothing.
 
 use std::iter::repeat;
 use std::ops::Range;
@@ -1221,7 +1216,6 @@ impl Span<'_> {
 /// Room for a row that is not there: 0 in every frame.
 static ZEROS: [f32; MAX_BLOCK] = [0.0; MAX_BLOCK];
 
-/// The `frames` of `samples`.
 fn part<'a>(samples: &'a [f32; MAX_BLOCK], frames: &Range<usize>) -> &'a [f32] {
     samples
         .get(frames.clone())

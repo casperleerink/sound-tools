@@ -1,6 +1,5 @@
 //! The gain computer and lookahead of a peak limiter, one frame at a time, for the Limiter
-//! effect. Next to [`Smoothed`](sound_core::Smoothed) and [`Envelope`](crate::Envelope), a helper a
-//! processor uses per frame. The core itself limits nothing.
+//! effect.
 //!
 //! The gain goes down at once to what a peak needs, so nothing goes over the ceiling, and comes
 //! back with the release. With a lookahead the sound is held back by that time and the gain
