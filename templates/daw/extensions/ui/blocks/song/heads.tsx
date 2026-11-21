@@ -2,7 +2,6 @@ import { h, live, memo, type Offer, type Pointer } from "../../../sdk";
 import { colourOf, lanesOf, muted, PALETTE, titleOf } from "../../../song/model";
 import { cannotRender } from "../../../song/tracks";
 import { chosenTrack, deviceName, HEAD, laneGroups, LOW_ROW, PLANE, RETURNS, ROW, type Page, type Row, type Strip, type Track } from "../../../song/view";
-import { freeName } from "../../../track";
 import { Button } from "../../button";
 import { Dot } from "../../dot";
 import { MenuList, type Item } from "../../menu";
@@ -32,7 +31,7 @@ export const Heads = ({ page }: HeadsProps) => {
         {laneGroups(rows).map((lanes) => <LaneHeads page={page} rows={lanes} />)}
         {tracks.length > 0 && (
           <row place={[0, height, HEAD - 1, 1]} pad={[1, 0]} align="center" border="border" borderSides={[1, 0, 0, 0]}>
-            <Button id="add-track" label="Add track" text="Add track" icon="plus" variant="ghost" size="sm" onPress={() => addTrack(page)} />
+            <Button id="add-track" label="Add track" text="Add track" icon="plus" variant="ghost" size="sm" onPress={() => page.edits.tracks.add("instrument")} />
             <Button id="add-track-kind" label="Add a track of a kind" icon="chevron-down" variant="ghost" size="sm" tip="Add an instrument, audio or return track">
               <MenuList id="add-track-kind" label="Add a track of a kind" items={kinds(page)} w={240} />
             </Button>
@@ -61,18 +60,9 @@ export const Heads = ({ page }: HeadsProps) => {
   );
 };
 
-/** What the plus of "Add track" adds: a track of the first instrument the catalog has, as the empty song's. */
-const addTrack = (page: Page, offer?: Offer) => {
-  const { song, edits } = page;
-  const name = freeName(song.children.map((child) => child.name), "track");
-  edits.tracks.add("instrument");
-  // A track comes with the synth: another instrument takes its place.
-  if (offer && offer.key !== "instrument.synth") edits.effects(name).replace(offer.key);
-};
-
-/** The tracks the chevron of "Add track" offers: one of each instrument there is, an audio track and a return. */
+/** The tracks the chevron of "Add track" offers: its instrument is picked on the track, in its panel. */
 const kinds = (page: Page): Item[] => [
-  ...page.song.catalog.filter((offer) => offer.takes === "notes" && offer.unavailable === null).map((offer) => ({ text: `${offer.name} track`, icon: offer.icon, onPress: () => addTrack(page, offer) })),
+  { text: "Instrument track", icon: "piano", onPress: () => page.edits.tracks.add("instrument") },
   { text: "Audio track", icon: "audio-lines", onPress: () => page.edits.tracks.add("audio") },
   { text: "Return track", icon: "send", onPress: () => page.edits.tracks.add("return") },
 ];

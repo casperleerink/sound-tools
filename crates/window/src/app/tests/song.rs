@@ -164,7 +164,7 @@ fn files_dropped_on_the_timeline_land_on_their_row_and_tick_as_one_undo_step_eac
 }
 
 #[test]
-fn a_track_of_another_instrument_is_added_as_one_undo_step() {
+fn the_menu_of_add_track_adds_an_instrument_track_as_one_undo_step() {
     let (_scratch, mut window) = song();
     act(
         &mut window.state,
@@ -172,7 +172,7 @@ fn a_track_of_another_instrument_is_added_as_one_undo_step() {
     );
     act(
         &mut window.state,
-        json!({ "label": "Sampler track", "action": "press" }),
+        json!({ "label": "Instrument track", "action": "press" }),
     );
     redraw(&mut window);
     let synth = |state: &State| {
@@ -180,7 +180,7 @@ fn a_track_of_another_instrument_is_added_as_one_undo_step() {
         file.exists()
             .then(|| record(state, "song/track/synth.json")["tool"].clone())
     };
-    assert_eq!(synth(&window.state), Some(json!("sampler")));
+    assert_eq!(synth(&window.state), Some(json!("instrument.synth")));
     act(&mut window.state, json!({ "action": "undo" }));
     assert_eq!(synth(&window.state), None);
 }

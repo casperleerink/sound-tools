@@ -74,10 +74,10 @@ test("a track with no clips cannot render, and says why", () => {
   expect(JSON.stringify(find("menu-t00-Render to audio track"))).toContain("The track has no clips");
 });
 
-test("the chevron of Add track offers an audio track and a return; a head says what plays it", () => {
+test("the chevron of Add track offers an instrument track, an audio track and a return; a head says what plays it", () => {
   const self = three();
   opened(self);
-  expect([find("add-track-kind-Audio track"), find("add-track-kind-Return track")]).toMatchObject([{ role: "menuitem" }, { role: "menuitem" }]);
+  expect(["Instrument", "Audio", "Return"].map((kind) => find(`add-track-kind-${kind} track`))).toMatchObject([{ role: "menuitem" }, { role: "menuitem" }, { role: "menuitem" }]);
   expect(JSON.stringify(find("track-audio-1"))).toContain('"text":"Audio"');
 });
 
