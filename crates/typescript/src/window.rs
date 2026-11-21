@@ -835,12 +835,9 @@ impl Tools {
         }
     }
 
-    /// `bun` ends: the takes it did not say it did wait for the next one, after what it said
-    /// before it ended is heard.
-    fn hold_takes_of(&mut self, bun: &Bun, project: &mut Project) {
-        if self.taking.is_empty() {
-            return;
-        }
+    /// `bun` ends: what it said since the last poll is heard, then the takes it did not say it
+    /// did wait for the next one.
+    fn hear_last_of(&mut self, bun: &Bun, project: &mut Project) {
         bun.kill();
         let events = bun.events();
         let start = Instant::now();
@@ -1001,7 +998,7 @@ impl Tools {
         }
         let old = self.bun.take();
         if let Some(old) = &old {
-            self.hold_takes_of(old, project);
+            self.hear_last_of(old, project);
         }
         self.performer_gone(project);
         let (folder, opening, skipped) = (self.folder.clone(), self.opening, self.skipped.clone());
