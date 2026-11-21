@@ -57,7 +57,7 @@ const Name = ({ roll }: { roll: Roll }) => {
   const title = roll.state.title ?? "";
   const track = titleOf(roll.track);
   return (
-    <row key="clip-name" label="Rename the clip" role="button" value={title || track} w={HEAD} h={HEADER} pad={[3, 0]} gap={2} align="center" hover="fill/50" border="border" borderSides={[0, 1, 0, 0]}>
+    <row key="clip-name" label="Rename the clip" role="button" value={title || track} w={HEAD} h={HEADER - 1} pad={[3, 0]} gap={2} align="center" hover="fill/50" border="border" borderSides={[0, 1, 0, 0]}>
       <Dot color={roll.colour} />
       {title ? <text style="heading" color="text" truncate>{title}</text> : null}
       <text style={title ? "label" : "heading"} color={title ? "text-secondary" : "text"} truncate>{track}</text>

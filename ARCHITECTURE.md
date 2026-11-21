@@ -185,7 +185,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 ## Tests
 
 - Logic is tested by plain `#[test]`s where it lives; the window by key and label, on the offline engine with Bun (`crates/window`); the template by `bun test`s beside it. Never by pixel: a label says what a control means, a pixel only where it is.
-- Looks are `--snap` pictures an agent judges against DESIGN.md, and rules `--tree` warns of to the view's writer, not the composer: a background flush with one edge of its frame, a few points in from the next. Rejected: golden pictures, which fail on every change and get accepted unseen; switching a rule off.
+- Looks are `--snap` pictures an agent judges against DESIGN.md, and rules `--tree` warns of to the view's writer, not the composer: a background flush with one edge of its frame and a few points in from the next, or lying over a border around it. Rejected: golden pictures, which fail on every change and get accepted unseen; switching a rule off.
 - Budgets, in `crates/window`: a frame that scrolls, plays, zooms or drags 500 clips or 2,000 notes, or plays the mixer of 64 tracks, costs under 4 ms of the window's work and runs no view. It is the thread's CPU against a fixed piece of work, so a busy machine does not fail it. A run without a window waits for Bun each frame, so it repeats.
 
 ## Shortcuts

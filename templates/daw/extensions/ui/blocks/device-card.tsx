@@ -119,7 +119,9 @@ export type FrameProps = {
 export const Frame = ({ id, title, menu, on = true, onPower, onRemove, end, chosen = false, onChoose, drag, onDragEnd, children }: FrameProps) => (
   <col key={id} label={`Device ${title}`} role="group" h={CARD_HEIGHT} radius="lg" fill="surface" border={chosen ? "text-muted" : "border-strong"} hoverGroup
     {...(drag ? { opacity: live.drag(id).active.times(-0.5).plus(1) } : {})}>
-    <row key={`${id}-header`} label={`Choose ${title}`} role="toolbar" group h={HEADER} pad={[1, 0]} gap={1} align="center"
+    <box h={HEADER} />
+    {/* One point inside the card's line, which lies under what the card holds; after its room, so a pointer finds it. */}
+    <row key={`${id}-header`} label={`Choose ${title}`} role="toolbar" group inset={[1, 1, 1, null]} h={HEADER - 1} pad={[1, 0]} gap={1} align="center"
       {...(drag ? { drag: { ...drag, id }, onDragEnd, radius: "md", hover: "fill" } : {})} {...(onChoose ? { onPress: onChoose } : {})}>
       {menu ? (
         <row key={`${id}-title`} label={menu.label} role="button" h={height("sm")} pad={[2, 0]} gap={1} align="center" radius="md" hover="fill">

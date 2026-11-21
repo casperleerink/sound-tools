@@ -238,7 +238,7 @@ impl State {
 
     /// What the search field of the open menu or list that `opener` opened says, in lower case,
     /// when it says something.
-    fn search_of(&self, opener: &str) -> Option<String> {
+    pub(super) fn search_of(&self, opener: &str) -> Option<String> {
         let fields = self.fields.borrow();
         let mut searches = fields.by_key.values().filter(|typed| {
             (typed.press.within.as_ref())
