@@ -91,7 +91,7 @@ To check Windows from a Mac: `cargo install cargo-xwin`, `brew install llvm`, `r
 With these, `sound-tools <project>` runs on the offline engine, silent, on every OS (no folder: the start screen):
 
 - `--snap out.png` draws it. Look at the picture after any change to the looks, against [DESIGN.md](DESIGN.md).
-- `--tree out.json`: every control (key, label, role, value, actions), planes, feeds, problems.
+- `--tree out.json`: every control (key, label, role, value, actions), planes, feeds, problems, warnings of a view's looks.
 - `--act steps.json` runs actions on controls by label or key, in the folder itself; the rest use a copy. `--script steps.json` plays timed pointer, wheel and key events.
 - `--play <seconds>` plays first; `--main <instance>` shows another one (`gallery`: every component); `--size <w>x<h>`; `--scene <name>`: the agent sidebar in one of its states.
 

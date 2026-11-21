@@ -12,7 +12,7 @@ In `extensions/`:
 With `sound-tools <project>`:
 
 3. `--snap out.png` draws it (`--play 2` plays first). Look at it.
-4. `--tree out.json`: every control (key, label, role, value or `checked`, actions), `planes`, `feeds`, `problems`.
+4. `--tree out.json`: every control (key, label, role, value or `checked`, actions), `planes`, `feeds`, `problems`, and `warnings`: mistakes in how your view looks, to fix.
 5. `--act steps.json` runs actions: `[{ "label": "Mute Track 2", "action": "toggle" }, { "key": "song", "action": "view", "value": { "x": [0, 3840] } }, { "action": "undo" }]`. `--script steps.json` points by key: `{"events": [{ "t": 2, "type": "drag", "key": "clip-1", "dx": 40 }]}`.
 
 `problems.txt` says what does not load.
