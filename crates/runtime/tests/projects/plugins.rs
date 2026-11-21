@@ -286,3 +286,28 @@ fn a_session_that_closes_saves_every_plugin_while_it_is_still_open() {
     session.close();
     assert!(asset.exists());
 }
+
+/// A render reads the plugins' states from their files, so it starts by saving every plugin,
+/// also one that never said its state changed. They stay loaded.
+#[test]
+fn a_render_starts_with_every_plugin_saved_and_still_loaded() {
+    let (mut harness, plugins) = plugin_rack(PluginFormat::Clap, "piano", &clip_with_pedal(None));
+    harness.play(4_096);
+    let asset = harness.path("assets/plugin-state/piano.bin");
+    assert!(!asset.exists());
+    let Harness {
+        project,
+        engine: _engine,
+        folder,
+        ..
+    } = harness;
+    let mut session =
+        runtime::session::Session::new(project, plugins.clone(), std::sync::Arc::new(|| {}));
+    let program = folder.path().join("no-program");
+    let file = folder.path().join("out.wav");
+    // Saved before the render starts, which here fails.
+    assert!(session.render(&program, "Export", file, &[]).is_err());
+    assert!(asset.exists());
+    let piano = sound_core::InstanceId::new("piano/instrument").unwrap();
+    assert!(plugins.parameters(&piano).is_some());
+}

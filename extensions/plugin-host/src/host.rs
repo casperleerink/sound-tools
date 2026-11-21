@@ -724,15 +724,31 @@ impl Plugins {
         std::mem::take(&mut self.0.table.borrow_mut().card_changed)
     }
 
+    /// For a render, which reads the project's files: ends open turns of a knob and saves every
+    /// loaded plugin, whether it said its state changed or not. They stay loaded.
+    pub fn save_all(&self, project: &mut Project) -> Vec<PluginProblem> {
+        let mut problems = self.end_turns_for_good(project);
+        if self.0.writes_state {
+            let assets = project.assets();
+            for hosted in self.0.table.borrow_mut().loaded.values_mut() {
+                problems.extend(save(hosted, assets).err());
+            }
+        }
+        problems
+    }
+
+    fn end_turns_for_good(&self, project: &mut Project) -> Vec<PluginProblem> {
+        (self.end_turns(project).into_iter())
+            .map(|error| PluginProblem::PinsNotWritten {
+                message: error.to_string(),
+            })
+            .collect()
+    }
+
     /// For a project that closes: ends open turns of a knob and saves every plugin, whether it
     /// said its state changed or not.
     pub fn close(&self, project: &mut Project) -> Vec<PluginProblem> {
-        let mut problems = Vec::new();
-        for error in self.end_turns(project) {
-            problems.push(PluginProblem::PinsNotWritten {
-                message: error.to_string(),
-            });
-        }
+        let mut problems = self.end_turns_for_good(project);
         let project = &*project;
         let mut table = self.0.table.borrow_mut();
         if self.0.writes_state

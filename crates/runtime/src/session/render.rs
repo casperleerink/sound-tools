@@ -59,6 +59,10 @@ impl Session {
                 "Another render is running: try again once it is done."
             ));
         }
+        // The render reads the plugins' states from their files: as they sound now.
+        for problem in self.plugins.save_all(&mut self.project) {
+            eprintln!("error: {problem}");
+        }
         // Starting it is quick; threads read what it says.
         #[allow(clippy::disallowed_methods)]
         let mut child = sound_core::process::background_command(program)
