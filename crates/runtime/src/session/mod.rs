@@ -274,8 +274,6 @@ impl Session {
         self.notice.as_ref().map(|(_, message)| message.as_str())
     }
 
-    /// Shows what went wrong outside an edit: the engine, the watcher, the system. It stays
-    /// until dismissed or replaced.
     /// For the project closing: an open drag and an open turn of a plugin's knob are written as
     /// one point each, and every plugin saves its state, whether it said it changed or not.
     pub fn close(&mut self) {
@@ -285,6 +283,8 @@ impl Session {
         }
     }
 
+    /// Shows what went wrong outside an edit: the engine, the watcher, the system. It stays
+    /// until dismissed or replaced.
     pub fn report(&mut self, error: impl Display) {
         self.set_notice(Source::System, error.to_string());
     }

@@ -2313,7 +2313,6 @@ mod card_file_tests {
     }
 }
 
-/// What the composer reads of a take no code runs to keep yet.
 /// The takes no code kept as the project last closed, which the first Bun is given. The file
 /// goes: the next close writes those still waiting.
 fn waiting_takes(project: &Project) -> Vec<Take> {
@@ -2330,6 +2329,7 @@ fn waiting_takes(project: &Project) -> Vec<Take> {
     })
 }
 
+/// What the composer reads of a take no code runs to keep yet.
 fn take_waits(take: &Take) -> String {
     format!(
         "The take of {} waits for the code of the project to run again.",

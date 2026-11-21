@@ -241,7 +241,11 @@ impl State {
                             state.session.report(error);
                             false
                         });
-                        state.answer(question, &Answer::Confirmed(written));
+                        // Written either way: code that started again meanwhile and never
+                        // hears it did nothing wrong.
+                        _ = (state.tools.as_mut()).is_some_and(|tools| {
+                            tools.answer(question, &Answer::Confirmed(written))
+                        });
                         state.handled();
                     });
                 }

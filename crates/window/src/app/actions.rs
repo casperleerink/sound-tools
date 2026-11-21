@@ -157,7 +157,6 @@ impl State {
         self.pointed(&instance, &key, "enter", None);
     }
 
-    /// The press of a paint is let go; a `cancelled` one takes back what it painted.
     /// A modal opened over a held press: Rune let go of it without the cancelled release that
     /// Escape gives, so what the press held ends here as Escape ends it.
     pub(crate) fn let_go_of_pointer(&mut self) {
@@ -168,6 +167,7 @@ impl State {
         self.cancel_tempo_drag();
     }
 
+    /// The press of a paint is let go; a `cancelled` one takes back what it painted.
     pub(crate) fn painted(&mut self, cancelled: bool) {
         self.painting = None;
         self.session.set_painting(false);
