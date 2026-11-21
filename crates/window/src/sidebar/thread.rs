@@ -621,7 +621,7 @@ fn skeleton(theme: &Theme) -> El {
         el().w_full()
             .h(106.0)
             .radius(theme.kit.radius.lg)
-            .border(1.0, theme.color("border")),
+            .border(1.0, theme.color("border-strong")),
     );
     col()
         .key("agent-looking")
