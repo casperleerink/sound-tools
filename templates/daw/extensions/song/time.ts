@@ -59,19 +59,38 @@ const ticksOfBar = (signature: string) => {
 };
 const runsOrFirst = (runs: Runs): Runs => (runs.length > 0 ? runs : [{ signature: "4/4", bars: 1 }]);
 
-/** The tick each bar starts at, up to the first at or past `end`. */
+/** The bar starts of each set of time signatures as far as asked yet, how many the runs before the last hold, and the last's bar. */
+const known = new WeakMap<Runs, { starts: number[]; fixed: number; step: number }>();
+
+/** The bar starts of `runs`, past `tick` at least: a lookup is a search, not a count from the song's start. */
+function startsPast(runs: Runs, tick: number): { starts: number[]; fixed: number } {
+  let bars = known.get(runs);
+  if (!bars) {
+    const all = runsOrFirst(runs);
+    const starts = [0];
+    for (const run of all.slice(0, -1)) for (let bar = 0; bar < run.bars; bar++) starts.push(starts.at(-1)! + ticksOfBar(run.signature));
+    bars = { starts, fixed: starts.length, step: ticksOfBar(all.at(-1)!.signature) };
+    known.set(runs, bars);
+  }
+  while (bars.starts.at(-1)! <= tick) bars.starts.push(bars.starts.at(-1)! + bars.step);
+  return bars;
+}
+
+/** The index of the first bar start that is `past`, which holds from some bar on. */
+function first(starts: number[], past: (start: number) => boolean): number {
+  let [low, high] = [0, starts.length];
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (past(starts[middle]!)) high = middle;
+    else low = middle + 1;
+  }
+  return low;
+}
+
+/** The tick each bar starts at, up to the first at or past `end`, and every bar of the runs before the last. */
 export function barStarts(runs: Runs, end: number): number[] {
-  const starts = [0];
-  let at = 0;
-  const all = runsOrFirst(runs);
-  all.forEach((run, index) => {
-    const goesOn = index === all.length - 1;
-    for (let bar = 0; goesOn ? at < end : bar < run.bars; bar++) {
-      at += ticksOfBar(run.signature);
-      starts.push(at);
-    }
-  });
-  return starts;
+  const { starts, fixed } = startsPast(runs, end);
+  return starts.slice(0, Math.max(fixed, first(starts, (start) => start >= end) + 1));
 }
 
 /** The tick the bar `bar` starts at, from 1. */
@@ -98,16 +117,17 @@ export function beatRuns(runs: Runs): { from: number; ticks: number }[] {
 
 /** The bar `tick` is in, from 1, and where it starts and ends. */
 export function barAt(runs: Runs, tick: number): { bar: number; start: number; end: number } {
-  const starts = barStarts(runs, tick + 1);
-  const next = starts.findIndex((start) => start > tick);
+  const { starts } = startsPast(runs, tick);
+  const next = first(starts, (start) => start > tick);
   return { bar: next, start: starts[next - 1] ?? 0, end: starts[next] ?? 0 };
 }
 
 /** The bar whose line is nearest `tick`, from 1, and the tick it starts at. */
 export function barNear(runs: Runs, tick: number): { bar: number; tick: number } {
-  const lines = barStarts(runs, tick + 1);
-  const index = lines.reduce((best, start, at) => (Math.abs(start - tick) < Math.abs((lines[best] ?? 0) - tick) ? at : best), 0);
-  return { bar: index + 1, tick: lines[index] ?? 0 };
+  const { starts } = startsPast(runs, tick);
+  const next = first(starts, (start) => start > tick);
+  const index = next > 0 && Math.abs(starts[next]! - tick) >= Math.abs(starts[next - 1]! - tick) ? next - 1 : next;
+  return { bar: index + 1, tick: starts[index] ?? 0 };
 }
 
 /** The grids of the snap in the corner, as the arrangement's menu: `ticks` 0 is off; "Bar" and "Beat" follow the time signature (`stepAt`). */

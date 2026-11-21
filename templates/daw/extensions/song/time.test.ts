@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { barStarts, BEAT, placeOf, secondsBetween, tickOfBar, tickOfPlace, ticksAcross } from "./time";
+import { barAt, barNear, barStarts, BAR, BEAT, placeOf, secondsBetween, tickOfBar, tickOfPlace, ticksAcross } from "./time";
 
 const runs = [{ signature: "4/4", bars: 2 }, { signature: "6/8", bars: 1 }];
 
@@ -20,4 +20,16 @@ test("seconds and ticks go through every tempo between", () => {
   const changes = [{ tick: 0, bpm: 120 }, { tick: 4 * BEAT, bpm: 60 }];
   expect(secondsBetween(changes, 2 * BEAT, 6 * BEAT)).toBe(3);
   expect(ticksAcross(changes, 2 * BEAT, 3)).toBe(4 * BEAT);
+});
+
+test("a bar is found by a search, not by counting the bars from the song's start each time", () => {
+  let read = 0;
+  const counted = runs.map((run) => new Proxy(run, { get: (target, key: keyof typeof run) => (key === "signature" && read++, target[key]) }));
+  const near = 500 * BAR;
+  for (let tick = near; tick < near + 100 * BEAT; tick += BEAT) {
+    barAt(counted, tick);
+    barNear(counted, tick);
+  }
+  expect(read).toBeLessThan(10);
+  expect(barAt(counted, near)).toEqual(barAt(runs, near));
 });
