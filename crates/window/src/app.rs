@@ -220,8 +220,8 @@ impl State {
         let mut chosen_input = None;
         let opened = match headless {
             true => {
-                // Found as `--inspect` finds them, and never loaded. A test looks in no folder
-                // of this computer and leaves its scan cache alone.
+                // Looked up in the scan cache as `--inspect` does: never scanned or loaded. A
+                // test looks in no folder of this computer and leaves its scan cache alone.
                 let plugins = match cfg!(test) {
                     true => Plugins::listing(
                         Vec::new(),

@@ -119,6 +119,9 @@ pub struct Scan {
     pub bundles: usize,
     /// While false, a plugin that is not in `plugins` yet may still turn up.
     pub finished: bool,
+    /// Bundles new or changed since the cache remembered them, which a cache that only
+    /// remembers ([`ScanCache::only_remembered`]) does not look at.
+    pub not_looked_at: usize,
     /// Why the cache of this machine could not be written or tidied. It costs the next start a
     /// scan and nothing else.
     pub cache_error: Option<String>,
@@ -466,6 +469,7 @@ pub fn scan_one_bundle(format: PluginFormat, bundle: &Path) -> Result<String, St
 pub struct ScanCache {
     path: Option<PathBuf>,
     reuse: Reuse,
+    looks_at_new: bool,
     /// The last scan, when there is no file to keep it in.
     kept: Arc<Mutex<Vec<CachedBundle>>>,
     /// The plugin windows of every project, when there is no file to keep them in.
@@ -521,9 +525,17 @@ impl ScanCache {
         Self {
             path,
             reuse: Reuse::Everything,
+            looks_at_new: true,
             kept: Arc::new(Mutex::new(Vec::new())),
             kept_placements: crate::placements::Kept::default(),
         }
+    }
+
+    /// Looks at no bundle that is new or changed since the cache remembered it, so no plugin's
+    /// code runs, and writes nothing: for a run without a window.
+    pub fn only_remembered(mut self) -> Self {
+        self.looks_at_new = false;
+        self
     }
 
     /// Looks at every bundle again and writes what it finds.
@@ -859,6 +871,7 @@ pub(crate) fn scan_folders(
             let Some(bundle) = bundles.get(next.fetch_add(1, Ordering::Relaxed)) else {
                 return;
             };
+            let command = cache.looks_at_new.then_some(command);
             if found
                 .send((bundle, look_at(bundle, command, &remembered)))
                 .is_err()
@@ -881,7 +894,11 @@ pub(crate) fn scan_folders(
             0 => look(found),
             _ => drop(found),
         }
-        for (bundle, (stamp, found)) in receiver {
+        for (bundle, looked) in receiver {
+            let Some((stamp, found)) = looked else {
+                scan.not_looked_at += 1;
+                continue;
+            };
             // A failure on this side says nothing about the bundle, so it is not remembered.
             let outcome = match &found {
                 Ok(plugins) => Some((plugins.clone(), None)),
@@ -925,7 +942,7 @@ pub(crate) fn scan_folders(
         .sort_by(|left, right| left.path.cmp(&right.path));
     to_remember.sort_by(|left, right| (&left.path, left.format).cmp(&(&right.path, right.format)));
     scan.finished = true;
-    let written = match to_remember != remembered {
+    let written = match cache.looks_at_new && to_remember != remembered {
         true => cache.write(&to_remember),
         false => Ok(()),
     };
@@ -936,8 +953,13 @@ pub(crate) fn scan_folders(
 
 type Looked = (Option<Stamp>, Result<Vec<ScannedPlugin>, ScanError>);
 
-/// What the cache remembers of the bundle when it has not changed, else what a child finds.
-fn look_at(bundle: &Bundle, command: &ScanCommand, remembered: &[CachedBundle]) -> Looked {
+/// What the cache remembers of the bundle when it has not changed, else what a child finds,
+/// else, without `command`, nothing.
+fn look_at(
+    bundle: &Bundle,
+    command: Option<&ScanCommand>,
+    remembered: &[CachedBundle],
+) -> Option<Looked> {
     let stamp = stamp(&bundle.path);
     let known = stamp.as_ref().and_then(|stamp| {
         remembered.iter().find(|entry| {
@@ -949,9 +971,9 @@ fn look_at(bundle: &Bundle, command: &ScanCommand, remembered: &[CachedBundle]) 
             Some(message) => Err(ScanError::Bundle(message.clone())),
             None => Ok(entry.plugins.clone()),
         },
-        None => command.scan(bundle),
+        None => command?.scan(bundle),
     };
-    (stamp, found)
+    Some((stamp, found))
 }
 
 #[cfg(test)]

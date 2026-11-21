@@ -60,6 +60,10 @@ pub enum PluginProblem {
         "the plugins of this machine are still being looked at, so {plugin_id:?} is not there yet. Nothing plays through it until the scan reaches it, which needs nothing of you"
     )]
     StillScanning { plugin_id: String },
+    #[error(
+        "{plugin_id:?} is not among the plugins Sound Tools has looked at, and a run without a window looks at no new or changed ones. Opening the project in Sound Tools looks at them"
+    )]
+    NotLookedAt { plugin_id: String },
     #[error("the plugin {plugin_id:?} did not load: {message}")]
     DidNotLoad { plugin_id: String, message: String },
     #[error(
@@ -594,6 +598,11 @@ impl Plugins {
             Some(found) => found.clone(),
             None if !scanned.finished => {
                 return Err(PluginProblem::StillScanning {
+                    plugin_id: record.plugin_id.clone(),
+                });
+            }
+            None if scanned.not_looked_at > 0 => {
+                return Err(PluginProblem::NotLookedAt {
                     plugin_id: record.plugin_id.clone(),
                 });
             }

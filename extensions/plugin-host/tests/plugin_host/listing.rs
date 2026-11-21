@@ -3,6 +3,7 @@
 //! without one.
 
 use plugin_host::{PluginFormat, PluginRecord, Plugins};
+use sound_core::feeds::NoSources;
 
 use crate::support::{
     FORMATS, Harness, Played, lifecycle, no_cache, plugin_folder, record, scanner, state_asset,
@@ -78,4 +79,40 @@ fn a_state_file_that_cannot_be_read_is_reported_by_a_host_that_only_lists() {
         assert_eq!(lifecycle(&log), Vec::new(), "{format:?}");
     }
     tell_the_plugin(None, None);
+}
+
+/// A run without a window scans nothing: a plugin the cache does not remember is not looked
+/// at, and the problem says so rather than that it is missing. Once a scan remembers it, it is
+/// found.
+#[test]
+fn a_host_that_only_remembers_scans_no_new_plugin_and_says_so() {
+    let installed = tempfile::tempdir().unwrap();
+    let folders = vec![plugin_folder(installed.path())];
+    let cache = no_cache();
+    let open = || {
+        let plugins = Plugins::listing(folders.clone(), scanner(), cache.clone().only_remembered());
+        let mut harness = Harness::with_plugins(tempfile::tempdir().unwrap(), plugins);
+        harness.add_track(record(PluginFormat::Clap, "piano"), one_note());
+        harness
+    };
+    let status = |harness: &Harness| {
+        let instrument = sound_core::InstanceId::new("track/instrument").unwrap();
+        let facts = sound_core::facts::of(&harness.project, &NoSources, &instrument, None);
+        facts.unwrap().to_value()["status"].clone()
+    };
+
+    let harness = open();
+    let problems = harness.problems();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].contains("a run without a window looks at no new"),
+        "{problems:?}"
+    );
+    // Not "missing": that it is not on this computer is not known.
+    assert_eq!(status(&harness), "not_loaded");
+
+    Plugins::listing(folders.clone(), scanner(), cache.clone()).wait_for_scan();
+    let harness = open();
+    assert_eq!(harness.problems(), Vec::<String>::new());
+    assert_eq!(status(&harness), "not_loaded");
 }

@@ -135,10 +135,13 @@ pub fn plugins_refreshing_the_cache() -> Result<Plugins> {
     with_cache(Loading::None, ScanCache::of_this_machine().refreshing())
 }
 
-/// The host `--inspect` uses: it says which plugins this machine has and loads none of them.
-/// See [`Plugins::listing`] for why.
+/// The host of `--inspect` and a run without a window: it says which plugins the cache of
+/// this machine remembers, and loads or scans none of them. See [`Plugins::listing`] for why.
 pub fn plugins_for_inspecting() -> Result<Plugins> {
-    with_cache(Loading::None, ScanCache::of_this_machine())
+    with_cache(
+        Loading::None,
+        ScanCache::of_this_machine().only_remembered(),
+    )
 }
 
 /// How much of a plugin a host is for.

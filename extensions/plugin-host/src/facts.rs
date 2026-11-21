@@ -29,7 +29,7 @@ enum Status {
     Missing,
     /// It crashed or hung in its own process and waits to be started again.
     Stopped,
-    /// On this computer, but it did not load.
+    /// It did not load: on this computer, or a run without a window did not look for it.
     NotLoaded,
     Plays,
 }
@@ -71,7 +71,8 @@ impl Facts {
         let name = plugins.installed_name(record.format, &record.plugin_id);
         let offered = plugins.window_offered(instance);
         let status = match (&name, plugins.has_stopped(instance), offered) {
-            (None, ..) => Status::Missing,
+            (None, ..) if plugins.looked_everywhere() => Status::Missing,
+            (None, ..) => Status::NotLoaded,
             (_, true, _) => Status::Stopped,
             (_, _, None) => Status::NotLoaded,
             _ => Status::Plays,
