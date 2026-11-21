@@ -121,14 +121,15 @@ pub(super) struct Recorder {
     lost: u64,
     read: Vec<f32>,
     picked: Vec<f32>,
-    /// The last [`PRE_ROLL`] of what the input brought, which a recording starts with.
+    /// What the input brought at the last read and the [`PRE_ROLL`] before it, which a
+    /// recording starts with.
     recent: VecDeque<f32>,
     /// The frame of the input `recent` starts at.
     recent_first: u64,
 }
 
-/// What a recording that starts takes of the input from before its start, which the place of
-/// the take trims: the start comes to the recorder a poll or so after the take began.
+/// What a recording that starts takes of the input from before the last read, which the place
+/// of the take trims: the start comes to the recorder a poll or so after the take began.
 const PRE_ROLL: Duration = Duration::from_millis(500);
 
 impl Recorder {
@@ -153,15 +154,14 @@ impl Recorder {
         for command in commands {
             match command {
                 RecorderCommand::Start(id, requests) => {
-                    // What runs already starts with the input before this one does.
-                    reports.extend(self.take_input());
                     // One under the same number that was never finished is finished first:
                     // its files are closed and given back, not lost.
                     reports.extend(self.finish(id));
                     reports.extend(self.start(id, requests));
-                    // The command comes a little after the take began: what the input brought
-                    // just before goes in first, and the place of the take trims what was not
-                    // part of it.
+                    // The command comes after the take began, later still when this thread is
+                    // behind: what was kept at the last read goes in first, and the place of
+                    // the take trims what was not part of it. The input read since follows.
+                    // Reading it here first would keep only its end.
                     let recent: Vec<f32> = self.recent.iter().copied().collect();
                     let first = self.recent_first;
                     reports.extend(self.write(first, &recent, |recording| recording.id == id));
@@ -248,7 +248,8 @@ impl Recorder {
         reports
     }
 
-    /// Keeps the last [`PRE_ROLL`] of the input, `read` from frame `first` on.
+    /// Keeps the input `read` from frame `first` on, and the [`PRE_ROLL`] before it: a take
+    /// that starts next began after that, however late this thread read it.
     fn keep_recent(&mut self, first: u64, read: &[f32]) {
         let channels = self.input.channels().max(1);
         let frames = (read.len() / channels) as u64;
@@ -260,7 +261,7 @@ impl Recorder {
         }
         self.recent.extend(read);
         let rate = u64::from(self.input.sample_rate());
-        let most = (rate * PRE_ROLL.as_millis() as u64 / 1_000) as usize * channels;
+        let most = (rate * PRE_ROLL.as_millis() as u64 / 1_000 + frames) as usize * channels;
         let over = self.recent.len().saturating_sub(most);
         self.recent.drain(..over);
         self.recent_first = end - (self.recent.len() / channels) as u64;

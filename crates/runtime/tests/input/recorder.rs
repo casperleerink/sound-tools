@@ -3,8 +3,8 @@
 //! input and the notes of the keyboard, and when it is turned off what it heard becomes a
 //! `region` and a `timeline` next to it, where it was heard, in one undo step.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use midi::Played;
 use runtime::input::Input;
@@ -97,19 +97,6 @@ impl Opened {
             self.poll();
         }
         self.settle();
-    }
-
-    /// Polls, without playing on, until the take of `recorder` has its first frames. Its thread
-    /// runs in real time while the engine here renders as fast as it can: on a busy machine the
-    /// input could otherwise run past what a take that starts keeps of it.
-    fn wait_for_take(&mut self, recorder: &str) {
-        let recorder = id(recorder);
-        let start = std::time::Instant::now();
-        while self.input.take_sound(&recorder).is_none() {
-            assert!(start.elapsed().as_secs() < 30, "{recorder} took nothing");
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            self.poll();
-        }
     }
 
     fn delete(&mut self, instance: &str) {
@@ -318,13 +305,9 @@ fn a_recorder_that_starts_while_another_records_keeps_its_own_take() {
     let (mut studio, input) = open_studio(true);
     studio.press("studio", "arm");
     studio.start_playing();
-    studio.record_for(&input, 2_048);
-    studio.wait_for_take("studio/rec");
-    studio.record_for(&input, 22_000);
+    studio.record_for(&input, 24_000);
     studio.press("studio", "arm-2");
-    studio.record_for(&input, 2_048);
-    studio.wait_for_take("studio/rec-2");
-    studio.record_for(&input, 22_000);
+    studio.record_for(&input, 24_000);
     studio.press("studio", "done");
     studio.press("studio", "done-2");
     studio.until("two regions", |studio| {
@@ -348,6 +331,53 @@ fn a_recorder_that_starts_while_another_records_keeps_its_own_take() {
         studio.record_for(&input, 2_048);
         input.closed_on().len() == 1
     });
+}
+
+/// A take that starts while the recorder is behind, as when writing a file stalls, keeps its
+/// sound from where it began.
+#[test]
+fn a_take_that_starts_while_the_recorder_is_behind_keeps_its_start() {
+    let (mut studio, input) = open_studio(true);
+    // The recorder's thread waits in its waker while the test holds `gate`, as on a slow disk.
+    let gate = Arc::new(Mutex::new(()));
+    let waiting = Arc::new(AtomicBool::new(false));
+    let (hold, waits) = (gate.clone(), waiting.clone());
+    studio.input = Input::new(
+        &mut studio.project,
+        input.devices(),
+        Arc::new(move || {
+            if std::thread::current().name() == Some("recorder") {
+                waits.store(true, Ordering::Relaxed);
+                drop(hold.lock().unwrap());
+            }
+        }),
+    );
+    studio.press("studio", "arm");
+    studio.until("the input opens", |_| {
+        input.openings.load(Ordering::Relaxed) == 1
+    });
+    let held = gate.lock().unwrap();
+    studio.start_playing();
+    studio.until(
+        "the recorder held at the start of the first take",
+        |studio| {
+            studio.record_for(&input, 2_048);
+            waiting.load(Ordering::Relaxed)
+        },
+    );
+    studio.press("studio", "arm-2");
+    studio.record_for(&input, 2_048);
+    let began = studio.input.take_notes(&id("studio/rec-2")).unwrap().start;
+    // A second of input comes while the recorder is held.
+    studio.record_for(&input, 48_000);
+    drop(held);
+    studio.press("studio", "done-2");
+    studio.until("the take", |studio| {
+        studio.record_for(&input, 2_048);
+        !studio.made("region").is_empty()
+    });
+    let (_, region) = &studio.made("region")[0];
+    assert_eq!(region["start"].as_u64(), Some(began.0), "{region}");
 }
 
 /// At a loop, a take ends and the next starts: one region for each round, and the input is let
