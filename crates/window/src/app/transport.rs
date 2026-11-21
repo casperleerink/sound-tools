@@ -462,7 +462,7 @@ type Switch = (
     fn(&runtime::session::TransportState) -> bool,
 );
 
-/// The switches of how the piece plays, in their order in the pill.
+/// The switches of how the piece plays, in their order in the title row.
 const SWITCHES: [Switch; 3] = [
     ("computer-keys", "Computer keys", Act::Keys, |on| on.keys),
     (
@@ -474,7 +474,7 @@ const SWITCHES: [Switch; 3] = [
     ("click", "Click", Act::Click, |on| on.click),
 ];
 
-/// The pill of the transport.
+/// The transport, as it stands in the title row.
 pub(super) fn view(state: &State) -> El {
     let theme = &state.theme;
     let transport = &state.transport;
@@ -483,7 +483,7 @@ pub(super) fn view(state: &State) -> El {
         .gap(theme.space(1))
         .items_center()
         .child(
-            round(
+            button(
                 state,
                 "play",
                 play_label(playing),
@@ -494,10 +494,10 @@ pub(super) fn view(state: &State) -> El {
             .keys(app_key_of(state, "play"))
             .build(|s: &mut State| s.play_or_pause()),
         )
-        .child(round(state, "stop", "Stop", &STOP).build(|s: &mut State| s.stop()))
+        .child(button(state, "stop", "Stop", &STOP).build(|s: &mut State| s.stop()))
         .children(state.records().then(|| {
             let on = state.records_now();
-            round(state, "record", "Record", &RECORD)
+            button(state, "record", "Record", &RECORD)
                 .ink(if on { "text-inverse" } else { "red" })
                 .lit(on.then_some("red"))
                 .checked(on)
@@ -525,7 +525,7 @@ pub(super) fn view(state: &State) -> El {
                 ),
                 _ => (&METRONOME, "Click: a tick on every beat", None),
             };
-            let mut button = round(state, key, label, icon)
+            let mut button = button(state, key, label, icon)
                 .small()
                 .role("switch")
                 .help(help)
@@ -540,14 +540,8 @@ pub(super) fn view(state: &State) -> El {
     ));
     row()
         .key("transport")
-        .h(36.0)
-        .pl(theme.space(1))
-        .pr(theme.space(4))
         .gap(theme.space(3))
         .items_center()
-        .radius(theme.radius("full").unwrap_or(18.0))
-        .fill(theme.color("fill-strong"))
-        .border(1.0, theme.color("border-strong"))
         .child(buttons)
         .child(readout(
             state,
@@ -574,7 +568,7 @@ pub(super) fn view(state: &State) -> El {
         .child(transport.meter.view(state))
 }
 
-/// A number of the pill, as the piece plays.
+/// A number of the transport, as the piece plays.
 fn readout(state: &State, key: &str, live: &LiveText, w: f32, colour: &str) -> El {
     let theme = &state.theme;
     text(String::new())
@@ -698,8 +692,8 @@ fn typed_or(state: &State, typed: Typed, readout: El) -> El {
         })
 }
 
-/// A round button of the pill: an icon, its label, a tooltip with its keys.
-struct Round<'a> {
+/// A button of the transport: an icon, its label, a tooltip with its keys.
+struct Button<'a> {
     state: &'a State,
     key: &'a str,
     label: &'a str,
@@ -714,8 +708,8 @@ struct Round<'a> {
     side: f32,
 }
 
-fn round<'a>(state: &'a State, key: &'a str, label: &'a str, icon: &'static Icon) -> Round<'a> {
-    Round {
+fn button<'a>(state: &'a State, key: &'a str, label: &'a str, icon: &'static Icon) -> Button<'a> {
+    Button {
         state,
         key,
         label,
@@ -730,7 +724,7 @@ fn round<'a>(state: &'a State, key: &'a str, label: &'a str, icon: &'static Icon
     }
 }
 
-impl<'a> Round<'a> {
+impl<'a> Button<'a> {
     fn ink(self, ink: &'a str) -> Self {
         Self { ink, ..self }
     }
@@ -770,7 +764,7 @@ impl<'a> Round<'a> {
             .focusable(true)
             .size(self.side, self.side)
             .center()
-            .radius(self.side / 2.0)
+            .radius(theme.radius("md").unwrap_or(6.0))
             .hover(hover)
             .press(theme.color("fill-strong"))
             .on_press(move |s: &mut State| {

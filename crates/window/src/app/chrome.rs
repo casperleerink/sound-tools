@@ -115,6 +115,7 @@ fn title_row(state: &State, menu: El) -> El {
         .pr(theme.space(4))
         .gap(theme.space(2))
         .items_center()
+        .border_sides([0.0, 0.0, 1.0, 0.0], theme.color("border"))
         .child(drag().w(TITLE_LEFT))
         .child(panel::icon_button(state))
         .child(menu)
