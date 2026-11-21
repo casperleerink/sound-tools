@@ -231,7 +231,8 @@ pub(crate) struct SimulatedInput {
     /// device that takes its time to open.
     pub holds: Arc<AtomicBool>,
     pub let_through: Arc<AtomicU32>,
-    started: Arc<AtomicU32>,
+    /// Openings that reached the device: the number of the next one.
+    pub started: Arc<AtomicU32>,
     /// For each time it closed, the thread it closed on.
     closed: Arc<Mutex<Vec<ThreadId>>>,
 }

@@ -249,7 +249,11 @@ fn an_opening_given_up_keeps_no_later_one_waiting() {
     input.holds.store(true, Ordering::Relaxed);
     for (key, armed) in [("arm", true), ("done", false), ("arm", true)] {
         studio.press("studio", key);
-        studio.until(key, |studio| studio.input.armed().is_empty() != armed);
+        // The opening given up reaches the device first, so it also opens first: the simulated
+        // input has the capture of the one that opened last.
+        studio.until(key, |studio| {
+            studio.input.armed().is_empty() != armed && input.started.load(Ordering::Relaxed) > 0
+        });
     }
     // The opening given up comes back first, then the one wanted, both before the next poll.
     for number in 1..=2 {
