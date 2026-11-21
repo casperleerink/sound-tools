@@ -334,7 +334,7 @@ const Clips = ({ memory }: { memory: Memory }) => {
   );
   const chosen = () => memory.clips.find((clip) => clip.name === memory.chosenClip);
   return (
-    <col w={480} radius="md" border="border" clip>
+    <col w={480} clip>
       <box key="clips-ruler" label="Ruler" w={480} h={20} fill="surface" plane={{ x: "clips" }}>
         {Array.from({ length: 16 }, (_, bar) => (
           <box place={[bar * BAR, 0, BAR, 20]} pad={[1, 0]} border="border" borderSides={[0, 0, 0, 1]}>
