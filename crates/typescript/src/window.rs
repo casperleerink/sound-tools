@@ -140,6 +140,18 @@ pub enum Drawn {
     NoCard(String),
 }
 
+/// A question of code, by the load of the Bun that asked it: each Bun numbers its own, so an
+/// answer goes to no other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Question {
+    load: u64,
+    number: u64,
+}
+
+/// What the composer reads who answered code that started again since it asked.
+pub const ASKED_BEFORE: &str =
+    "The code of the project started again meanwhile, so this did nothing. Do it again.";
+
 /// What code asks of the window that only the window does: the composer's choices that no record
 /// holds, and the questions only the composer answers. [`Tools::take_wants`] gives them; the
 /// answer to a question goes back with [`Tools::answer`].
@@ -171,26 +183,26 @@ pub enum Want {
     },
     /// A yes or no, its yes button `confirm` and the other Cancel: [`Answer::Confirmed`].
     Confirm {
-        question: u64,
+        question: Question,
         message: String,
         detail: Option<String>,
         confirm: String,
     },
     /// A file the composer chooses, copied into `assets/audio/`: [`Answer::Asset`].
     OpenFile {
-        question: u64,
+        question: Question,
         title: String,
     },
     /// Where to write the MIDI file `bytes`, offered as `name`: [`Answer::Confirmed`] once written.
     ExportNotes {
-        question: u64,
+        question: Question,
         name: String,
         bytes: Vec<u8>,
     },
     /// The sound of `instance` alone over `span`, with what still sounds after it when `tail`,
     /// into a new file of `assets/audio/` named after `name`: [`Answer::Asset`].
     Render {
-        question: u64,
+        question: Question,
         instance: InstanceId,
         span: Range<Ticks>,
         tail: bool,
@@ -383,12 +395,28 @@ impl Tools {
         std::mem::take(&mut self.wants)
     }
 
-    /// The window's answer to the question of a [`Want`]. An answer for a Bun that ended is
-    /// nobody's: the next one numbers its questions anew.
-    pub fn answer(&mut self, question: u64, answer: &Answer) {
-        if let Some(bun) = &self.bun {
-            bun.send(&Request::Answer { question, answer });
+    /// A question the running Bun asks.
+    fn question(&self, number: u64) -> Question {
+        Question {
+            load: self.loads,
+            number,
         }
+    }
+
+    /// Whether the Bun that asked `question` runs still, which an answer goes to.
+    pub fn asks(&self, question: Question) -> bool {
+        question.load == self.loads && self.bun.is_some()
+    }
+
+    /// The window's answer to the question of a [`Want`], to the Bun that asked it. Whether it
+    /// went: an answer for a Bun that ended is nobody's.
+    pub fn answer(&mut self, question: Question, answer: &Answer) -> bool {
+        let Some(bun) = self.bun.as_ref().filter(|_| question.load == self.loads) else {
+            return false;
+        };
+        let question = question.number;
+        bun.send(&Request::Answer { question, answer });
+        true
     }
 
     /// What the window shows of `id`, once a Bun said. `None` while one may still say: a Bun
@@ -1323,6 +1351,7 @@ impl Tools {
                 detail,
                 confirm,
             } => {
+                let question = self.question(question);
                 self.wants.push(Want::Confirm {
                     question,
                     message,
@@ -1332,6 +1361,7 @@ impl Tools {
                 false
             }
             Event::OpenFile { question, title } => {
+                let question = self.question(question);
                 self.wants.push(Want::OpenFile { question, title });
                 false
             }
@@ -1341,6 +1371,7 @@ impl Tools {
                 path,
                 name,
             } => {
+                let question = self.question(question);
                 match self.notes_of(project, &instance, &path) {
                     Ok(bytes) => self.wants.push(Want::ExportNotes {
                         question,
@@ -1363,6 +1394,7 @@ impl Tools {
                 tail,
                 name,
             } => {
+                let question = self.question(question);
                 let child =
                     self.child_of(project, &instance, &path)
                         .and_then(|child| match from < to {

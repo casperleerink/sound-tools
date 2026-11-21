@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::Result;
 use runtime::session::{Polled, Rendered};
 use sound_core::{InstanceId, Ticks};
-use sound_typescript::window::Answer;
+use sound_typescript::window::{Answer, Question};
 
 use super::State;
 
@@ -18,7 +18,7 @@ pub(super) enum Purpose {
     Export(PathBuf),
     /// A part code asked for, into a scratch folder, then into `assets/audio/`.
     Part {
-        question: u64,
+        question: Question,
         name: String,
         file: PathBuf,
         scratch: tempfile::TempDir,
@@ -86,7 +86,7 @@ impl State {
     /// answers `question` with its name; with `tail`, what rings on after the span too.
     pub(super) fn render_part(
         &mut self,
-        question: u64,
+        question: Question,
         instance: &InstanceId,
         span: Range<Ticks>,
         tail: bool,
@@ -128,7 +128,7 @@ impl State {
 
     fn part_rendered(
         &mut self,
-        question: u64,
+        question: Question,
         name: &str,
         file: PathBuf,
         scratch: tempfile::TempDir,
