@@ -1,4 +1,4 @@
-import { h, live, type Card, type Node } from "../../../sdk";
+import { h, live, type Card, type Child, type Node } from "../../../sdk";
 import theme from "../../../theme.json";
 import { Button } from "../../button";
 import { Cell } from "../../cell";
@@ -10,8 +10,9 @@ import { Tooltip } from "../../tooltip";
 import { DeviceCard } from "../device-card";
 
 const CELL = theme.size.cell;
-/** The card's own two controls take three cells, so a plugin's name fits; a list of steps two. */
+/** The card's own column is three cells wide, as wide as a display of so many, so a plugin's name fits; a list of steps two. */
 const [OWN, LIST] = [3, 2];
+const WIDE = OWN * CELL - 8;
 /** The longest name a switch of one column holds: a longer one takes two, and one longer still ends in an ellipsis with its whole name in a tip. */
 const [SWITCH_LETTERS, WIDE_SWITCH_LETTERS] = [7, 17];
 /** The most pins a record holds: as many as lanes can move of one device. */
@@ -36,27 +37,25 @@ const stepValue = (parameter: Parameter, steps: number, index: number) => parame
 const stepOf = (parameter: Parameter, steps: number, value: number) => Math.round(((value - parameter.min) / (parameter.max - parameter.min || 1)) * (steps - 1));
 
 /**
- * A plugin: it draws itself in a window of its own, so the card has no display. In its place the
- * button that opens that window over the list of its parameters, which puts one on the card or
- * takes it off; then a control for each pinned parameter, each in the row with the most room. A
- * plugin that cannot play says why where the display would be.
+ * A plugin: it draws itself in a window of its own, so the card has no display. In its place one
+ * column: the button that opens that window over the list of its parameters, which puts one on
+ * the card or takes it off; then a control for each pinned parameter, each in the row with the
+ * most room. A plugin that cannot play says why in that column.
  */
 export const card: Card<"plugin"> = (self, ctx) => {
   const { facts, state } = self;
   const title = facts.title;
   const pins = (state.parameters ?? {}) as Record<string, Pin>;
-  const says = (text: string) => (
-    <col w={OWN * CELL} h={2 * theme.size.row} pad={[2, 0]} justify="center">
-      {lines(text, OWN * LETTERS_A_CELL).map((line) => <text style="label" color="text-secondary">{line}</text>)}
-    </col>
-  );
+  const says = (text: string) => <col>{lines(text, OWN * LETTERS_A_CELL).map((line) => <text style="label" color="text-secondary">{line}</text>)}</col>;
+  // Its first button sits where a list or a switch does in the top row of cells: centred on a knob.
+  const own = (...children: Child[]) => <col w={WIDE}><box h={(theme.size.knob - theme.size.sm) / 2} /><col gap={1}>{children}</col></col>;
   const name = facts.name ?? state.plugin_id;
-  if (facts.status === "missing") return <DeviceCard id="card" title={title} display={says("This plugin is not on this computer. Install it, or pick another.")} />;
+  if (facts.status === "missing") return <DeviceCard id="card" title={title} display={own(says("This plugin is not on this computer. Install it, or pick another."))} />;
   if (facts.status === "stopped") {
-    const again = <Button id="plugin-start-again" label={`${title} start again`} text="Start again" size="sm" onPress={() => ctx.send("start_again")} />;
-    return <DeviceCard id="card" title={title} display={<col gap={1}>{says(`${name} stopped working.`)}{again}</col>} />;
+    const again = <Button id="plugin-start-again" label={`${title} start again`} text="Start again" variant="primary" size="sm" w={WIDE} onPress={() => ctx.send("start_again")} />;
+    return <DeviceCard id="card" title={title} display={own(says(`${name} stopped working.`), again)} />;
   }
-  if (facts.status === "not_loaded") return <DeviceCard id="card" title={title} display={says("This plugin did not load, so there is nothing to open.")} />;
+  if (facts.status === "not_loaded") return <DeviceCard id="card" title={title} display={own(says("This plugin did not load, so there is nothing to open."))} />;
 
   const parameters = new Map(facts.parameters.map((parameter) => [parameter.id, parameter as Parameter]));
   const pinned = Object.entries(pins).filter(([, pin]) => pin).map(([id]) => Number(id)).sort((a, b) => a - b);
@@ -72,8 +71,8 @@ export const card: Card<"plugin"> = (self, ctx) => {
     pins[id] ? ctx.update(`Remove ${pins[id]!.name}`, (draft) => void delete (draft.state as { parameters?: Record<string, Pin> }).parameters?.[id]) : ctx.send("pin", id);
 
   const window = facts.window === "none"
-    ? <col>{lines("This plugin has no window of its own.", OWN * LETTERS_A_CELL).map((line) => <text style="label" color="text-secondary">{line}</text>)}</col>
-    : <Button id="plugin-window" label={`${title} ${facts.window === "open" ? "close window" : "open window"}`} text={facts.window === "open" ? "Close window" : "Open window"} size="sm" onPress={() => (facts.window === "open" ? ctx.send("close_window") : ctx.openWindow(""))} />;
+    ? <row h={theme.size.sm} align="center"><text style="label" color="text-secondary">This plugin has no window.</text></row>
+    : <Button id="plugin-window" label={`${title} ${facts.window === "open" ? "close window" : "open window"}`} text={facts.window === "open" ? "Close window" : "Open window"} variant={facts.window === "open" ? "subtle" : "primary"} size="sm" w={WIDE} onPress={() => (facts.window === "open" ? ctx.send("close_window") : ctx.openWindow(""))} />;
   const listed = [
     ...facts.parameters.map((parameter) => {
       const has = pinned.includes(parameter.id);
@@ -82,18 +81,12 @@ export const card: Card<"plugin"> = (self, ctx) => {
     }),
     ...pinned.filter((id) => !parameters.has(id)).map((id) => ({ text: pins[id]!.name, key: String(id), checked: true, detail: "Not in this plugin", onPress: () => pinOrUnpin(id) })),
   ];
-  const list = (
-    <row key="plugin-parameters" label={`${title} parameters`} role="button" w={OWN * CELL - 8} h={24} pad={[2, 0]} gap={1} align="center" justify="between" radius="md" fill="fill" hover="fill">
+  const list = facts.parameters.length > 0 && (
+    <row key="plugin-parameters" label={`${title} parameters`} role="button" w={WIDE} h={theme.size.sm} pad={[2, 0]} gap={1} align="center" justify="between" radius="md" fill="fill" hover="fill">
       <text style="label" color="text">Parameters</text>
       <icon name="chevron-down" size={14} color="text-muted" />
       <MenuList id="plugin-parameters" label={`${title} parameters`} items={listed} w={260} search notes={full ? [`The card holds ${MOST} parameters at most. Take one off to add another.`] : []} />
     </row>
-  );
-  const own = (
-    <col w={OWN * CELL} gap={1}>
-      <Cell span={OWN}>{window}</Cell>
-      {facts.parameters.length > 0 && <Cell span={OWN}>{list}</Cell>}
-    </col>
   );
 
   /** The cell of a pin, and how many columns it takes. */
@@ -146,5 +139,5 @@ export const card: Card<"plugin"> = (self, ctx) => {
       <row h={theme.size.row}>{rows[1]}</row>
     </col>
   );
-  return <DeviceCard id="card" title={title} cells={controls ? [own, controls] : [own]} />;
+  return <DeviceCard id="card" title={title} display={own(window, list)} cells={controls ? [controls] : []} />;
 };
