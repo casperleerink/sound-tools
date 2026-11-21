@@ -311,7 +311,7 @@ fn picker(state: &State, sidebar: &Sidebar) -> El {
         .px(12.0)
         .gap(theme.space(2))
         .items_center()
-        .border_sides([0.0, 0.0, 0.0, 1.0], theme.color("border"))
+        .border_sides([0.0, 0.0, 1.0, 0.0], theme.color("border"))
         .child(icon(&icons::SEARCH, 14.0).color(theme.color("text-muted")))
         .child(search);
     let panel = col()
