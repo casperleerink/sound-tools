@@ -703,7 +703,7 @@ mod tests {
     /// quotes and renamed parts, of the SDK and of what it no longer has.
     const OLD_PAGE: &str = r#"import {
   h, number, // the pitch
-  Knob /* gone */,
+  Knob /* } gone */,
   Page as Screen,
   sine as wave,
   tool // makes it

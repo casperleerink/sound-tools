@@ -74,7 +74,7 @@ fn is_card(file: &str) -> bool {
 }
 
 /// What a tool whose file was written for the views of an older Sound Tools says.
-pub const OLD_VIEWS: &str = "This was made for an older Sound Tools, whose views are gone. It plays as before; ask the agent to make its view again.";
+pub const OLD_VIEWS: &str = "This was made for an older Sound Tools, whose views are gone. It plays as before; the agent can bring its view back.";
 
 /// What a device shows whose card has a mistake.
 const MISTAKE: &str = "This device's card has a mistake, so it shows nothing until it is mended.";
