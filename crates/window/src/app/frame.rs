@@ -296,10 +296,13 @@ pub(crate) fn closing(state: &mut State, tx: &mut Tx) {
     tx.quit();
 }
 
-/// Before any window goes, so what was recorded is in the song, every plugin saves its state
-/// and lets go of its view, and the agent's writes end.
+/// Before any window goes, so what was recorded is in the song or waits for the next open,
+/// every plugin saves its state and lets go of its view, and the agent's writes end.
 pub(crate) fn quitting(state: &mut State, tx: &mut Tx) {
     finish_takes(state);
+    if let Some(tools) = &mut state.tools {
+        tools.close(state.session.project());
+    }
     state.session.close();
     state.plugin_windows.close_all(&state.plugins);
     crate::sidebar::before_quit(state, tx);
@@ -308,17 +311,16 @@ pub(crate) fn quitting(state: &mut State, tx: &mut Tx) {
 /// The piece stops, which ends the takes, and their code keeps them: frames until it did, or
 /// until [`FINISHING`] passed.
 fn finish_takes(state: &mut State) {
-    if !state.session.recording() {
-        return;
+    if state.session.recording() {
+        state.session.background(|project| project.engine().stop());
     }
-    state.session.background(|project| project.engine().stop());
     let (start, began) = (std::time::Instant::now(), state.last);
     while start.elapsed() < FINISHING {
-        frame(state, began + start.elapsed().as_secs_f64());
         let keeping = state.tools.as_ref().is_some_and(Tools::keeping_takes);
         if !state.session.recording() && !keeping {
             return;
         }
+        frame(state, began + start.elapsed().as_secs_f64());
         std::thread::sleep(Duration::from_millis(2));
     }
 }

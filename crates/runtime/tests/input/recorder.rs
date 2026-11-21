@@ -505,6 +505,48 @@ fn a_take_too_short_to_place_leaves_no_file_and_says_so() {
     assert_eq!(files, 0);
 }
 
+/// A take no code kept as the project closes waits in it for the next open, whose code keeps
+/// it. While a Bun starts, a quit waits for it.
+#[test]
+fn a_take_waiting_for_the_code_as_the_project_closes_is_kept_by_the_next_open() {
+    let (mut studio, input) = open_studio(false);
+    let file = studio.folder.path().join("extensions/studio.tsx");
+    let hangs = STUDIO.replace(
+        "onTake: ({ update }, take) =>\n",
+        "onTake: ({ update }, take) =>\n    (() => { while (take.name) {} })() ??\n",
+    );
+    let loads = studio.tools.loads();
+    std::fs::write(&file, &hangs).unwrap();
+    studio.tools.code_changed();
+    studio.until("the code that hangs", |studio| studio.tools.loads() > loads);
+    studio.press("studio", "arm");
+    studio.start_playing();
+    studio.record_for(&input, 24_000);
+    studio.press("studio", "done");
+    // The code runs without the file that hung: the take waits for it to be saved again.
+    studio.until("the take waits", |studio| {
+        studio.record_for(&input, 2_048);
+        let problems = studio.project.problems();
+        (problems.iter()).any(|problem| problem.message.contains("waits for the code"))
+    });
+    assert!(!studio.tools.keeping_takes());
+    // Saved: a quit waits for the Bun that starts. This one quits before it.
+    std::fs::write(&file, STUDIO).unwrap();
+    studio.tools.code_changed();
+    assert!(studio.tools.keeping_takes());
+    studio.tools.close(&studio.project);
+    let Opened {
+        project,
+        tools,
+        input: live,
+        folder,
+        ..
+    } = studio;
+    drop((tools, live, project));
+    let mut studio = open(folder, input.devices());
+    studio.until("the take kept", |studio| !studio.made("region").is_empty());
+}
+
 /// A take given to code that hangs on it is kept by the code that runs next.
 #[test]
 fn a_take_the_code_hung_on_is_kept_by_the_next_code() {

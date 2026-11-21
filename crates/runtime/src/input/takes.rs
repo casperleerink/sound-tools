@@ -561,7 +561,7 @@ impl Input {
             self.happened.push(Happened::Take(Take {
                 recorder,
                 name,
-                tool,
+                tool: tool.to_string(),
                 state,
             }));
         }
