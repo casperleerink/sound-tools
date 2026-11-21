@@ -244,11 +244,9 @@ pub(super) fn view(state: &State, page: &Page) -> El {
             .color(muted)
     });
     let cards = groups.into_iter().map(|(title, lines)| {
-        let last = lines.len().saturating_sub(1);
         let rows = lines
             .into_iter()
-            .enumerate()
-            .map(|(index, line)| shortcut_row(state, page, line, index < last));
+            .map(|line| shortcut_row(state, page, line));
         col()
             .w_full()
             .px(20.0)
@@ -262,7 +260,7 @@ pub(super) fn view(state: &State, page: &Page) -> El {
                     .color(theme.color("text"))
                     .pb(2.0),
             )
-            .children(rows)
+            .children(theme.lined(rows))
     });
     col()
         .w_full()
@@ -282,7 +280,7 @@ pub(super) fn view(state: &State, page: &Page) -> El {
         .children(cards)
 }
 
-fn shortcut_row(state: &State, page: &Page, line: Line, rule: bool) -> El {
+fn shortcut_row(state: &State, page: &Page, line: Line) -> El {
     let theme = &state.theme;
     let kit = &theme.kit;
     let muted = theme.color("text-muted");
@@ -382,11 +380,7 @@ fn shortcut_row(state: &State, page: &Page, line: Line, rule: bool) -> El {
         )
         .child(buttons)
         .child(keys);
-    let mut wrap = col().w_full().child(kit.interactive(action));
-    if rule {
-        wrap = wrap.border_sides([0.0, 0.0, 1.0, 0.0], theme.color("border-strong"));
-    }
-    wrap
+    kit.interactive(action)
 }
 
 /// A key as caps: `⇧⌘Z` is ⇧, ⌘ and Z; `Ctrl+Z` is Ctrl and Z.

@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use rune::{Color, TextStyle};
+use rune::{Color, El, Shadow, TextStyle, col};
 use rune_kit::{Kit, PaletteFocus, PaletteSeed, Radius, StateColors, Type};
 use serde::Deserialize;
 
@@ -131,6 +131,15 @@ impl Theme {
             lg: r("lg", 8.0),
             xl: r("lg", 8.0) + 2.0,
         };
+        // A field's edge is a card's, 1 point inside its box; the kit's own is a half-point ring
+        // outside it, too faint beside the cards.
+        let edge = Shadow {
+            spread: 1.0,
+            inset: true,
+            color: c("border-strong"),
+            ..Shadow::default()
+        };
+        kit.elevation = kit.elevation.with_input([edge]);
         kit
     }
 
@@ -185,6 +194,24 @@ impl Theme {
 
     pub(crate) fn radius(&self, name: &str) -> Option<f32> {
         self.radius.get(name).copied()
+    }
+
+    /// `rows` with a quiet line between each two. The line takes a point of its own under its
+    /// row, so the row's hover or chosen fill never covers it.
+    pub(crate) fn lined(&self, rows: impl IntoIterator<Item = El>) -> Vec<El> {
+        let mut rows = rows.into_iter().peekable();
+        let mut lined = Vec::new();
+        while let Some(row) = rows.next() {
+            lined.push(match rows.peek() {
+                Some(_) => col()
+                    .w_full()
+                    .border_sides([0.0, 0.0, 1.0, 0.0], self.color("border"))
+                    .border_layout()
+                    .child(row),
+                None => row,
+            });
+        }
+        lined
     }
 
     pub(crate) fn shadow(&self, name: &str) -> Option<&ShadowToken> {

@@ -318,6 +318,27 @@ fn a_picked_device_is_kept_for_the_machine_and_a_missing_one_says_what_plays() {
     );
 }
 
+/// The line between two rows has a point of its own, so a chosen or hovered row's fill never
+/// covers it.
+#[test]
+fn a_chosen_row_leaves_the_line_under_it_uncovered() {
+    let scratch = new_project();
+    let mut window = window_of(without_agent(kept(&scratch)));
+    chord(&mut window, ',', false);
+    act(
+        &mut window.state,
+        json!({ "label": "Shortcuts", "action": "press" }),
+    );
+    act(
+        &mut window.state,
+        json!({ "key": "shortcut-app.undo", "action": "press" }),
+    );
+    redraw(&mut window);
+    let rect = |key: &str| window.presented(key).unwrap().0;
+    let (chosen, next) = (rect("shortcut-app.undo"), rect("shortcut-app.redo"));
+    assert_eq!(next[1] - (chosen[1] + chosen[3]), 1.0);
+}
+
 #[test]
 fn a_key_pressed_on_an_action_becomes_its_key_and_the_file_keeps_it() {
     let scratch = new_project();

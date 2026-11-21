@@ -225,7 +225,10 @@ fn body(
                 let rows: Vec<El> = (services.signed_in.iter())
                     .map(|row| service_row(theme, provider, row, places))
                     .collect();
-                col().w_full().child(group(SIGNED_IN_GROUP)).children(rows)
+                col()
+                    .w_full()
+                    .child(group(SIGNED_IN_GROUP))
+                    .children(theme.lined(rows))
             });
             let panel = services.panel.as_ref().map(|panel| {
                 let inner = match &panel.body {
@@ -280,7 +283,7 @@ fn body(
                 .child(group(ADD_A_SERVICE))
                 .children(panel)
                 .child(search)
-                .child(col().w_full().children(listed).children(empty))
+                .child(col().w_full().children(theme.lined(listed)).children(empty))
         }
     }
 }

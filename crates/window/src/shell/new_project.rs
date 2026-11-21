@@ -281,7 +281,7 @@ pub(crate) fn template_row<S: 'static>(
         .gap(theme.space(2))
         .items_start()
         .radius(theme.kit.radius.md)
-        .border(1.0, theme.color("border"))
+        .border(1.0, theme.color("border-strong"))
         .on_press_tx(press)
         .child(words)
         .children(trailing);

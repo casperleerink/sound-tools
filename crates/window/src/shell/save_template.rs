@@ -110,7 +110,7 @@ impl SaveTemplate {
                 .w_full()
                 .padding(theme.space(3))
                 .radius(theme.kit.radius.md)
-                .border(1.0, theme.color("border"))
+                .border(1.0, theme.color("border-strong"))
                 .on_press_tx(move |s: &mut S, tx: &mut Tx| {
                     super::run(s, Act::Content(content), None, tx)
                 })
