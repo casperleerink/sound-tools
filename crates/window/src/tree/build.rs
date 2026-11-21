@@ -279,7 +279,9 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
         _ => e,
     };
     if let Some(grow) = b.grow {
-        e = e.grow(grow);
+        // It takes the room left over and no more: without the floor, what it holds would
+        // widen it and push what follows out of its row.
+        e = e.grow(grow).min_w(0.0);
     }
     match b.pad {
         Some(Pad::All(step)) => e = e.padding(theme.space(step)),

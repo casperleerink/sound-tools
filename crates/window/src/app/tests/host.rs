@@ -1438,6 +1438,36 @@ export const cut = tool({
     assert_eq!(tip(&window), None);
 }
 
+/// A box that grows takes the room left in its row and no more: a long text in it is cut, and
+/// what follows it stays in the row.
+#[test]
+fn a_long_text_in_a_box_that_grows_is_cut_and_leaves_what_follows_in_the_row() {
+    const HEAD: &str = r#"import { h, tool } from "./sdk";
+export const head = tool({
+  name: "head", title: "Head", when: "Never", doc: "A name and a button in a narrow row.", state: {},
+  view: () => (
+    <row key="head" w={120} h={24}>
+      <row grow={1}><text key="name" truncate>A name far too long for a hundred and twenty points</text></row>
+      <box key="end" w={20} h={20} />
+    </row>
+  ),
+});
+"#;
+    let files = [
+        ("extensions/head.tsx", HEAD),
+        ("state/head.json", r#"{"tool": "head", "state": {}}"#),
+    ];
+    let (_scratch, window) = page(&files, "head");
+    let rect = |key: &str| window.presented(key).unwrap().0;
+    let [head, name, end] = [rect("head"), rect("name"), rect("end")];
+    assert_eq!(
+        end[0] + end[2],
+        head[0] + head[2],
+        "the end is out of its row"
+    );
+    assert_eq!(name[2], 100.0, "the name is not cut to the room left");
+}
+
 /// A project of the DAW template, as an older release made it: `song.tsx` the project never
 /// changed and `track.ts` it did, each as the older template had it.
 fn older_daw(scratch: &tempfile::TempDir) -> PathBuf {
