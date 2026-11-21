@@ -173,19 +173,21 @@ impl AudioInput {
     }
 
     /// The opening that came back, if one did: its live input for the engine and the notice
-    /// that it is not the one chosen, or why it did not open. `None` too for an opening given
-    /// up since: its input closes again.
+    /// that it is not the one chosen, or why it did not open. An opening given up since is
+    /// passed over: its input closes again.
     fn take_opened(
         &mut self,
         assets: &Assets,
     ) -> Option<Result<(LiveInput, Option<String>), DeviceError>> {
-        let (generation, opened) = self.opened.1.try_recv().ok()?;
-        if self.opening != Some(generation) {
+        let opened = loop {
+            let (generation, opened) = self.opened.1.try_recv().ok()?;
+            if self.opening == Some(generation) {
+                break opened;
+            }
             if let Ok(input) = opened {
                 drop_off_thread(input.stream);
             }
-            return None;
-        }
+        };
         self.opening = None;
         let OpenedInput {
             stream,

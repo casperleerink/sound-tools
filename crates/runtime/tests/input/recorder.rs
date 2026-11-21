@@ -3,9 +3,11 @@
 //! input and the notes of the keyboard, and when it is turned off what it heard becomes a
 //! `region` and a `timeline` next to it, where it was heard, in one undo step.
 
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use midi::Played;
+use runtime::input::Input;
 use serde_json::Value;
 use sound_core::{Changes, InstanceId, Ticks};
 use sound_notes::{Amount, Bend};
@@ -204,6 +206,39 @@ fn the_level_of_the_input_a_recorder_opened_is_there_for_a_meter() {
         studio.input.input_levels().get(1) == Some(&0.25)
     });
     assert!(studio.input.armed().contains(&id("studio/rec")));
+}
+
+/// Armed, disarmed and armed again while the input takes its time to open: the opening given
+/// up is passed over, and the one wanted is there at the same poll.
+#[test]
+fn an_opening_given_up_keeps_no_later_one_waiting() {
+    let (mut studio, input) = open_studio(false);
+    // Only the threads of the input wake this one.
+    let opened = Arc::new(AtomicU64::new(0));
+    let waker = opened.clone();
+    studio.input = Input::new(
+        &mut studio.project,
+        input.devices(),
+        Arc::new(move || {
+            waker.fetch_add(1, Ordering::Relaxed);
+        }),
+    );
+    input.holds.store(true, Ordering::Relaxed);
+    for (key, armed) in [("arm", true), ("done", false), ("arm", true)] {
+        studio.press("studio", key);
+        studio.until(key, |studio| studio.input.armed().is_empty() != armed);
+    }
+    // The opening given up comes back first, then the one wanted, both before the next poll.
+    for number in 1..=2 {
+        input.let_through.store(number, Ordering::Relaxed);
+        let start = std::time::Instant::now();
+        while opened.load(Ordering::Relaxed) < u64::from(number) {
+            assert!(start.elapsed().as_secs() < 30, "the input did not open");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+    studio.poll();
+    assert!(!studio.input.input_levels().is_empty());
 }
 
 /// An input that cannot open ends the take that waited for it: its notes are kept, and nothing

@@ -227,6 +227,11 @@ pub(crate) struct SimulatedInput {
     pub openings: Arc<AtomicU32>,
     /// Whether opening it fails, as a device that is in use or not allowed.
     pub fails: Arc<AtomicBool>,
+    /// While it holds, each opening waits until `let_through` passes its number, from 0: as a
+    /// device that takes its time to open.
+    pub holds: Arc<AtomicBool>,
+    pub let_through: Arc<AtomicU32>,
+    started: Arc<AtomicU32>,
     /// For each time it closed, the thread it closed on.
     closed: Arc<Mutex<Vec<ThreadId>>>,
 }
@@ -242,6 +247,12 @@ impl SimulatedInput {
     fn opener(&self) -> OpenInput {
         let input = self.clone();
         Arc::new(move || {
+            let number = input.started.fetch_add(1, Ordering::Relaxed);
+            while input.holds.load(Ordering::Relaxed)
+                && input.let_through.load(Ordering::Relaxed) <= number
+            {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
             if input.fails.load(Ordering::Relaxed) {
                 return Err(sound_core::DeviceError::NoInputDevice);
             }
