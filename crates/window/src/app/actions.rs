@@ -125,6 +125,7 @@ impl State {
     /// and what it enters until let go: one step of undo.
     pub(crate) fn paint(&mut self, instance: &InstanceId, key: &str) {
         self.painting = Some((instance.clone(), BTreeSet::from([key.to_string()])));
+        self.session.set_painting(true);
         if let Some(tools) = &mut self.tools {
             (self.session).background(|project| tools.hold(project, true));
         }
@@ -157,8 +158,19 @@ impl State {
     }
 
     /// The press of a paint is let go; a `cancelled` one takes back what it painted.
+    /// A modal opened over a held press: Rune let go of it without the cancelled release that
+    /// Escape gives, so what the press held ends here as Escape ends it.
+    pub(crate) fn let_go_of_pointer(&mut self) {
+        tree::cancel_gesture(self);
+        if self.painting.is_some() {
+            self.painted(true);
+        }
+        self.cancel_tempo_drag();
+    }
+
     pub(crate) fn painted(&mut self, cancelled: bool) {
         self.painting = None;
+        self.session.set_painting(false);
         if let Some(tools) = &mut self.tools {
             (self.session).background(|project| match cancelled {
                 true => tools.cancel_hold(project),

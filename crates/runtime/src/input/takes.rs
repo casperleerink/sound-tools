@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use sound_core::{Clock, EngineStatus, EventTap, Frames, InstanceId, Project, Ticks};
-use sound_media::TakeOverview;
+use sound_core::{Assets, Clock, EngineStatus, EventTap, Frames, InstanceId, Project, Ticks};
+use sound_media::{AudioAsset, TakeOverview};
 use sound_notes::{NoteEvent, Pedal, RawEvent, RawTake};
 use sound_typescript::window::Take;
 use sound_typescript::{ARMED, HEARD, Heard, RECORDER, RecorderState};
@@ -517,13 +517,8 @@ impl Input {
                 let file = imported.audio.info();
                 let placed = (head.zip(audio.end))
                     .and_then(|(head, end)| take_place(&file, head, (start, end), &clock));
-                // It ended before it was tied to the timeline, or holds nothing of the take.
                 let Some((start, file_start, file_end)) = placed else {
-                    let path = project.assets().path(imported.asset.asset_name());
-                    if let Err(error) = std::fs::remove_file(&path) {
-                        eprintln!("error: {}: {error}", path.display());
-                    }
-                    let notice = "A take of sound was too short to keep.".to_string();
+                    let notice = unplaced(project.assets(), &imported.asset, file.seconds());
                     self.happened.push(Happened::Notice(notice));
                     continue;
                 };
@@ -561,7 +556,7 @@ impl Input {
             self.happened.push(Happened::Take(Take {
                 recorder,
                 name,
-                tool,
+                tool: tool.to_string(),
                 state,
             }));
         }
@@ -709,11 +704,49 @@ fn raw(event: NoteEvent, at: u64) -> Option<RawEvent> {
     })
 }
 
+/// A take of sound shorter than this that has no place in the song was a slip of the hand.
+const TOO_SHORT: f64 = 0.5;
+
+/// What becomes of a take of sound `seconds` long that has no place in the song: it ended
+/// before it was tied to the timeline, or holds nothing of it. One too short to be meant goes;
+/// else its file stays where the notice says.
+fn unplaced(assets: &Assets, asset: &AudioAsset, seconds: f64) -> String {
+    if seconds >= TOO_SHORT {
+        return format!(
+            "A take of sound could not be put in the song. It is kept in the project folder as {}.",
+            asset.project_path()
+        );
+    }
+    let path = assets.path(asset.asset_name());
+    if let Err(error) = std::fs::remove_file(&path) {
+        eprintln!("error: {}: {error}", path.display());
+    }
+    "A take of sound was too short to keep.".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use sound_notes::{Pedal, Pitch, Velocity};
 
     use super::*;
+
+    #[test]
+    fn a_take_of_sound_with_no_place_goes_only_when_it_is_too_short() {
+        let folder = tempfile::tempdir().unwrap();
+        let assets = Assets::new(folder.path());
+        let asset = AudioAsset::new("rec-sound-1.wav").unwrap();
+        let path = assets.path(asset.asset_name());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"").unwrap();
+        let kept = unplaced(&assets, &asset, 30.0);
+        assert!(path.exists());
+        assert!(kept.contains("assets/audio/rec-sound-1.wav"), "{kept}");
+        assert_eq!(
+            unplaced(&assets, &asset, 0.1),
+            "A take of sound was too short to keep."
+        );
+        assert!(!path.exists());
+    }
 
     #[test]
     fn all_off_ends_the_keys_still_down_and_the_pedal() {

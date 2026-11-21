@@ -140,6 +140,18 @@ pub enum Drawn {
     NoCard(String),
 }
 
+/// A question of code, by the load of the Bun that asked it: each Bun numbers its own, so an
+/// answer goes to no other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Question {
+    load: u64,
+    number: u64,
+}
+
+/// What the composer reads who answered code that started again since it asked.
+pub const ASKED_BEFORE: &str =
+    "The code of the project started again meanwhile, so this did nothing. Do it again.";
+
 /// What code asks of the window that only the window does: the composer's choices that no record
 /// holds, and the questions only the composer answers. [`Tools::take_wants`] gives them; the
 /// answer to a question goes back with [`Tools::answer`].
@@ -171,26 +183,26 @@ pub enum Want {
     },
     /// A yes or no, its yes button `confirm` and the other Cancel: [`Answer::Confirmed`].
     Confirm {
-        question: u64,
+        question: Question,
         message: String,
         detail: Option<String>,
         confirm: String,
     },
     /// A file the composer chooses, copied into `assets/audio/`: [`Answer::Asset`].
     OpenFile {
-        question: u64,
+        question: Question,
         title: String,
     },
     /// Where to write the MIDI file `bytes`, offered as `name`: [`Answer::Confirmed`] once written.
     ExportNotes {
-        question: u64,
+        question: Question,
         name: String,
         bytes: Vec<u8>,
     },
     /// The sound of `instance` alone over `span`, with what still sounds after it when `tail`,
     /// into a new file of `assets/audio/` named after `name`: [`Answer::Asset`].
     Render {
-        question: u64,
+        question: Question,
         instance: InstanceId,
         span: Range<Ticks>,
         tail: bool,
@@ -200,14 +212,17 @@ pub enum Want {
 
 /// A take a `recorder` made, for the `onTake` of its parent: the record of the child that would
 /// keep it, a `timeline` of notes or a `region` of sound, whose files are written.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Take {
     pub recorder: InstanceId,
     /// A name of the files it wrote, for the child that keeps it.
     pub name: String,
-    pub tool: &'static str,
+    pub tool: String,
     pub state: Value,
 }
+
+/// The takes no code kept when the project closed, for its next open.
+const WAITING_TAKES: &str = ".sound-tools/takes.json";
 
 pub struct Tools {
     folder: PathBuf,
@@ -350,7 +365,7 @@ impl Tools {
             facts: BTreeMap::new(),
             keys: BTreeMap::new(),
             clock: None,
-            held_takes: Vec::new(),
+            held_takes: waiting_takes(project),
             taking: Vec::new(),
             taps: HashMap::new(),
             waker,
@@ -358,6 +373,7 @@ impl Tools {
         };
         if let Some(bun) = bun {
             this.listen(bun);
+            this.offer_held_takes(project);
         }
         this
     }
@@ -379,12 +395,28 @@ impl Tools {
         std::mem::take(&mut self.wants)
     }
 
-    /// The window's answer to the question of a [`Want`]. An answer for a Bun that ended is
-    /// nobody's: the next one numbers its questions anew.
-    pub fn answer(&mut self, question: u64, answer: &Answer) {
-        if let Some(bun) = &self.bun {
-            bun.send(&Request::Answer { question, answer });
+    /// A question the running Bun asks.
+    fn question(&self, number: u64) -> Question {
+        Question {
+            load: self.loads,
+            number,
         }
+    }
+
+    /// Whether the Bun that asked `question` runs still, which an answer goes to.
+    pub fn asks(&self, question: Question) -> bool {
+        question.load == self.loads && self.bun.is_some()
+    }
+
+    /// The window's answer to the question of a [`Want`], to the Bun that asked it. Whether it
+    /// went: an answer for a Bun that ended is nobody's.
+    pub fn answer(&mut self, question: Question, answer: &Answer) -> bool {
+        let Some(bun) = self.bun.as_ref().filter(|_| question.load == self.loads) else {
+            return false;
+        };
+        let question = question.number;
+        bun.send(&Request::Answer { question, answer });
+        true
     }
 
     /// What the window shows of `id`, once a Bun said. `None` while one may still say: a Bun
@@ -743,7 +775,7 @@ impl Tools {
 
     /// Gives `take` to the `onTake` of the parent of its recorder. While no Bun runs it waits
     /// for the next one. Gives what to tell the composer: why it was not kept, or that it waits.
-    pub fn take(&mut self, project: &mut Project, take: Take) -> Option<String> {
+    pub fn take(&mut self, project: &Project, take: Take) -> Option<String> {
         let parent = take.recorder.parent();
         let info = (parent.as_ref()).and_then(|parent| self.info_of(project, parent));
         let keeps = info.as_ref().is_some_and(|info| info.on_take);
@@ -758,7 +790,7 @@ impl Tools {
             instance: played(project, &parent),
             recorder: take.recorder.name(),
             name: &take.name,
-            tool: take.tool,
+            tool: &take.tool,
             state: &take.state,
             clock: self.clock_now(project),
         };
@@ -776,17 +808,36 @@ impl Tools {
         Some(notice)
     }
 
-    /// Whether a take went to Bun that did not say it did it yet.
+    /// Whether a take went to Bun that did not say it did it yet, or waits for one that starts.
     pub fn keeping_takes(&self) -> bool {
-        !self.taking.is_empty()
+        let starts = self.starting.is_some() || self.changed_at.is_some();
+        !self.taking.is_empty() || (starts && !self.held_takes.is_empty())
     }
 
-    /// `bun` ends: the takes it did not say it did wait for the next one, after what it said
-    /// before it ended is heard.
-    fn hold_takes_of(&mut self, bun: &Bun, project: &mut Project) {
-        if self.taking.is_empty() {
+    /// For the project closing: the takes no code kept yet wait for its next open. Their files
+    /// stay in the project either way.
+    pub fn close(&mut self, project: &Project) {
+        let waiting: Vec<&Take> = (self.taking.iter().map(|(_, take)| take))
+            .chain(&self.held_takes)
+            .collect();
+        if waiting.is_empty() {
             return;
         }
+        let written = serde_json::to_vec(&waiting)
+            .map_err(std::io::Error::other)
+            .and_then(|bytes| {
+                let path = project.root().join(WAITING_TAKES);
+                std::fs::create_dir_all(path.parent().unwrap_or(project.root()))?;
+                sound_core::write_atomically(&path, &bytes)
+            });
+        if let Err(error) = written {
+            eprintln!("error: the takes no code kept were not written down: {error}");
+        }
+    }
+
+    /// `bun` ends: what it said since the last poll is heard, then the takes it did not say it
+    /// did wait for the next one.
+    fn hear_last_of(&mut self, bun: &Bun, project: &mut Project) {
         bun.kill();
         let events = bun.events();
         let start = Instant::now();
@@ -947,7 +998,7 @@ impl Tools {
         }
         let old = self.bun.take();
         if let Some(old) = &old {
-            self.hold_takes_of(old, project);
+            self.hear_last_of(old, project);
         }
         self.performer_gone(project);
         let (folder, opening, skipped) = (self.folder.clone(), self.opening, self.skipped.clone());
@@ -1048,13 +1099,18 @@ impl Tools {
             .collect();
         self.problems = problems;
         self.listen(bun);
+        self.offer_held_takes(project);
+        self.report(project);
+        true
+    }
+
+    /// The takes that waited for a Bun go to the one that runs now.
+    fn offer_held_takes(&mut self, project: &Project) {
         for take in std::mem::take(&mut self.held_takes) {
             if let Some(notice) = self.take(project, take) {
                 self.problems.push(crate::folder_problem(notice));
             }
         }
-        self.report(project);
-        true
     }
 
     /// The Bun that ran the actions sent is gone: what they changed is one step, and those it
@@ -1292,6 +1348,7 @@ impl Tools {
                 detail,
                 confirm,
             } => {
+                let question = self.question(question);
                 self.wants.push(Want::Confirm {
                     question,
                     message,
@@ -1301,6 +1358,7 @@ impl Tools {
                 false
             }
             Event::OpenFile { question, title } => {
+                let question = self.question(question);
                 self.wants.push(Want::OpenFile { question, title });
                 false
             }
@@ -1310,6 +1368,7 @@ impl Tools {
                 path,
                 name,
             } => {
+                let question = self.question(question);
                 match self.notes_of(project, &instance, &path) {
                     Ok(bytes) => self.wants.push(Want::ExportNotes {
                         question,
@@ -1332,6 +1391,7 @@ impl Tools {
                 tail,
                 name,
             } => {
+                let question = self.question(question);
                 let child =
                     self.child_of(project, &instance, &path)
                         .and_then(|child| match from < to {
@@ -2250,6 +2310,22 @@ mod card_file_tests {
 }
 
 /// What the composer reads of a take no code runs to keep yet.
+/// The takes no code kept as the project last closed, which the first Bun is given. The file
+/// goes: the next close writes those still waiting.
+fn waiting_takes(project: &Project) -> Vec<Take> {
+    let path = project.root().join(WAITING_TAKES);
+    let Ok(bytes) = std::fs::read(&path) else {
+        return Vec::new();
+    };
+    if let Err(error) = std::fs::remove_file(&path) {
+        eprintln!("error: {}: {error}", path.display());
+    }
+    serde_json::from_slice(&bytes).unwrap_or_else(|error| {
+        eprintln!("error: {}: {error}", path.display());
+        Vec::new()
+    })
+}
+
 fn take_waits(take: &Take) -> String {
     format!(
         "The take of {} waits for the code of the project to run again.",

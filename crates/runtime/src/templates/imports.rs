@@ -8,11 +8,12 @@ pub(super) fn imported(path: &str, contents: &str) -> Vec<String> {
         .collect()
 }
 
+/// The endings of code, which an import may leave out.
+const CODE: [&str; 6] = [".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs"];
+
 /// Whether a file at `path` is code that can import another.
 pub(super) fn is_code(path: &str) -> bool {
-    [".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs"]
-        .iter()
-        .any(|end| path.ends_with(end))
+    CODE.iter().any(|end| path.ends_with(end))
 }
 
 /// The relative specifiers after `from`, `import` or `import(`.
@@ -31,7 +32,7 @@ fn specifiers(contents: &str) -> impl Iterator<Item = &str> {
         })
 }
 
-fn resolve(path: &str, specifier: &str) -> [String; 5] {
+fn resolve(path: &str, specifier: &str) -> Vec<String> {
     let mut parts: Vec<&str> = path.split('/').collect();
     parts.pop();
     for part in specifier.split('/') {
@@ -44,7 +45,17 @@ fn resolve(path: &str, specifier: &str) -> [String; 5] {
         }
     }
     let base = parts.join("/");
-    ["", ".ts", ".tsx", "/index.ts", "/index.tsx"].map(|end| format!("{base}{end}"))
+    // Bun takes `./x.js` for `x.ts` too, as TypeScript does.
+    let stem = [".js", ".jsx", ".mjs"]
+        .iter()
+        .find_map(|end| base.strip_suffix(end))
+        .unwrap_or(&base);
+    let ends = std::iter::once(String::new())
+        .chain(CODE.iter().map(|end| end.to_string()))
+        .chain(CODE.iter().map(|end| format!("/index{end}")));
+    let mut paths: Vec<String> = ends.map(|end| format!("{base}{end}")).collect();
+    paths.extend(CODE.iter().map(|end| format!("{stem}{end}")));
+    paths
 }
 
 #[cfg(test)]
@@ -59,7 +70,10 @@ import "./side";
 const later = await import("./later");
 export * from "./again";
 const words = "from ./not-an-import";
-import { c } from "some-package";"#;
+import { c } from "some-package";
+import { d } from "./d.js";
+import { e } from "./e.jsx";
+import { f } from "./f";"#;
         let imported = imported("extensions/song/page.tsx", code);
         for path in [
             "extensions/song/sdk.ts",
@@ -67,9 +81,17 @@ import { c } from "some-package";"#;
             "extensions/song/side.tsx",
             "extensions/song/later/index.ts",
             "extensions/song/again.ts",
+            "extensions/song/d.ts",
+            "extensions/song/e.tsx",
+            "extensions/song/f.js",
+            "extensions/song/f/index.js",
         ] {
             assert!(imported.contains(&path.to_string()), "{path}: {imported:?}");
         }
-        assert_eq!(imported.len(), 5 * 5);
+        assert!(
+            !imported
+                .iter()
+                .any(|path| path.contains("some-package") || path.contains("not-an-import"))
+        );
     }
 }

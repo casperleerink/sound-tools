@@ -82,12 +82,14 @@ pub(crate) fn view(state: &State, cx: &mut Cx<State>) -> El {
         .fill(theme.color("background"))
         .children(screen)
         .children(notices::view(state));
-    let overlays = tree::overlays(state)
-        .into_iter()
-        .chain(super::history::overlays(state))
+    let modals: Vec<El> = (super::history::overlays(state).into_iter())
         .chain(menu_layer)
         .chain(dialogs(state))
-        .chain(crate::sidebar::overlays(state));
+        .chain(crate::sidebar::overlays(state))
+        .collect();
+    // A view's tips are overlays too, but no modal: its open overlays are.
+    state.modals.set(state.open.len() + modals.len());
+    let overlays = tree::overlays(state).into_iter().chain(modals);
     // On the root, which hears the key ups when nothing has the focus.
     rune_kit::root(base, overlays).on_key_up(super::keys::on_key_up)
 }

@@ -505,6 +505,49 @@ fn a_question_of_code_is_the_windows_dialog_and_its_answer_runs_the_view_again()
     );
 }
 
+/// The answer to a question of code that started again meanwhile reaches no question of the
+/// new code, also one with the same number: the composer is told to do it again.
+#[test]
+fn an_answer_for_code_that_started_again_reaches_no_other_question() {
+    let (_scratch, mut window) = asker();
+    act(
+        &mut window.state,
+        json!({ "label": "Said nothing", "action": "press" }),
+    );
+    let loads = window.state.tools.as_ref().unwrap().loads();
+    window.state.tools.as_mut().unwrap().code_changed();
+    while window.state.tools.as_ref().unwrap().loads() == loads {
+        polled(&mut window);
+    }
+    window.state.settle();
+    let asker = InstanceId::new("song/t00/chain/asker").unwrap();
+    (window.state.tools.as_mut().unwrap())
+        .act(&asker, "ask", "press", None)
+        .unwrap();
+    window.state.settle();
+    assert_eq!(window.state.waiting.asked.len(), 2);
+    // The first dialog is the question of the code before.
+    act(
+        &mut window.state,
+        json!({ "label": "Delete", "action": "press" }),
+    );
+    window.state.settle();
+    assert!(
+        labels(&window.state).contains(&"Said nothing".to_string()),
+        "{:?}",
+        labels(&window.state)
+    );
+    assert_eq!(
+        window.state.session.notice(),
+        Some(sound_typescript::window::ASKED_BEFORE)
+    );
+    act(
+        &mut window.state,
+        json!({ "label": "Delete", "action": "press" }),
+    );
+    assert!(labels(&window.state).contains(&"Said yes".to_string()));
+}
+
 /// A short WAV file of silence, 16-bit mono at 48 kHz.
 pub(super) fn wav(path: &Path) {
     let samples = 4800_u32;

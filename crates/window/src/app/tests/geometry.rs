@@ -188,6 +188,31 @@ fn escape_puts_a_drag_back_and_tells_nobody() {
     assert_eq!(rect(&window, "clip-0"), before);
 }
 
+/// A menu a right press opens during a drag ends the drag as Escape does: the release that
+/// follows is no drop, and the next drag works.
+#[test]
+fn a_menu_that_opens_during_a_drag_puts_it_back() {
+    let (_scratch, mut window) = lanes();
+    let before = rect(&window, "clip-0");
+    let (x, y) = window.find(&format!("{PREFIX}clip-0")).unwrap();
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    travel(&mut window, (x, y), (10.0, 0.0), 10);
+    window.secondary_down(x + 100.0, y);
+    window.secondary_up(x + 100.0, y);
+    redraw(&mut window);
+    assert!(!window.state.open.is_empty());
+    window.pointer_up(x + 100.0, y);
+    redraw(&mut window);
+    assert!(window.state.gesture.is_none());
+    assert!(
+        !heard(&window.state).contains("song"),
+        "{}",
+        heard(&window.state)
+    );
+    assert_eq!(rect(&window, "clip-0"), before);
+}
+
 #[test]
 fn a_right_press_opens_the_menu_at_the_pointer_after_its_press_and_a_pick_closes_it() {
     let (_scratch, mut window) = lanes();

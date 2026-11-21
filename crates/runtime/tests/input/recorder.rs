@@ -3,9 +3,11 @@
 //! input and the notes of the keyboard, and when it is turned off what it heard becomes a
 //! `region` and a `timeline` next to it, where it was heard, in one undo step.
 
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use midi::Played;
+use runtime::input::Input;
 use serde_json::Value;
 use sound_core::{Changes, InstanceId, Ticks};
 use sound_notes::{Amount, Bend};
@@ -190,6 +192,29 @@ fn a_recorder_records_the_input_and_the_keyboard_where_they_were_heard() {
     assert_eq!(studio.notices, [] as [String; 0]);
 }
 
+/// An input that goes away during a take says so, and the take keeps what it recorded until
+/// then.
+#[test]
+fn an_input_that_goes_away_during_a_take_says_so_and_keeps_what_came() {
+    let (mut studio, input) = open_studio(false);
+    studio.press("studio", "arm");
+    studio.until("the input opens", |_| {
+        input.openings.load(Ordering::Relaxed) == 1
+    });
+    studio.start_playing();
+    studio.record_for(&input, 24_000);
+    assert!(studio.input.is_recording());
+    input.unplug();
+    studio.record_for(&input, 24_000);
+    studio.press("studio", "done");
+    studio.until("the take kept", |studio| {
+        studio.record_for(&input, 2_048);
+        !studio.made("region").is_empty()
+    });
+    let went = "The audio input went away.".to_string();
+    assert!(studio.notices.contains(&went), "{:?}", studio.notices);
+}
+
 /// While a recorder is armed the input is open, and its level is there for a meter of its
 /// channels at every poll.
 #[test]
@@ -204,6 +229,39 @@ fn the_level_of_the_input_a_recorder_opened_is_there_for_a_meter() {
         studio.input.input_levels().get(1) == Some(&0.25)
     });
     assert!(studio.input.armed().contains(&id("studio/rec")));
+}
+
+/// Armed, disarmed and armed again while the input takes its time to open: the opening given
+/// up is passed over, and the one wanted is there at the same poll.
+#[test]
+fn an_opening_given_up_keeps_no_later_one_waiting() {
+    let (mut studio, input) = open_studio(false);
+    // Only the threads of the input wake this one.
+    let opened = Arc::new(AtomicU64::new(0));
+    let waker = opened.clone();
+    studio.input = Input::new(
+        &mut studio.project,
+        input.devices(),
+        Arc::new(move || {
+            waker.fetch_add(1, Ordering::Relaxed);
+        }),
+    );
+    input.holds.store(true, Ordering::Relaxed);
+    for (key, armed) in [("arm", true), ("done", false), ("arm", true)] {
+        studio.press("studio", key);
+        studio.until(key, |studio| studio.input.armed().is_empty() != armed);
+    }
+    // The opening given up comes back first, then the one wanted, both before the next poll.
+    for number in 1..=2 {
+        input.let_through.store(number, Ordering::Relaxed);
+        let start = std::time::Instant::now();
+        while opened.load(Ordering::Relaxed) < u64::from(number) {
+            assert!(start.elapsed().as_secs() < 30, "the input did not open");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+    studio.poll();
+    assert!(!studio.input.input_levels().is_empty());
 }
 
 /// An input that cannot open ends the take that waited for it: its notes are kept, and nothing
@@ -445,6 +503,48 @@ fn a_take_too_short_to_place_leaves_no_file_and_says_so() {
     let audio = studio.folder.path().join("assets/audio");
     let files = std::fs::read_dir(&audio).map_or(0, Iterator::count);
     assert_eq!(files, 0);
+}
+
+/// A take no code kept as the project closes waits in it for the next open, whose code keeps
+/// it. While a Bun starts, a quit waits for it.
+#[test]
+fn a_take_waiting_for_the_code_as_the_project_closes_is_kept_by_the_next_open() {
+    let (mut studio, input) = open_studio(false);
+    let file = studio.folder.path().join("extensions/studio.tsx");
+    let hangs = STUDIO.replace(
+        "onTake: ({ update }, take) =>\n",
+        "onTake: ({ update }, take) =>\n    (() => { while (take.name) {} })() ??\n",
+    );
+    let loads = studio.tools.loads();
+    std::fs::write(&file, &hangs).unwrap();
+    studio.tools.code_changed();
+    studio.until("the code that hangs", |studio| studio.tools.loads() > loads);
+    studio.press("studio", "arm");
+    studio.start_playing();
+    studio.record_for(&input, 24_000);
+    studio.press("studio", "done");
+    // The code runs without the file that hung: the take waits for it to be saved again.
+    studio.until("the take waits", |studio| {
+        studio.record_for(&input, 2_048);
+        let problems = studio.project.problems();
+        (problems.iter()).any(|problem| problem.message.contains("waits for the code"))
+    });
+    assert!(!studio.tools.keeping_takes());
+    // Saved: a quit waits for the Bun that starts. This one quits before it.
+    std::fs::write(&file, STUDIO).unwrap();
+    studio.tools.code_changed();
+    assert!(studio.tools.keeping_takes());
+    studio.tools.close(&studio.project);
+    let Opened {
+        project,
+        tools,
+        input: live,
+        folder,
+        ..
+    } = studio;
+    drop((tools, live, project));
+    let mut studio = open(folder, input.devices());
+    studio.until("the take kept", |studio| !studio.made("region").is_empty());
 }
 
 /// A take given to code that hangs on it is kept by the code that runs next.

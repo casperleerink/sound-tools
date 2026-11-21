@@ -12,14 +12,14 @@ use runtime::session::Loop;
 use sound_core::facts::{self, Facts};
 use sound_core::{InstanceId, ProjectError};
 use sound_typescript::devices::{self, Offer, Takes};
-use sound_typescript::window::{Answer, Shown, Tools, Want};
+use sound_typescript::window::{ASKED_BEFORE, Answer, Question, Shown, Tools, Want};
 
 use super::State;
 
 /// A question of code only the composer answers, in the window's own dialog: its yes button
 /// says `confirm`, the other Cancel.
 pub(crate) struct Asked {
-    pub(crate) question: u64,
+    pub(crate) question: Question,
     pub(crate) message: String,
     pub(crate) detail: Option<String>,
     pub(crate) confirm: String,
@@ -37,7 +37,7 @@ pub(crate) struct Waiting {
 }
 
 struct Import {
-    question: u64,
+    question: Question,
     importing: Importing,
     /// The folder of a render, which goes once its file is in.
     _scratch: Option<tempfile::TempDir>,
@@ -180,9 +180,11 @@ impl State {
         changed
     }
 
-    pub(crate) fn answer(&mut self, question: u64, answer: &Answer) {
-        if let Some(tools) = &mut self.tools {
-            tools.answer(question, answer);
+    /// A yes, or a file, for code that started again since it asked says so.
+    pub(crate) fn answer(&mut self, question: Question, answer: &Answer) {
+        let went = (self.tools.as_mut()).is_some_and(|tools| tools.answer(question, answer));
+        if !went && matches!(answer, Answer::Confirmed(true) | Answer::Asset(Some(_))) {
+            self.session.report(ASKED_BEFORE);
         }
     }
 
@@ -251,10 +253,14 @@ impl State {
     /// Brings `file` into `assets/audio/` on a thread; the answer goes once it is there.
     pub(super) fn import(
         &mut self,
-        question: u64,
+        question: Question,
         file: PathBuf,
         scratch: Option<tempfile::TempDir>,
     ) {
+        if !(self.tools.as_ref()).is_some_and(|tools| tools.asks(question)) {
+            self.session.report(ASKED_BEFORE);
+            return;
+        }
         let waker = self.waker.clone();
         let wake = Arc::new(move || {
             if let Some(wake) = waker
