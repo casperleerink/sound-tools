@@ -139,7 +139,21 @@ fn the_problems_file_follows_a_plugin_that_is_corrected() {
 /// and call it the piece.
 #[test]
 fn a_render_answers_a_plugin_that_is_waiting_for_its_host() {
-    tell_the_plugin_to_wait_for_its_host();
+    // The plugin reads this from the environment of its process, so only a process of this
+    // test alone tells it: the other tests of the process run beside it.
+    let waits = test_plugin_support::NEEDS_HOST_VARIABLE;
+    if !test_plugin_support::told_to(waits) {
+        let name = "plugins::a_render_answers_a_plugin_that_is_waiting_for_its_host";
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name])
+            .env(waits, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{stdout}");
+        assert!(stdout.contains("1 passed"), "{stdout}");
+        return;
+    }
     for format in [PluginFormat::Clap, PluginFormat::Vst3] {
         let (harness, _plugins) = plugin_rack(format, "piano", &clip_with_pedal(None));
         assert_eq!(harness.project.problems(), []);
@@ -155,13 +169,6 @@ fn a_render_answers_a_plugin_that_is_waiting_for_its_host() {
         let sounded = left(&rendered)[note..].iter().any(|sample| *sample != 0.0);
         assert!(sounded, "{format:?}: the render is silent");
     }
-}
-
-/// Makes both test plugins wait for the main-thread work of their host before they sound. The
-/// plugin runs in this process, and nextest gives every test a process of its own.
-fn tell_the_plugin_to_wait_for_its_host() {
-    // SAFETY: nothing but this thread exists yet, so no other thread reads the environment.
-    unsafe { std::env::set_var(test_plugin_support::NEEDS_HOST_VARIABLE, "1") };
 }
 
 /// Both formats in one piece. The two test plugins are the same instrument, so the two racks
@@ -255,4 +262,52 @@ fn the_parameters_of_a_plugin_this_machine_does_not_have_are_an_error() {
         .to_string();
     assert!(error.contains("no CLAP plugin"), "{error}");
     assert!(error.contains("--plugins"), "{error}");
+}
+
+/// The window closes its session as the app quits or opens another project, before any
+/// destructor runs: every plugin saves then, also one that never said its state changed.
+#[test]
+fn a_session_that_closes_saves_every_plugin_while_it_is_still_open() {
+    let (mut harness, _plugins) = plugin_rack(PluginFormat::Clap, "piano", &clip_with_pedal(None));
+    harness.play(4_096);
+    let asset = harness.path("assets/plugin-state/piano.bin");
+    assert!(
+        !asset.exists(),
+        "the plugin said nothing, so nothing was written yet"
+    );
+    let Harness {
+        project,
+        plugins,
+        engine: _engine,
+        folder: _folder,
+        ..
+    } = harness;
+    let mut session = runtime::session::Session::new(project, plugins, std::sync::Arc::new(|| {}));
+    session.close();
+    assert!(asset.exists());
+}
+
+/// A render reads the plugins' states from their files, so it starts by saving every plugin,
+/// also one that never said its state changed. They stay loaded.
+#[test]
+fn a_render_starts_with_every_plugin_saved_and_still_loaded() {
+    let (mut harness, plugins) = plugin_rack(PluginFormat::Clap, "piano", &clip_with_pedal(None));
+    harness.play(4_096);
+    let asset = harness.path("assets/plugin-state/piano.bin");
+    assert!(!asset.exists());
+    let Harness {
+        project,
+        engine: _engine,
+        folder,
+        ..
+    } = harness;
+    let mut session =
+        runtime::session::Session::new(project, plugins.clone(), std::sync::Arc::new(|| {}));
+    let program = folder.path().join("no-program");
+    let file = folder.path().join("out.wav");
+    // Saved before the render starts, which here fails.
+    assert!(session.render(&program, "Export", file, &[]).is_err());
+    assert!(asset.exists());
+    let piano = sound_core::InstanceId::new("piano/instrument").unwrap();
+    assert!(plugins.parameters(&piano).is_some());
 }

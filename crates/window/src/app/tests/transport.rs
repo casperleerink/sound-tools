@@ -1,0 +1,358 @@
+//! The transport of the title row and the notices, driven by key and label.
+
+use rune::{Key, KeyEvent, Mods};
+use sound_core::Ticks;
+
+use super::*;
+use crate::app::MAIN_MODIFIER;
+
+fn window() -> (tempfile::TempDir, rune::Runtime<State>) {
+    let scratch = new_project();
+    let mut window = laid_out(opened(&scratch.path().join("song")));
+    redraw(&mut window);
+    (scratch, window)
+}
+
+fn tempo(state: &State) -> f64 {
+    let map = &state.project().project_file().tempo_map;
+    map.change_at(Ticks(0)).bpm.bpm()
+}
+
+fn signature(state: &State) -> String {
+    let map = &state.project().project_file().tempo_map;
+    let signature = map.time_signatures().bar_at(Ticks(0)).signature;
+    format!("{}/{}", signature.numerator(), signature.denominator())
+}
+
+fn undo_label(state: &State) -> Option<String> {
+    state.project().undo_label()
+}
+
+fn chord(window: &mut rune::Runtime<State>, key: Key, shift: bool) {
+    let mods = Mods {
+        shift,
+        ..MAIN_MODIFIER
+    };
+    window.key(KeyEvent { key, mods });
+    redraw(window);
+}
+
+fn typed(window: &mut rune::Runtime<State>, words: &str) {
+    for letter in words.chars() {
+        key(window, Key::Text(letter.into()));
+    }
+}
+
+fn frames(window: &mut rune::Runtime<State>, seconds: f64) {
+    for _ in 0..(seconds * 60.0) as usize {
+        redraw(window);
+    }
+}
+
+#[test]
+fn play_pauses_where_it_is_and_stop_goes_back_to_the_start() {
+    let (_scratch, mut window) = window();
+    act(
+        &mut window.state,
+        json!({ "label": "Play", "action": "press" }),
+    );
+    frames(&mut window, 0.5);
+    assert!(window.state.playing);
+    act(
+        &mut window.state,
+        json!({ "label": "Pause", "action": "press" }),
+    );
+    frames(&mut window, 0.1);
+    let paused = window.state.playhead;
+    assert!(!window.state.playing && paused.0 > 0, "{paused:?}");
+    frames(&mut window, 0.1);
+    assert_eq!(window.state.playhead, paused);
+    act(
+        &mut window.state,
+        json!({ "label": "Stop", "action": "press" }),
+    );
+    frames(&mut window, 0.1);
+    assert_eq!(window.state.playhead, Ticks(0));
+
+    // Space plays and pauses wherever the keys are.
+    key(&mut window, Key::Text(" ".into()));
+    frames(&mut window, 0.1);
+    assert!(window.state.playing);
+}
+
+#[test]
+fn a_drag_on_the_tempo_is_one_undo_step() {
+    let (_scratch, mut window) = window();
+    let (x, y) = window.find("tempo").unwrap();
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    window.pointer_move(x, y - 10.0);
+    redraw(&mut window);
+    // Twenty points up: ten beats a minute faster.
+    window.pointer_move(x, y - 20.0);
+    redraw(&mut window);
+    assert_eq!(tempo(&window.state), 130.0);
+    assert_eq!(undo_label(&window.state), None);
+    window.pointer_up(x, y - 20.0);
+    redraw(&mut window);
+    assert_eq!(
+        undo_label(&window.state).as_deref(),
+        Some("Change the tempo")
+    );
+    chord(&mut window, Key::Command('z'), false);
+    assert_eq!(tempo(&window.state), 120.0);
+}
+
+/// A click types the tempo: Enter keeps it as one undo step, Escape leaves it.
+#[test]
+fn a_tempo_typed_is_one_undo_step_and_escape_leaves_it() {
+    let (_scratch, mut window) = window();
+    click(&mut window, "tempo");
+    assert_eq!(focused(&window).as_deref(), Some("tempo-typed"));
+    typed(&mut window, "95");
+    key(&mut window, Key::Enter);
+    assert_eq!(tempo(&window.state), 95.0);
+    assert_eq!(
+        undo_label(&window.state).as_deref(),
+        Some("Change the tempo")
+    );
+    assert_eq!(focused(&window).as_deref(), Some("tempo"));
+
+    // Enter on the tempo types it too.
+    key(&mut window, Key::Enter);
+    typed(&mut window, "140");
+    key(&mut window, Key::Escape);
+    assert_eq!(tempo(&window.state), 95.0);
+    assert_eq!(focused(&window).as_deref(), Some("tempo"));
+}
+
+#[test]
+fn an_agent_sets_the_tempo_and_the_time_signature_one_step_each() {
+    let (_scratch, mut window) = window();
+    let state = &mut window.state;
+    act(
+        state,
+        json!({ "label": "Tempo", "action": "set", "value": 100 }),
+    );
+    act(
+        state,
+        json!({ "label": "Time signature", "action": "set", "value": "3/4" }),
+    );
+    assert_eq!((tempo(state), signature(state).as_str()), (100.0, "3/4"));
+    let controls = controls::collect(state).controls;
+    assert_eq!(control(&controls, "Tempo").value, Some(json!(100.0)));
+    act(state, json!({ "action": "undo" }));
+    assert_eq!((tempo(state), signature(state).as_str()), (100.0, "4/4"));
+    act(state, json!({ "action": "undo" }));
+    assert_eq!(tempo(state), 120.0);
+}
+
+#[test]
+fn the_click_the_computer_keys_and_write_automation_are_no_edit() {
+    let (_scratch, mut window) = window();
+    let state = &mut window.state;
+    for label in ["Click", "Computer keys", "Write automation"] {
+        act(state, json!({ "label": label, "action": "toggle" }));
+        let controls = controls::collect(state).controls;
+        assert_eq!(control(&controls, label).checked, Some(true), "{label}");
+    }
+    let now = state.session.transport();
+    assert!(now.click && now.keys && now.automation);
+    assert_eq!(undo_label(state), None);
+
+    chord(&mut window, Key::Command('k'), false);
+    assert!(!window.state.session.transport().keys);
+}
+
+#[test]
+fn record_shows_only_for_a_tool_that_records() {
+    let (_scratch, mut window) = window();
+    let has_record = |state: &State| {
+        let controls = controls::collect(state).controls;
+        controls.iter().any(|control| control.label == "Record")
+    };
+    assert!(has_record(&window.state));
+    window.state.main = Some(InstanceId::new("gallery").unwrap());
+    redraw(&mut window);
+    assert!(!has_record(&window.state));
+}
+
+#[test]
+fn undo_waits_for_the_drag_on_the_tempo_and_says_why() {
+    let (_scratch, mut window) = window();
+    act(
+        &mut window.state,
+        json!({ "label": "Tempo", "action": "set", "value": 100 }),
+    );
+    let (x, y) = window.find("tempo").unwrap();
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    window.pointer_move(x, y - 20.0);
+    redraw(&mut window);
+    chord(&mut window, Key::Command('z'), false);
+    assert_eq!(tempo(&window.state), 110.0);
+    assert_eq!(
+        window.state.session.notice(),
+        Some("Let go of the drag first.")
+    );
+    // The drag ends as a step that works, which clears the notice.
+    window.pointer_up(x, y - 20.0);
+    redraw(&mut window);
+    assert_eq!(window.state.session.notice(), None);
+    chord(&mut window, Key::Command('z'), false);
+    assert_eq!(tempo(&window.state), 100.0);
+
+    // Nothing left to redo is no error.
+    chord(&mut window, Key::Command('z'), true);
+    chord(&mut window, Key::Command('z'), true);
+    assert_eq!(tempo(&window.state), 110.0);
+    assert_eq!(window.state.session.notice(), None);
+}
+
+/// A dialog that opens over a held drag, as one the app opens when work it started ends, ends
+/// the drag as a cancel: undo is not refused afterwards.
+#[test]
+fn a_dialog_that_opens_during_a_drag_cancels_it() {
+    let (_scratch, mut window) = window();
+    act(
+        &mut window.state,
+        json!({ "label": "Tempo", "action": "set", "value": 100 }),
+    );
+    let (x, y) = window.find("tempo").unwrap();
+    window.pointer_down(x, y);
+    window.frame(1.0 / 60.0);
+    window.pointer_move(x, y - 20.0);
+    redraw(&mut window);
+    assert_eq!(tempo(&window.state), 110.0);
+    window.state.project_menu.installed = Some(("Installed".into(), "Done.".into()));
+    redraw(&mut window);
+    window.pointer_up(x, y - 20.0);
+    redraw(&mut window);
+    assert_eq!(tempo(&window.state), 100.0);
+    assert!(!window.state.session.gesture_open());
+    window.state.project_menu.installed = None;
+    redraw(&mut window);
+    chord(&mut window, Key::Command('z'), false);
+    assert_eq!(window.state.session.notice(), None);
+    assert_eq!(tempo(&window.state), 120.0);
+}
+
+#[test]
+fn tab_reaches_the_transport_and_enter_types_the_tempo() {
+    let (_scratch, mut window) = window();
+    tab_to(&mut window, "play");
+    tab_to(&mut window, "tempo");
+    key(&mut window, Key::Enter);
+    assert_eq!(focused(&window).as_deref(), Some("tempo-typed"));
+}
+
+#[test]
+fn a_long_notice_fits_bottom_right_in_three_lines_and_a_dismiss_takes_it_away() {
+    let (_scratch, mut window) = window();
+    let long = "a problem that goes on and on, ".repeat(20);
+    window.state.session.report(&long);
+    frames(&mut window, 0.5);
+    let (size, (notice, _)) = ((1470.0, 920.0), window.presented("notice-error").unwrap());
+    let [x, y, w, h] = notice;
+    // 24 pt in from the bottom right, 400 pt wide at most, three lines of 20 pt and padding.
+    assert_eq!((x + w, y + h), (size.0 - 24.0, size.1 - 24.0), "{notice:?}");
+    assert!(w <= 400.0, "{notice:?}");
+    assert!((60.0..=74.0).contains(&h), "{notice:?}");
+
+    // A short one is as wide as its words.
+    window.state.session.dismiss_notice();
+    window.state.session.report("short");
+    redraw(&mut window);
+    frames(&mut window, 0.5);
+    let [_, _, w, h] = window.presented("notice-error").unwrap().0;
+    assert!(w < 200.0 && h < 40.0, "{w} {h}");
+
+    // A notice of the system stays after an edit that works; the dismiss takes it away.
+    act(
+        &mut window.state,
+        json!({ "label": "Tempo", "action": "set", "value": 100 }),
+    );
+    assert_eq!(window.state.session.notice(), Some("short"));
+    click(&mut window, "notice-dismiss");
+    assert_eq!(window.state.session.notice(), None);
+    assert!(window.find("notice-error").is_none());
+}
+
+/// A key held down does the app's action once: Space does not start and stop the piece, nor
+/// Cmd-K turn the computer keys on and off. Undo goes on.
+#[test]
+fn a_held_key_does_the_apps_action_once_but_undo_goes_on() {
+    let (_scratch, mut window) = window();
+    let space = KeyEvent {
+        key: Key::Text(" ".into()),
+        mods: Mods::default(),
+    };
+    window.key(space.clone());
+    for _ in 0..3 {
+        window.repeat_key(space.clone());
+        redraw(&mut window);
+    }
+    frames(&mut window, 0.1);
+    assert!(window.state.playing);
+    let keys = KeyEvent {
+        key: Key::Command('k'),
+        mods: MAIN_MODIFIER,
+    };
+    window.key(keys.clone());
+    window.repeat_key(keys);
+    redraw(&mut window);
+    redraw(&mut window);
+    assert!(window.state.incoming.live.computer_keys());
+
+    for _ in 0..2 {
+        act(
+            &mut window.state,
+            json!({ "label": "Mute Track 2", "action": "toggle" }),
+        );
+    }
+    let undo = KeyEvent {
+        key: Key::Command('z'),
+        mods: MAIN_MODIFIER,
+    };
+    window.key(undo.clone());
+    window.repeat_key(undo);
+    redraw(&mut window);
+    assert_eq!(undo_label(&window.state), None);
+}
+
+/// Behind every dialog the window's keys do nothing: Space does not play, Cmd-Z does not undo,
+/// Cmd-K does not turn on the computer keys.
+#[test]
+fn a_dialog_keeps_the_keys() {
+    let scratch = new_project();
+    std::fs::write(scratch.path().join("song/state/song/quiet.json"), "{").unwrap();
+    let mut window = laid_out(opened(&scratch.path().join("song")));
+    redraw(&mut window);
+    act(
+        &mut window.state,
+        json!({ "label": "Mute Track 2", "action": "toggle" }),
+    );
+    let opens: [fn(&mut State); 3] = [
+        |state| act(state, json!({ "action": "app.export" })),
+        |state| state.problems_open = true,
+        |state| state.project_menu.installed = Some(("Installed".into(), "Done.".into())),
+    ];
+    for open in opens {
+        open(&mut window.state);
+        redraw(&mut window);
+        chord(&mut window, Key::Command('z'), false);
+        chord(&mut window, Key::Command('k'), false);
+        redraw(&mut window);
+        assert!(!crate::app::chrome::dialogs(&window.state).is_empty());
+        assert!(undo_label(&window.state).is_some());
+        assert!(!window.state.incoming.live.computer_keys());
+        // Space presses the dialog's button that has the keys, if any.
+        key(&mut window, Key::Text(" ".into()));
+        frames(&mut window, 0.1);
+        assert!(!window.state.playing);
+        key(&mut window, Key::Escape);
+        window.state.problems_open = false;
+        window.state.project_menu.installed = None;
+        redraw(&mut window);
+    }
+}

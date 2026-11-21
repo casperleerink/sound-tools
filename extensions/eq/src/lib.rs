@@ -21,15 +21,13 @@
 //! A band or a field left out is reset to the default of that band, not kept, so an agent
 //! writes the whole list. A list with fewer bands loads, so more bands later would not break a
 //! saved project.
-//!
-//! [`view`] is the card of the EQ, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
+use sound_core::feeds::{AUDIBLE_OCTAVES, db, hz_at};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
     RegistryError, Scale, State, lanes, ranges,
@@ -223,6 +221,9 @@ pub const OUTPUT_GAIN: Parameter = Parameter {
     set: |state, value| state.output_gain_db = value,
 };
 
+/// The numbers of the whole EQ, not of a band.
+const WHOLE: [&Parameter; 1] = [&OUTPUT_GAIN];
+
 /// The saved state. It is small and `Copy`, so it is also the update the processor gets. The
 /// memory of the bands is runtime state and is not saved, and neither is which band the card
 /// has selected.
@@ -230,7 +231,7 @@ pub const OUTPUT_GAIN: Parameter = Parameter {
 /// A field that a record leaves out takes its default, so `"state": {}` is the default EQ.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
-#[schemars(transform = ranges(&[&OUTPUT_GAIN]))]
+#[schemars(transform = ranges(&WHOLE))]
 pub struct EqState {
     /// Band 1 first, as the card numbers them. A list with fewer bands gives the rest their
     /// defaults.
@@ -321,7 +322,13 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<EqState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Eq::AUTOMATION.parameters());
+        .schema(Eq::AUTOMATION.parameters())
+        .feed("response", "Its response: the gain of a steady sine in dB at each of `points` places (157 unless the binding says), evenly in octaves above 20 Hz from 0 to 9.97 (20 kHz) unless the binding shows another range.", |state, context| {
+            let rate = context.sample_rate as f32;
+            context.curve(AUDIBLE_OCTAVES, 157, |octaves| {
+                db(response(state, hz_at(octaves), rate))
+            })
+        });
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

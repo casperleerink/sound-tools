@@ -1,0 +1,634 @@
+//! The keys of the window, matched in one place: a dialog first, which keeps them; a focused
+//! text field, which passes on only the app's actions that never type; then the left panel's;
+//! then undo and redo; then the tool of the focused card, the pages around it up to the main
+//! view, the app, and last the computer keys, which play the plain keys no one else took.
+//! Outside the views the main view's tool hears only its actions that run `everywhere` and its
+//! `globalKeys`. A key does an action, or a tool's `onKey` or the computer keys hold it until
+//! it comes up.
+
+use std::collections::{BTreeMap, HashMap};
+
+use rune::{Key, KeyEvent, Mods, Tx};
+use sound_core::InstanceId;
+use sound_typescript::shortcuts::{self, Group, Held, Shortcuts};
+
+use crate::controls::{self, Target};
+use crate::tree::Pointer;
+
+use super::State;
+use super::projects::AppAction;
+
+/// The app's own group in the keymap.
+pub(crate) const APP: &str = "app";
+/// The app's actions a tool's key never takes the place of.
+const BEFORE_TOOLS: [&str; 3] = ["undo", "redo", UNDO_KEEPING_VERSION];
+
+/// The keymap, and the keys a tool's `onKey` holds.
+pub(crate) struct Keys {
+    pub(crate) keymap: Shortcuts,
+    /// Each key that went down to an `onKey`, by its name without what was held: its up goes
+    /// to the same instance whatever is held by then.
+    held: HashMap<String, InstanceId>,
+}
+
+impl Keys {
+    /// The keymap with the composer's own keys of `file`; without one they last as long as the
+    /// window. Why the file did not read, if it did not.
+    pub(crate) fn open(file: Option<std::path::PathBuf>) -> (Self, Option<String>) {
+        let (mut keymap, unread) = match file {
+            Some(file) => Shortcuts::open(file),
+            None => (Shortcuts::default(), None),
+        };
+        keymap.set_group(app_group());
+        let keys = Self {
+            keymap,
+            held: HashMap::new(),
+        };
+        (keys, unread.map(|error| error.to_string()))
+    }
+}
+
+/// The app's actions: name, title and key. The names are those of the composer's keys file
+/// the GPUI app wrote, so it keeps working.
+const APP_ACTIONS: [(&str, &str, Option<&str>); 14] = [
+    ("undo", "Undo", Some("cmd-z")),
+    ("redo", "Redo", Some("cmd-shift-z")),
+    (
+        UNDO_KEEPING_VERSION,
+        "Undo and keep the work as a version",
+        Some("cmd-alt-z"),
+    ),
+    ("play", "Play or pause", Some("space")),
+    (
+        "computer_keys",
+        "Play notes with the computer keys",
+        Some("cmd-k"),
+    ),
+    (AGENT, "Go to the agent", Some("cmd-l")),
+    (STOP_AGENT, "Stop the agent", Some("cmd-.")),
+    (LEFT_PANEL, "Open or close the left panel", Some("cmd-b")),
+    ("export", "Export audio…", None),
+    ("new_project", "New project…", Some("cmd-n")),
+    ("save_as_template", "Save as template…", None),
+    ("open_project", "Open project…", Some("cmd-o")),
+    ("settings", "Settings…", Some("cmd-,")),
+    ("quit", "Quit Sound Tools", Some("cmd-q")),
+];
+
+/// Whether the app's action `name` comes before a tool's on its key, so the tool's never runs.
+pub(crate) fn before_tools(name: &str) -> bool {
+    BEFORE_TOOLS.contains(&name) || [AGENT, LEFT_PANEL, STOP_AGENT].contains(&name)
+}
+
+const UNDO_KEEPING_VERSION: &str = "undo_keeping_version";
+const AGENT: &str = "agent";
+const STOP_AGENT: &str = "stop_agent";
+const LEFT_PANEL: &str = "left_panel";
+
+fn app_group() -> Group {
+    let actions = APP_ACTIONS
+        .iter()
+        .map(|(name, title, key)| shortcuts::Action {
+            name: name.to_string(),
+            title: title.to_string(),
+            keys: key.iter().map(ToString::to_string).collect(),
+        });
+    Group {
+        name: APP.to_string(),
+        title: "Sound Tools".to_string(),
+        actions: actions.collect(),
+    }
+}
+
+/// The key the app's action `name` has now, as a menu or a tooltip draws it: `⇧⌘Z`.
+pub(crate) fn app_key_of(state: &State, name: &str) -> Option<String> {
+    let keys = state.keys.keymap.keys(&shortcuts::id(APP, name));
+    keys.first().map(|chord| key_label(chord))
+}
+
+/// A chord of the keymap as this system draws a key: `cmd-shift-z` is `⇧⌘Z` on a Mac and
+/// `Ctrl+Shift+Z` elsewhere.
+pub(crate) fn key_label(chord: &str) -> String {
+    parsed(chord).map_or_else(|| shortcuts::drawn(chord), |parsed| parsed.label())
+}
+
+/// A chord of the keymap as this system draws its keycaps: ⌥, ⌘ and Z on a Mac; Ctrl, Alt and Z
+/// elsewhere.
+pub(crate) fn key_caps(chord: &str) -> Vec<String> {
+    parsed(chord).map_or_else(
+        || vec![shortcuts::drawn(chord)],
+        |parsed| parsed.keycaps_on(rune::KeyPlatform::current()),
+    )
+}
+
+fn parsed(chord: &str) -> Option<rune::Chord> {
+    let mut rest = chord;
+    let mut parts = Vec::new();
+    for (prefix, held) in [
+        ("cmd-", "mod"),
+        ("ctrl-", "ctrl"),
+        ("super-", "super"),
+        ("alt-", "alt"),
+        ("shift-", "shift"),
+    ] {
+        if let Some(after) = rest.strip_prefix(prefix) {
+            parts.push(held);
+            rest = after;
+        }
+    }
+    parts.push(rest);
+    rune::Chord::parse(&parts.join("+")).ok()
+}
+
+/// A key as the keymap and the SDK name it: `a`, `space`, `left`, `?`. `None` for one they do
+/// not name, such as a modifier alone.
+fn name_of(key: &Key) -> Option<String> {
+    Some(match key {
+        Key::Text(text) if text == " " => "space".to_string(),
+        Key::Text(text) if text.chars().count() == 1 => text.to_lowercase(),
+        Key::Command(' ') => "space".to_string(),
+        Key::Command(letter) => letter.to_ascii_lowercase().to_string(),
+        Key::Enter => "enter".to_string(),
+        Key::Escape => "escape".to_string(),
+        Key::Backspace => "backspace".to_string(),
+        Key::Delete => "delete".to_string(),
+        Key::Tab => "tab".to_string(),
+        Key::Up => "up".to_string(),
+        Key::Down => "down".to_string(),
+        Key::Left => "left".to_string(),
+        Key::Right => "right".to_string(),
+        Key::Home => "home".to_string(),
+        Key::End => "end".to_string(),
+        Key::PageUp => "pageup".to_string(),
+        Key::PageDown => "pagedown".to_string(),
+        Key::Function(number) => format!("f{number}"),
+        _ => return None,
+    })
+}
+
+/// What is held with a key, as the keymap reads it: a key that types another character with
+/// shift is named by that character, with no shift.
+fn held_of(name: &str, mods: Mods) -> Held {
+    let symbol = name.chars().count() == 1 && !name.chars().all(char::is_alphanumeric);
+    Held {
+        platform: mods.logo || (cfg!(target_os = "macos") && mods.cmd),
+        control: mods.ctrl,
+        alt: mods.alt,
+        shift: mods.shift && !symbol,
+    }
+}
+
+/// The main modifier as Rune sends it, which `held_of` reads: ⌘ on macOS, Ctrl elsewhere. Rune
+/// never sends `cmd` alone.
+#[cfg(test)]
+pub(crate) const MAIN_MODIFIER: Mods = Mods {
+    cmd: true,
+    logo: cfg!(target_os = "macos"),
+    ctrl: !cfg!(target_os = "macos"),
+    shift: false,
+    alt: false,
+};
+
+/// Who hears a key, nearest first: an instance, and whether only what runs everywhere.
+type Chain = Vec<(InstanceId, bool)>;
+
+impl State {
+    /// The instances that hear a key while `focused` has the focus: none in a text field; the
+    /// view of the focused element and those around it up to the main view; outside the views
+    /// the main view, with only what runs everywhere.
+    fn chain(&self, focused: Option<&str>) -> Chain {
+        let Some(main) = self.main().cloned() else {
+            return Vec::new();
+        };
+        let typing = self.typing_now();
+        let Some(focused) = focused.filter(|_| !typing) else {
+            return match typing {
+                true => Vec::new(),
+                false => vec![(main, false)],
+            };
+        };
+        let found = controls::collect(self)
+            .controls
+            .into_iter()
+            .find_map(|control| match (control.key == focused, control.target) {
+                (true, Target::View(press)) => Some(press.instance),
+                _ => None,
+            });
+        let Some(instance) = found else {
+            return vec![(main, true)];
+        };
+        let around = std::iter::once(instance.clone()).chain(instance.ancestors());
+        let mut chain: Chain = around
+            .take_while(|id| id.is_inside(&main) || *id == main)
+            .map(|id| (id, false))
+            .collect();
+        if chain.is_empty() {
+            chain.push((main, true));
+        }
+        chain
+    }
+
+    /// The press of the focused element of a view, when it has `onPress`, and whether it turns
+    /// on and off in place: a switch or a step.
+    fn focused_press(&self, focused: Option<&str>) -> Option<(crate::tree::Press, bool)> {
+        let focused = focused?;
+        (controls::collect(self).controls.into_iter()).find_map(|control| {
+            let turns = matches!(control.role.as_deref(), Some("switch" | "gridcell"));
+            match (control.key == focused, control.target) {
+                (true, Target::View(press)) if press.pressed => Some((press, turns)),
+                _ => None,
+            }
+        })
+    }
+
+    /// Runs the actions of the tool of `instance` that `chord` does, if any: as one step of
+    /// undo, in their order until one does it. Whether it had any.
+    fn act_on_key(
+        &mut self,
+        instance: &InstanceId,
+        chord: &str,
+        everywhere: bool,
+        repeat: bool,
+    ) -> bool {
+        let Some(tool) = self.project().tool_of(instance).map(str::to_string) else {
+            return false;
+        };
+        let Some(tools) = &self.tools else {
+            return false;
+        };
+        let mut actions: Vec<String> = (self.keys.keymap.bound(&tool, chord).into_iter())
+            .map(str::to_string)
+            .collect();
+        actions.retain(|action| !everywhere || tools.acts_everywhere(&tool, action));
+        if actions.is_empty() {
+            return false;
+        }
+        // A key held down does it once.
+        if !repeat {
+            self.run_actions(instance, &actions);
+        }
+        true
+    }
+
+    /// Runs `actions` of the tool of `instance`, in order until one does it, as one step of undo.
+    pub(crate) fn run_actions(&mut self, instance: &InstanceId, actions: &[String]) -> bool {
+        let clock = self.session.clock();
+        let Some(tools) = &mut self.tools else {
+            return false;
+        };
+        let sent = tools.action(self.session.project(), instance, actions, clock);
+        self.handled();
+        sent
+    }
+
+    /// The key `name` goes down or up to the `onKey` of the tool of `instance`.
+    fn key_to(&mut self, instance: &InstanceId, (name, down): (&str, bool), held: Held) {
+        let clock = self.session.clock();
+        if let Some(tools) = &mut self.tools {
+            tools.key(self.session.project(), instance, (name, down), held, clock);
+        }
+        self.handled();
+    }
+
+    /// Every key an `onKey` or the computer keys hold comes up: cmd went down, under which macOS
+    /// sends no key up, or the window lost the keys.
+    pub(crate) fn let_go_of_keys(&mut self) {
+        self.incoming.live.let_go_of_computer_keys();
+        for (name, instance) in std::mem::take(&mut self.keys.held) {
+            self.key_to(&instance, (&name, false), Held::default());
+        }
+    }
+
+    /// The app's action `action` of the keymap. The left panel's are [`panel_key`]'s.
+    fn app_key(&mut self, action: &str, tx: &mut Tx) {
+        let done = match action {
+            "undo" => self.undo(),
+            "redo" => self.redo(),
+            UNDO_KEEPING_VERSION => self.undo_keeping_version(),
+            "computer_keys" => super::transport::Act::Keys.run(self, None),
+            other => {
+                self.app_command(other, tx);
+                Ok(())
+            }
+        };
+        // What refused is the session's notice already.
+        done.ok();
+        self.handled();
+    }
+
+    fn app_command(&mut self, action: &str, tx: &mut Tx) {
+        let app = match action {
+            "play" => return self.play_or_pause(),
+            "quit" => return tx.quit(),
+            "export" => AppAction::Export,
+            "new_project" => AppAction::NewProject,
+            "save_as_template" => AppAction::SaveAsTemplate,
+            "open_project" => AppAction::OpenProject,
+            "settings" => AppAction::Settings,
+            _ => return,
+        };
+        self.app_action(app, tx);
+    }
+
+    /// The actions of the tools shown and of the app, with the keys they have now, for `--tree`.
+    pub(crate) fn shown_actions(&self) -> Vec<serde_json::Value> {
+        let tools: std::collections::BTreeSet<&str> = (self.shown.iter())
+            .filter_map(|id| self.project().tool_of(id))
+            .chain([APP])
+            .collect();
+        let groups =
+            (self.keys.keymap.groups()).filter(|group| tools.contains(group.name.as_str()));
+        groups
+            .flat_map(|group| {
+                group.actions.iter().map(|action| {
+                    let id = shortcuts::id(&group.name, &action.name);
+                    serde_json::json!({ "action": id, "title": action.title, "keys": self.keys.keymap.keys(&id) })
+                })
+            })
+            .collect()
+    }
+
+    /// The key each action of a tool has now, by `<tool>.<action>`, for `ctx.shortcut`.
+    pub(crate) fn action_keys(&self) -> BTreeMap<String, Option<String>> {
+        let groups = self.keys.keymap.groups().filter(|group| group.name != APP);
+        let ids = groups.flat_map(|group| {
+            (group.actions.iter()).map(|action| shortcuts::id(&group.name, &action.name))
+        });
+        ids.map(|id| {
+            let key = self
+                .keys
+                .keymap
+                .keys(&id)
+                .first()
+                .map(|chord| key_label(chord));
+            (id, key)
+        })
+        .collect()
+    }
+}
+
+/// A key that reaches the views before Rune presses what has the keys there, as the old app
+/// had it: Space is the keymap's wherever the focus is, so it plays, but a switch or a step the
+/// keys moved onto it turns, as the old step grid did; Enter presses the focused element that
+/// has a press, however it got the focus. Either presses with `clicks: 0`, so its code tells a
+/// press of the keys from a click. A text field that types keeps both (`on_key`).
+pub(crate) fn in_views(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
+    let Mods {
+        cmd,
+        ctrl,
+        alt,
+        shift,
+        ..
+    } = key.mods;
+    if cmd || ctrl || alt || shift {
+        return false;
+    }
+    let space = matches!(&key.key, Key::Text(text) if text == " ");
+    if !space && key.key != Key::Enter {
+        return false;
+    }
+    let pressed = match state.focused_press(tx.focused()) {
+        Some((press, turns)) if !space || (turns && tx.focus_visible()) => press,
+        _ if space => return on_key(state, key, tx),
+        _ => return false,
+    };
+    if !tx.key_repeat() {
+        let keys = Pointer {
+            clicks: 0,
+            ..Pointer::default()
+        };
+        state.press(&pressed, "press", Some(serde_json::json!(keys)));
+    }
+    true
+}
+
+pub(crate) fn on_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
+    let repeat = tx.key_repeat();
+    key_down(state, key, repeat, tx)
+}
+
+/// A key went down, or the OS sent it again as it is held: `repeat`.
+pub(crate) fn key_down(state: &mut State, key: &KeyEvent, repeat: bool, tx: &mut Tx) -> bool {
+    // A held key does an app's action once; undo and redo go on.
+    if repeat && app_action(state, key).is_some_and(|action| !BEFORE_TOOLS.contains(&&*action)) {
+        return true;
+    }
+    // A dialog keeps every key until it closes, but Quit, which works in any window: its own
+    // buttons and fields take theirs.
+    if !super::chrome::dialogs(state).is_empty() {
+        if app_action(state, key).as_deref() == Some("quit") {
+            tx.quit();
+        }
+        return true;
+    }
+    if state.typing_now() {
+        return typing_key(state, key, tx);
+    }
+    let Some(name) = name_of(&key.key) else {
+        return false;
+    };
+    let held = held_of(&name, key.mods);
+    if held.platform {
+        state.let_go_of_keys();
+    }
+    let modified = held.platform || held.control || held.alt;
+    // A key the computer keys hold stays theirs: its repeats reach no one else.
+    if state.computer_key(&name, modified, repeat, false) {
+        return true;
+    }
+    // Settings is over the project: only the app's keys, and its own.
+    let page = state.settings.page.is_some();
+    if page && super::settings::key(state, key, tx) {
+        return true;
+    }
+    if !page && panel_key(state, key, false, tx) {
+        state.handled();
+        return true;
+    }
+    let chord = shortcuts::chord(&name, held);
+    let plain = shortcuts::chord(
+        &name,
+        Held {
+            shift: false,
+            ..held
+        },
+    );
+    let app: Option<String> = (state.keys.keymap.bound(APP, &chord).first()).map(|a| a.to_string());
+    if let Some(action) = app
+        .as_deref()
+        .filter(|action| BEFORE_TOOLS.contains(action))
+    {
+        state.app_key(action, tx);
+        return true;
+    }
+    let main = state.main().cloned();
+    let chain = match page {
+        true => Vec::new(),
+        false => state.chain(tx.focused()),
+    };
+    for (instance, everywhere) in chain {
+        if state.act_on_key(&instance, &chord, everywhere, repeat) {
+            return true;
+        }
+        let Some(tool) = state.project().tool_of(&instance).map(str::to_string) else {
+            continue;
+        };
+        let Some(tools) = &state.tools else {
+            continue;
+        };
+        let takes = (!everywhere && tools.takes_key(&tool, &plain))
+            || (Some(&instance) == main.as_ref() && tools.takes_global_key(&tool, &plain));
+        if !takes {
+            continue;
+        }
+        // Only a key with nothing held comes up: macOS sends no up while cmd is held.
+        let modified = plain != name;
+        if !repeat && (modified || !state.keys.held.contains_key(&name)) {
+            if !modified {
+                state.keys.held.insert(name, instance.clone());
+            }
+            state.key_to(&instance, (&plain, true), held);
+        }
+        return true;
+    }
+    let Some(action) = app else {
+        return !page && state.computer_key(&name, modified, repeat, true);
+    };
+    state.app_key(&action, tx);
+    true
+}
+
+/// A key a text field passed on. Typing and the field's editing keys are its own; of the rest
+/// only the app's actions run that never type: held with the main modifier or ctrl, and not
+/// undo or redo, which are the field's. A tool's keys and the computer keys never run.
+fn typing_key(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
+    let in_panel = (state.panel.agent.as_ref()).is_some_and(|agent| agent.typing());
+    if matches!(key.key, Key::Escape) {
+        return in_panel && panel_key(state, key, true, tx);
+    }
+    if !chord_of(key).is_some_and(|chord| never_types(&chord)) {
+        return false;
+    }
+    let page = state.settings.page.is_some();
+    if !page && panel_key(state, key, in_panel, tx) {
+        state.handled();
+        return true;
+    }
+    let Some(action) = app_action(state, key).filter(|action| !BEFORE_TOOLS.contains(&&**action))
+    else {
+        return false;
+    };
+    state.app_key(&action, tx);
+    true
+}
+
+/// Whether `chord` never types and is no editing key of a text field, so an app's action on it
+/// works while a field has the keys.
+fn never_types(chord: &str) -> bool {
+    const EDITING: [&str; 6] = ["cmd-a", "cmd-c", "cmd-v", "cmd-x", "cmd-z", "cmd-shift-z"];
+    const MOVES: [&str; 11] = [
+        "left",
+        "right",
+        "up",
+        "down",
+        "home",
+        "end",
+        "backspace",
+        "delete",
+        "enter",
+        "escape",
+        "tab",
+    ];
+    let main = chord.starts_with("cmd-") || chord.starts_with("ctrl-");
+    let key = chord.rsplit('-').next().unwrap_or(chord);
+    main && !EDITING.contains(&chord) && !MOVES.contains(&key)
+}
+
+/// The app's action `key` does now.
+fn app_action(state: &State, key: &KeyEvent) -> Option<String> {
+    let chord = chord_of(key)?;
+    let bound = state.keys.keymap.bound(APP, &chord);
+    bound.first().map(|action| action.to_string())
+}
+
+/// The keys of the left panel, from inside it or from the window: Go to the agent, Stop the
+/// agent, Open or close the left panel, and Escape inside it. Whether `key` was one.
+pub(super) fn panel_key(state: &mut State, key: &KeyEvent, inside: bool, tx: &mut Tx) -> bool {
+    if inside && matches!(key.key, Key::Escape) {
+        state.give_keys_back(tx);
+        return true;
+    }
+    let Some(chord) = chord_of(key) else {
+        return false;
+    };
+    let bound = state.keys.keymap.bound(APP, &chord);
+    match bound.first().copied() {
+        Some(AGENT) => state.agent_keys(inside, tx),
+        Some(LEFT_PANEL) => state.open_or_close_panel(inside, tx),
+        Some(STOP_AGENT) => match state.panel.agent.as_mut() {
+            Some(agent) => agent.stop(),
+            None => return false,
+        },
+        _ => return false,
+    }
+    true
+}
+
+/// `key` as the keymap names it, such as `cmd-shift-z`. None for a modifier alone.
+pub(crate) fn chord_of(key: &KeyEvent) -> Option<String> {
+    let name = name_of(&key.key)?;
+    Some(shortcuts::chord(&name, held_of(&name, key.mods)))
+}
+
+/// A key came up: to the computer keys or the `onKey` that took it going down, if one did.
+pub(crate) fn on_key_up(state: &mut State, key: &KeyEvent, _: &mut Tx) -> bool {
+    let Some(name) = name_of(&key.key) else {
+        return false;
+    };
+    if state.incoming.live.computer_key_up(&name) {
+        return true;
+    }
+    let Some(instance) = state.keys.held.remove(&name) else {
+        return false;
+    };
+    let held = held_of(&name, key.mods);
+    state.key_to(&instance, (&name, false), held);
+    true
+}
+
+/// The window lost the keys: whatever is held comes up. It gained them: the agent reads its
+/// settings again.
+pub(crate) fn on_focus(state: &mut State, focused: bool, tx: &mut Tx) {
+    if !focused {
+        state.let_go_of_keys();
+    }
+    crate::sidebar::focused(state, focused, tx);
+}
+
+/// Cmd went down, under which macOS sends no key up: whatever is held comes up.
+pub(crate) fn on_modifiers(state: &mut State, mods: Mods, _: &mut Tx) {
+    if mods.logo || (cfg!(target_os = "macos") && mods.cmd) {
+        state.let_go_of_keys();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_key_that_types_or_edits_never_does_an_apps_action_in_a_field() {
+        assert!(super::never_types("cmd-n"));
+        assert!(super::never_types("ctrl-n"));
+        assert!(super::never_types("cmd-shift-n"));
+        for chord in [
+            "n",
+            "alt-shift-n",
+            "f5",
+            "cmd-z",
+            "cmd-shift-z",
+            "cmd-a",
+            "cmd-left",
+        ] {
+            assert!(!super::never_types(chord), "{chord}");
+        }
+    }
+}

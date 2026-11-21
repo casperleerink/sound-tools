@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sound_core::{
     BehaviourContext, BehaviourError, EventInput, EventTap, InputEndpoint, JsonTool, JsonToolDoc,
-    Ports, PrepareConfig, ProcessContext, Processor, State, Tappable, ToolSchema, Watch,
+    Ports, PrepareConfig, ProcessContext, Processor, Registry, State, Tappable, ToolSchema, Watch,
 };
 use sound_notes::{NOTES_INPUT, NoteEvent, Schedule};
 use sound_signals::Number;
@@ -92,6 +92,64 @@ pub(crate) fn json_tool() -> JsonTool {
     }
 }
 
+/// Its feeds and facts: the input it records and the take that runs, as the window's input
+/// gives them, see [`sound_core::feeds::Sources`].
+pub(crate) fn register_feeds(registry: &mut Registry) {
+    registry
+        .shows::<RecorderState>()
+        .feed(
+            "input",
+            "The level now of the audio input channels it records, 0 to 1; 0 while the input is closed.",
+            |_, context| {
+                (context.sources())
+                    .input_level(context.instance())
+                    .unwrap_or(0.0)
+            },
+        )
+        .feed(
+            "take",
+            "The sound of the take that runs: the loudest sample, 0 to 1, of each of `points` equal stretches (96 unless the binding says) across the ticks after it began the binding shows (up to now unless it says), as `rects` that draw it mirrored about its middle with `units` [ticks, 1]; empty while none runs.",
+            |_, context| {
+                let (sources, id) = (context.sources(), context.instance());
+                let Some(from) = sources.taking(id) else {
+                    return Vec::new();
+                };
+                let now = context.tick.0.saturating_sub(from.0) as f64;
+                let points = context.points_or(96);
+                let [from, to] = context.range_or([0.0, now]);
+                let peaks = (sources.take_wave(id, from, to, points)).unwrap_or_default();
+                let edges: Vec<f64> = context.across([0.0, now], points + 1).collect();
+                sound_core::feeds::band(&edges, peaks)
+            },
+        )
+        .feed(
+            "notes",
+            "The notes of the take that runs, four numbers each: ticks after it began, pitch, length in ticks (up to now while held), 1; empty while none runs.",
+            |_, context| {
+                (context.sources())
+                    .take_notes(context.instance())
+                    .unwrap_or_default()
+            },
+        )
+        .facts(|_, context| Facts {
+            taking: (context.sources().taking(context.instance()))
+                .map(|from| Taking { from: from.0 }),
+        });
+}
+
+/// What a view of a recorder knows that is no record.
+#[derive(Serialize, JsonSchema)]
+struct Facts {
+    /// The take that runs; null while none does.
+    taking: Option<Taking>,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct Taking {
+    /// The tick it began at.
+    from: u64,
+}
+
 /// The record of the recorder, for the SDK.
 pub(crate) fn schema() -> ToolSchema {
     ToolSchema {
@@ -115,7 +173,8 @@ fn record(state: &Value) -> Result<RecorderState, String> {
 fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     record(state).map_err(BehaviourError::Other)?;
     let (tap, armed) = (context.tap::<Heard>(HEARD), context.watch(ARMED));
-    let node = context.processor(PROCESSOR, || Recorder::new(tap, armed))?;
+    let sounding = context.tap::<NoteEvent>(crate::tools::SOUNDING_TAP);
+    let node = context.processor(PROCESSOR, || Recorder::new(tap, armed, sounding))?;
     context.input(NOTES_INPUT, InputEndpoint::new(node, Recorder::NOTES));
     context.input(RECORD, InputEndpoint::new(node, Recorder::RECORD));
     context.input(ARM, InputEndpoint::new(node, Recorder::ARM));
@@ -125,6 +184,8 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
 pub(crate) struct Recorder {
     heard: EventTap<Heard>,
     armed: Watch,
+    /// Where it says which keys what reaches it holds down.
+    sounding: EventTap<NoteEvent>,
     /// Its input `record`, from a cable or a performer.
     record: bool,
     /// What a cable last sent: a number sent every block records once.
@@ -154,9 +215,10 @@ impl Recorder {
     pub(crate) const RECORD: EventInput<Number> = EventInput::new(1);
     pub(crate) const ARM: EventInput<Number> = EventInput::new(2);
 
-    fn new(heard: EventTap<Heard>, armed: Watch) -> Self {
+    fn new(heard: EventTap<Heard>, armed: Watch, sounding: EventTap<NoteEvent>) -> Self {
         Self {
             heard,
+            sounding,
             armed,
             record: false,
             cabled: None,
@@ -207,6 +269,8 @@ impl Processor for Recorder {
         let frame_at = |offset: usize| range.start + offset.saturating_sub(first) as u64;
         let mut cabled = context.event_inputs.get(Self::RECORD).iter().peekable();
         let notes = context.event_inputs.get(Self::NOTES);
+        // What reaches it, as the keyboard plays, sounds on its track.
+        crate::window::sounds(&self.sounding, notes);
         let mut read = 0;
         // The block in stretches between what turns `record` on or off, each at its frame.
         let mut offset = 0;
@@ -295,9 +359,11 @@ mod tests {
         let (mut control, engine) = Engine::new(EngineConfig::new(48_000, 2));
         let heard = EventTap::new();
         let mut edit = control.edit();
-        let recorder = Recorder::new(heard.clone(), Watch::new());
+        let recorder = Recorder::new(heard.clone(), Watch::new(), EventTap::new());
         let recorder = edit.add_processor("recorder", recorder).unwrap();
-        let timeline = edit.add_processor("timeline", Timeline::new()).unwrap();
+        let timeline = edit
+            .add_processor("timeline", Timeline::new(EventTap::new()))
+            .unwrap();
         edit.connect(Connection::new(
             timeline.id(),
             Timeline::NOTES,

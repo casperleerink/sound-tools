@@ -1,4 +1,4 @@
-"""The benchmark projects. Each is made by the runtime of the commit under test, then filled with
+"""The benchmark projects. Each is made by `sound-tools` of the commit under test, then filled with
 state files and the tool files of that same commit."""
 
 import json
@@ -13,16 +13,12 @@ HERE = Path(__file__).resolve().parent
 BAR = 3840  # ticks in a 4/4 bar; at the default 120 bpm a bar is 2 s
 BARS = 32  # 64 s, longer than the longest render
 
-# Example tools: file in the repo, state, whether it plays the notes of a clip.
+# Example tools: file in the repo, state.
 TOOLS = {
     "acid-bass": ("tooling/agent-eval/fixtures/acid-bass.tsx",
                   {"steps": [1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0],
-                   "accents": [1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0]}, False),
-    "dorian-drift": ("tooling/agent-eval/examples/dorian-drift.tsx", {}, False),
-    "gravity-harp": ("tooling/agent-eval/examples/gravity-harp.tsx", {}, False),
-    "storm": ("tooling/agent-eval/examples/storm.tsx", {}, False),
-    "life": ("tooling/agent-eval/examples/life.tsx", {}, True),
-    "grain-cloud": ("tooling/agent-eval/examples/grain-cloud.ts", {"sound": "texture.wav"}, False),
+                   "accents": [1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0]}),
+    "grain-cloud": ("tooling/agent-eval/examples/grain-cloud.ts", {"sound": "texture.wav"}),
 }
 # TypeScript rebuilds of built-in instruments: rebuild tool -> built-in tool id.
 REBUILDS = {"ts-synth": "instrument.synth"}
@@ -61,7 +57,7 @@ def drums(bars=BARS):
 
 
 def daw(folder, source):
-    """The song of the DAW template of `source` in the project the runtime made: its tools, its
+    """The song of the DAW template of `source` in the project `sound-tools` made: its tools, its
     master, its audio track, and how it reaches the device. Its first track is left out."""
     template = source / "templates/daw"
     shutil.copytree(template / "extensions", folder / "extensions", dirs_exist_ok=True)
@@ -131,11 +127,10 @@ def texture(folder):
 
 def tool(folder, source, name, order, suffix=""):
     """Adds an example tool on a track. `source` is the checkout of the commit."""
-    file, state, plays_notes = TOOLS[name]
+    file, state = TOOLS[name]
     (folder / "extensions").mkdir(exist_ok=True)
     shutil.copy(source / file, folder / "extensions" / Path(file).name)
-    clip_notes = notes("arp", order) if plays_notes else None
-    track(folder, f"{name}{suffix}", order, {"tool": name, "state": state}, clip_notes)
+    track(folder, f"{name}{suffix}", order, {"tool": name, "state": state}, None)
 
 
 def rebuild_file(source, name):
@@ -274,11 +269,11 @@ def automate(folder):
         write(path, record)
 
 
-def make(runtime, source, folder, name, env):
-    """Makes project `name` in `folder` with `runtime`, from the sources of `source`."""
+def make(program, source, folder, name, env):
+    """Makes project `name` in `folder` with `program`, from the sources of `source`."""
     shutil.rmtree(folder, ignore_errors=True)
     folder.mkdir(parents=True)
-    made = subprocess.run([runtime, folder, "--headless"], input="quit\n", env=env, capture_output=True, text=True)
+    made = subprocess.run([program, folder, "--headless"], input="quit\n", env=env, capture_output=True, text=True)
     if made.returncode != 0 or not (folder / "project.json").exists():
         raise SystemExit(f"could not make {name}:\n{made.stdout}{made.stderr}")
     daw(folder, source)

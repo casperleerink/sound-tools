@@ -1,4 +1,4 @@
-//! Timelines that loop, the clip launcher of the doc for agents: what they play from their
+//! Timelines that loop under a launcher: what they play from their
 //! records in a render, the launches a cable sends them, and the notes they hold when what they
 //! play into changes.
 
@@ -6,16 +6,28 @@ use crate::owners::{closed, rendered_frames};
 use crate::support::{BAR, Harness, first_sound, write};
 use sound_core::InstanceId;
 
-/// The launcher of the doc for agents that write tools, as it is written there.
-fn doc_launcher() -> String {
-    let mut blocks = (sound_typescript::AGENT_DOCS.iter())
-        .flat_map(|doc| doc.markdown.split("```ts\n"))
-        .filter_map(|block| block.split("```").next());
-    let block = blocks
-        .find(|block| block.contains("number: \"launch\""))
-        .unwrap();
-    block.to_string()
-}
+/// A launcher of the timelines `low` and `high`, which play on `synth` through `fx`.
+const LAUNCHER: &str = r#"import { tool, type Declaration } from "./sdk";
+
+const children = { low: "timeline", high: "timeline", synth: "instrument.synth", fx: "utility" } as const;
+
+tool({
+  name: "loops",
+  title: "Loops",
+  when: "You want bass loops to launch in time with the bars",
+  doc: "Loops the timelines `low` and `high` on `synth` through `fx`.",
+  state: {},
+  children,
+  behaviour: (): Declaration<typeof children> => ({
+    connections: [
+      { from: { child: "low", notes: "notes" }, to: { child: "synth", notes: "notes" } },
+      { from: { child: "high", notes: "notes" }, to: { child: "synth", notes: "notes" } },
+      { from: { child: "synth" }, to: { child: "fx" } },
+      { from: { child: "fx" }, to: { port: "audio" } },
+    ],
+  }),
+});
+"#;
 
 /// A looping timeline of a bar that waits for a launch, with one note on the second beat.
 const HIGH: &str = r#"{"tool": "timeline", "state": {"length": 3840, "loop": true, "plays": false, "notes": [
@@ -25,7 +37,7 @@ const HIGH: &str = r#"{"tool": "timeline", "state": {"length": 3840, "loop": tru
 const LOW: &str = r#"{"tool": "timeline", "state": {"length": 3840, "loop": true, "notes": [
   {"start": 0, "length": 480, "pitch": 36, "velocity": 100}, {"start": 1920, "length": 480, "pitch": 43, "velocity": 100}]}}"#;
 
-/// A project of the doc's launcher `loops` at the top, connected to the device, with the
+/// A project of the [`LAUNCHER`] `loops` at the top, connected to the device, with the
 /// timeline `low` of `low` and [`HIGH`], a synth that lets go at once, a utility, and
 /// the tools of `extra` in `extensions/extra.ts`.
 fn loops(low: &str, extra: &str) -> Harness {
@@ -39,7 +51,7 @@ fn loops(low: &str, extra: &str) -> Harness {
   "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
   "connections": [{"from": {"instance": "loops", "port": "audio"}, "to": {"device_output": 0}}]}"#;
     write(root, "project.json", project);
-    write(root, "extensions/loops.ts", &doc_launcher());
+    write(root, "extensions/loops.ts", LAUNCHER);
     write(root, "extensions/extra.ts", extra);
     write(
         root,
@@ -129,7 +141,7 @@ fn a_number_a_cable_sends_starts_and_stops_loops_at_the_next_bar_in_a_render() {
         "state/loops/conductor.json",
         r#"{"tool": "conductor", "state": {}}"#,
     );
-    let launcher = doc_launcher().replace(
+    let launcher = LAUNCHER.replace(
         "connections: [",
         r#"connections: [
       { from: { child: "conductor", number: "first" }, to: { child: "low", number: "launch" } },

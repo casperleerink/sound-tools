@@ -23,8 +23,8 @@ const WORKSPACE_FILES: [&str; 5] = [
     ".cargo/",
 ];
 
-/// Folders outside the crates that a crate builds in.
-const FOLDERS: [(&str, &str); 1] = [("templates/", "runtime")];
+/// Folders outside the crates that crates build in.
+const FOLDERS: [(&str, &[&str]); 1] = [("templates/", &["runtime", "sound-window"])];
 
 /// Checks the docs and the dependency rules, which a change anywhere can break. It is cheap.
 const ALWAYS_TESTED: &str = "workspace-rules";
@@ -48,11 +48,11 @@ fn main() -> Result<ExitCode> {
     for file in &changed {
         if WORKSPACE_FILES.iter().any(|name| file.starts_with(name)) {
             whole_workspace = true;
-        } else if let Some((_, package)) =
+        } else if let Some((_, packages)) =
             FOLDERS.iter().find(|(folder, _)| file.starts_with(folder))
         {
-            tested.insert(package.to_string());
-            used.insert(package.to_string());
+            tested.extend(packages.iter().map(|package| package.to_string()));
+            used.extend(packages.iter().map(|package| package.to_string()));
         } else if let Some(package) = package_of(&metadata, &root.join(file)) {
             tested.insert(package.name.to_string());
             let tests = package.manifest_path.with_file_name("tests");

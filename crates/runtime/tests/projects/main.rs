@@ -16,6 +16,7 @@ mod effects;
 mod eq;
 mod events;
 mod export;
+mod feeds;
 mod filter;
 mod latency;
 mod launcher;
@@ -25,19 +26,13 @@ mod metronome;
 mod modulation;
 mod own_ports;
 mod owners;
-// The sizes of its page are for the window tests.
-#[path = "../shared/plugin_hosts.rs"]
 mod plugin_hosts;
 mod plugins;
-#[allow(dead_code)]
-#[path = "../shared/rack.rs"]
 mod rack;
 mod render_cost;
 mod reverb;
 mod sampler;
 mod saturator;
-#[allow(dead_code)]
-#[path = "../shared/song.rs"]
 mod shared_song;
 mod song;
 mod song_mixer;
@@ -45,5 +40,6 @@ mod song_sound;
 mod sound_ports;
 mod summary;
 mod support;
+mod template_sound;
 mod typescript;
 mod utility;

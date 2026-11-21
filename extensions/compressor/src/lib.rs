@@ -26,11 +26,8 @@
 //!
 //! The detector hears the last 10 ms. Under 50 Hz that can fall between two peaks of the wave,
 //! so the gain follows the wave and adds harmonics. A longer release keeps deep bass cleaner.
-//!
-//! [`view`] is the card of the compressor, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -241,14 +238,44 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
     markdown: include_str!("../agent-doc.md"),
 };
 
+/// The levels its curve shows, in dBFS: the range of the threshold.
+const LEVELS: [f64; 2] = [-60.0, 0.0];
+
 /// Registers the compressor tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<CompressorState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Compressor::AUTOMATION.parameters());
+        .schema(Compressor::AUTOMATION.parameters())
+        .feed(
+            "level",
+            "The loudest it heard since the last frame, in dBFS (-120 for silence).",
+            |_, context| context.peak_db(Meters::LEVEL),
+        )
+        .feed(
+            "reduction",
+            "The most it turned the sound down since the last frame, in dB, 0 or more.",
+            |_, context| context.peaks(Meters::REDUCTION)[0],
+        )
+        .feed(
+            "transfer",
+            "Its curve: the level out before makeup and mix, in dBFS, of a steady sound at each of `points` levels in (61 unless the binding says), evenly from -60 to 0 dBFS unless the binding shows another range.",
+            |state, context| {
+                context.curve(LEVELS, 61, |input| input - reduction_db(state, input))
+            },
+        )
+        .feed(
+            "threshold_level",
+            "The level out before makeup and mix, in dBFS, of a steady sound at the threshold: the point of the `transfer` curve where a card puts the handle of the threshold, under it by as much as the knee already turns down there.",
+            |state, _| threshold_level_db(state),
+        );
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
+}
+
+/// The level out, in dBFS, of a steady sound at the threshold.
+pub fn threshold_level_db(state: &CompressorState) -> f32 {
+    state.threshold_db - reduction_db(state, state.threshold_db)
 }
 
 /// Runs for every valid state, from every source. The processor is kept between runs, so the
@@ -292,6 +319,28 @@ mod tests {
             check_parameter_ranges(&state, &PARAMETERS, |state| state),
             Ok(())
         );
+    }
+
+    /// A hard knee starts to turn down at the threshold; a soft one already has there, and
+    /// more the wider it is.
+    #[test]
+    fn the_level_at_the_threshold_is_turned_down_only_by_a_soft_knee() {
+        let at = |knee_db| {
+            threshold_level_db(&CompressorState {
+                threshold_db: -18.0,
+                ratio: 4.0,
+                knee_db,
+                ..CompressorState::default()
+            })
+        };
+        assert_eq!(at(0.0), -18.0);
+        assert!(
+            at(6.0) < -18.0 && at(12.0) < at(6.0),
+            "{} {}",
+            at(6.0),
+            at(12.0)
+        );
+        assert!(at(12.0) > -18.0 - 12.0 / 2.0 * 0.75, "{}", at(12.0));
     }
 
     #[test]

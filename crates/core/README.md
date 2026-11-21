@@ -88,12 +88,21 @@ writes it from the schema of the tool (`.schema(..)`): a field's doc comment is 
 `#[schemars(transform = ranges(&PARAMETERS))]` gives its range, and its `Default` its default.
 The doc itself says only what no field says: what the tool is for, starting points, behaviour.
 
+## What a view reads
+
+A tool registers feeds (`.feed(name, doc, read)`): numbers or lists a view draws as the sound
+plays, such as a response curve or a gain reduction, worked out from the record as it plays by
+the code that makes the sound, never a second copy in TypeScript. What rarely changes, such as a
+missing file, is facts (`.facts(read)`). What a card asks of its device, such as a download, is a
+command (`.command(name, run)`), which code plays with `send(name)`. Rejected: views reading
+peaks and watches by name; a card calling into its device's Rust by any other way.
+
 ## Copy an example
 
 | You want | Start from |
 | --- | --- |
 | The smallest tool: one record, one processor | `extensions/tone/src/lib.rs` |
-| An effect with parameters, a card and an agent doc | `extensions/filter` |
+| An effect with parameters, a feed and an agent doc | `extensions/filter` |
 | An instrument that plays notes | `extensions/instrument` |
 | An owner with many small child records | `crates/core/tests/project/tools.rs` |
 | A processor driven by the timeline, with snapshots | `crates/notes/src/player.rs` |

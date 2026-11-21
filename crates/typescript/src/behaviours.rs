@@ -349,11 +349,6 @@ pub fn take_declared(assets: &Assets) -> Vec<InstanceId> {
     ours.into_iter().map(|(_, instance)| instance).collect()
 }
 
-/// How many questions the behaviours of this process asked Bun, for tests and measurements.
-pub fn asked_behaviours() -> u64 {
-    store().next_question
-}
-
 /// Waits until Bun answered everything it was asked, or stopped. For a render, which plays what
 /// the records say from its first block, and for tests.
 pub fn wait_for_behaviours() {

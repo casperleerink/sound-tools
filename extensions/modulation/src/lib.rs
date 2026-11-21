@@ -12,11 +12,8 @@
 //!   "state": {"mode": "chorus", "rate_hz": 0.5, "depth": 0.5, "feedback": 0.2, "spread": 0.5, "mix": 0.5}
 //! }
 //! ```
-//!
-//! [`view`] is the card of the modulation, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

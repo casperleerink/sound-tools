@@ -1,6 +1,6 @@
 //! What the sidebar shows of one thread, built from [`AgentEvent`]s.
 //!
-//! Plain state with no process and no gpui, so a test feeds it events by hand or from a
+//! Plain state with no process and no toolkit, so a test feeds it events by hand or from a
 //! recording. The view renders it, and the driver only produces the events.
 //!
 //! Times are the wall clock, not `Instant`: a saved thread replays its events with the times

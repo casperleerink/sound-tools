@@ -13,6 +13,7 @@ use anyhow::{Context as _, Result, bail};
 use crate::PROJECT_FILE;
 
 mod about;
+mod imports;
 mod saved;
 mod written;
 
@@ -75,8 +76,7 @@ pub fn choices() -> Result<Vec<Choice>> {
 }
 
 /// Makes `folder` for a new project unless it is there and has files in it: it must be
-/// missing, empty (see [`is_empty`]) or an empty project, one that holds nothing but its
-/// `project.json` and what the runtime writes.
+/// missing, empty (see [`is_empty`]) or an empty project, see [`is_empty_project`].
 fn check_new(folder: &Path) -> Result<()> {
     let empty_project = || -> Result<bool> {
         Ok(folder.join(PROJECT_FILE).exists() && is_empty_project(folder, folder)?)
@@ -150,8 +150,8 @@ pub struct Update {
 
 /// Brings the code of the template the project was made from up to this release's: each file
 /// the project never changed becomes the template's, a new one is added and one the template
-/// no longer has goes. A file the project changed stays as it is and is in the [`Update`] for a
-/// merge. A project made before the template was kept, or from a template this release has not,
+/// no longer has goes once no file left in the project imports it. A file the project changed
+/// stays as it is and is in the [`Update`] for a merge. A project made before the template was kept, or from a template this release has not,
 /// is left alone. Doing it again changes nothing.
 pub fn update(folder: &Path) -> Result<Option<Update>> {
     let kept = folder.join(KEPT);
@@ -170,6 +170,7 @@ pub fn update(folder: &Path) -> Result<Option<Update>> {
         }
     }
     let mut files = Vec::new();
+    let mut gone = Vec::new();
     for path in paths {
         let newer = code(template)
             .find(|(each, _)| *each == path)
@@ -180,12 +181,20 @@ pub fn update(folder: &Path) -> Result<Option<Update>> {
         }
         let ours = read(&folder.join(&path))?;
         if ours == before {
+            if newer.is_none() {
+                gone.push(path);
+                continue;
+            }
             put(&folder.join(&path), newer)?;
         } else if ours.as_deref() != newer {
             files.push(path);
             continue;
         }
         put(&kept.join(&path), newer)?;
+    }
+    for path in unimported(folder, gone)? {
+        put(&folder.join(&path), None)?;
+        put(&kept.join(&path), None)?;
     }
     if files.is_empty() {
         if file.version != crate::VERSION {
@@ -194,6 +203,31 @@ pub fn update(folder: &Path) -> Result<Option<Update>> {
         return Ok(None);
     }
     Ok(Some(Update { template, files }))
+}
+
+/// The files of `gone` that no other file of the project's code imports, also through one of
+/// `gone` that stays: older code the project kept may still need them.
+fn unimported(folder: &Path, mut gone: Vec<String>) -> Result<Vec<String>> {
+    let mut code = Vec::new();
+    for path in files_under(folder, &folder.join("extensions"))? {
+        if imports::is_code(&path)
+            && let Some(contents) = read(&folder.join(&path))?
+        {
+            code.push((imports::imported(&path, &contents), path));
+        }
+    }
+    loop {
+        let stays = |path: &String| !gone.contains(path);
+        let needed: Vec<&String> = (code.iter().filter(|(_, path)| stays(path)))
+            .flat_map(|(imported, _)| imported)
+            .collect();
+        let (needed, unneeded): (Vec<_>, Vec<_>) =
+            gone.into_iter().partition(|path| needed.contains(&path));
+        if needed.is_empty() {
+            return Ok(unneeded);
+        }
+        gone = unneeded;
+    }
 }
 
 /// Starts the merge of `update`: the kept code becomes the new template's, the code it had
@@ -258,11 +292,8 @@ fn read(path: &Path) -> Result<Option<String>> {
 /// Writes `contents` at `path`, making its folder, or removes the file when there are none.
 fn put(path: &Path, contents: Option<&str>) -> Result<()> {
     match contents {
-        Some(contents) => {
-            make_room(path)?;
-            std::fs::write(path, contents)
-                .with_context(|| format!("could not write {}", path.display()))
-        }
+        Some(contents) => sound_core::write_atomically(path, contents.as_bytes())
+            .with_context(|| format!("could not write {}", path.display())),
         None => match std::fs::remove_file(path) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
                 Err(error).with_context(|| format!("could not remove {}", path.display()))
@@ -293,8 +324,8 @@ fn with_extensions(contents: &str) -> Result<String> {
     Ok(serde_json::to_string_pretty(&file)?)
 }
 
-/// Whether `folder`, in the project at `root`, holds no file but `project.json` and what the
-/// runtime writes.
+/// Whether `folder`, in the project at `root`, holds no file but `project.json`, what the
+/// runtime writes and the code of its template as it wrote it, such as the kit of Bare.
 fn is_empty_project(root: &Path, folder: &Path) -> Result<bool> {
     let entries = std::fs::read_dir(folder)
         .with_context(|| format!("could not read {}", folder.display()))?;
@@ -308,7 +339,11 @@ fn is_empty_project(root: &Path, folder: &Path) -> Result<bool> {
             .replace('\\', "/");
         let empty = match path.is_dir() {
             true => written::written_by_the_runtime(&inside) || is_empty_project(root, &path)?,
-            false => inside == PROJECT_FILE || written::written_by_the_runtime(&inside),
+            false => {
+                inside == PROJECT_FILE
+                    || written::written_by_the_runtime(&inside)
+                    || read(&root.join(KEPT).join(&inside))? == read(&path)?
+            }
         };
         if !empty {
             return Ok(false);
@@ -318,7 +353,7 @@ fn is_empty_project(root: &Path, folder: &Path) -> Result<bool> {
 }
 
 /// Whether `folder` holds nothing but hidden files.
-pub(crate) fn is_empty(folder: &Path) -> Result<bool> {
+pub fn is_empty(folder: &Path) -> Result<bool> {
     let entries = std::fs::read_dir(folder)
         .with_context(|| format!("could not read {}", folder.display()))?;
     for entry in entries {
@@ -377,6 +412,16 @@ mod tests {
         std::fs::write(opened.join("AGENTS.md"), "").unwrap();
         write(&opened, daw).unwrap();
         assert!(opened.join("state/song/instance.json").exists());
+
+        // So does a Bare one, whose kit is as Bare wrote it; not once a file of it changed.
+        let bare = folder.path().join("bare");
+        write(&bare, named("Bare").unwrap()).unwrap();
+        let knob = bare.join("extensions/ui/knob.tsx");
+        std::fs::write(&knob, "// mine").unwrap();
+        write(&bare, daw).unwrap_err();
+        std::fs::remove_file(&knob).unwrap();
+        write(&bare, daw).unwrap();
+        assert!(bare.join("extensions/song.tsx").exists());
     }
 
     /// A project from the DAW template whose `song.tsx` and the kept one are `before`, as if an
@@ -461,6 +506,38 @@ mod tests {
         assert_eq!(song(folder.path()).as_deref(), Some("ours"));
         // Asked once: the agent's merge is what the project has from here.
         assert!(update(folder.path()).unwrap().is_none());
+    }
+
+    /// An update writes a new file in place of the old one, never into it: a crash leaves the
+    /// old file or the new one whole. A hard link to the old one keeps it.
+    #[test]
+    fn an_update_never_writes_into_the_old_file() {
+        let folder = made_earlier(Some("old"), Some("old"));
+        let link = folder.path().join("old-song");
+        std::fs::hard_link(folder.path().join(SONG), &link).unwrap();
+        assert!(update(folder.path()).unwrap().is_none());
+        assert_eq!(song(folder.path()).as_deref(), Some(template_song()));
+        assert_eq!(read(&link).unwrap().as_deref(), Some("old"));
+    }
+
+    #[test]
+    fn a_file_the_newer_template_lacks_stays_while_code_the_project_keeps_imports_it() {
+        let folder = made_earlier(Some("old"), Some(r#"import { page } from "./page";"#));
+        let page = "extensions/page.ts";
+        let time = "extensions/time.ts";
+        for (path, contents) in [(page, r#"export * from "./time";"#), (time, "")] {
+            put(&folder.path().join(KEPT).join(path), Some(contents)).unwrap();
+            put(&folder.path().join(path), Some(contents)).unwrap();
+        }
+        let waiting = update(folder.path()).unwrap().unwrap();
+        assert_eq!(waiting.files, [SONG]);
+        assert!(folder.path().join(page).exists() && folder.path().join(time).exists());
+
+        // Once the merged song no longer needs them, they go.
+        begin_merge(folder.path(), &waiting).unwrap();
+        put(&folder.path().join(SONG), Some(template_song())).unwrap();
+        assert!(update(folder.path()).unwrap().is_none());
+        assert!(!folder.path().join(page).exists() && !folder.path().join(time).exists());
     }
 
     #[test]

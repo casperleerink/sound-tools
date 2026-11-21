@@ -11,13 +11,10 @@
 //!   "state": {"pads": {"36": {"decay_ms": 900.0}, "48": {"sample": "shaker.wav", "decay_ms": 900.0}}}
 //! }
 //! ```
-//!
-//! [`view`] is the card of the Drum pad, and the only module here that uses GPUI.
 
 mod kit;
 mod processor;
 mod sounds;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::de::Error as _;
@@ -547,18 +544,130 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         .tool::<DrumPadState>(EXTENSION)?
         .behaviour(apply)
         .rebinds_on_assets(sound_media::AUDIO_FOLDER)
-        .schema(DrumPad::AUTOMATION.parameters());
+        .schema(DrumPad::AUTOMATION.parameters())
+        .feed(
+            "levels",
+            "How loud each pad sounded since the last frame, 0 to 1: 16 numbers, pad 0 (note 36, bottom left) first.",
+            |_, context| {
+                (0..PADS)
+                    .map(|pad| {
+                        let [left, right] = context.peaks(&peaks_name(pad));
+                        left.max(right)
+                    })
+                    .collect::<Vec<f32>>()
+            },
+        )
+        .facts(|state, context| Facts::of(state, context.assets()))
+        .command("fit_decay", fit_decay);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
 
-/// The name of the peaks of pad `pad`, which say how loud it sounds for the card.
-pub fn peaks_name(pad: usize) -> String {
-    format!("pad-{}", note_of(pad))
+/// The pad on the note sent, which a card just made play a file, decays over half again the
+/// length of that file, as [`Pad::load_sample`] says: one step with the load, of its label.
+fn fit_decay(
+    state: &DrumPadState,
+    context: &sound_core::CommandContext<'_>,
+    note: Option<f64>,
+) -> Option<(String, DrumPadState)> {
+    let pad = pad_of(Pitch::nearest(note? as i64))?;
+    let Source::Sample(asset) = &state.pads[pad].source else {
+        return None;
+    };
+    let seconds = sound_media::info(context.assets, asset).ok()?.seconds();
+    let mut state = state.clone();
+    state.pads[pad].load_sample(asset.clone(), seconds);
+    Some(("Load sample".to_string(), state))
 }
 
-/// The name of the processor, for [`sound_core::Project::send`]: a click on a pad plays it.
-pub const PROCESSOR: &str = "drums";
+/// What its card knows that is no record.
+#[derive(Serialize, JsonSchema)]
+struct Facts {
+    /// Pad 0 (note 36, bottom left) first.
+    pads: Vec<PadFacts>,
+    /// The sounds of the kit, in the order a list shows them.
+    sounds: Vec<SoundFacts>,
+}
+
+/// A record leaves out the pads and fields that are the kit's, and the kit's differ by pad, so
+/// these say what each pad plays and what a reset gives it.
+#[derive(Serialize, JsonSchema)]
+struct PadFacts {
+    note: u8,
+    /// What the card writes on it, see [`Pad::name`].
+    name: String,
+    /// The file it plays; null for a sound of the kit.
+    file: Option<sound_media::FileFacts>,
+    /// The sound of the kit it plays, as a record writes it; null for a file.
+    sound: Option<&'static str>,
+    volume_db: f32,
+    pitch_semitones: f32,
+    decay_ms: f32,
+    pan: f32,
+    choke: bool,
+    /// Its numbers in the kit.
+    kit: KitFacts,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct KitFacts {
+    volume_db: f32,
+    pitch_semitones: f32,
+    decay_ms: f32,
+    pan: f32,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct SoundFacts {
+    /// As a record writes it.
+    value: &'static str,
+    name: &'static str,
+}
+
+impl Facts {
+    fn of(state: &DrumPadState, assets: &sound_core::Assets) -> Self {
+        let pads = (state.pads.iter().enumerate())
+            .map(|(pad, settings)| {
+                let (file, sound) = match &settings.source {
+                    Source::Sample(asset) => {
+                        (Some(sound_media::FileFacts::of(assets, asset)), None)
+                    }
+                    Source::Sound(sound) => (None, Some(sound.key())),
+                };
+                let kit = &KIT[pad];
+                PadFacts {
+                    note: note_of(pad),
+                    name: settings.name(pad),
+                    file,
+                    sound,
+                    volume_db: settings.volume_db,
+                    pitch_semitones: settings.pitch_semitones,
+                    decay_ms: settings.decay_ms,
+                    pan: settings.pan,
+                    choke: settings.choke,
+                    kit: KitFacts {
+                        volume_db: kit.volume_db,
+                        pitch_semitones: kit.pitch_semitones,
+                        decay_ms: kit.decay_ms,
+                        pan: kit.pan,
+                    },
+                }
+            })
+            .collect();
+        let sounds = (Sound::ALL.into_iter())
+            .map(|sound| SoundFacts {
+                value: sound.key(),
+                name: sound.name(),
+            })
+            .collect();
+        Self { pads, sounds }
+    }
+}
+
+/// The name of the peaks of pad `pad`, which say how loud it sounds.
+fn peaks_name(pad: usize) -> String {
+    format!("pad-{}", note_of(pad))
+}
 
 /// Runs for every valid state, from every source. It makes no sound and reads no file: the
 /// sound each pad needs is taken from those made before, or asked of the thread that makes them,
@@ -584,7 +693,7 @@ fn apply(state: &DrumPadState, context: &mut BehaviourContext<'_>) -> Result<(),
     for problem in problems {
         context.problem(problem);
     }
-    let drums = context.processor(PROCESSOR, || DrumPad::new(peaks))?;
+    let drums = context.processor("drums", || DrumPad::new(peaks))?;
     context.update(drums, DrumUpdate::kit(pads, state))?;
     context.input(NOTES_INPUT, InputEndpoint::new(drums, DrumPad::NOTES));
     context.automation(drums, DrumPad::AUTOMATION);
@@ -600,6 +709,26 @@ mod tests {
 
     fn parse(json: &str) -> Result<DrumPadState, String> {
         serde_json::from_str(json).map_err(|error| error.to_string())
+    }
+
+    /// A pad the record leaves out, or a field of one, is the kit's for that pad, not for the
+    /// first: the card shows and resets each pad by these.
+    #[test]
+    fn the_facts_of_a_pad_are_what_it_plays_with_the_kit_of_that_pad() {
+        let state = parse(r#"{"pads": {"37": {"volume_db": -6}}}"#).unwrap();
+        let assets = sound_core::Assets::new(&std::env::temp_dir());
+        let facts = serde_json::to_value(Facts::of(&state, &assets)).unwrap();
+        let rim = &facts["pads"][1];
+        assert_eq!(rim["name"], "Rim");
+        assert_eq!(rim["sound"], "rim");
+        assert_eq!(rim["volume_db"], -6.0);
+        assert_eq!(rim["decay_ms"], 70.0);
+        assert_eq!(rim["kit"]["volume_db"], 0.0);
+        let open_hat = &facts["pads"][10];
+        assert_eq!(
+            (&open_hat["decay_ms"], &open_hat["choke"]),
+            (&650.0.into(), &true.into())
+        );
     }
 
     #[test]

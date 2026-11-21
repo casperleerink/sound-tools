@@ -3,14 +3,23 @@
 //! `eq.bands[0].gain_db`, or `voices[2].detune` in the record of the view's own tool.
 
 use serde_json::{Map, Value};
+use sound_core::{InstanceId, Project};
 
-/// The instance inside the view's own that `path` names, if any, and the number in its record.
-/// A name of an instance holds no `[`, so a place in a list of the own record is told apart.
-pub(crate) fn split(path: &str) -> (Option<&str>, &str) {
-    match path.split_once('.') {
-        Some((child, number)) if !child.contains('[') => (Some(child), number),
-        _ => (None, path),
+/// The instance a path of `instance` names a number of, and that number: an instance inside it
+/// when the path starts with one, else `instance` itself (`pads.36.pan` of a kit and
+/// `osc_1.position` of a wavetable are its own).
+pub fn number_at<'a>(
+    project: &Project,
+    instance: &InstanceId,
+    path: &'a str,
+) -> (InstanceId, &'a str) {
+    if let Some((inside, number)) = path.split_once('.')
+        && let Ok(id) = instance.child(inside)
+        && project.tool_of(&id).is_some()
+    {
+        return (id, number);
     }
+    (instance.clone(), path)
 }
 
 /// The parts of the path of a number in a record: `bands[0].gain_db` is `bands`, `0` and
@@ -30,9 +39,17 @@ pub(crate) fn at<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     parts(path).try_fold(value, child)
 }
 
+/// A number a record holds, `"-inf"` for silence too, which JSON has no number for.
+pub(crate) fn number_of(value: &Value) -> Option<f32> {
+    match value.as_str() {
+        Some("-inf") => Some(f32::NEG_INFINITY),
+        _ => value.as_f64().map(|value| value as f32),
+    }
+}
+
 /// Puts `to` at `path`, or takes the number out where `to` is `None`. An object on the way that
 /// the record leaves out is made, such as a pad of a kit at its defaults; an item of a list is not.
-pub(crate) fn set(value: &mut Value, path: &str, to: Option<Value>) {
+pub fn set(value: &mut Value, path: &str, to: Option<Value>) {
     let parts: Vec<&str> = parts(path).collect();
     let Some((last, objects)) = parts.split_last() else {
         return;
@@ -82,7 +99,7 @@ pub(crate) fn set(value: &mut Value, path: &str, to: Option<Value>) {
 mod tests {
     use serde_json::json;
 
-    use super::{at, set, split};
+    use super::{at, set};
 
     #[test]
     fn a_number_is_found_and_put_back_by_its_path_in_the_record() {
@@ -107,23 +124,5 @@ mod tests {
             record,
             json!({"pads": {"36": {"volume_db": -6}}, "bands": []})
         );
-    }
-
-    #[test]
-    fn the_first_dot_ends_the_instance_unless_it_is_a_place_in_a_list() {
-        assert_eq!(split("cutoff_hz"), (None, "cutoff_hz"));
-        assert_eq!(
-            split("bass/synth.cutoff_hz"),
-            (Some("bass/synth"), "cutoff_hz")
-        );
-        assert_eq!(
-            split("kit.pads.36.volume_db"),
-            (Some("kit"), "pads.36.volume_db")
-        );
-        assert_eq!(
-            split("eq.bands[0].gain_db"),
-            (Some("eq"), "bands[0].gain_db")
-        );
-        assert_eq!(split("voices[2].detune"), (None, "voices[2].detune"));
     }
 }

@@ -3,9 +3,9 @@
 // message per line: the runtime tells on stdin, this says on stdout. What a tool logs goes to
 // stderr, so it cannot break a message.
 
-import { realpathSync, writeSync } from "node:fs";
+import { readFileSync, realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, MenuOptions, MovedNumber, NoteEvent, Offers, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
+import type { Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, NoteEvent, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
@@ -15,6 +15,59 @@ const stackPaths = files.map((file) => [file, `${realpathSync(join(folder, file)
 // So the stack `tool` keeps reaches its file through any number of helpers.
 Error.stackTraceLimit = Infinity;
 const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
+/** What the host uses of `sdk/view.ts`: a tool's `view` is one of it. */
+type Views = {
+  host: {
+    run(instance: string, draw: unknown, self: unknown, ctx: unknown): unknown;
+    perform(instance: string, key: string, action: string, value?: unknown): void;
+    forget(instance: string): void;
+    refuseHeld(held: readonly string[], before: object, after: object): void;
+  };
+};
+/** What the window knows of an instance that no record holds, see `Facts` in `sdk/view.ts`. */
+type Facts = { title: string; fields: { name: string; default?: unknown }[] };
+const views: Views = await import(join(folder, "sdk/view.ts"));
+
+// Code of an older Sound Tools imports parts of its views that the SDK no longer has. Its files
+// load with those names empty, and its tools without their views: their sound plays, and a card
+// draws them, until an agent writes the views again.
+/** Every name the SDK exports, values and types. */
+const sdkNames = new Set(
+  [...readFileSync(join(folder, "sdk.ts"), "utf8").matchAll(/export (?:type )?\{([^}]*)\}/g)]
+    .flatMap(([, list]) => list!.split(","))
+    .map((name) => name.trim().split(/\s+as\s+/).pop()!)
+    .concat([...readFileSync(join(folder, "sdk/records.ts"), "utf8").matchAll(/export (?:declare )?(?:type|interface|const|function|enum) (\w+)/g)].map(([, name]) => name!)),
+);
+/** The files, by their real path, that import a name the SDK no longer has. */
+const oldViews = new Set<string>();
+const realFolder = realpathSync(folder);
+Bun.plugin({
+  setup(build) {
+    build.onLoad({ filter: /\.tsx?$/ }, ({ path }) => {
+      const text = readFileSync(path, "utf8");
+      const loader = path.endsWith(".tsx") ? "tsx" : "ts";
+      if (!path.startsWith(`${realFolder}/`) || path.startsWith(join(realFolder, "sdk"))) return { contents: text, loader };
+      // A name with no value: a type, which Bun leaves out unless the code uses it as a value, or gone.
+      // The list runs to the first `}` outside a comment.
+      const empty: string[] = [];
+      const kept = text.replace(/import\s*\{((?:[^}/]|\/\/[^\n]*(?=\n)|\/\*[\s\S]*?\*\/|\/(?![/*]))*)\}\s*from\s*(["'])((?:\.\.?\/)+sdk)\2/g, (whole: string, list: string, quote: string, from: string) => {
+        const parts = list.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, "").split(",").map((part) => part.trim());
+        const known = parts.filter((part) => {
+          const [name, local = name] = part.split(/\s+as\s+/);
+          if (part === "" || part.startsWith("type ") || name! in sdk) return part !== "";
+          empty.push(local!);
+          if (!sdkNames.has(name!)) oldViews.add(path);
+          return false;
+        });
+        // On as many lines as it was, so an error names the line of the file.
+        return `import { ${known.join(", ")} } from ${quote}${from}${quote};${"\n".repeat(whole.split("\n").length - 1)}`;
+      });
+      if (empty.length === 0) return { contents: text, loader };
+      return { contents: `const ${empty.map((name) => `${name}: any = undefined`).join(", ")}; ${kept}`, loader };
+    });
+  },
+});
+const isOld = (file: string) => oldViews.has(realpathSync(join(folder, file)));
 
 for (const name of ["log", "info", "debug", "warn"] as const) {
   console[name] = (...values: unknown[]) => console.error(...values);
@@ -25,12 +78,8 @@ process.on("unhandledRejection", (error) => console.error(error));
 type Spec = ToolSpec<Fields, Inputs, unknown>;
 type State = ValuesOf<Fields>;
 type Choices = Record<string, string | number>;
-type Watches = Record<string, number>;
-type Size = { width: number; height: number };
-/** The room of a view in the check without a window: the default window's. */
-const CHECKED_ROOM: Size = { width: 1422, height: 824 };
-/** An instance whose code runs, with its watches as they are now. */
-type Played = { instance: string; watches: Watches };
+/** An instance whose code runs. */
+type Played = { instance: string };
 /** A record as the runtime tells it: its `state` as the file holds it. */
 type Told = { id: string; tool: string; state: unknown };
 /** Where the piece plays and how, as the window tells it. */
@@ -43,27 +92,25 @@ type Song = { tempo_map: TempoMap; sections: Section[] };
 type Request =
   /** The records this Bun did not hold as they are, those that are gone, and how many of its edits the runtime heard. */
   | { type: "records"; records: Told[]; gone: string[]; edits: number }
-  /** A view opens in the room the window gives it: its code makes its nodes. */
-  | ({ type: "mount"; card: number; instance: string; watches: Watches; size: Size } & Clock)
-  | { type: "resize"; card: number; size: Size }
-  | { type: "watches"; instance: string; watches: Watches }
   | ({ type: "clock" } & Clock)
   | ({ type: "song" } & Song)
-  /** What happened on a node, such as a press or the end of a drag, with what its handler hears. */
-  | { type: "event"; card: number; node: number; kind: Parameters<typeof sdk.host.nodeEvent>[1]; payload: unknown; time: number }
   | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
   | ({ type: "key"; instance: Played; key: PlainKey; down: boolean; shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean } & Clock)
   /** The key of these actions of its tool went down: they run in this order until one does it. */
   | ({ type: "action"; instance: Played; actions: string[] } & Clock)
   | ({ type: "notes"; instance: Played; events: HeardEvent[] } & Clock)
   | ({ type: "take"; instance: Played } & Take & Clock)
-  | { type: "drop"; card: number }
   | { type: "behaviour"; question: number; tool: string; instance: string }
   /** The answer to a question of `ask`. */
-  | { type: "answer"; question: number; answer: unknown };
-
-/** What bindings of an instance read: the window tells this Bun at once only what they read. */
-type Reads = { state: string[] | null; children: boolean; watches: string[] | null };
+  | { type: "answer"; question: number; answer: unknown }
+  /**
+   * The instances whose views the window shows: each sends its tree now, and again when its
+   * records change. `cards` names those a card draws; `facts` are those of each and of what
+   * it holds at any depth, `catalog` what `addOffer` puts, `keys` each action's key by `tool.action`.
+   */
+  | { type: "show"; instances: string[]; cards: string[]; held: Record<string, string[]>; facts?: Record<string, Facts>; catalog?: unknown[]; keys?: Record<string, string | null> }
+  /** An action on an element of a shown view, by its key: `press` and `drag` with a pointer, `drop` with files, `commit` with text or `null`, or one it names with a number. */
+  | { type: "act"; instance: string; key: string; action: string; value?: unknown };
 
 /** Says something to the runtime, at once: before code that may hang runs, and in order. */
 function say(message: object) {
@@ -209,7 +256,11 @@ async function load() {
     say({ type: "loading", file });
     const before = new Set(sdk.host.tools.keys());
     try {
-      await import(join(folder, file));
+      const module = await import(join(folder, file));
+      const card = file === GENERIC_CARD || file.startsWith(`${CARDS}/`);
+      if (card && typeof module.card !== "function") throw new Error("it exports no `card`, a `Card`");
+      if (file === GENERIC_CARD) genericCard = module.card;
+      else if (card) toolCards.set(file.slice(CARDS.length + 1, -".tsx".length), module.card);
     } catch (error) {
       // The tools it defined before it failed are its tools too.
       errors.push({ file, message: String(error) });
@@ -219,6 +270,7 @@ async function load() {
         continue;
       }
       const defined = definedIn(name, file);
+      if (isOld(defined)) delete spec.view;
       const problems = problemsOf(spec);
       errors.push(...problems.map((problem) => ({ file: defined, message: `tool ${name}: ${problem}` })));
       if (problems.length === 0) {
@@ -239,7 +291,7 @@ function described(spec: Spec, file: string) {
   const sounds = combinations(spec).map((choices) => [choices, made(() => sound(spec, choices))] as const);
   beats.set(spec.name, sounds.some(([, graph]) => "Ok" in graph && readsBeat(graph.Ok)));
   // Before its actions are read: a `Transport` in its view gives it `play`.
-  const view = made(() => draw(spec));
+  const view = made(() => checkView(spec));
   return {
     info: {
       name: spec.name,
@@ -256,6 +308,7 @@ function described(spec: Spec, file: string) {
       sound_inputs: inputs.filter(([, input]) => input.kind === "audio").map(([name]) => name),
       tick: spec.tick !== undefined,
       view: spec.view !== undefined,
+      old_views: isOld(file),
       keys: spec.onKey !== undefined,
       takes: spec.keys ?? null,
       global_keys: spec.globalKeys ?? [],
@@ -460,12 +513,7 @@ function declare({ question, tool, instance }: Extract<Request, { type: "behavio
   say({ type: "declared", question, declaration, reads });
 }
 
-/** What draws the view of a tool. */
-function drawerOf(spec: Spec) {
-  return (spec.view ?? sdk.defaultView(spec.state, spec.inputs)) as (view: unknown) => Child;
-}
-
-/** The memory of an instance, made when it is first needed: a store its cards follow. */
+/** The memory of an instance, made when it is first needed. */
 function memoryOf(instance: string, spec: Spec): unknown {
   // A record that becomes another tool's starts its memory again.
   const key = `${instance} ${spec.name}`;
@@ -476,7 +524,7 @@ function memoryOf(instance: string, spec: Spec): unknown {
 }
 
 function freshMemory(spec: Spec): unknown {
-  return sdk.host.store((spec.memory ? spec.memory() : {}) as object, true);
+  return spec.memory ? spec.memory() : {};
 }
 
 /** The `time` of the last frame. */
@@ -624,9 +672,13 @@ function forget(id: string) {
   for (const key of memories.keys()) {
     if (key.startsWith(`${id} `)) memories.delete(key);
   }
+  for (const key of lastMade.keys()) {
+    if (key.startsWith(`${id} `)) lastMade.delete(key);
+  }
 }
 
 function hear({ records, gone, edits: heard }: Extract<Request, { type: "records" }>) {
+  recordsChanged += 1;
   for (const { id, tool, state } of records) {
     if (told.get(id)?.tool !== tool) forget(id);
     told.set(id, { tool, state });
@@ -655,7 +707,158 @@ function hear({ records, gone, edits: heard }: Extract<Request, { type: "records
     const known = kids.get(id);
     if (known) known.told = undefined;
   }
-  refresh(touched);
+  for (const id of touched) {
+    if (shown.has(id)) drawNext(id);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Views (`sdk/view.ts`): a plain function of the records, run again on every
+// change of them. The window gets the whole tree; what a `memo` kept it has already.
+
+const shown = new Set<string>();
+
+/** Runs the view of `instance` and sends its tree, or that its tool has none. */
+function drawNext(instance: string) {
+  Object.values(followsClock).forEach((views) => views.delete(instance));
+  followsSong.delete(instance);
+  drawing = instance;
+  try {
+    draw(instance);
+  } finally {
+    drawing = undefined;
+  }
+}
+
+function draw(instance: string) {
+  const record = recordOf(instance);
+  const spec = sdk.host.tools.get(record?.tool ?? "");
+  // The runtime says which instances a card draws: it and Bun read one list.
+  if (record && carded.has(instance)) {
+    // Without a generic card that loaded, the runtime says why in its problems.
+    if (genericCard) drawCard(instance, record);
+    else say({ type: "tree", instance, none: true });
+    return;
+  }
+  if (!record || !spec?.view) {
+    say({ type: "tree", instance, none: true });
+    return;
+  }
+  const self = { name: nameOf(instance), state: filledState(spec, record), children: seenChildren(instance), facts: factsOf(instance, record.tool) };
+  runs(spec.name, "view");
+  try {
+    // Its handlers get what `tick` gets.
+    const context = contextOf(instance, spec, record, { time: now, transport }, {});
+    say({ type: "tree", instance, tree: views.host.run(instance, spec.view, self, context) });
+  } catch (error) {
+    say({ type: "tree", instance, error: String(error) });
+  }
+}
+
+const nameOf = (instance: string) => instance.slice(instance.lastIndexOf("/") + 1);
+/** What the window told of the shown instances besides their records. */
+let known: { facts: Record<string, Facts>; catalog: unknown[]; keys: Record<string, string | null> } = { facts: {}, catalog: [], keys: {} };
+/** The facts of `id` as the window told them, or its title alone. */
+const factsOf = (id: string, tool: string): Facts => known.facts[id] ?? kept(`${id} facts`, [tool], () => ({ title: sdk.host.tools.get(tool)?.title ?? nameOf(id), fields: [] }));
+/** `children` of `parent` with their facts, and their children's at any depth, as views and actions get them. */
+function seen(parent: string, children: readonly OwnedChild[]): OwnedChild[] {
+  const list = children.map((child) => {
+    const id = `${parent}/${child.name}`;
+    const [facts, below] = [factsOf(id, child.tool), seen(id, child.children)];
+    return kept(`${id} seen`, [child, facts, below], () => ({ ...child, facts, children: below }) as OwnedChild);
+  });
+  return kept(`${parent} seen list`, list, () => list);
+}
+
+/**
+ * What was made last under `key`, while it is made of the same `parts`, else what `make` makes:
+ * a child that did not change is the same object in every run, so a `memo` on it holds.
+ */
+const lastMade = new Map<string, { parts: readonly unknown[]; value: unknown }>();
+function kept<T>(key: string, parts: readonly unknown[], make: () => T): T {
+  const last = lastMade.get(key);
+  if (last && last.parts.length === parts.length && last.parts.every((part, at) => part === parts[at])) return last.value as T;
+  const value = make();
+  lastMade.set(key, { parts, value });
+  return value;
+}
+const seenChildren = (instance: string) => seen(instance, childrenOf(instance));
+/** The key the action `name` of `tool` has now: as the window told, none included, else its first own key. */
+const shortcutOf = (tool: string) => (name: string) => {
+  const id = `${tool}.${name}`;
+  return id in known.keys ? known.keys[id] : (sdk.host.tools.get(tool)?.actions?.[name]?.keys?.[0] ?? null);
+};
+
+/** The shown instances whose tools have no view, and the project's view of such a card. */
+let carded = new Set<string>();
+let genericCard: unknown;
+/** The project's cards of built-in tools, by tool name, from `ui/blocks/cards/<tool>.tsx`. */
+const toolCards = new Map<string, unknown>();
+/** The file of the card that draws `instance` (its file runs that code, and is blamed for it), or `undefined` when no card does. */
+const cardFile = (instance: string) => {
+  if (!carded.has(instance)) return undefined;
+  const tool = recordOf(instance)?.tool ?? "";
+  return toolCards.has(tool) ? `${CARDS}/${tool}.tsx` : GENERIC_CARD;
+};
+/** The numbers a lane moves of each shown instance, by name as `held` takes it. */
+let heldFields: Record<string, string[]> = {};
+const heldIn = (instance: string) => (name: string) => heldFields[instance]?.includes(name) ?? false;
+/** As `GENERIC_CARD` of the runtime names it, which loads it with the tools. */
+const GENERIC_CARD = "ui/blocks/generic-card.tsx";
+const CARDS = "ui/blocks/cards";
+
+/** The card of an instance whose tool has no view: the project's card of its tool, else the generic card. */
+function drawCard(instance: string, record: Entry) {
+  const facts = factsOf(instance, record.tool);
+  const defaults = Object.fromEntries(facts.fields.filter((field) => "default" in field).map((field) => [field.name, field.default]));
+  const fill = (entry: Entry) => frozen({ ...defaults, ...(entry.state as object) });
+  const self = { name: nameOf(instance), state: fill(record), children: [], facts };
+  const key = `${instance} card`;
+  if (!memories.has(key)) memories.set(key, {});
+  // A card gets what a tool's view gets.
+  const context = { ...performer(instance), memory: memories.get(key), clock: clockFor(instance), time: now, update: updater(instance, defaults), held: heldIn(instance), select: selector(instance), addOffer: offerAdder(instance), openWindow: (path: string) => say({ type: "open_window", instance, path }), show: shower(instance), shortcut: () => null, ...askers(instance) };
+  Object.defineProperties(context, { ...newest(instance, fill, record), children: { enumerable: true, value: [] } });
+  runs(cardFile(instance)!, "card");
+  try {
+    say({ type: "tree", instance, tree: views.host.run(instance, toolCards.get(record.tool) ?? genericCard, self, context) });
+  } catch (error) {
+    say({ type: "tree", instance, error: String(error) });
+  }
+}
+
+function show(instances: string[]) {
+  const asked = new Set(instances);
+  for (const instance of shown) {
+    if (!asked.has(instance)) {
+      shown.delete(instance);
+      views.host.forget(instance);
+    }
+  }
+  for (const instance of asked) {
+    if (!shown.has(instance)) {
+      shown.add(instance);
+      drawNext(instance);
+    }
+  }
+}
+
+/** The instance whose view runs an action now: what it changes is one step of undo, which ends with `acted`. */
+let acting: string | undefined;
+
+/** An action on a shown view; it runs again after, also when nothing changed, as its memory may have. */
+function act({ instance, key, action, value }: Extract<Request, { type: "act" }>) {
+  runs(cardFile(instance) ?? recordOf(instance)?.tool ?? "", `${action} on ${key}`);
+  let error: string | undefined;
+  acting = instance;
+  try {
+    views.host.perform(instance, key, action, value);
+  } catch (thrown) {
+    error = thrown instanceof Error ? thrown.message : String(thrown);
+  } finally {
+    acting = undefined;
+  }
+  say({ type: "acted", ...(error === undefined ? {} : { error }) });
+  if (shown.has(instance)) drawNext(instance);
 }
 
 /** The record of `id` as its code knows it: as told, and with the edits not heard on top when `latest`. */
@@ -705,11 +908,14 @@ function listed(id: string, told: Set<string>, latest: boolean): OwnedChild[] {
       }
     }
   }
-  return frozen([...names].sort().flatMap((name) => {
+  const list = [...names].sort().flatMap((name) => {
     const child = `${id}/${name}`;
     const entry = recordOf(child, latest);
-    return entry ? [{ name, tool: entry.tool, state: filledOf(entry), children: childrenOf(child, latest) } as OwnedChild] : [];
-  }));
+    if (!entry) return [];
+    const children = childrenOf(child, latest);
+    return [kept(`${child} record`, [entry, children], () => frozen({ name, tool: entry.tool, state: filledOf(entry), children } as OwnedChild))];
+  });
+  return kept(`${id} records`, list, () => frozen(list));
 }
 
 /** The `state` of a record as the code of its tool gets it: every field, at its default where left out. */
@@ -914,17 +1120,18 @@ function created(id: string, child: OwnedChild, changes: Change[]) {
  * What changes the record of an instance and those of its children, each time on the latest the
  * code knows: also after an `await`, while the instance is there.
  */
-function updater(instance: string) {
+function updater(instance: string, defaults?: Record<string, unknown>) {
   return (label: string, change: (part: Part<State>) => void) => {
     if (typeof label !== "string") {
       throw new TypeError(`the label of an update is ${JSON.stringify(label)}: give text, such as "Save the take"`);
     }
     const own = recordOf(instance);
     const spec = sdk.host.tools.get(own?.tool ?? "");
-    if (!own || !spec) {
+    if (!own || (!spec && !defaults)) {
       return;
     }
-    const state = filledState(spec, own);
+    // A tool with no code here, such as a built-in one, has its defaults from its generic card.
+    const state = spec ? filledState(spec, own) : (frozen({ ...defaults, ...(own.state as object) }) as State);
     // The children only when the change reads them: an update of a parent of a thousand takes
     // that edits its own fields costs nothing for them.
     let children: [OwnedChild[], unknown] | [] = [];
@@ -943,31 +1150,31 @@ function updater(instance: string) {
       },
     });
     change(part);
+    const [before, after] = children as [OwnedChild[]?, unknown?];
+    views.host.refuseHeld(heldFields[instance] ?? [], { state, children: before }, { state: part.state, children: after as object });
     const changes = changesOf(instance, [state, part.state], children);
     if (changes.length === 0) {
       return;
     }
     const wired = changes.map(({ id, ...change }) => (id === instance ? change : { ...change, child: id.slice(instance.length + 1) }));
     // Before it counts: a value JSON cannot hold, such as a cycle, throws here.
-    const line = JSON.stringify({ type: "edit", instance, label, changes: wired }) + "\n";
+    const line = JSON.stringify({ type: "edit", instance, label, changes: wired, ...(acting === instance ? { gesture: true } : {}) }) + "\n";
     edits += 1;
+    recordsChanged += 1;
     unheard.push({ number: edits, changes });
     writeSync(1, line);
-    // What its cards show follows at once, before the runtime answers.
-    refresh(withOwners(changes.map((change) => change.id)), {
-      instance,
-      state: part.state,
-      children: children.length > 0,
-    });
   };
 }
 
-/** What `tick`, an action, `onKey` and `onNotes` of an instance get: the record as it is now, and its memory. */
+/**
+ * What a view, `tick`, an action, `onKey` and `onNotes` of an instance get: its records as they
+ * are when read, also by a handler a `memo` kept from an earlier run and after an `update`, and
+ * its memory.
+ */
 function contextOf<Extra extends object>(
   instance: string,
   spec: Spec,
   record: Entry,
-  watches: Watches,
   { time }: Clock,
   extra: Extra,
 ) {
@@ -976,13 +1183,25 @@ function contextOf<Extra extends object>(
     time,
     ...doers(instance, spec),
   };
-  // Made when code reads them: a tick of a parent of a thousand takes that does not costs nothing for them.
-  let children: OwnedChild[] | undefined;
-  return Object.defineProperties(context, {
-    state: { enumerable: true, value: filledState(spec, record) },
-    outputs: { enumerable: true, value: watches },
-    children: { enumerable: true, get: () => (children ??= childrenOf(instance)) },
-  }) as typeof context & { state: State; outputs: Watches; children: OwnedChild[] };
+  return Object.defineProperties(context, newest(instance, (entry) => filledState(spec, entry), record)) as typeof context & { state: State; children: OwnedChild[]; catalog: unknown[] };
+}
+
+/** How many times what code reads changed: the runtime told records or facts, or code sent an edit. */
+let recordsChanged = 0;
+
+/**
+ * `state` and `children` of `instance`, with their facts, as they are when read, made again only
+ * after the records or facts changed: children only when read, so code of a parent of a thousand
+ * takes that does not costs nothing for them. `record` while the instance is gone.
+ */
+function newest(instance: string, fill: (entry: Entry) => unknown, record: Entry): PropertyDescriptorMap {
+  let state: [number, unknown] | undefined;
+  let children: [number, OwnedChild[]] | undefined;
+  return {
+    catalog: { enumerable: true, get: () => known.catalog },
+    state: { enumerable: true, get: () => (state?.[0] === recordsChanged ? state : (state = [recordsChanged, fill(recordOf(instance) ?? record)]))[1] },
+    children: { enumerable: true, get: () => (children?.[0] === recordsChanged ? children : (children = [recordsChanged, seenChildren(instance)]))[1] },
+  };
 }
 
 /** What every piece of code of an instance can do, in a view or in `tick`, an action, `onKey`, `onNotes` and `onTake`. */
@@ -991,10 +1210,12 @@ function doers(instance: string, spec: Spec) {
     memory: memoryOf(instance, spec),
     clock: clockFor(instance),
     update: updater(instance),
+    held: heldIn(instance),
     select: selector(instance),
     addOffer: offerAdder(instance),
     openWindow: (path: string) => say({ type: "open_window", instance, path }),
-    now: sdk.now as Context<State>["now"],
+    show: shower(instance),
+    shortcut: shortcutOf(spec.name),
     ...askers(instance),
     ...performer(instance),
   };
@@ -1008,67 +1229,52 @@ function selector(instance: string) {
   };
 }
 
-/** Questions to the window, by number, which its answers settle: `openFile`, `render`, `exportNotes`, `openMenu`, `confirm`, `offers`, `numbers`. */
-const asked = new Map<number, (answer: unknown) => void>();
+/** `show`: the window shows a range of a plane of the view of `instance`. */
+function shower(instance: string) {
+  return (key: string, { x, y }: { x?: [number, number]; y?: [number, number] }) => {
+    const range = (axis: [number, number] | undefined, what: string) => axis && [finite(axis[0], `${what} from`), finite(axis[1], `${what} to`)];
+    say({ type: "show_range", instance, key, x: range(x, "x") ?? null, y: range(y, "y") ?? null });
+  };
+}
+
+/** Questions to the window, by number, which its answers settle, and the instance that asked: `openFile`, `render`, `exportNotes`, `confirm`. */
+const asked = new Map<number, { resolve: (answer: unknown) => void; instance: string }>();
 let questions = Number(bunNumber) * 2 ** 32;
 /** Questions asked since the last ops, which go after them: a menu a new dialog opens belongs to it. */
 const unsaid: object[] = [];
-function ask<Answer>(message: { type: string } & Record<string, unknown>): Promise<Answer> {
+function ask<Answer>(instance: string, message: { type: string } & Record<string, unknown>): Promise<Answer> {
   const question = ++questions;
   unsaid.push({ ...message, question });
   later();
-  return new Promise((resolve) => asked.set(question, resolve as (answer: unknown) => void));
+  return new Promise((resolve) => asked.set(question, { resolve: resolve as (answer: unknown) => void, instance }));
 }
 
 /** What a tool asks the window, for its instance. */
 function askers(instance: string) {
   return {
-    openMenu: (items: readonly MenuItem[], { notes = [], width, maxHeight, search = false }: MenuOptions = {}) =>
-      ask<number | null>({ type: "open_menu", items: items.map(({ label, disabled, checked, icon, detail, group, separator, shortcut }) => ({ label, disabled, checked, icon, detail, group, separator, shortcut })), notes, width, maxHeight, search }),
-    offers: (takes: "notes" | "audio", { at }: { at?: string } = {}) => ask<Offers>({ type: "offers", takes, instance, at }),
-    numbers: (path: string) => ask<MovedNumber[]>({ type: "numbers", instance, path }),
     /** The runtime opens the file and copies it under `assets/audio/`. */
-    openFile: ({ title = "Choose a file" }: { title?: string } = {}) => ask<string | null>({ type: "open_file", title }),
+    openFile: ({ title = "Choose a file" }: { title?: string } = {}) => ask<string | null>(instance, { type: "open_file", title }),
     render: (path: string, { from, to, tail = true, name = path }: { from: number; to: number; tail?: boolean; name?: string }) =>
-      ask<string | null>({ type: "render", instance, path, span: [wholeTick(from, "render from"), wholeTick(to, "render to")], tail, name }),
-    confirm: ({ message, detail, confirm }: { message: string; detail?: string; confirm: string }) => ask<boolean>({ type: "confirm", message, detail, confirm }),
-    exportNotes: (path: string, { name }: { name: string }) => ask<boolean>({ type: "export_notes", instance, path, name }),
+      ask<string | null>(instance, { type: "render", instance, path, span: [wholeTick(from, "render from"), wholeTick(to, "render to")], tail, name }),
+    confirm: ({ message, detail, confirm }: { message: string; detail?: string; confirm: string }) => ask<boolean>(instance, { type: "confirm", message, detail, confirm }),
+    exportNotes: (path: string, { name }: { name: string }) => ask<boolean>(instance, { type: "export_notes", instance, path, name }),
   };
 }
 
 /** `addOffer`: the window writes the offer's record into the child, as one edit. */
 function offerAdder(instance: string) {
-  return (key: string, path: string, label: string) => say({ type: "add_offer", instance, path, key, label });
+  return (key: string, path: string, label: string) => say({ type: "add_offer", instance, path, key, label, ...(acting === instance ? { gesture: true } : {}) });
 }
 
 // ---------------------------------------------------------------------------------------------
-// Views: their code runs once and makes nodes; stores of the record, its children,
-// the watches and the clock change what reads them. The window gets the ops of each card
-// after every request, and at once after an `await`.
+// The clock code reads, and what it asks the window.
 
-/** What the cards of an instance read, which its stores hold as they are now. */
-type Stores = {
-  tool: string;
-  state: Record<string, unknown>;
-  children: OwnedChild[];
-  watches: Watches;
-  /** What its bindings read as last told to the window, as JSON. */
-  told?: string;
-};
-
-type Mounted = { root: ReturnType<typeof sdk.host.mount>; instance: string; tool: string; size: Size };
-
-const stores = new Map<string, Stores>();
-const cards = new Map<number, Mounted>();
-/** Cards whose next ops make all of them again, and the card whose event the next ops answer. */
-const mounting = new Set<number>();
-const answering = new Set<number>();
-let flushing = false;
 /** Where the piece plays as last told: what moves on every frame, which no binding follows. */
 let transport: Transport = { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120, repeat: null, click: false, keys: false, automation: false };
 /** What of the clock bindings follow, one for every tool. */
-const following = sdk.host.adopted({ playing: false, repeat: null as { from: number; to: number } | null, click: false, keys: false, automation: false });
-const song = sdk.host.adopted<Song>({ tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] }, sections: [] });
+const following = ({ playing: false, repeat: null as { from: number; to: number } | null, click: false, keys: false, automation: false });
+let flushing = false;
+const song: Song = { tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] }, sections: [] };
 
 /** A tick as the window takes it: a whole number from 0. */
 function wholeTick(tick: number, what: string): number {
@@ -1078,23 +1284,20 @@ function wholeTick(tick: number, what: string): number {
 
 /** The clock as the code of `instance` gets it: what bindings follow, and what moves it. */
 function clockFor(instance: string): SdkClock {
-  const followed = sdk.host.store(following, false);
-  const songOf = sdk.host.store(song, false);
-  const moving = (name: "tick" | "bar" | "beat" | "bpm") => {
-    if (sdk.host.binding()) {
-      throw new Error(`clock.${name} moves on every frame, so no binding follows it: show it with now.tick or now.bpm, or read it in a handler`);
-    }
-    return transport[name];
-  };
+  const moving = (name: "tick" | "bar" | "beat" | "bpm") => transport[name];
   const op = (message: object) => say({ type: "transport", ...message });
+  const follows = <T>(into: Set<string>, value: T) => {
+    if (drawing === instance) into.add(instance);
+    return value;
+  };
   return {
-    get playing() { return followed.playing; },
-    get repeat() { return followed.repeat; },
-    get click() { return followed.click; },
-    get computerKeys() { return followed.keys; },
-    get writeAutomation() { return followed.automation; },
-    get tempo_map() { return songOf.tempo_map; },
-    get sections() { return songOf.sections; },
+    get playing() { return follows(followsClock.playing, following.playing); },
+    get repeat() { return follows(followsClock.repeat, following.repeat); },
+    get click() { return follows(followsClock.click, following.click); },
+    get computerKeys() { return follows(followsClock.keys, following.keys); },
+    get writeAutomation() { return follows(followsClock.automation, following.automation); },
+    get tempo_map() { return follows(followsSong, song.tempo_map); },
+    get sections() { return follows(followsSong, song.sections); },
     get tick() { return moving("tick"); },
     get bar() { return moving("bar"); },
     get beat() { return moving("beat"); },
@@ -1111,64 +1314,32 @@ function clockFor(instance: string): SdkClock {
       const draft = structuredClone({ tempo_map: song.tempo_map, sections: song.sections });
       change(draft);
       // Before it counts: a value JSON cannot hold throws here.
-      const line = JSON.stringify({ type: "song_edit", instance, label, ...draft }) + "\n";
+      const line = JSON.stringify({ type: "song_edit", instance, label, ...draft, ...(acting === instance ? { gesture: true } : {}) }) + "\n";
       writeSync(1, line);
       // What its views show follows at once, before the runtime answers.
-      sdk.host.batch(() => sdk.host.reconcile(song as never, draft as never));
+      Object.assign(song, draft);
       later();
     },
   };
-}
-
-/** The stores of `instance`, made from the record as code knows it, with its edits not heard. */
-function storesOf(instance: string, spec: Spec, record: Entry): Stores {
-  let known = stores.get(instance);
-  // A record of another tool now is another instance to its code.
-  if (!known || known.tool !== spec.name) {
-    known = {
-      tool: spec.name,
-      state: sdk.host.adopted(filledState(spec, record)) as Record<string, unknown>,
-      children: sdk.host.adopted(childrenOf(instance)) as OwnedChild[],
-      watches: {},
-    };
-    stores.set(instance, known);
-  }
-  return known;
-}
-
-/**
- * Brings the stores of each of `instances` to the records as code knows them now; `edited` is
- * the state an `update` just made, which is that already.
- */
-function refresh(instances: Iterable<string>, edited?: { instance: string; state: unknown; children: boolean }) {
-  sdk.host.batch(() => {
-    for (const instance of new Set(instances)) {
-      const known = stores.get(instance);
-      const record = recordOf(instance);
-      const spec = sdk.host.tools.get(known?.tool ?? "");
-      if (known && (!record || record.tool !== known.tool)) stores.delete(instance);
-      if (!known || !record || !spec || record.tool !== known.tool) continue;
-      const own = edited?.instance === instance ? edited : undefined;
-      sdk.host.reconcile(known.state, (own?.state ?? filledState(spec, record)) as Record<string, unknown>);
-      if (!own || own.children) {
-        sdk.host.reconcile(known.children as never, childrenOf(instance) as never);
-      }
-    }
-  });
-  later();
-}
-
-function setWatches(instance: string, watches: Watches) {
-  const known = stores.get(instance);
-  if (known) sdk.host.reconcile(known.watches, watches);
 }
 
 function setClock({ time, transport: next }: Clock) {
   now = time;
   transport = next;
   const repeat = next.repeat && { from: next.repeat[0], to: next.repeat[1] };
-  sdk.host.batch(() => sdk.host.reconcile(following as never, { playing: next.playing, repeat, click: next.click, keys: next.keys, automation: next.automation } as never));
+  const followed = { playing: next.playing, repeat, click: next.click, keys: next.keys, automation: next.automation };
+  const moved = (Object.keys(followed) as (keyof typeof followed)[]).filter((name) => JSON.stringify(followed[name]) !== JSON.stringify(following[name]));
+  if (moved.length === 0) return;
+  const views = new Set(moved.flatMap((name) => [...followsClock[name]]));
+  Object.assign(following, followed);
+  [...views].filter((id) => shown.has(id)).forEach(drawNext);
 }
+
+/** The views that read each part of the clock that bindings follow, and those that read the song, when they last ran. */
+const followsClock: Record<keyof typeof following, Set<string>> = { playing: new Set(), repeat: new Set(), click: new Set(), keys: new Set(), automation: new Set() };
+const followsSong = new Set<string>();
+/** The instance whose view runs now. */
+let drawing: string | undefined;
 
 /** Sends the ops at once when code changed something outside a request, such as after an `await`. */
 function later() {
@@ -1178,87 +1349,12 @@ function later() {
   }
 }
 
-/** Sends the window the ops of every card that has some, and what the bindings of each instance read now. */
+/** Sends the questions code asked since. */
 function flushOps() {
   flushing = false;
-  for (const [card, mounted] of cards) {
-    const taken = sdk.host.takeOps(mounted.root);
-    const mount = mounting.delete(card);
-    const event = answering.delete(card);
-    if ("error" in taken) {
-      fail(mounted.tool, `its card failed: ${taken.error}`);
-      say({ type: "ops", card, error: taken.error, event });
-      mounted.root.dispose();
-      cards.delete(card);
-    } else if (taken.ops.length > 0 || mount || event) {
-      const started = performance.now();
-      const text = JSON.stringify(taken.ops);
-      writeSync(1, `{"type":"ops","card":${card},"mount":${mount},"event":${event},"took":${performance.now() - started + took},"ops":${text}}\n`);
-    }
-  }
-  for (const card of answering) {
-    say({ type: "ops", card, mount: false, event: true, took: 0, ops: [] });
-  }
-  answering.clear();
   for (const message of unsaid.splice(0)) {
     say(message);
   }
-  for (const [instance, known] of stores) {
-    const reads: Reads = {
-      state: sdk.host.readFields(known.state),
-      children: sdk.host.isRead(known.children),
-      watches: sdk.host.readFields(known.watches),
-    };
-    const text = JSON.stringify(reads);
-    if (text !== known.told) {
-      known.told = text;
-      say({ type: "reads", instance, reads });
-    }
-  }
-}
-
-/** Milliseconds this Bun spent on the request whose ops go now. */
-let took = 0;
-
-/** Opens a view: its code runs once and makes its nodes, or the window hears why not. */
-function mount(request: Extract<Request, { type: "mount" }>) {
-  const { card, instance, watches } = request;
-  setClock(request);
-  const record = recordOf(instance);
-  const spec = sdk.host.tools.get(record?.tool ?? "");
-  if (!record || !spec) {
-    say({ type: "ops", card, error: record ? `no tool ${record.tool} is loaded` : "drawn without a record", event: false });
-    return;
-  }
-  cards.get(card)?.root.dispose();
-  cards.delete(card);
-  const known = storesOf(instance, spec, record);
-  setWatches(instance, watches);
-  // A resize reconciles the object itself: the store over it is read only.
-  const room = { ...request.size };
-  const size = sdk.host.store(room, false);
-  runs(spec.name, "view");
-  try {
-    const context = cardContext(instance, spec, known, { size });
-    const draw = drawerOf(spec);
-    const root = sdk.host.mount(card, () => draw(context), { state: context.state, children: context.children, fields: spec.state, tool: spec.name, update: context.update, openMenu: context.openMenu, clock: context.clock });
-    cards.set(card, { root, instance, tool: spec.name, size: room });
-    mounting.add(card);
-  } catch (error) {
-    say({ type: "ops", card, error: String(error), event: false });
-  }
-}
-
-/** What a view gets: the stores of its instance, its memory, and what plays it. */
-function cardContext<Extra extends object>(instance: string, spec: Spec, known: Stores, extra: Extra) {
-  const context = {
-    ...extra,
-    state: sdk.host.store(known.state, false) as State,
-    children: sdk.host.store(known.children, false),
-    outputs: sdk.host.store(known.watches, false),
-    ...doers(instance, spec),
-  };
-  return Object.defineProperty(context, "time", { enumerable: true, get: () => now }) as typeof context & { time: number };
 }
 
 /** `value` of `field` as the window gives it: at its default when left out, and so each item. */
@@ -1292,27 +1388,22 @@ function defaultOf(field: Field): unknown {
 }
 
 /** The ops of a tool's view at its defaults, after one tick: a check without a window. */
-function draw(spec: Spec): unknown {
+function checkView(spec: Spec): unknown {
   const memory = freshMemory(spec);
-  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, render: async () => null, openMenu: async () => null, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [], addOffer() {}, openWindow() {} };
+  const performs = { play() {}, send() {}, update() {}, held: () => false, select() {}, openFile: async () => null, render: async () => null, confirm: async () => false, addOffer() {}, openWindow() {}, show() {}, catalog: [], shortcut: () => null };
   const state = frozen(filledObject(spec.state, {}));
   // What the check plays on the clock goes nowhere.
   const clock = { ...clockFor(""), play() {}, pause() {}, stop() {}, jump() {}, setRepeat() {}, setClick() {}, setComputerKeys() {}, update() {} };
-  const context = { state, children: [], outputs: {}, memory, time: 0, clock, now: sdk.now, ...performs };
+  const context = { state, children: [], memory, time: 0, clock, ...performs };
   try {
     spec.tick?.({ ...context, dt: 1 / 30 } as never);
   } catch (error) {
     throw new Error(`its tick fails: ${error}`);
   }
-  const known: Stores = { tool: spec.name, state: structuredClone(state), children: [], watches: {} };
-  const drawn = { ...context, state: sdk.host.store(known.state, false), size: sdk.host.store({ ...CHECKED_ROOM }, false) };
-  const root = sdk.host.mount(-1, () => drawerOf(spec)(drawn), { state: drawn.state as never, children: [], fields: spec.state, tool: spec.name, update() {}, openMenu: performs.openMenu, clock });
-  const taken = sdk.host.takeOps(root);
-  root.dispose();
-  if ("error" in taken) {
-    throw new Error(taken.error);
-  }
-  return taken.ops;
+  const checked = `check ${spec.name}`;
+  if (spec.view) views.host.run(checked, spec.view, { name: spec.name, state, children: [], facts: { title: spec.title, fields: [] } }, context);
+  views.host.forget(checked);
+  return null;
 }
 
 /**
@@ -1329,8 +1420,7 @@ function run<Extra extends object>(
 ) {
   const clock = { time, transport };
   setClock(clock);
-  for (const { instance, watches } of instances) {
-    setWatches(instance, watches);
+  for (const { instance } of instances) {
     const record = recordOf(instance);
     const spec = sdk.host.tools.get(record?.tool ?? "");
     if (!spec || !record) {
@@ -1339,7 +1429,8 @@ function run<Extra extends object>(
     const failed = (error: unknown) => fail(spec.name, `its ${what} failed: ${error}`);
     try {
       runs(spec.name, what);
-      caught(call(spec, contextOf(instance, spec, record, watches, clock, extra)), failed);
+      const context = contextOf(instance, spec, record, clock, extra) as unknown as Context<State, Inputs, unknown> & Extra;
+      caught(call(spec, context), failed);
     } catch (error) {
       failed(error);
     }
@@ -1353,43 +1444,19 @@ function caught(result: unknown, failed: (error: unknown) => void) {
   }
 }
 
-function handle(request: Request) {
+/** Does what the window said. The instance whose code goes on after an answer, which draws again once it ran. */
+function handle(request: Request): string | undefined {
   switch (request.type) {
     case "records":
       hear(request);
-      break;
-    case "mount":
-      mount(request);
-      break;
-    case "resize": {
-      const mounted = cards.get(request.card);
-      if (mounted) sdk.host.reconcile(mounted.size as never, request.size as never);
-      break;
-    }
-    case "watches":
-      setWatches(request.instance, request.watches);
       break;
     case "clock":
       setClock(request);
       break;
     case "song":
-      sdk.host.reconcile(song as never, { tempo_map: request.tempo_map, sections: request.sections } as never);
+      Object.assign(song, { tempo_map: request.tempo_map, sections: request.sections });
+      [...followsSong].filter((id) => shown.has(id)).forEach(drawNext);
       break;
-    case "event": {
-      now = request.time;
-      const mounted = cards.get(request.card);
-      const failed = (error: unknown) => mounted && fail(mounted.tool, `a click on its card failed: ${error}`);
-      try {
-        if (mounted) {
-          runs(mounted.tool, "click handler");
-        }
-        caught(sdk.host.batch(() => sdk.host.nodeEvent(request.node, request.kind, request.payload as never)), failed);
-      } catch (error) {
-        failed(error);
-      }
-      answering.add(request.card);
-      break;
-    }
     case "frame":
       run(request, request.instances, "tick", { dt: request.dt }, (spec, tool) => spec.tick?.(tool));
       say({ type: "framed" });
@@ -1401,17 +1468,26 @@ function handle(request: Request) {
       break;
     }
     case "action": {
-      // Until one does not say `false`. One that fails, or whose tool is gone, ends it too.
+      // Until one does not say `false`. One that fails, or whose tool is gone, ends it too. What
+      // they change is one step of undo, which ends with `acted`.
+      const { instance } = request.instance;
       let passed = true;
-      for (const name of request.actions) {
-        if (!passed) break;
-        passed = false;
-        run(request, [request.instance], `action ${name}`, {}, (spec, tool) => {
-          const result = spec.actions?.[name]?.run(tool);
-          passed = result === false;
-          return result;
-        });
+      acting = instance;
+      try {
+        for (const name of request.actions) {
+          if (!passed) break;
+          passed = false;
+          run(request, [request.instance], `action ${name}`, {}, (spec, tool) => {
+            const result = spec.actions?.[name]?.run(tool);
+            passed = result === false;
+            return result;
+          });
+        }
+      } finally {
+        acting = undefined;
       }
+      say({ type: "acted" });
+      if (shown.has(instance)) drawNext(instance);
       break;
     }
     case "take": {
@@ -1424,22 +1500,47 @@ function handle(request: Request) {
         Promise.all(request.events.map((event) => spec.onNotes?.(tool, event))),
       );
       break;
-    case "drop":
-      cards.get(request.card)?.root.dispose();
-      cards.delete(request.card);
-      mounting.delete(request.card);
-      break;
     case "behaviour":
       declare(request);
       break;
-    case "answer":
-      asked.get(request.question)?.(request.answer);
-      asked.delete(request.question);
+    case "show": {
+      const sent = { facts: request.facts ?? {}, catalog: request.catalog ?? [], keys: request.keys ?? {} };
+      // A view whose card, held numbers or facts changed, its own or those of what it holds, draws again; every one when the catalog or the keys did.
+      const all = JSON.stringify([sent.catalog, sent.keys]) !== JSON.stringify([known.catalog, known.keys]);
+      const same = (before: unknown, after: unknown) => JSON.stringify(before) === JSON.stringify(after);
+      const factsMoved = Object.keys({ ...known.facts, ...sent.facts }).filter((id) => !same(known.facts[id], sent.facts[id]));
+      const changed = request.instances.filter(
+        (id) =>
+          shown.has(id) &&
+          (all ||
+            carded.has(id) !== request.cards.includes(id) ||
+            !same(heldFields[id], request.held[id]) ||
+            factsMoved.some((moved) => moved === id || moved.startsWith(`${id}/`))),
+      );
+      carded = new Set(request.cards);
+      heldFields = request.held;
+      if (factsMoved.length > 0) recordsChanged += 1;
+      // Facts that did not move stay the objects they were, so the children made of them do.
+      const moved = new Set(factsMoved);
+      for (const id of Object.keys(sent.facts)) if (!moved.has(id)) sent.facts[id] = known.facts[id]!;
+      known = sent;
+      show(request.instances);
+      changed.forEach(drawNext);
       break;
+    }
+    case "act":
+      act(request);
+      break;
+    case "answer": {
+      const question = asked.get(request.question);
+      asked.delete(request.question);
+      question?.resolve(request.answer);
+      return question?.instance;
+    }
   }
+  return undefined;
 }
 
-sdk.host.changed = later;
 
 await load();
 
@@ -1448,11 +1549,14 @@ for await (const line of console) {
   if (line === "") {
     continue;
   }
-  const started = performance.now();
   try {
-    sdk.host.batch(() => handle(JSON.parse(line) as Request));
+    const answered = handle(JSON.parse(line) as Request);
+    if (answered !== undefined) {
+      // Its code goes on in the microtasks before this; whatever it awaits next waits on.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (shown.has(answered)) drawNext(answered);
+    }
   } finally {
-    took = performance.now() - started;
     flushOps();
     // Bun does one thing at a time, so the runtime knows what hangs: the oldest not done.
     say({ type: "done" });

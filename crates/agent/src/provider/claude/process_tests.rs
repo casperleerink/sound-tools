@@ -47,10 +47,8 @@ const DEADLINE: Duration = Duration::from_secs(10);
 
 /// Runs `future` to the end, or fails the test after [`DEADLINE`].
 fn within<T>(what: &str, future: impl Future<Output = T>) -> T {
-    // Not a gpui test, and the timer only bounds a hang.
-    #[allow(clippy::disallowed_methods)]
     let deadline = async {
-        smol::Timer::after(DEADLINE).await;
+        crate::jobs::sleep(DEADLINE).await;
         panic!("{what} took over {DEADLINE:?}");
     };
     smol::block_on(future::or(future, deadline))

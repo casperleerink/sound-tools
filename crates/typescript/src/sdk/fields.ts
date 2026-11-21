@@ -76,6 +76,8 @@ export interface ListField<I extends Field | ObjectItem = Field | ObjectItem> {
   /** `[]` when left out. `list` types it from `item`. */
   default?: unknown[];
   label?: string;
+  /** Made by `pattern`: a card shows it as a row of steps. */
+  pattern?: true;
 }
 
 export type Field = NumberField | BooleanField | ChoiceField | TextField | FileField | ListField;
@@ -135,9 +137,7 @@ export function list<const I extends Field | Fields>(
   return { kind: "list", item: field as ItemOf<I>, ...options };
 }
 
-/** The lists `pattern` made: the view of a tool that has none shows each as a row of steps. */
-const patterns = new WeakSet<Field>();
-export const isPattern = (field: Field): field is ListField<NumberField> => patterns.has(field);
+export const isPattern = (field: Field): field is ListField<NumberField> => field.kind === "list" && field.pattern === true;
 
 /**
  * A row of `length` numbers, such as the steps of a sequence: a list that starts as `length`
@@ -151,9 +151,7 @@ export function pattern(field: { length: number; min: number; max: number; integ
     throw new RangeError(`a pattern holds 1 to 1024 values, not ${length}`);
   }
   const [each, start] = typeof field.default === "number" ? [field.default, Array<number>(length).fill(field.default)] : [min, field.default];
-  const made = list(number({ min, max, integer, default: each, unit: "plain" }), { max: length, label, default: start });
-  patterns.add(made);
-  return made;
+  return { ...list(number({ min, max, integer, default: each, unit: "plain" }), { max: length, label, default: start }), pattern: true };
 }
 
 /** The fields of a `Note`, with their ranges. */

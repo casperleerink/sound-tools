@@ -25,15 +25,13 @@
 //!
 //! With `"sfz": "cello/cello.sfz"` instead of `sample` it plays the SFZ file
 //! `assets/instruments/cello/cello.sfz` and the samples it names ([`sfz`], [`instrument`]).
-//!
-//! [`view`] is the card of the sampler, and the only module here that uses GPUI.
 
 mod catalog;
 pub mod instrument;
 pub mod library;
 mod processor;
 pub mod sfz;
-pub mod view;
+mod shown;
 
 use std::sync::Arc;
 
@@ -321,7 +319,30 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         .behaviour(apply)
         .rebinds_on_assets(sound_media::AUDIO_FOLDER)
         .rebinds_on_assets(INSTRUMENTS_FOLDER)
-        .schema(Sampler::AUTOMATION.parameters());
+        .schema(Sampler::AUTOMATION.parameters())
+        .feed(
+            "position",
+            "Where the last note it started is now, in seconds of its file; 0 before one.",
+            |_, context| context.peaks(POSITION)[0],
+        )
+        .feed(
+            "wave",
+            "The loudest sample, 0 to 1, of each of `points` equal stretches (96 unless the binding says) of its file, across the seconds of it the binding shows (all of it unless it says), as `rects` that draw it mirrored about its middle with `units` [across, 1]; empty without a file or while it is read.",
+            shown::wave,
+        )
+        .feed(
+            "envelope",
+            "The level of a held note, 0 to 1, at each of `points` places (96 unless the binding says) across the seconds of its file the binding shows (all of it unless it says): up over the attack from the start, down to the sustain over the decay, held to the end; empty without a file that plays.",
+            shown::envelope,
+        )
+        .facts(shown::Facts::of)
+        // Only the composer starts a download: a card's Download and Try again.
+        .command("download", |state, _, _| {
+            if let Some(id) = &state.library {
+                library::download(id.entry());
+            }
+            None
+        });
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     registry.agent_doc(EXTENSION, SFZ_AGENT_DOC)?;
     registry.agent_doc(EXTENSION, LIBRARY_AGENT_DOC)?;

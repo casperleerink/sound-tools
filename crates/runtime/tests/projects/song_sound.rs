@@ -188,8 +188,9 @@ fn a_pitch_two_clips_hold_sounds_until_both_notes_end() {
     assert!(held > 1e-2, "{held}");
 }
 
-/// The regions of the audio track, of a file that holds 0.25 from start to end, with the other
-/// tracks and the returns down. What the song plays over the first second.
+/// The regions of the audio track, of a file that holds 0.25 from start to end (`level.wav`) or
+/// 0.5 (`loud.wav`), with the other tracks and the returns down. What the song plays over the
+/// first second.
 fn regions(records: &[(&str, &str)]) -> Vec<f32> {
     let mut harness = song(&[
         ("state/song/t00/mix.json", SILENT),
@@ -198,6 +199,7 @@ fn regions(records: &[(&str, &str)]) -> Vec<f32> {
         ("state/song/ret-b/mix.json", SILENT),
     ]);
     write_samples(&harness, "level.wav", 48_000, 2.0, |_| 0.25);
+    write_samples(&harness, "loud.wav", 48_000, 2.0, |_| 0.5);
     for (name, record) in records {
         harness.write_and_apply(&format!("state/song/audio-voice/{name}.json"), record);
     }
@@ -232,24 +234,24 @@ fn two_regions_that_meet_hand_over_with_no_dip() {
     );
 }
 
-/// Where two regions overlap, the last by name is heard, as on main's audio tracks, and not the
-/// two summed.
+/// Where two regions overlap, the last by name is heard, and not the two summed. A number in a
+/// name counts as a number: the tenth take plays over the ninth.
 #[test]
 fn of_two_regions_that_overlap_the_last_by_name_is_heard() {
     let left = regions(&[
         (
-            "a",
-            r#"{"tool": "region", "state": {"asset": "level.wav", "file_end_seconds": 1.0}}"#,
+            "take-9",
+            r#"{"tool": "region", "state": {"asset": "loud.wav", "file_end_seconds": 1.0}}"#,
         ),
         (
-            "b",
+            "take-10",
             r#"{"tool": "region", "state": {"asset": "level.wav", "start": 960, "file_end_seconds": 0.25}}"#,
         ),
     ]);
     let (alone, over) = (left[12_000], left[30_000]);
     assert!(alone > 0.1, "{alone}");
     assert!(
-        (over - alone).abs() < 1e-3,
+        (over - alone / 2.0).abs() < 1e-3,
         "{over} where they overlap, {alone} before"
     );
 }

@@ -25,11 +25,8 @@
 //! Known gap: turning bass mono on or off fades from the sound as it came to the sound through
 //! the crossover over 20 ms. The crossover turns the phase near its frequency, so for those
 //! 20 ms the bass there dips. It does not click.
-//!
-//! [`view`] is the card of the utility, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -170,12 +167,44 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
     markdown: include_str!("../agent-doc.md"),
 };
 
+/// The widest place of [`image`], twice as wide as the speakers.
+const WIDEST: f32 = 2.0;
+
+/// A place in the stereo field, -1 the left speaker and 1 the right, as the turn of the pan
+/// knob that puts a single sound there: the pan law is `tan(pan · π/4)`.
+fn as_pan(place: f32) -> f32 {
+    place.atan() / std::f32::consts::FRAC_PI_4
+}
+
+/// See the feed `image`. A column of the matrix is where one input channel goes; it is heard
+/// at the part of it on the right less the part on the left.
+fn image(state: &UtilityState) -> Vec<f32> {
+    let [[left_left, left_right], [right_left, right_right]] = matrix(state);
+    let place = |left: f32, right: f32| {
+        // Infinite where the two sides cancel: as wide as it shows.
+        let heard = left != 0.0 || right != 0.0;
+        heard.then(|| ((right - left) / (left + right)).clamp(-WIDEST, WIDEST))
+    };
+    let places = [place(left_left, right_left), place(left_right, right_right)];
+    let mut places = places.into_iter().flatten();
+    let Some(first) = places.next() else {
+        return Vec::new();
+    };
+    let (low, high) = places.fold((first, first), |(low, high), x| (low.min(x), high.max(x)));
+    vec![as_pan(low), as_pan(high)]
+}
+
 /// Registers the utility tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<UtilityState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Utility::AUTOMATION.parameters());
+        .schema(Utility::AUTOMATION.parameters())
+        .feed(
+            "image",
+            "Where its sound is heard in the stereo field: the leftmost and the rightmost place of its input channels, as the turn of its pan that puts a single sound there: -1 the left speaker, 1 the right, up to ±1.41 for a sound twice as wide as the speakers. Empty while it sends out nothing.",
+            |state, _| image(state),
+        );
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
@@ -196,6 +225,50 @@ mod tests {
     use sound_core::testing::check_parameter_ranges;
 
     use super::*;
+
+    /// A card puts its handle where the pan is: a single sound shows there at every pan; a
+    /// stereo one spreads by its width.
+    #[test]
+    fn the_image_shows_the_width_and_where_the_sound_is_in_turns_of_the_pan() {
+        let at = |state: UtilityState| image(&state);
+        let default = UtilityState::default();
+        for pan in [-1.0, -0.4, 0.0, 0.3, 0.5, 1.0] {
+            let [low, high] = at(UtilityState {
+                pan,
+                width: 0.0,
+                ..default
+            })[..] else {
+                panic!()
+            };
+            assert!(
+                (low - pan).abs() < 1e-5 && (high - pan).abs() < 1e-5,
+                "{pan}: {low} {high}"
+            );
+        }
+        assert_eq!(at(default), [-1.0, 1.0]);
+        let wide = at(UtilityState {
+            width: 2.0,
+            ..default
+        });
+        assert!(
+            (wide[0] + as_pan(WIDEST)).abs() < 1e-5 && wide[1] > 1.4,
+            "{wide:?}"
+        );
+        assert_eq!(
+            at(UtilityState {
+                channels: Channels::Left,
+                ..default
+            }),
+            [0.0, 0.0]
+        );
+        assert!(
+            at(UtilityState {
+                mute: true,
+                ..default
+            })
+            .is_empty()
+        );
+    }
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {

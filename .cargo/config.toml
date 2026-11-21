@@ -3,7 +3,7 @@
 rustflags = ["-C", "symbol-mangling-version=v0"]
 
 # The C runtime inside the Windows program, so it starts on a computer without the Visual C++
-# Redistributable. Zed does the same.
+# Redistributable.
 [target.'cfg(windows)']
 rustflags = ["-C", "target-feature=+crt-static"]
 

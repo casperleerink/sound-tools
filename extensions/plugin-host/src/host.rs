@@ -18,7 +18,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use gpui::WindowHandle;
 use sound_core::{AssetName, Assets, InstanceId, PrepareConfig, Project};
 
 use self::pins::{PinGesture, PinState, Shown, listed_lanes, pins_of};
@@ -31,7 +30,7 @@ use crate::processor::{
     AutomatedPin, AutomatedPins, HostedPlugin, HostedUpdate, Laned, Player, PluginAudio, laned_here,
 };
 use crate::scan::{ScanCache, ScanCommand};
-use crate::window::{PluginFrame, PluginWindow};
+use crate::window::{PluginWindow, WindowCommand};
 use crate::{PluginFormat, PluginRecord};
 
 /// At most one state write a second per plugin: a plugin marks itself dirty on every step of a
@@ -61,6 +60,10 @@ pub enum PluginProblem {
         "the plugins of this machine are still being looked at, so {plugin_id:?} is not there yet. Nothing plays through it until the scan reaches it, which needs nothing of you"
     )]
     StillScanning { plugin_id: String },
+    #[error(
+        "{plugin_id:?} is not among the plugins Sound Tools has looked at, and a run without a window looks at no new or changed ones. Opening the project in Sound Tools looks at them"
+    )]
+    NotLookedAt { plugin_id: String },
     #[error("the plugin {plugin_id:?} did not load: {message}")]
     DidNotLoad { plugin_id: String, message: String },
     #[error(
@@ -227,6 +230,8 @@ struct Hosted {
     /// lane means the same pin to both until the next run.
     lanes: AutomatedPins,
     shown: BTreeMap<u32, Shown>,
+    /// The last text of each parameter, with the bits of its value.
+    texts: BTreeMap<u32, (u64, Option<String>)>,
 }
 
 /// Both formats change a plugin's latency by starting it again.
@@ -291,15 +296,16 @@ struct Table {
     retired: Vec<Hosted>,
     /// A window opened or closed, or a plugin's parameters or their text changed.
     card_changed: bool,
-    /// Their views are already freed. Taking a window down needs the application, which the
-    /// moments that find them do not have.
-    finished_windows: Vec<WindowHandle<PluginFrame>>,
+    /// For the app, at the next [`Plugins::settle_windows`].
+    commands: Vec<WindowCommand>,
+    /// Counts every window asked for, so each has an id of its own.
+    windows_made: u64,
     placements: Placements,
     /// A write that fails is not tried again until a window changes again, so it is said once.
     placements_changed: bool,
     /// A dragged window moves many times a second, so at most one write a second.
     placements_written: Option<Instant>,
-    /// Settling windows has no project to report to. The next poll gives these.
+    /// Window work has no project to report to. The next poll gives these.
     window_problems: Vec<PluginProblem>,
 }
 
@@ -339,9 +345,8 @@ struct Inner {
     gestures: RefCell<BTreeMap<InstanceId, PinGesture>>,
 }
 
-/// The last chance to save. On macOS the application ends without unwinding: GPUI drops the
-/// main window, and with it the project and this host, and then the process is gone. So whoever
-/// polls the host must hold it weakly ([`Plugins::downgrade`]), else nothing is saved.
+/// The last chance to save, should the app end by dropping what holds the project: whoever polls
+/// the host must hold it weakly ([`Plugins::downgrade`]), else nothing is saved.
 impl Drop for Inner {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
@@ -353,7 +358,7 @@ impl Drop for Inner {
         }
         for hosted in table.loaded.values_mut().chain(&mut table.retired) {
             // The window cannot be taken down from here; it goes with the application.
-            let _window = hosted.window.give_up(hosted.plugin.gui());
+            let _window = hosted.give_up_window();
             if let Some(Some(assets)) = &assets
                 && let Err(problem) = save(hosted, assets)
             {
@@ -476,6 +481,22 @@ impl Plugins {
         })
     }
 
+    /// A pin of `parameter` at what the plugin of `id` plays now, or at its default when it
+    /// cannot say: on a step for a stepped one, inside its range for the rest. Calls into the
+    /// plugin, as [`Self::parameter_value`].
+    pub fn pin_now(&self, id: &InstanceId, parameter: &Parameter) -> crate::Pin {
+        let now = self.parameter_value(id, parameter.id);
+        let now = now.map_or(parameter.default, |now| now.value);
+        let value = match &parameter.steps {
+            Some(steps) => parameter.step_value(steps, steps.index(now)),
+            None => now.max(parameter.minimum).min(parameter.maximum),
+        };
+        crate::Pin {
+            name: parameter.name.clone(),
+            value,
+        }
+    }
+
     /// The same `Rc` until the plugin says its parameters changed, so a card can tell a new list
     /// by its pointer. The first call asks the plugin, as [`Self::parameter_value`].
     pub fn parameters(&self, id: &InstanceId) -> Option<Rc<BTreeMap<u32, Parameter>>> {
@@ -483,11 +504,19 @@ impl Plugins {
         Some(table.loaded.get_mut(id)?.parameters().clone())
     }
 
-    /// The plugin's own text, such as `1.2 kHz`. Calls into the plugin, as
-    /// [`Self::parameter_value`].
+    /// The plugin's own text for `value`, such as `1.2 kHz`. A card reads it every frame, so
+    /// the plugin is asked once per value, as [`Self::parameter_value`] asks it.
     pub fn parameter_text(&self, id: &InstanceId, parameter: u32, value: f64) -> Option<String> {
         let mut table = self.0.table.try_borrow_mut().ok()?;
-        table.loaded.get_mut(id)?.plugin.text(parameter, value)
+        let hosted = table.loaded.get_mut(id)?;
+        if let Some((known, text)) = hosted.texts.get(&parameter)
+            && *known == value.to_bits()
+        {
+            return text.clone();
+        }
+        let text = hosted.plugin.text(parameter, value);
+        (hosted.texts).insert(parameter, (value.to_bits(), text.clone()));
+        text
     }
 
     /// Loads the plugin the record names, for the engine. A run whose record changed only its
@@ -572,6 +601,11 @@ impl Plugins {
                     plugin_id: record.plugin_id.clone(),
                 });
             }
+            None if scanned.not_looked_at > 0 => {
+                return Err(PluginProblem::NotLookedAt {
+                    plugin_id: record.plugin_id.clone(),
+                });
+            }
             None => {
                 return Err(PluginProblem::NotInstalled {
                     format: record.format.name().to_string(),
@@ -641,6 +675,7 @@ impl Plugins {
             laned,
             lanes: AutomatedPins::NONE,
             shown: BTreeMap::new(),
+            texts: BTreeMap::new(),
         };
         // The record wins over the state just loaded. The backend gave the plugin every pin
         // before activating it; they go again in the first block for a plugin that took
@@ -698,15 +733,31 @@ impl Plugins {
         std::mem::take(&mut self.0.table.borrow_mut().card_changed)
     }
 
+    /// For a render, which reads the project's files: ends open turns of a knob and saves every
+    /// loaded plugin, whether it said its state changed or not. They stay loaded.
+    pub fn save_all(&self, project: &mut Project) -> Vec<PluginProblem> {
+        let mut problems = self.end_turns_for_good(project);
+        if self.0.writes_state {
+            let assets = project.assets();
+            for hosted in self.0.table.borrow_mut().loaded.values_mut() {
+                problems.extend(save(hosted, assets).err());
+            }
+        }
+        problems
+    }
+
+    fn end_turns_for_good(&self, project: &mut Project) -> Vec<PluginProblem> {
+        (self.end_turns(project).into_iter())
+            .map(|error| PluginProblem::PinsNotWritten {
+                message: error.to_string(),
+            })
+            .collect()
+    }
+
     /// For a project that closes: ends open turns of a knob and saves every plugin, whether it
     /// said its state changed or not.
     pub fn close(&self, project: &mut Project) -> Vec<PluginProblem> {
-        let mut problems = Vec::new();
-        for error in self.end_turns(project) {
-            problems.push(PluginProblem::PinsNotWritten {
-                message: error.to_string(),
-            });
-        }
+        let mut problems = self.end_turns_for_good(project);
         let project = &*project;
         let mut table = self.0.table.borrow_mut();
         if self.0.writes_state
@@ -720,7 +771,7 @@ impl Plugins {
             loaded,
             retired,
             card_changed,
-            finished_windows,
+            commands,
             ..
         } = &mut *table;
         let assets = self.0.writes_state.then(|| project.assets());
@@ -730,8 +781,8 @@ impl Plugins {
         }
         for hosted in loaded.values_mut().chain(&mut *retired) {
             // The placements still say which were open.
-            if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
-                finished_windows.push(handle);
+            if let Some(window) = hosted.give_up_window() {
+                commands.push(WindowCommand::Close { window });
                 *card_changed = true;
             }
             if let Some(assets) = assets
@@ -826,7 +877,7 @@ impl Plugins {
             loaded,
             retired,
             card_changed,
-            finished_windows,
+            commands,
             ..
         } = &mut *table;
         let assets = self.0.writes_state.then(|| project.assets());
@@ -841,8 +892,8 @@ impl Plugins {
             .collect();
         for id in stale {
             if let Some(mut hosted) = loaded.remove(&id) {
-                if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
-                    finished_windows.push(handle);
+                if let Some(window) = hosted.give_up_window() {
+                    commands.push(WindowCommand::Close { window });
                     *card_changed = true;
                 }
                 closed_for_good.push(id.clone());
@@ -864,9 +915,9 @@ impl Plugins {
                 hosted.window.wants_size(wanted);
             }
             if requests.window_closed
-                && let Some(handle) = hosted.window.give_up(hosted.plugin.gui())
+                && let Some(window) = hosted.give_up_window()
             {
-                finished_windows.push(handle);
+                commands.push(WindowCommand::Close { window });
                 *card_changed = true;
                 if let Some(id) = id {
                     closed_for_good.push(id.clone());
@@ -926,8 +977,8 @@ impl Plugins {
             .collect();
         for id in crashed {
             if let Some(mut hosted) = loaded.remove(&id) {
-                if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
-                    finished_windows.push(handle);
+                if let Some(window) = hosted.give_up_window() {
+                    commands.push(WindowCommand::Close { window });
                 }
                 *card_changed = true;
                 let stopped = Stopped {
@@ -967,10 +1018,8 @@ impl Plugins {
 }
 
 fn retire(mut hosted: Hosted, table: &mut Table, assets: Option<&Assets>) {
-    if let Some(handle) = hosted.window.give_up(hosted.plugin.gui()) {
-        table.finished_windows.push(handle);
-        table.card_changed = true;
-    }
+    let finished = hosted.give_up_window();
+    table.close(finished);
     if let Some(assets) = assets
         && let Err(problem) = save(&mut hosted, assets)
     {

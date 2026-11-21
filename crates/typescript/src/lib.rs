@@ -15,29 +15,25 @@
 //! audio thread, and the window never waits for Bun.
 
 mod behaviours;
-#[cfg(test)]
-mod bindings;
 mod bun;
-mod card;
+pub mod devices;
 mod fader;
 mod feeds;
 mod lane;
-mod live;
+pub mod live;
 mod meter;
-mod path;
-#[cfg(test)]
-mod performance;
+pub mod path;
+mod project;
+mod readout;
 mod recorder;
 mod records;
 mod region;
-mod region_card;
 mod samples;
+pub mod shortcuts;
 mod timeline;
-mod tokens;
 mod tools;
-mod touch;
-mod tree;
-mod window;
+pub mod touch;
+pub mod window;
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -46,80 +42,29 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry, ToolSchema};
 use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
-use sound_ui::Shortcuts;
 
-pub use behaviours::{asked_behaviours, take_declared, wait_for_behaviours};
-pub use bun::{heard_batches, heard_bytes, last_batch, sent_bytes, sent_updates_and_events};
-pub use card::{TitleBar, drawn_nodes, embedded_view, run_frame, title_bar_of};
-#[cfg(feature = "test-support")]
-pub use card::{node_counts, page_has_text, page_ready, scroll_room, soft_edges};
-#[cfg(feature = "test-support")]
-pub use feeds::shown_by_live_values;
+pub use behaviours::{take_declared, wait_for_behaviours};
 pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};
 pub use timeline::timeline_state;
 pub use tools::forget_gone;
-pub use window::start_window;
-#[cfg(feature = "test-support")]
-pub use window::{CodeChanges, start_window_unwatched};
+
+/// Registers the feeds and facts of the tools this crate defines, and the keys down on the
+/// sound of every instance. Call it before the project opens.
+pub fn register_feeds(registry: &mut Registry) {
+    region::register_feeds(registry);
+    recorder::register_feeds(registry);
+    registry.every_instance_feed(
+        "sounding",
+        "1 for each of the 128 keys down on its sound now, else 0: `sounding.60` is middle C.",
+        window::sounding,
+    );
+}
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
 use crate::tools::{Sounds, ToolInfo, Tools};
 
 /// The folder of a project that holds its own tools and cards.
 pub const FOLDER: &str = "extensions";
-
-/// The key context of a card or a page whose tool hears every key of the computer keyboard while
-/// it has the focus. The plain keys of the window, such as space, leave it alone.
-pub const KEY_CONTEXT: &str = "ToolKeys";
-
-/// The key context of a card or a page of the tool `info`: the keys it takes, which the computer
-/// keys leave to it. Every key for an `onKey` that names none, else the keys it names, with or
-/// without shift, and the keys that do its actions now, each as it is with shift.
-pub(crate) fn key_context(info: &ToolInfo, cx: &gpui::App) -> gpui::KeyContext {
-    let mut context = gpui::KeyContext::default();
-    let named = match (info.keys, &info.takes) {
-        (true, None) => {
-            context.add(KEY_CONTEXT);
-            return context;
-        }
-        (true, Some(takes)) => takes.as_slice(),
-        (false, _) => &[],
-    };
-    let shortcuts = cx.try_global::<Shortcuts>();
-    for key in named {
-        context.add(taken(key));
-    }
-    for chord in (shortcuts.iter()).flat_map(|shortcuts| shortcuts.chords(&info.name)) {
-        context.add(acted(chord));
-    }
-    context
-}
-
-/// The actions of `tool` that the key does now, in the order its code tries them.
-pub(crate) fn actions_on(tool: &str, keystroke: &gpui::Keystroke, cx: &gpui::App) -> Vec<String> {
-    let Some(shortcuts) = cx.try_global::<Shortcuts>() else {
-        return Vec::new();
-    };
-    let bound = shortcuts.bound(tool, &sound_ui::shortcuts::chord(keystroke));
-    bound.into_iter().map(str::to_string).collect()
-}
-
-fn taken(key: &str) -> String {
-    format!("{KEY_CONTEXT}_{key}")
-}
-
-fn acted(chord: &str) -> String {
-    format!("ToolAction_{chord}")
-}
-
-/// Whether the focus is in a tool that takes the key, which the computer keys leave to it.
-pub fn takes_key(window: &gpui::Window, keystroke: &gpui::Keystroke) -> bool {
-    let names = [
-        taken(&keystroke.key),
-        acted(&sound_ui::shortcuts::chord(keystroke)),
-    ];
-    (window.context_stack().iter()).any(|context| names.iter().any(|name| context.contains(name)))
-}
 
 /// A note event as the code of a tool sends and hears it, see `NoteEvent` in `sdk.ts`: a
 /// velocity or a value from 0 to 1, the bend from -1 to 1. The pedal is controller 64 and the
@@ -198,22 +143,29 @@ impl NoteMessage {
     }
 }
 
-const SDK: &str = include_str!("sdk.ts");
-/// The modules `sdk.ts` names, by their path in `extensions/`. The runtime adds
-/// `sdk/records.ts`.
-const SDK_MODULES: [(&str, &str); 12] = [
+/// The SDK of every project, by its path in `extensions/`. The runtime adds `sdk/records.ts`,
+/// `sdk/feeds.ts` and `sdk/icons.ts`.
+const SDK: [(&str, &str); 9] = [
+    ("sdk.ts", include_str!("sdk.ts")),
     ("sdk/fields.ts", include_str!("sdk/fields.ts")),
     ("sdk/notes.ts", include_str!("sdk/notes.ts")),
     ("sdk/sound.ts", include_str!("sdk/sound.ts")),
     ("sdk/tools.ts", include_str!("sdk/tools.ts")),
-    ("sdk/live.ts", include_str!("sdk/live.ts")),
-    ("sdk/reactivity.ts", include_str!("sdk/reactivity.ts")),
-    ("sdk/nodes.ts", include_str!("sdk/nodes.ts")),
-    ("sdk/drawing.ts", include_str!("sdk/drawing.ts")),
-    ("sdk/components.ts", include_str!("sdk/components.ts")),
-    ("sdk/page.ts", include_str!("sdk/page.ts")),
-    ("sdk/card.ts", include_str!("sdk/card.ts")),
-    ("sdk/host.ts", include_str!("sdk/host.ts")),
+    ("sdk/clock.ts", include_str!("sdk/clock.ts")),
+    ("sdk/values.ts", include_str!("sdk/values.ts")),
+    ("sdk/view.ts", include_str!("sdk/view.ts")),
+    ("sdk/test.d.ts", include_str!("sdk/test.d.ts")),
+];
+/// What the SDK of a project of the GPUI app had in `sdk/` that this one has not.
+const GONE: [&str; 8] = [
+    "sdk/live.ts",
+    "sdk/reactivity.ts",
+    "sdk/nodes.ts",
+    "sdk/drawing.ts",
+    "sdk/components.ts",
+    "sdk/page.ts",
+    "sdk/card.ts",
+    "sdk/host.ts",
 ];
 pub const HOST: &str = include_str!("host.ts");
 /// What [`HOST`] uses of Node and Bun, for a check of its types.
@@ -241,39 +193,14 @@ const TSCONFIG: &str = r#"{
 }
 "#;
 
-/// How an agent writes a tool of the project: the first doc, then one per area.
-pub const AGENT_DOCS: [AgentDoc; 5] = [
-    AgentDoc {
-        name: "extensions",
-        group: WRITING,
-        when: "No tool does what you need: write a device for a track, or make the whole project one tool",
-        markdown: include_str!("extensions.md"),
-    },
-    AgentDoc {
-        name: "extensions-sound",
-        group: WRITING,
-        when: "A tool's sound needs feedback, files, stereo, a sidechain, voices, outputs or its spectrum",
-        markdown: include_str!("extensions-sound.md"),
-    },
-    AgentDoc {
-        name: "extensions-view",
-        group: WRITING,
-        when: "A tool has its own view, a control loop, keys or MIDI",
-        markdown: include_str!("extensions-view.md"),
-    },
-    AgentDoc {
-        name: "extensions-drawing",
-        group: WRITING,
-        when: "A tool's view draws shapes that move: a piano roll, a meter, a scope, drags",
-        markdown: include_str!("extensions-drawing.md"),
-    },
-    AgentDoc {
-        name: "extensions-children",
-        group: WRITING,
-        when: "A tool plays other tools: devices, plugins, timelines, lanes, recorders",
-        markdown: include_str!("extensions-children.md"),
-    },
-];
+/// How an agent writes a tool of the project.
+pub const AGENT_DOCS: [AgentDoc; 1] = [AgentDoc {
+    name: "tools",
+    group: WRITING,
+    when: "No tool does what you need: write a device for a track, change the song page, or make the whole project one tool",
+    markdown: include_str!("tools.md"),
+}];
+
 const WRITING: &str = "Writing tools";
 /// The group of the docs of the built-in children.
 const BLOCKS: &str = "Blocks a parent plays";
@@ -309,13 +236,13 @@ impl Extensions {
     /// for the agent that writes the first one, with the records of the built-in tools of
     /// `schemas`. Bun `logs` for a runtime that holds the project, see [`Bun::start`]. Waits
     /// for Bun, up to a timeout for each file: not on the thread that draws.
-    pub fn load(folder: &Path, schemas: &[ToolSchema], logs: bool) -> Option<FirstLoad> {
+    pub fn load(folder: &Path, built_in: &BuiltIn, logs: bool) -> Option<FirstLoad> {
         let folder = folder.join(FOLDER);
         if !folder.is_dir() {
             return None;
         }
         let opening = bun::new_opening();
-        let launched = write_sdk(&folder, schemas)
+        let launched = write_sdk(&folder, built_in)
             .map_err(|error| error.to_string())
             .and_then(|()| launch((&folder, opening), Skipped::new(), logs));
         Some(FirstLoad {
@@ -412,13 +339,15 @@ fn checked(loaded: Loaded, skipped: &Skipped, bun: &Arc<Bun>) -> (Vec<Sounds>, V
         let failed: Vec<String> = (sounds_failed.into_iter().take(shown).cloned())
             .chain(more)
             .chain(
-                drawn(view)
-                    .err()
+                view.err()
                     .map(|error| format!("its view does not draw: {error}")),
             )
             .collect();
         if !failed.is_empty() {
             problems.push(info.problem(failed.join("; ")));
+        }
+        if info.old_views {
+            problems.push(info.problem(window::OLD_VIEWS));
         }
         tools.push(sounds);
     }
@@ -474,12 +403,6 @@ pub(crate) fn built_in_schemas() -> [ToolSchema; 6] {
     ]
 }
 
-/// Whether a card or a page made nodes the window can show.
-fn drawn(ops: Result<serde_json::Value, String>) -> Result<(), String> {
-    let ops: Vec<tree::Op> = serde_json::from_value(ops?).map_err(|error| error.to_string())?;
-    tree::NodeTable::default().apply(ops).map(|_| ())
-}
-
 /// The files of tools in `extensions`, by name, in order: those that are not the runtime's.
 /// A file they import may be anywhere under it.
 fn tool_files(extensions: &Path) -> Vec<String> {
@@ -493,6 +416,8 @@ fn tool_files(extensions: &Path) -> Vec<String> {
             (name.ends_with(".ts") || name.ends_with(".tsx"))
                 && !OWNED.contains(&name.as_str())
                 && !name.ends_with(".d.ts")
+                // What `bun test` runs.
+                && !name.contains(".test.")
         })
         .collect();
     files.sort();
@@ -519,9 +444,16 @@ fn launch(
     mut skipped: Skipped,
     logs: bool,
 ) -> Result<Option<Launched>, String> {
-    let files = tool_files(extensions);
-    if files.is_empty() {
+    let mut files = tool_files(extensions);
+    write_icon_names(extensions).map_err(|error| error.to_string())?;
+    // Bun runs for the generic card too.
+    let card = extensions.join(window::GENERIC_CARD).is_file();
+    if files.is_empty() && !card {
         return Ok(None);
+    }
+    if card {
+        files.push(window::GENERIC_CARD.to_string());
+        files.extend(window::card_files(extensions));
     }
     let program = bun_program().ok_or_else(|| {
         "Bun is not installed, so the tools of this project do not load: install it from https://bun.sh and open the project again".to_string()
@@ -539,7 +471,14 @@ fn launch(
                 // The tools that own children ask it what they declare while their records
                 // play, also outside the window.
                 let bun = Arc::new(bun);
-                let (sounds, problems) = checked(loaded, &skipped, &bun);
+                let (sounds, mut problems) = checked(loaded, &skipped, &bun);
+                // A project with the kit of the templates draws its devices with it.
+                if !card && extensions.join(window::THEME).is_file() {
+                    problems.push(folder_problem(format!(
+                        "{} is missing, so a device whose tool has no view shows no card: write one that exports `card`, a `Card`",
+                        window::GENERIC_CARD
+                    )));
+                }
                 return Ok(Some(Launched {
                     bun,
                     sounds,
@@ -581,16 +520,28 @@ fn folder_problem(message: String) -> Problem {
     }
 }
 
+/// What the code of a project reads of the built-in tools, for the types of its SDK: their
+/// records, the feeds of each, and the JSON Schema of the facts of each that adds some.
+#[derive(Default)]
+pub struct BuiltIn {
+    pub schemas: Vec<ToolSchema>,
+    pub feeds: Vec<sound_core::feeds::FeedName>,
+    pub facts: Vec<(&'static str, serde_json::Value)>,
+    /// The bang inputs of each tool that has some.
+    pub commands: Vec<(&'static str, Vec<&'static str>)>,
+}
+
 /// Writes what the runtime owns in `extensions/`, only where the text changed: the SDK with
-/// the records of the built-in tools of `schemas`.
-fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
+/// the records, feeds and facts of the built-in tools.
+pub fn write_sdk(extensions: &Path, built_in: &BuiltIn) -> std::io::Result<()> {
     // Bun's own types, once installed, declare `Bun` as well.
     let bun_types = extensions.join("node_modules/bun-types").is_dir();
-    let records = records::sdk_records(schemas);
+    let records = records::sdk_records(&built_in.schemas, &built_in.commands);
+    let feeds = records::sdk_feeds(&built_in.feeds, &built_in.facts, &built_in.schemas);
     std::fs::create_dir_all(extensions.join("sdk"))?;
     let files = [
-        ("sdk.ts", SDK),
-        ("sdk/records.ts", &records),
+        ("sdk/records.ts", records.as_str()),
+        ("sdk/feeds.ts", feeds.as_str()),
         ("tsconfig.json", TSCONFIG),
         ("bun.d.ts", BUN_TYPES),
     ];
@@ -599,7 +550,14 @@ fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
     if !ignore.exists() {
         std::fs::write(ignore, format!("{}\n", bun::LOG_FILE))?;
     }
-    for (name, text) in files.into_iter().chain(SDK_MODULES) {
+    // Other files in `sdk/` are the project's.
+    for name in GONE {
+        match std::fs::remove_file(extensions.join(name)) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
+    for (name, text) in files.into_iter().chain(SDK) {
         let path = extensions.join(name);
         if name == "bun.d.ts" && bun_types {
             match std::fs::remove_file(&path) {
@@ -614,9 +572,39 @@ fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Registers the cards of the blocks of this crate that have one: a region's.
-pub fn register_views(views: &mut sound_ui::Views) {
-    region_card::register(views);
+/// `sdk/icons.ts`: the names of the icons in `ui/icons/`, so a view that draws one without a
+/// file does not type-check. Written as the code loads, so an icon added meanwhile is there.
+fn write_icon_names(extensions: &Path) -> std::io::Result<()> {
+    let mut names: Vec<String> = std::fs::read_dir(extensions.join("ui/icons"))
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().into_string().ok()?;
+            Some(format!("{:?}", name.strip_suffix(".svg")?))
+        })
+        .collect();
+    names.sort();
+    let union = match names.is_empty() {
+        true => "never".to_string(),
+        false => names.join(" | "),
+    };
+    let text = format!(
+        "// The icons of `ui/icons/`, by file name. Written as the code loads.\nexport type IconName = {union};\n"
+    );
+    let path = extensions.join("sdk/icons.ts");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
+        std::fs::create_dir_all(extensions.join("sdk"))?;
+        std::fs::write(path, text)?;
+    }
+    Ok(())
+}
+
+/// The instances whose sample, region file or periods were read since the last call, to run
+/// their behaviours again.
+pub fn take_read(assets: &sound_core::Assets) -> Vec<sound_core::InstanceId> {
+    let mut read = samples::take_read(assets);
+    read.extend(region::take_read(assets));
+    read
 }
 
 /// Whether this machine has a Bun to run the tools with.
@@ -691,18 +679,71 @@ mod tests {
     #[test]
     fn the_types_of_bun_are_left_out_once_bun_types_are_installed() {
         let extensions = tempfile::tempdir().unwrap();
-        write_sdk(extensions.path(), &[]).unwrap();
+        write_sdk(extensions.path(), &BuiltIn::default()).unwrap();
         assert!(extensions.path().join("bun.d.ts").is_file());
         std::fs::create_dir_all(extensions.path().join("node_modules/bun-types")).unwrap();
-        write_sdk(extensions.path(), &[]).unwrap();
+        write_sdk(extensions.path(), &BuiltIn::default()).unwrap();
         assert!(!extensions.path().join("bun.d.ts").exists());
+    }
+
+    #[test]
+    fn the_sdk_of_the_gpui_app_goes_and_the_projects_own_files_stay() {
+        let extensions = tempfile::tempdir().unwrap();
+        let folder = extensions.path();
+        std::fs::create_dir_all(folder.join("sdk")).unwrap();
+        std::fs::write(folder.join("sdk/my-helper.ts"), "export {}").unwrap();
+        std::fs::write(folder.join("sdk/live.ts"), "export {}").unwrap();
+        write_sdk(folder, &BuiltIn::default()).unwrap();
+        assert!(folder.join("sdk/view.ts").is_file());
+        assert!(!folder.join("sdk/live.ts").exists());
+        assert!(folder.join("sdk/my-helper.ts").is_file());
+    }
+
+    /// Code of an older Sound Tools as people write imports: comments, line breaks, single
+    /// quotes and renamed parts, of the SDK and of what it no longer has.
+    const OLD_PAGE: &str = r#"import {
+  h, number, // the pitch
+  Knob /* } gone */,
+  Page as Screen,
+  sine as wave,
+  tool // makes it
+} from './sdk';
+export const old = tool({
+  name: "old", title: "Old", when: "Never", doc: "A tone.",
+  state: { hz: number({ min: 20, max: 2000, default: 220 }) },
+  sound: ({ hz }) => wave(hz).times(0.2),
+  view: () => <Screen><Knob field="hz" /></Screen>,
+});
+"#;
+
+    #[test]
+    fn a_file_of_an_older_sound_tools_loads_whatever_shape_its_imports_have() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir(project.path().join(FOLDER)).unwrap();
+        std::fs::write(project.path().join(FOLDER).join("old.tsx"), OLD_PAGE).unwrap();
+        let extensions = Extensions::load(project.path(), &BuiltIn::default(), false)
+            .unwrap()
+            .register(&mut Registry::new());
+        let messages: Vec<&str> = (extensions.problems.iter())
+            .map(|problem| problem.message.as_str())
+            .collect();
+        assert!(
+            matches!(&messages[..], [message] if message.ends_with(window::OLD_VIEWS)),
+            "{messages:?}"
+        );
+        assert!(
+            extensions
+                .tools
+                .iter()
+                .any(|tool| tool.name == "old" && tool.old_views)
+        );
     }
 
     #[test]
     fn a_folder_with_no_tool_starts_no_bun_but_has_the_sdk() {
         let project = tempfile::tempdir().unwrap();
         std::fs::create_dir(project.path().join(FOLDER)).unwrap();
-        let extensions = Extensions::load(project.path(), &[], true)
+        let extensions = Extensions::load(project.path(), &BuiltIn::default(), true)
             .unwrap()
             .register(&mut Registry::new());
         assert!(extensions.bun.is_none());

@@ -84,14 +84,9 @@ pub(crate) struct Kit {
     returned: Vec<Arc<Rendered>>,
 }
 
-/// What a [`DrumPad`] gets: every pad from its behaviour, or one hit from an interface.
+/// What a [`DrumPad`] gets: every pad from its behaviour.
 pub(crate) enum DrumUpdate {
     Kit(Box<Kit>),
-    /// Plays a pad now, as a click on it does. Not an edit.
-    Hit {
-        pad: usize,
-        velocity: Velocity,
-    },
 }
 
 impl DrumUpdate {
@@ -101,11 +96,6 @@ impl DrumUpdate {
             state: state.clone(),
             returned: Vec::with_capacity(VOICES),
         }))
-    }
-
-    /// Plays pad `pad`, 0 to 15, as a note of it at `velocity` would.
-    pub(crate) fn hit(pad: usize, velocity: Velocity) -> Self {
-        Self::Hit { pad, velocity }
     }
 }
 
@@ -359,7 +349,6 @@ impl Processor for DrumPad {
 
     fn update(&mut self, update: &mut DrumUpdate) {
         match update {
-            DrumUpdate::Hit { pad, velocity } => self.hit(*pad, *velocity),
             DrumUpdate::Kit(kit) => {
                 std::mem::swap(&mut self.pads, &mut kit.pads);
                 for place in &mut self.graveyard {

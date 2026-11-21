@@ -1,4 +1,10 @@
 {
   "name": "Bare",
-  "description": "An empty project. Ask the agent for the tools you want."
+  "description": "An empty project. Ask the agent for the tools you want.",
+  "shares": [
+    "daw/extensions/theme.json",
+    "daw/extensions/ui",
+    "!daw/extensions/ui/blocks/song",
+    "!daw/extensions/ui/strip.tsx"
+  ]
 }

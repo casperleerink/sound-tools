@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds Sound Tools.app from the runtime binary.
+# Builds Sound Tools.app from the sound-tools binary.
 #
 #   tooling/bundle-macos.sh [--zip] [output-folder]
 #
@@ -30,10 +30,10 @@ output="$(cd "$output" && pwd)"
 
 version="${SOUND_TOOLS_VERSION:-0.0.0}"
 
-cargo build --release -p runtime --locked
+cargo build --release -p sound-window --locked
 # .cargo/config.toml moves the build output out of the repository, so ask cargo where it is.
 target="$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
-binary="$target/release/runtime"
+binary="$target/release/sound-tools"
 
 app="$output/Sound Tools.app"
 rm -rf "$app"
@@ -53,7 +53,7 @@ done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
 rm -rf "$(dirname "$iconset")"
 
-# macOS 11 is the oldest a build for Apple silicon runs on, and GPUI asks for less.
+# macOS 13: Rune draws with its own Metal backend, which needs Metal 3.
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -82,7 +82,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.music</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>11.0</string>
+	<string>13.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSAudioCaptureUsageDescription</key>

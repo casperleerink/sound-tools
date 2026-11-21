@@ -29,11 +29,8 @@
 //!   dotted one under 90.
 //! - The power icon bypasses the slot with a hard switch, the same for every effect. The
 //!   repeats stop at once, and on loud repeats it may click.
-//!
-//! [`view`] is the card of the delay, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

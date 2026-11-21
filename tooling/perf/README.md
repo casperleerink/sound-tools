@@ -6,15 +6,29 @@ Python 3, no packages (numpy for `reverb.py`).
 ```sh
 python3 tooling/perf/bench.py render main HEAD            # CPU of a 61 s offline render, median of 3
 python3 tooling/perf/bench.py live main --window 60       # headless playback at -60 dB: CPU, memory, late callbacks
-python3 tooling/perf/bench.py window main HEAD            # the window, stopped or `+play`: CPU, memory (macOS, takes the keys)
 python3 tooling/perf/bench.py null main HEAD              # same sound? peak difference of 20 s renders
 python3 tooling/perf/bench.py profile main --projects mixed   # macOS `sample` of a render, hottest functions
 python3 tooling/perf/bench.py render main HEAD --projects builtins --runs 5   # every built-in device
 python3 tooling/perf/reverb.py main HEAD                  # the reverb of B against A
 ```
 
-`--projects a,b` picks projects (`projects.names()`); `--runs` and `--seconds` change the
-counts. Builds, projects and logs go to `/tmp/st-perf` (`PERF_DIR` moves it). Remove it and run
+The window, headless, on a release build of this checkout:
+
+```sh
+python3 tooling/perf/window.py            # compares with window.json, the last saved run
+python3 tooling/perf/window.py --save     # and keeps this run as window.json
+```
+
+Each scenario (idle, play, scroll, zoom, drag a clip, the note editor, the mixer playing, a
+fader's drag) is a Rune `--script` of 3 s on the DAW template and on a song of 64 tracks and 500
+clips, and a project of 64 lanes of 200 points gets idle, scroll, zoom and an opened lane. The table
+has Rune's frame times, the first frame, the process's CPU and memory, and memory with Bun; `--play
+60` is the app's own playback. Last, the big song plays, scrolls and zooms for 10 s and for 120 s:
+memory that grew between them is a leak. Frame times are wall time: on a busy machine they double,
+so compare runs of a similar load average. Headless, every frame builds the whole window, which a
+window at rest does not. Rejected: `--native --trace`, which opens a window.
+
+Builds, projects and logs go to `/tmp/st-perf` (`PERF_DIR` moves it). Remove it and run
 `git worktree prune` to clean up.
 
 Built-ins must stay bit for bit the same (`null`). Only the reverb may change its sound. B
@@ -25,21 +39,3 @@ passes `reverb.py` when, against A, for every setting:
 - echo density at 0.95 no later than A + 20 ms
 - correlation per band within ±0.1
 - the highest narrow tail peak at most A + 3 dB (ringing)
-
-## The window
-
-```sh
-python3 tooling/perf/ui.py                        # the song of the DAW template, 8 tracks of 32 clips
-python3 tooling/perf/ui.py path/to/project        # any project; the song's own scenarios are skipped
-python3 tooling/perf/ui.py --against before.json  # and compares with a saved run
-```
-
-It runs each scenario of `crates/runtime/tests/window/tools/scenarios.rs` in a new test window
-(offline engine, simulated polls, the system's text, no GPU) and writes JSON: per update, time,
-draw time and allocations of the window's thread; renders and own render time per part and
-instance; gpui's self time per view type (phases of 0.5 ms or more); nodes per card. Renders
-and allocations repeat exactly; times move about 15% between runs.
-
-It builds the `perf` profile with the runtime's `perf` feature, which rebuilds gpui, so
-`cargo verify` never sets it. Rejected: `#[gpui::bench]`, which times one view under Criterion
-in real time; the scenarios need Bun, the offline engine and polls stepped by hand.

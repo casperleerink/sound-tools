@@ -1,6 +1,6 @@
 //! The Sound Tools core: audio engine, musical clock, transport, project storage and editing.
 //!
-//! Independent of GPUI, and of musical conventions such as tracks, clips and notes.
+//! Independent of the window, and of musical conventions such as tracks, clips and notes.
 //! Those belong to extensions.
 
 mod apps;
@@ -60,14 +60,15 @@ pub use processor::{
 };
 pub use project::{
     AGENT_DOC_FILE, AGENT_DOCS_FOLDER, ASSETS_FOLDER, AgentDoc, AgentDocText, AssetError,
-    AssetName, Assets, BehaviourContext, BehaviourError, Changes, Edit as ProjectEdit, FORMAT,
-    FieldDoc, FieldRange, FileChange, GROUPING_WINDOW, HISTORY_FOLDER, History, INSTRUCTIONS_FILE,
-    InputEndpoint, Instance, InstanceId, InvalidAssetName, InvalidInstanceId, JsonTool,
-    JsonToolDoc, Line, NO_PROBLEMS, OUTSIDE_POINT_WINDOW, OutputEndpoint, PROBLEMS_FILE, Place,
-    Point, PointId, PortReference, Problem, Project, ProjectError, ProjectEvent, ProjectFile,
-    RUN_LONGEST, RUN_QUIET, RecordSchema, RecordStamp, Registry, RegistryError, SavedConnection,
-    SavedDestination, SavedSource, State, StorageError, ToolRegistration, ToolSchema, parse_state,
-    ranges, type_doc, unit_of,
+    AssetName, Assets, BehaviourContext, BehaviourError, Changes, CommandContext,
+    Edit as ProjectEdit, FORMAT, FieldDoc, FieldRange, FileChange, GROUPING_WINDOW, HISTORY_FOLDER,
+    History, INSTRUCTIONS_FILE, InputEndpoint, Instance, InstanceId, InvalidAssetName,
+    InvalidInstanceId, JsonTool, JsonToolDoc, Line, NO_PROBLEMS, OUTSIDE_POINT_WINDOW,
+    OutputEndpoint, PROBLEMS_FILE, Place, Point, PointId, PortReference, Problem, Project,
+    ProjectError, ProjectEvent, ProjectFile, RUN_LONGEST, RUN_QUIET, RecordSchema, RecordStamp,
+    Registry, RegistryError, SavedConnection, SavedDestination, SavedSource, State, StorageError,
+    ToolRegistration, ToolSchema, facts, feeds, parse_state, ranges, type_doc, unit_of,
+    write_atomically,
 };
 pub use scope::Scope;
 pub use sections::{Section, SectionError, SectionName, Sections};

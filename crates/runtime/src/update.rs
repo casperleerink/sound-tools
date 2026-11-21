@@ -3,10 +3,9 @@
 //! When the window opens, and every day while it stays open, it asks GitHub for the latest
 //! release. A newer one is downloaded in the background with the agent's downloader (the
 //! system's curl, a lock, resume), checked against the release's `SHA256SUMS` and unpacked in
-//! the support folder. The window then shows a notice with **Restart**. The swap itself happens at the next start
-//! of the windowed app, before any window: Restart is a quit and a start again, and a quit
-//! without Restart gets the update at the next launch. GPUI gives a quit too little time to
-//! copy an app.
+//! the support folder. The window then shows a notice with **Restart**. The swap itself happens
+//! at the next start of the windowed app, before any window: Restart is a quit and a start
+//! again, and a quit without Restart gets the update at the next launch.
 //!
 //! On macOS the `.app` the program runs from is replaced. When its folder cannot be written,
 //! as for an app macOS runs from a read-only copy, the notice offers **Download**, which opens
@@ -32,11 +31,10 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use gpui::{App, AppContext as _, Global};
 use serde::Deserialize;
 use sound_agent::Download;
 #[cfg(windows)]
@@ -44,6 +42,7 @@ use sound_core::process::background_command;
 use sound_core::process::curl;
 
 use crate::app::{self, TOOL_NAME};
+use crate::input::Waker;
 
 /// The JSON of the latest release. GitHub leaves drafts and prereleases out of it.
 const LATEST_RELEASE: &str =
@@ -105,8 +104,6 @@ pub struct Ready {
     pub version: Version,
     pub action: Action,
 }
-
-impl Global for Ready {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -577,37 +574,81 @@ pub fn start_pending_update() -> bool {
     }
 }
 
-/// Checks for an update in the background, now and every day while the app is open, and
-/// sets [`Ready`] when there is one, or when [`start_pending_update`] could not install one at
-/// this start. Quiet when a check fails: the next one tries again.
-pub fn check_in_background(support: &Path, cx: &mut App) {
-    if let Some(failed) = FAILED.get() {
-        cx.set_global(failed.clone());
+/// The update check of the open app: [`Update::start`] once, then [`Update::poll`] when its
+/// waker says.
+pub struct Update(Arc<Mutex<Option<Ready>>>);
+
+impl Update {
+    /// Checks for an update on a thread of its own, now and every day while the app is open,
+    /// and wakes the owner once there is one, or at once when [`start_pending_update`] could
+    /// not install one at this start. Quiet when a check fails: the next one tries again.
+    pub fn start(support: &Path, waker: Waker) -> Self {
+        Self::of(Updater::of_this_app(support), waker)
     }
-    let Some(updater) = Updater::of_this_app(support) else {
-        return;
-    };
-    let updater = Arc::new(updater);
-    cx.spawn(async move |cx| {
-        loop {
-            let checked = cx
-                .background_spawn({
-                    let updater = updater.clone();
-                    async move { updater.check().await }
-                })
-                .await;
-            match checked {
-                Ok(Some(ready)) => {
-                    cx.update(|cx| cx.set_global(ready));
-                    return;
-                }
-                Ok(None) => {}
-                Err(error) => eprintln!("update: {error:#}"),
-            }
-            cx.background_executor().timer(CHECK_EVERY).await;
+
+    fn of(updater: Option<Updater>, waker: Waker) -> Self {
+        let found = Arc::new(Mutex::new(FAILED.get().cloned()));
+        if found
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+        {
+            waker();
         }
-    })
-    .detach();
+        let Some(updater) = updater else {
+            return Self(found);
+        };
+        let ready = found.clone();
+        let started = std::thread::Builder::new()
+            .name("update".into())
+            .spawn(move || {
+                loop {
+                    match smol::block_on(updater.check()) {
+                        Ok(Some(newer)) => {
+                            *ready.lock().unwrap_or_else(PoisonError::into_inner) = Some(newer);
+                            return waker();
+                        }
+                        Ok(None) => {}
+                        Err(error) => eprintln!("update: {error:#}"),
+                    }
+                    std::thread::sleep(CHECK_EVERY);
+                }
+            });
+        if let Err(error) = started {
+            eprintln!("update: no thread to check on: {error}");
+        }
+        Self(found)
+    }
+
+    /// The newer release to tell the composer about, once there is one.
+    pub fn poll(&self) -> Option<Ready> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl Ready {
+    /// What the notice of it says.
+    pub fn message(&self) -> String {
+        let version = self.version;
+        match &self.action {
+            Action::Restart | Action::Download { .. } => format!("Sound Tools {version} is ready"),
+            Action::Failed { reason, .. } => {
+                format!("Sound Tools {version} did not install: {reason}")
+            }
+        }
+    }
+
+    /// The button of its notice: Restart starts the app again, which installs it; Download
+    /// opens the release page, where this app's folder cannot take it or it did not install.
+    pub fn button(&self) -> &'static str {
+        match self.action {
+            Action::Restart => "Restart",
+            Action::Download { .. } | Action::Failed { .. } => "Download",
+        }
+    }
 }
 
 #[cfg(test)]
