@@ -50,7 +50,7 @@ test("plugin: a pin a lane moves cannot come off, and the window button names wh
   open({}, { window: "open" });
   expect(find("Test Tone close window")).toBeDefined();
   open({}, { window: "none" });
-  expect(JSON.stringify(find("card"))).toContain("This plugin has no window of");
+  expect(JSON.stringify(find("card"))).toContain("This plugin has no window.");
 });
 
 test("plugin: one that cannot play says why where the display would be", () => {
