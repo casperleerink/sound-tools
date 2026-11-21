@@ -180,7 +180,7 @@ pub(crate) struct Storage {
     /// Canonical, so that paths from the watcher can be compared with it.
     root: PathBuf,
     /// Held for as long as the project is open. `None` for a read-only project.
-    _lock: Option<fs::File>,
+    lock: Option<fs::File>,
     records: BTreeMap<InstanceId, OnDisk>,
     /// The bytes of record files that did not load, at ids that are not live, by path. A
     /// record of an extension that is off may have no other copy, so undo of its delete
@@ -240,6 +240,30 @@ fn try_lock(file: &fs::File) -> Result<(), fs::TryLockError> {
     }
 }
 
+/// Lets go of the project lock as it closes. On Linux a program another thread starts holds a
+/// copy of every open file until it runs, so the close alone could leave the lock held for that
+/// moment and the project would not open again at once.
+#[cfg(not(windows))]
+fn unlock(file: &fs::File) -> io::Result<()> {
+    file.unlock()
+}
+
+/// Windows starts programs without our handles: closing the handle lets go.
+#[cfg(windows)]
+fn unlock(_file: &fs::File) -> io::Result<()> {
+    Ok(())
+}
+
+impl Drop for Storage {
+    fn drop(&mut self) {
+        if let Some(lock) = &self.lock
+            && let Err(error) = unlock(lock)
+        {
+            eprintln!("error: the project lock was not let go: {error}");
+        }
+    }
+}
+
 impl Storage {
     /// Creates the folder when it is missing, and takes the project lock.
     pub(super) fn open_exclusive(folder: &Path) -> io::Result<Locked> {
@@ -265,7 +289,7 @@ impl Storage {
     fn new(root: PathBuf, lock: Option<fs::File>) -> Self {
         Self {
             root,
-            _lock: lock,
+            lock,
             records: BTreeMap::new(),
             unloaded: BTreeMap::new(),
             project_file: None,

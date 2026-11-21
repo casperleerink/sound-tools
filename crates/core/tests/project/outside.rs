@@ -885,6 +885,31 @@ fn a_second_open_of_the_same_folder_fails_with_a_typed_error() {
     assert!(Project::open(&folder, registry(), control).is_ok());
 }
 
+/// On Linux a program that starts gets a copy of every open file until it runs, the lock file
+/// too. A project closed in that moment must still open again at once.
+#[test]
+fn a_closed_project_opens_again_while_another_thread_starts_programs() {
+    use std::process::Command;
+    use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+
+    let folder = tempfile::tempdir().unwrap();
+    let starting = AtomicBool::new(true);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while starting.load(Relaxed) {
+                Command::new("/nonexistent").status().unwrap_err();
+            }
+        });
+        for _ in 0..200 {
+            let (control, _engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 1));
+            let opened = Project::open(folder.path(), registry(), control);
+            starting.store(opened.is_ok(), Relaxed);
+            opened.unwrap();
+        }
+        starting.store(false, Relaxed);
+    });
+}
+
 /// A project of the first milestone connects one port once per device channel. Audio is
 /// stereo since the second milestone, so the first of those connections already carries both
 /// channels and the second would play the source again on the right.
