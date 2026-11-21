@@ -313,7 +313,11 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
         e = e.pin(left, top, right, bottom);
     }
     if b.clip {
-        e = e.clip_soft(0.0);
+        // A rounded box cuts what it holds at its corners too.
+        e = match b.radius.as_deref().and_then(|name| theme.radius(name)) {
+            Some(radius) if radius > 0.0 => e.clip_rounded(radius),
+            _ => e.clip_soft(0.0),
+        };
     }
     if let Some(h) = b.max_h {
         e = e.max_h(h);
