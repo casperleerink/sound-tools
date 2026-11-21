@@ -1,6 +1,6 @@
 //! Feeds the views bind: numbers as live values, lists drawn by `shapes`, all without Bun.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::*;
 
@@ -273,17 +273,20 @@ fn eight_spectra_512_points_wide_draw_within_two_milliseconds_a_frame() {
         .background(|project| project.engine().play());
     let mut seconds = window.state.last;
     let mut times: Vec<Duration> = Vec::new();
+    let mut calibration = Duration::MAX;
     for _ in 0..120 {
         seconds += 1.0 / 60.0;
         frame(&mut window.state, seconds);
-        let started = Instant::now();
-        window.state.feeds.next_frame(1.0 / 60.0);
-        window.state.lives.update(&window.state, 1.0 / 60.0);
-        window.frame(1.0 / 60.0);
+        let took = budget::timed(|| {
+            window.state.feeds.next_frame(1.0 / 60.0);
+            window.state.lives.update(&window.state, 1.0 / 60.0);
+            window.frame(1.0 / 60.0);
+        });
         // Only frames in which every spectrum moved and drew again.
         if window.state.feeds.drew() == 8 {
-            times.push(started.elapsed());
+            times.push(took);
         }
+        calibration = calibration.min(budget::timed(budget::calibrate));
     }
     assert!(
         times.len() > 10,
@@ -294,8 +297,10 @@ fn eight_spectra_512_points_wide_draw_within_two_milliseconds_a_frame() {
     assert_eq!(window.state.tools.as_ref().unwrap().view_runs(), runs);
     // The least: other work on this machine only adds to a frame.
     let least = times.into_iter().min().unwrap();
-    eprintln!("eight spectra: {least:?} a frame");
-    // Drawing pixels is about nine times slower in a test build, which is not optimized.
-    let unoptimized = if cfg!(debug_assertions) { 10 } else { 1 };
-    assert!(least < Duration::from_millis(2 * unoptimized), "{least:?}");
+    let cost = budget::Cost(least.as_secs_f64() / calibration.as_secs_f64());
+    eprintln!("eight spectra: {cost:?}, {least:?} a frame");
+    // 2 ms as the app is built. Drawing pixels is about nine times slower in a test build, which
+    // is not optimized, and a calibration three times.
+    let budget = budget::Cost(if cfg!(debug_assertions) { 7.4 } else { 2.2 });
+    assert!(cost < budget, "{cost:?}, {least:?}");
 }

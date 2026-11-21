@@ -85,7 +85,7 @@ fn shown(tool: &str, code: &str) -> (tempfile::TempDir, rune::Runtime<State>) {
 
 /// A frame's cost, in calibrations.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
-pub(super) struct Cost(f64);
+pub(super) struct Cost(pub(super) f64);
 
 /// What `work` costs: the least it says it took of 15 runs after 3 to warm up, over the least
 /// the calibration took between them. Other work on the computer only adds to either.
@@ -109,7 +109,7 @@ pub(super) fn timed(work: impl FnOnce()) -> Duration {
 }
 
 /// Work of a fixed size like a frame's: small allocations, strings and a sorted map.
-fn calibrate() {
+pub(super) fn calibrate() {
     let mut map = std::collections::BTreeMap::new();
     for i in 0..4_000u32 {
         map.insert(
