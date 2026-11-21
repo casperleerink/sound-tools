@@ -505,10 +505,8 @@ fn a_take_too_short_to_place_leaves_no_file_and_says_so() {
     assert_eq!(files, 0);
 }
 
-/// A take no code kept as the project closes waits in it for the next open, whose code keeps
-/// it. While a Bun starts, a quit waits for it.
-#[test]
-fn a_take_waiting_for_the_code_as_the_project_closes_is_kept_by_the_next_open() {
+/// A take no code kept waits, and a Bun starts with the code that keeps it.
+fn a_take_waiting_as_the_code_starts() -> (Opened, SimulatedInput) {
     let (mut studio, input) = open_studio(false);
     let file = studio.folder.path().join("extensions/studio.tsx");
     let hangs = STUDIO.replace(
@@ -530,9 +528,17 @@ fn a_take_waiting_for_the_code_as_the_project_closes_is_kept_by_the_next_open() 
         (problems.iter()).any(|problem| problem.message.contains("waits for the code"))
     });
     assert!(!studio.tools.keeping_takes());
-    // Saved: a quit waits for the Bun that starts. This one quits before it.
     std::fs::write(&file, STUDIO).unwrap();
     studio.tools.code_changed();
+    (studio, input)
+}
+
+/// A take no code kept as the project closes waits in it for the next open, whose code keeps
+/// it. While a Bun starts, a quit waits for it.
+#[test]
+fn a_take_waiting_for_the_code_as_the_project_closes_is_kept_by_the_next_open() {
+    let (mut studio, input) = a_take_waiting_as_the_code_starts();
+    // Saved: a quit waits for the Bun that starts. This one quits before it.
     assert!(studio.tools.keeping_takes());
     studio.tools.close(&studio.project);
     let Opened {
@@ -545,6 +551,19 @@ fn a_take_waiting_for_the_code_as_the_project_closes_is_kept_by_the_next_open() 
     drop((tools, live, project));
     let mut studio = open(folder, input.devices());
     studio.until("the take kept", |studio| !studio.made("region").is_empty());
+}
+
+/// A close that wrote a take down, then the code kept it: the next close leaves nothing for
+/// the next open to hand again.
+#[test]
+fn a_take_kept_after_a_close_wrote_it_down_is_not_handed_again() {
+    let (mut studio, _input) = a_take_waiting_as_the_code_starts();
+    studio.tools.close(&studio.project);
+    let waiting = studio.folder.path().join(".sound-tools/takes.json");
+    assert!(waiting.exists());
+    studio.until("the take kept", |studio| !studio.made("region").is_empty());
+    studio.tools.close(&studio.project);
+    assert!(!waiting.exists());
 }
 
 /// A take given to code that hangs on it is kept by the code that runs next.

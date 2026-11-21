@@ -287,12 +287,9 @@ pub(super) fn run_loops(state: &mut State, seconds: f64) -> bool {
     looped == Looped::Sent
 }
 
-/// The main window closes: the app ends with it, not with the last plugin window open.
-pub(crate) fn closing(state: &mut State, tx: &mut Tx) {
-    // A quit ran `quitting` already, before its windows close.
-    if !rune::quitting() {
-        quitting(state, tx);
-    }
+/// The main window closes: the app ends with it, not with the last plugin window open. The
+/// quit runs `quitting`.
+pub(crate) fn closing(_: &mut State, tx: &mut Tx) {
     tx.quit();
 }
 

@@ -814,22 +814,26 @@ impl Tools {
         !self.taking.is_empty() || (starts && !self.held_takes.is_empty())
     }
 
-    /// For the project closing: the takes no code kept yet wait for its next open. Their files
-    /// stay in the project either way.
+    /// For the project closing: the takes no code kept yet wait for its next open, and only
+    /// those, as a close may come again. Their files stay in the project either way.
     pub fn close(&mut self, project: &Project) {
         let waiting: Vec<&Take> = (self.taking.iter().map(|(_, take)| take))
             .chain(&self.held_takes)
             .collect();
-        if waiting.is_empty() {
-            return;
-        }
-        let written = serde_json::to_vec(&waiting)
-            .map_err(std::io::Error::other)
-            .and_then(|bytes| {
-                let path = project.root().join(WAITING_TAKES);
-                std::fs::create_dir_all(path.parent().unwrap_or(project.root()))?;
-                sound_core::write_atomically(&path, &bytes)
-            });
+        let path = project.root().join(WAITING_TAKES);
+        let written = if waiting.is_empty() {
+            match std::fs::remove_file(&path) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+                _ => Ok(()),
+            }
+        } else {
+            serde_json::to_vec(&waiting)
+                .map_err(std::io::Error::other)
+                .and_then(|bytes| {
+                    std::fs::create_dir_all(path.parent().unwrap_or(project.root()))?;
+                    sound_core::write_atomically(&path, &bytes)
+                })
+        };
         if let Err(error) = written {
             eprintln!("error: the takes no code kept were not written down: {error}");
         }
