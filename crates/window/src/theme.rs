@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use rune::{Color, TextStyle};
+use rune::{Color, Shadow, TextStyle};
 use rune_kit::{Kit, PaletteFocus, PaletteSeed, Radius, StateColors, Type};
 use serde::Deserialize;
 
@@ -131,6 +131,15 @@ impl Theme {
             lg: r("lg", 8.0),
             xl: r("lg", 8.0) + 2.0,
         };
+        // A field's edge is a card's, 1 point inside its box; the kit's own is a half-point ring
+        // outside it, too faint beside the cards.
+        let edge = Shadow {
+            spread: 1.0,
+            inset: true,
+            color: c("border-strong"),
+            ..Shadow::default()
+        };
+        kit.elevation = kit.elevation.with_input([edge]);
         kit
     }
 
