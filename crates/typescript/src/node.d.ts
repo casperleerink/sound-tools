@@ -9,6 +9,7 @@ declare module "node:fs" {
 
 declare module "node:path" {
   export function join(...paths: string[]): string;
+  export const sep: string;
 }
 
 declare const process: {
