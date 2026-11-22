@@ -27,11 +27,19 @@ export function signatureOf(runs: Runs, bar: number): string {
 
 /** Where the piece ends: on the bar line after its last clip or audio; with none, after `FIRST_BARS`. */
 export function pieceEnd(children: readonly Child[], tempo_map: Frozen<TempoMap>): number {
-  const runs = tempo_map.time_signatures;
+  return endLine(placesOf(children, tempo_map, ["timeline", "region"]).map(({ start, length }) => start + length), tempo_map.time_signatures);
+}
+
+/** Where each clip or audio part of `children` starts and how long it plays, in ticks. */
+export function placesOf(children: readonly Child[], tempo_map: Frozen<TempoMap>, tools: readonly ("timeline" | "region")[]) {
   const song = { children, clock: { tempo_map } };
-  const ends = children.filter(isRow).flatMap((track) =>
-    track.children.flatMap((child) => (child.tool === "timeline" || child.tool === "region" ? [child.state.start + lengthAt(song, `${track.name}/${child.name}`)] : [])),
+  return children.filter(isRow).flatMap((track) =>
+    track.children.flatMap((child) => (child.tool === "timeline" || child.tool === "region") && tools.includes(child.tool) ? [{ start: child.state.start, length: lengthAt(song, `${track.name}/${child.name}`) }] : []),
   );
+}
+
+/** The bar line at or after the last of `ends`; with none, after `FIRST_BARS`. */
+export function endLine(ends: readonly number[], runs: Runs): number {
   const end = ends.length === 0 ? tickOfBar(runs, FIRST_BARS + 1) : Math.max(...ends, 1);
   return barStarts(runs, end).find((start) => start >= end) ?? end;
 }
@@ -94,8 +102,7 @@ function points<P>(list: readonly P[], at: (point: P) => number, set: (point: P,
 
 /**
  * The clips, audio and lanes of the song's `children` with `by` ticks added at `from` (above 0)
- * or taken out from it (below 0). A clip over `from` grows or shrinks, and one that ends there
- * grows too. A note that starts in what is taken
+ * or taken out from it (below 0). A clip over `from` grows or shrinks. A note that starts in what is taken
  * out goes, and one before it loses what lay in it; audio that starts in it starts where it was.
  */
 export function moveMusic(children: Draft["children"], from: number, by: number) {
@@ -114,7 +121,8 @@ export function moveMusic(children: Draft["children"], from: number, by: number)
         continue;
       }
       const start = retimed(first, from, by) ?? from;
-      const length = Math.max((retimed(last, from, by) ?? from) - start, 1);
+      // A clip that ends where bars go in keeps its end, so what it holds there does not ring on.
+      const length = Math.max((last === from && by > 0 ? last : (retimed(last, from, by) ?? from)) - start, 1);
       const relative = <P>(list: readonly P[] | undefined, at: (each: P) => number, set: (each: P, tick: number) => P) =>
         points(list ?? [], (each) => first + at(each), (each, tick) => set(each, tick - start), from, by);
       const notes = clip.notes.flatMap((note) => {

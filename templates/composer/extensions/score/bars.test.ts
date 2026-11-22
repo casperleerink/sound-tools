@@ -59,7 +59,7 @@ test("a bar taken out takes its notes, its tempo change and its fermata, cuts a 
   expect(clip.length).toBe(3 * BAR);
 });
 
-test("the piece ends on the bar line after its music, audio as long as it plays, and bars added at its end are in its clips", () => {
+test("the piece ends on the bar line after its music, audio as long as it plays, and a clip that ends where bars go in keeps its end", () => {
   const tempo_map = { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] };
   const end = (tracks: Draft["children"]) => pieceEnd(tracks as unknown as Child[], tempo_map);
   expect(end(tracksOf(trackOf("t00", [clipOf("music", 0, 6 * BAR - BEAT)])))).toBe(6 * BAR);
@@ -68,5 +68,5 @@ test("the piece ends on the bar line after its music, audio as long as it plays,
   expect(end(tracksOf(tapeOf("audio-1", [regionOf("voice", 0, 60)])))).toBe(30 * BAR);
   const ending = tracksOf(trackOf("t00", [clipOf("music", 0, 6 * BAR)]));
   moveMusic(ending, 6 * BAR, 2 * BAR);
-  expect(end(ending)).toBe(8 * BAR);
+  expect(end(ending)).toBe(6 * BAR);
 });

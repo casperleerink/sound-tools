@@ -8,7 +8,7 @@ import { changeBars, FASTEST, SLOWEST, withoutSignature, withSignature } from ".
 import { isRow, type Memory, type Song } from "../song/model";
 import { barAt, tickOfBar } from "../song/time";
 import { PLANE } from "../song/view";
-import { AFTER, moveMusic, pieceEnd, signatureOf, ticksOfSignature, withBars } from "./bars";
+import { AFTER, endLine, moveMusic, pieceEnd, placesOf, retimed, signatureOf, ticksOfSignature, withBars } from "./bars";
 
 type Changes = TempoMap["tempo_changes"];
 type Read = Frozen<TempoMap>;
@@ -87,14 +87,18 @@ export const scoreEdits = (song: Song) => {
     const from = tickOfBar(runs(), after ? bar + 1 : bar);
     const by = count * ticksOfSignature(signatureOf(runs(), bar));
     const last = end();
-    clock.update(label, (piece) => Object.assign(piece, withBars(piece, bar, count, after)));
+    const piece = withBars(clock, bar, count, after);
+    // How long the audio plays, which what an update gets of a region does not say.
+    const audio = placesOf(song.children, clock.tempo_map, ["region"]);
+    clock.update(label, (draft) => Object.assign(draft, piece));
     song.update(label, ({ children }) => {
       moveMusic(children, from, by);
-      // The end line moves by the bars too, held by an empty clip on the first instrument, so no note plays longer.
+      // The end line moves by the bars too: held by an empty clip at the end, else a new one on the first instrument, so no note plays longer.
       const rows = children.filter(isRow);
       const clips = rows.flatMap((row) => row.children.flatMap((child) => (child.tool === "timeline" ? [child.state] : [])));
       const reach = Math.max(0, ...clips.map((clip) => clip.start + lengthOf(clip)));
-      if (reach >= last + by) return;
+      const ends = [...clips.map((clip) => clip.start + lengthOf(clip)), ...audio.map(({ start, length }) => (retimed(start, from, by) ?? from) + length)];
+      if (ends.length > 0 && endLine(ends, piece.tempo_map.time_signatures) >= last + by) return;
       const empty = clips.find((clip) => clip.start + lengthOf(clip) === reach && clip.notes.length === 0 && [clip.pedal, clip.bend, clip.mod_wheel, clip.pressure].every((points) => !points?.length) && Object.keys(clip.controllers ?? {}).length === 0);
       const first = children.find((child) => child.name === rows.find((row) => row.tool === "track")?.name);
       if (empty) empty.length = last + by - empty.start;

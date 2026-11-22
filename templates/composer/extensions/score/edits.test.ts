@@ -126,6 +126,22 @@ test("a bar added at the end line makes the piece longer, also when its music en
   expect(edits.end()).toBe(5 * BAR);
 });
 
+test("a bar added after the last keeps the last clip's end, so its last note does not ring on, and an empty clip holds the end line", () => {
+  const f = fakeSong({ children: [trackOf("t00", [clipOf("music", 0, 4 * BAR, [{ start: 3 * BAR, length: 2 * BAR, pitch: 60, velocity: 100 }])])] });
+  const edits = scoreEdits(f.song);
+  edits.addBars(4, 1, true);
+  expect(childOf(f.self, 0, 1)).toMatchObject({ state: { length: 4 * BAR } });
+  expect(edits.end()).toBe(5 * BAR);
+});
+
+test("taking out a bar where the end line already moves makes no clip", () => {
+  const f = fakeSong({ children: [trackOf("t00", [clipOf("music", 0, null, [{ start: 3 * BAR, length: BEAT, pitch: 60, velocity: 100 }])])] });
+  const edits = scoreEdits(f.song);
+  edits.removeBar(1);
+  expect((f.self as { children: { children: unknown[] }[] }).children[0]?.children.length).toBe(2);
+  expect(edits.end()).toBe(3 * BAR);
+});
+
 test("audio that starts in a bar taken out starts where the bar was", () => {
   const f = fakeSong({ children: [trackOf("t00", [clipOf("music", 0, 4 * BAR)]), tapeOf("audio-1", [regionOf("voice", BAR + BEAT, 1)])] });
   scoreEdits(f.song).removeBar(2);
