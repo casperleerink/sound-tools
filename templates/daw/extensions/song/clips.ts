@@ -1,7 +1,7 @@
 // What the song does to its clips and regions: choose them, add, move, copy, cut, paste,
 // duplicate, delete and resize them, each with the automation under it.
 // The timeline's plane: x in ticks of the song, y in rows of the timeline, its tracks in `order`.
-import type { Dropped, FilledStateOfTool, Frozen, Pointer } from "../sdk";
+import { tempoSteps, type Dropped, type FilledStateOfTool, type Frozen, type Pointer } from "../sdk";
 import { freeName, splitTarget } from "../track";
 import { emptied, laid, laneAt, lift, type AutomationPoint } from "./lanes";
 import { itemAt, itemsOf, nameFrom, rowOfKey, rowsOf, type Child, type Draft, type RowKind, type Song } from "./model";
@@ -20,13 +20,13 @@ export const lengthOf = (clip: Frozen<Clip>) => clip.length ?? Math.max(1, ...cl
  * warp point, else as long as it plays through the tempo changes: what the window says of it, or
  * to the end its record names.
  */
-export function lengthAt(song: { children: readonly Child[]; clock: { tempo_map: { tempo_changes: readonly { tick: number; bpm: number }[] } } }, key: string): number {
+export function lengthAt(song: { children: readonly Child[]; clock: { tempo_map: Parameters<typeof tempoSteps>[0] } }, key: string): number {
   const item = itemAt(song.children, key);
   if (item?.tool === "timeline") return lengthOf(item.state);
   if (item?.tool !== "region") return 0;
   const { warp, start, file_start_seconds, file_end_seconds } = item.state;
   const seconds = item.facts.seconds ?? (file_end_seconds === null ? 0 : file_end_seconds - file_start_seconds);
-  return warp?.at(-1)?.ticks ?? ticksAcross(song.clock.tempo_map.tempo_changes, start, seconds);
+  return warp?.at(-1)?.ticks ?? ticksAcross(tempoSteps(song.clock.tempo_map), start, seconds);
 }
 
 /** The track of what shows below: its panel, or the notes of one of its clips. */

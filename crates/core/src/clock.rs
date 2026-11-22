@@ -86,6 +86,10 @@ pub enum ClockError {
     TwoTimeSignatureFields,
     #[error("the tempo map needs \"time_signatures\"")]
     NoTimeSignatureField,
+    #[error("a fermata holds its beat {min} to {max} times as long, not {0}", min = Hold::MIN, max = Hold::MAX)]
+    HoldOutOfRange(f64),
+    #[error("fermatas must be sorted by tick, each tick used once: see tick {}", .0.0)]
+    FermatasNotSorted(Ticks),
 }
 
 /// Beats per minute, where a beat is a quarter note. Held in steps of 0.001 bpm so all clock
@@ -109,6 +113,13 @@ impl Tempo {
         Ok(Self {
             milli_bpm: (bpm * 1000.0).round() as u32,
         })
+    }
+
+    /// `bpm`, or the nearest end of the range outside it.
+    pub fn clamped(bpm: f64) -> Self {
+        Self {
+            milli_bpm: (bpm.clamp(Self::MIN_BPM, Self::MAX_BPM) * 1000.0).round() as u32,
+        }
     }
 
     pub fn bpm(self) -> f64 {
@@ -509,12 +520,78 @@ impl From<TimeSignatures> for Vec<SignatureRun> {
     }
 }
 
-/// From `tick` on, the tempo is `bpm`. A step: there are no ramps.
+/// From `tick` on, the tempo is `bpm`. With `to`, it moves evenly to `to` by the next change, as
+/// a rit. or an accel. does; on the last change `to` has nothing to move to and plays as a step.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TempoChange {
     pub tick: Ticks,
     pub bpm: Tempo,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<Tempo>,
 }
+
+impl TempoChange {
+    /// A step to `bpm` at `tick`.
+    pub fn step(tick: Ticks, bpm: Tempo) -> Self {
+        Self {
+            tick,
+            bpm,
+            to: None,
+        }
+    }
+}
+
+/// How many times as long a fermata holds its beat. Held in thousandths, like [`Tempo`]. Saved
+/// as a plain number, for example `2.0`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "f64", into = "f64")]
+pub struct Hold {
+    thousandths: u32,
+}
+
+impl Hold {
+    pub const MIN: f64 = 1.0;
+    pub const MAX: f64 = 8.0;
+
+    pub fn new(times: f64) -> Result<Self, ClockError> {
+        if !(Self::MIN..=Self::MAX).contains(&times) {
+            return Err(ClockError::HoldOutOfRange(times));
+        }
+        Ok(Self {
+            thousandths: (times * 1000.0).round() as u32,
+        })
+    }
+
+    pub fn times(self) -> f64 {
+        f64::from(self.thousandths) / 1000.0
+    }
+}
+
+impl TryFrom<f64> for Hold {
+    type Error = ClockError;
+
+    fn try_from(times: f64) -> Result<Self, ClockError> {
+        Self::new(times)
+    }
+}
+
+impl From<Hold> for f64 {
+    fn from(hold: Hold) -> Self {
+        hold.times()
+    }
+}
+
+/// A fermata: the beat from `tick`, a beat of the time signature there, lasts `hold` times as
+/// long. The tempo of that beat is divided by `hold`, so a note held across it is held too.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fermata {
+    pub tick: Ticks,
+    pub hold: Hold,
+}
+
+/// How finely a tempo that moves is cut into steps: a 32nd note. A rit. over a bar of 4/4 is 32
+/// steps, too fine to hear, and every step is a plain tempo the clock converts exactly.
+const GLIDE_STEP: u64 = TICKS_PER_QUARTER / 8;
 
 /// The saved musical clock of a project: the time signatures and the tempo changes.
 ///
@@ -535,6 +612,8 @@ pub struct TempoChange {
 pub struct TempoMap {
     time_signatures: TimeSignatures,
     tempo_changes: Vec<TempoChange>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    fermatas: Vec<Fermata>,
 }
 
 /// What `project.json` holds, before the one-signature form is read as a list.
@@ -543,6 +622,8 @@ struct SavedTempoMap {
     time_signatures: Option<TimeSignatures>,
     time_signature: Option<TimeSignature>,
     tempo_changes: Vec<TempoChange>,
+    #[serde(default)]
+    fermatas: Vec<Fermata>,
 }
 
 impl TryFrom<SavedTempoMap> for TempoMap {
@@ -555,7 +636,7 @@ impl TryFrom<SavedTempoMap> for TempoMap {
             (Some(_), Some(_)) => return Err(ClockError::TwoTimeSignatureFields),
             (None, None) => return Err(ClockError::NoTimeSignatureField),
         };
-        Self::new(time_signatures, saved.tempo_changes)
+        Self::new(time_signatures, saved.tempo_changes)?.with_fermatas(saved.fermatas)
     }
 }
 
@@ -569,17 +650,34 @@ impl TempoMap {
         Ok(Self {
             time_signatures: time_signatures.into(),
             tempo_changes,
+            fermatas: Vec::new(),
         })
+    }
+
+    /// The same map with `fermatas` in place of its own. Ticks must go up, each tick used once.
+    pub fn with_fermatas(self, fermatas: Vec<Fermata>) -> Result<Self, ClockError> {
+        if let Some([_, later]) = (fermatas.windows(2))
+            .find(|pair| matches!(pair, [earlier, later] if later.tick <= earlier.tick))
+        {
+            return Err(ClockError::FermatasNotSorted(later.tick));
+        }
+        Ok(Self { fermatas, ..self })
+    }
+
+    /// The same map with other time signatures: its tempo changes and fermatas stay on their ticks.
+    pub fn with_time_signatures(&self, time_signatures: TimeSignatures) -> Self {
+        Self {
+            time_signatures,
+            ..self.clone()
+        }
     }
 
     /// One tempo for the whole project.
     pub fn constant(time_signatures: impl Into<TimeSignatures>, bpm: Tempo) -> Self {
         Self {
             time_signatures: time_signatures.into(),
-            tempo_changes: vec![TempoChange {
-                tick: Ticks(0),
-                bpm,
-            }],
+            tempo_changes: vec![TempoChange::step(Ticks(0), bpm)],
+            fermatas: Vec::new(),
         }
     }
 
@@ -589,6 +687,50 @@ impl TempoMap {
 
     pub fn tempo_changes(&self) -> &[TempoChange] {
         &self.tempo_changes
+    }
+
+    pub fn fermatas(&self) -> &[Fermata] {
+        &self.fermatas
+    }
+
+    /// The tempo as plain steps, which is how it plays: each change that moves cut into a step
+    /// every 32nd note, each at the tempo halfway through it so the steps last as long as
+    /// the even move; and the beat of each fermata at its tempo divided by its hold.
+    pub fn steps(&self) -> Vec<TempoChange> {
+        let mut steps = Vec::with_capacity(self.tempo_changes.len());
+        for (index, change) in self.tempo_changes.iter().enumerate() {
+            let next = self.tempo_changes.get(index + 1).map(|next| next.tick.0);
+            let (Some(to), Some(end)) = (change.to, next) else {
+                steps.push(TempoChange::step(change.tick, change.bpm));
+                continue;
+            };
+            let length = end - change.tick.0;
+            let count = length.div_ceil(GLIDE_STEP);
+            let (from, to) = (change.bpm.bpm(), to.bpm());
+            for step in 0..count {
+                let tick = change.tick.0 + step * GLIDE_STEP;
+                let middle = (tick + GLIDE_STEP / 2).min(end) - change.tick.0;
+                let bpm = from + (to - from) * middle as f64 / length as f64;
+                steps.push(TempoChange::step(Ticks(tick), Tempo::clamped(bpm)));
+            }
+        }
+        for fermata in &self.fermatas {
+            let beat = self
+                .time_signatures
+                .bar_at(fermata.tick)
+                .signature
+                .ticks_per_beat();
+            let (start, end) = (fermata.tick, fermata.tick + Ticks(beat));
+            split_steps(&mut steps, start);
+            split_steps(&mut steps, end);
+            for step in steps
+                .iter_mut()
+                .filter(|step| step.tick >= start && step.tick < end)
+            {
+                step.bpm = Tempo::clamped(step.bpm.bpm() / fermata.hold.times());
+            }
+        }
+        steps
     }
 
     /// The same map with the tempo change that starts exactly at `tick` set to `bpm`. `None`
@@ -604,8 +746,8 @@ impl TempoMap {
             .find(|change| change.tick == tick)?;
         change.bpm = bpm;
         Some(Self {
-            time_signatures: self.time_signatures.clone(),
             tempo_changes,
+            ..self.clone()
         })
     }
 
@@ -617,10 +759,7 @@ impl TempoMap {
             .partition_point(|change| change.tick <= tick)
             .saturating_sub(1);
         // A map always has a change at tick 0, so the fallback is never used.
-        let start = TempoChange {
-            tick: Ticks(0),
-            bpm: Tempo::default(),
-        };
+        let start = TempoChange::step(Ticks(0), Tempo::default());
         self.tempo_changes.get(index).copied().unwrap_or(start)
     }
 
@@ -634,10 +773,17 @@ impl TempoMap {
         }
         let mut tempo_changes = self.tempo_changes.clone();
         let index = tempo_changes.partition_point(|change| change.tick < tick);
-        tempo_changes.insert(index, TempoChange { tick, ..change });
+        tempo_changes.insert(
+            index,
+            TempoChange {
+                tick,
+                to: None,
+                ..change
+            },
+        );
         Some(Self {
-            time_signatures: self.time_signatures.clone(),
             tempo_changes,
+            ..self.clone()
         })
     }
 
@@ -654,8 +800,8 @@ impl TempoMap {
         let mut tempo_changes = self.tempo_changes.clone();
         tempo_changes.remove(index);
         Some(Self {
-            time_signatures: self.time_signatures.clone(),
             tempo_changes,
+            ..self.clone()
         })
     }
 }
@@ -664,6 +810,18 @@ impl TempoMap {
 impl Default for TempoMap {
     fn default() -> Self {
         Self::constant(TimeSignature::default(), Tempo::default())
+    }
+}
+
+/// `steps` with one that starts at `tick`, at the tempo that plays there, unless one does.
+fn split_steps(steps: &mut Vec<TempoChange>, tick: Ticks) {
+    let index = steps.partition_point(|step| step.tick < tick);
+    if steps.get(index).is_some_and(|step| step.tick == tick) {
+        return;
+    }
+    if let Some(before) = index.checked_sub(1).and_then(|before| steps.get(before)) {
+        let bpm = before.bpm;
+        steps.insert(index, TempoChange::step(tick, bpm));
     }
 }
 
@@ -760,7 +918,8 @@ impl Clock {
                 frames_per_tick: (frames / divisor, ticks / divisor),
             }
         };
-        let mut changes = tempo_map.tempo_changes.iter();
+        let steps = tempo_map.steps();
+        let mut changes = steps.iter();
         // A tempo map always starts with a change at tick 0. The fallback is never used.
         let first_bpm = changes.next().map(|change| change.bpm).unwrap_or_default();
         let first = segment(Ticks(0), 0, first_bpm);
@@ -824,8 +983,17 @@ impl Clock {
         (segment.tick as f64 + ticks_since_start) / TICKS_PER_QUARTER as f64
     }
 
+    /// The tempo that plays at `tick`, a moving one and a fermata's beat included.
     pub fn tempo_at(&self, tick: Ticks) -> Tempo {
         self.segment_of_tick(tick).bpm
+    }
+
+    /// Where the tempo changes as it plays after `from` and before `to`, see [`TempoMap::steps`].
+    pub fn steps_between(&self, from: Ticks, to: Ticks) -> impl Iterator<Item = Ticks> + '_ {
+        let after = self.later.partition_point(|segment| segment.tick <= from.0);
+        (self.later.get(after..).unwrap_or_default().iter())
+            .take_while(move |segment| segment.tick < to.0)
+            .map(|segment| Ticks(segment.tick))
     }
 
     /// Seconds from the project start, through `frame_of`, so it agrees with the audio.

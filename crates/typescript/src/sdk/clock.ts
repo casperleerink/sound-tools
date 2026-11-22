@@ -48,10 +48,70 @@ export interface Clock {
   update(label: string, change: (song: { tempo_map: TempoMap; sections: Section[] }) => void): void;
 }
 
-/** The time signatures, as runs of bars, and the tempo from a tick on, as steps. */
+/**
+ * The time signatures, as runs of bars; the tempo from a tick on, moving evenly to `to` by the
+ * next change when it has one (a rit. or an accel.); and the fermatas, each holding the beat
+ * from its tick `hold` times as long (1 to 8).
+ */
 export interface TempoMap {
   time_signatures: { signature: string; bars: number }[];
-  tempo_changes: { tick: number; bpm: number }[];
+  tempo_changes: { tick: number; bpm: number; to?: number }[];
+  fermatas?: { tick: number; hold: number }[];
+}
+
+/** A tempo map as the clock gives it, which code reads and does not change. */
+type ReadTempoMap = {
+  readonly time_signatures: readonly { readonly signature: string; readonly bars: number }[];
+  readonly tempo_changes: readonly { readonly tick: number; readonly bpm: number; readonly to?: number }[];
+  readonly fermatas?: readonly { readonly tick: number; readonly hold: number }[];
+};
+
+/** A 32nd note, how finely the clock cuts a tempo that moves. */
+const GLIDE_STEP = 120;
+const [SLOWEST, FASTEST] = [10, 1000];
+const tempo = (bpm: number) => Math.round(Math.min(Math.max(bpm, SLOWEST), FASTEST) * 1000) / 1000;
+
+/** The ticks of a beat of the time signature that plays at `tick`. */
+function beatAt(runs: ReadTempoMap["time_signatures"], tick: number): number {
+  let start = 0;
+  for (const [index, run] of runs.entries()) {
+    const [count, unit] = run.signature.split("/").map(Number);
+    const bar = ((count ?? 4) * 3840) / (unit ?? 4);
+    if (index === runs.length - 1 || tick < start + run.bars * bar) return 3840 / (unit ?? 4);
+    start += run.bars * bar;
+  }
+  return 960;
+}
+
+/**
+ * The tempo as it plays, in plain steps, as the clock plays it: a change that moves cut into a
+ * step every 32nd note, each at the tempo halfway through it; a fermata's beat at the tempo
+ * divided by its hold.
+ */
+export function tempoSteps(map: ReadTempoMap): { tick: number; bpm: number }[] {
+  const changes = map.tempo_changes;
+  const steps = changes.flatMap(({ tick, bpm, to }, index) => {
+    const end = changes[index + 1]?.tick;
+    if (to === undefined || end === undefined) return [{ tick, bpm }];
+    const length = end - tick;
+    return Array.from({ length: Math.ceil(length / GLIDE_STEP) }, (_, step) => {
+      const at = tick + step * GLIDE_STEP;
+      return { tick: at, bpm: tempo(bpm + ((to - bpm) * (Math.min(at + GLIDE_STEP / 2, end) - tick)) / length) };
+    });
+  });
+  const split = (tick: number) => {
+    const index = steps.findIndex((step) => step.tick >= tick);
+    if (steps[index]?.tick === tick) return;
+    const at = index === -1 ? steps.length : index;
+    if (at > 0) steps.splice(at, 0, { tick, bpm: steps[at - 1]!.bpm });
+  };
+  for (const { tick, hold } of map.fermatas ?? []) {
+    const end = tick + beatAt(map.time_signatures, tick);
+    split(tick);
+    split(end);
+    for (const step of steps) if (step.tick >= tick && step.tick < end) step.bpm = tempo(step.bpm / hold);
+  }
+  return steps;
 }
 
 /** A part of the piece from the start of `bar`, counted from 1, up to the next section. */

@@ -9,9 +9,7 @@ use anyhow::{Context as _, Result, anyhow};
 use rune::{Cursor, El, Icon, Key, KeyEvent, LiveText, TextEdit, Tx, el, icon, row, text};
 use runtime::session::Drag;
 use serde_json::{Value, json};
-use sound_core::{
-    Changes, FADER_TOP_DB, Peaks, Project, Scale, Tempo, TempoMap, Ticks, TimeSignature,
-};
+use sound_core::{Changes, FADER_TOP_DB, Peaks, Project, Scale, Tempo, Ticks, TimeSignature};
 use sound_typescript::live::{Readout, TickReadout, text_of};
 
 use super::State;
@@ -261,8 +259,7 @@ impl State {
         let run = signatures.change_at(self.session.status().playhead_tick);
         let signatures = (signatures.with_signature_at(run.number, signature))
             .context("the time signature could not change there")?;
-        let map = TempoMap::new(signatures, map.tempo_changes().to_vec())
-            .map_err(|error| anyhow!("{error}"))?;
+        let map = map.with_time_signatures(signatures);
         let mut changes = Changes::new();
         changes.set_tempo_map(map);
         self.session

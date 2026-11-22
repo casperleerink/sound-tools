@@ -1,7 +1,7 @@
 // An audio clip on the timeline: its sound as it plays, its gain and fades in it, or the words of
 // a file that is not there; its trims; and, chosen alone, the handles of its fades and its gain.
 // The window draws the sound and moves the handles; the view runs for none of it.
-import { h, live, type Color, type Drag, type Live, type Pointer } from "../../../sdk";
+import { h, live, tempoSteps, type Color, type Drag, type Live, type Pointer } from "../../../sdk";
 import { GAIN } from "../../../song/regions";
 import { BEAT, secondsBetween, ticksAcross, ticksBefore } from "../../../song/time";
 import { ROW, type Page, type Track } from "../../../song/view";
@@ -47,7 +47,7 @@ export const RegionWave = ({ region, path, x, y, length, colour }: { region: Reg
  * step of the snap long. A drag of an edge is one undo step.
  */
 export function trimsOf(page: Page, key: string, { state, facts }: Region, start: number, length: number, step: number) {
-  const changes = page.song.clock.tempo_map.tempo_changes;
+  const changes = tempoSteps(page.song.clock.tempo_map);
   const earlier = Math.min(start, Math.floor(ticksBefore(changes, start, state.file_start_seconds)));
   const rest = state.file_end_seconds === null ? 0 : Math.max((facts.file.seconds ?? 0) - state.file_end_seconds, 0);
   const later = Math.round(ticksAcross(changes, start + length, rest));
@@ -69,7 +69,7 @@ type HandlesProps = { page: Page; itemKey: string; region: Region; words: string
 export const RegionHandles = ({ page, itemKey: key, region, words, x, y: row, width }: HandlesProps) => {
   const { state, facts } = region;
   const seconds = facts.seconds ?? 0;
-  const changes = page.song.clock.tempo_map.tempo_changes;
+  const changes = tempoSteps(page.song.clock.tempo_map);
   // A fade is a time, drawn in ticks at the tempo where it is: the fade in at the clip's start, the fade out at its end.
   const end = state.start + ticksAcross(changes, state.start, seconds);
   const [msPerTick, msPerTickOut] = [(secondsBetween(changes, state.start, state.start + BEAT) * 1000) / BEAT, (secondsBetween(changes, end - BEAT, end) * 1000) / BEAT];

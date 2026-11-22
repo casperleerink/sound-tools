@@ -663,10 +663,9 @@ impl Leaves for Sources<'_> {
             Live::Tick => playhead,
             Live::Playing => f64::from(u8::from(self.state.playing)),
             Live::Elapsed => self.lives.elapsed.get(),
-            Live::Bpm => {
-                let tempo_map = self.state.project().clock().tempo_map();
-                tempo_map.change_at(Ticks(playhead as u64)).bpm.bpm()
-            }
+            Live::Bpm => (self.state.project().clock())
+                .tempo_at(Ticks(playhead as u64))
+                .bpm(),
             Live::Feed { name, path } => {
                 (self.state.feeds).number(self.state, self.instance, path.as_deref(), name)
             }

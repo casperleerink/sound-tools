@@ -18,7 +18,7 @@ export const TempoLane = ({ page }: { page: Page }) => {
   const { clock, memory } = song;
   const changes = clock.tempo_map.tempo_changes;
   const tall = TEMPO - 1;
-  const bpms = changes.map((change) => change.bpm);
+  const bpms = changes.flatMap((change) => [change.bpm, change.to ?? change.bpm]);
   const [low, high] = [Math.min(...bpms), Math.max(...bpms)];
   const yOf = (bpm: number) => (high > low ? EDGE + ((high - bpm) / (high - low)) * (tall - 2 * EDGE) : tall / 2);
   const perPoint = Math.max(high - low, SPAN) / (tall - 2 * EDGE);
@@ -40,8 +40,8 @@ export const TempoLane = ({ page }: { page: Page }) => {
           <box>
             <shapes place={[0, 0, end, tall]} lines={[{ color: "text-secondary", width: 1.5, points: changes.flatMap((change, index) => {
               const next = changes[index + 1];
-              const y = yOf(change.bpm);
-              return [change.tick, y, next?.tick ?? end, y, ...(next ? [next.tick, y, next.tick, yOf(next.bpm)] : [])];
+              const [y, last] = [yOf(change.bpm), yOf(next ? (change.to ?? change.bpm) : change.bpm)];
+              return [change.tick, y, next?.tick ?? end, last, ...(next ? [next.tick, last, next.tick, yOf(next.bpm)] : [])];
             }) }]} />
             {changes.map((change, index) => {
               const [y, to] = [yOf(change.bpm), changes[index + 1]?.tick ?? end];

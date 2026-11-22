@@ -37,6 +37,9 @@ export type {
   TakingTool, Tick, ToolName, ToolSpec
 } from "./sdk/tools";
 // the clock and keys
+export {
+  tempoSteps
+} from "./sdk/clock";
 export type {
   ActionKey, Clock, KeyName, Modifiers, PlainKey, Section, TempoMap
 } from "./sdk/clock";
