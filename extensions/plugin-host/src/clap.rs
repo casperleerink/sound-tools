@@ -710,10 +710,15 @@ impl PluginGui for ClapPlugin {
             .map_err(|error| self.failed(error))
     }
 
+    /// A view with a parent on screen is on screen: every plugin made with nih-plug refuses
+    /// `show` and draws all the same.
     fn show(&mut self) -> Result<(), PluginProblem> {
         let gui = self.gui_extension().ok_or_else(|| self.no_window())?;
-        gui.show(&self.instance.plugin_handle())
-            .map_err(|error| self.failed(error))
+        match gui.show(&self.instance.plugin_handle()) {
+            Ok(()) => {}
+            Err(_refused) => {}
+        }
+        Ok(())
     }
 
     fn can_resize(&mut self) -> bool {

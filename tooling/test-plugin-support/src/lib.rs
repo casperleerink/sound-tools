@@ -116,6 +116,10 @@ pub const RESIZE_IN_ATTACHED_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_RESIZE_IN
 /// and must not call `removed` for an `attached` that never happened. VST 3 only.
 pub const ATTACH_FAILS_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_ATTACH_FAILS";
 
+/// Makes the CLAP plugin answer `show` with a refusal while its view is on screen, as every
+/// plugin made with nih-plug does. CLAP only.
+pub const REFUSES_SHOW_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_REFUSES_SHOW";
+
 /// Makes the plugin's controller edit a parameter through the host as soon as it has a
 /// component handler, the way a plugin's own window does when the composer turns a knob: a
 /// `beginEdit`, that many `performEdit`s ending on `1 / count`, and an `endEdit`. The plugin's
