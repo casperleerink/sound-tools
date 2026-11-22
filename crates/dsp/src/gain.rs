@@ -1,6 +1,5 @@
-//! Gain in decibels and the pan law, the two sums every volume and pan of the SDK shares: the
-//! track mixer, a pad of the Drum pad and the Utility. One place, so a pan of 0.3 means the same
-//! wherever a composer turns it.
+//! Gain in decibels and the pan law, the two sums every volume and pan shares, so a pan of 0.3
+//! means the same wherever a composer turns it.
 
 use std::f64::consts::{FRAC_PI_2, SQRT_2};
 

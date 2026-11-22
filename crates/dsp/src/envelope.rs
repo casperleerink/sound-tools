@@ -1,7 +1,5 @@
 //! An envelope of four stages, attack, decay to a sustain level and release, for an instrument
-//! that shapes each voice. Next to [`Smoothed`](sound_core::Smoothed), the other helper a processor
-//! uses per frame. The core itself shapes nothing and knows no notes: an instrument starts and
-//! releases a voice when it decides to.
+//! that shapes each voice.
 
 /// How far past full level the attack aims. It shapes the attack curve, and lets it reach full
 /// level in exactly the attack time.

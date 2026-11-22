@@ -1,6 +1,4 @@
-//! A soft clip curve, for a processor that drives a sound into saturation: the drive of the
-//! Filter and the `clip` curve of the Saturator. Next to [`Smoothed`](sound_core::Smoothed), a helper
-//! a processor uses per frame. The core itself shapes nothing.
+//! A soft clip curve, for a processor that drives a sound into saturation.
 
 /// The curve is exactly clean up to full scale, then bends softly towards `KNEE + BEND`.
 const KNEE: f32 = 1.0;

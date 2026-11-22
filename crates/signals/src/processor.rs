@@ -38,7 +38,8 @@ const BEND_SEMITONES: f32 = 2.0;
 
 /// The most notes an instrument plays at once.
 pub const MAX_VOICES: usize = 8;
-/// The most notes and triggers that wait for their frame: a control loop plays a little ahead.
+/// The most notes, triggers and live moves that wait for their frame: a control loop plays a
+/// little ahead.
 const MAX_SCHEDULED: usize = 256;
 
 /// What a tool is.
