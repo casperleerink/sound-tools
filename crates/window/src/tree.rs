@@ -107,6 +107,8 @@ pub(crate) struct BoxNode {
     w: Option<Size>,
     h: Option<Size>,
     grow: Option<f32>,
+    #[serde(default)]
+    shrink: bool,
     pad: Option<Pad>,
     gap: Option<u32>,
     align: Option<String>,

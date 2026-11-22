@@ -283,6 +283,9 @@ fn boxed(scope: &Scope, mut e: El, b: &BoxNode) -> El {
         // widen it and push what follows out of its row.
         e = e.grow(grow).min_w(0.0);
     }
+    if b.shrink {
+        e = e.shrink();
+    }
     match b.pad {
         Some(Pad::All(step)) => e = e.padding(theme.space(step)),
         Some(Pad::Sides([across, down])) => e = e.px(theme.space(across)).py(theme.space(down)),
