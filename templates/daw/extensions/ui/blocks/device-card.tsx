@@ -121,7 +121,7 @@ export const Frame = ({ id, title, menu, on = true, onPower, onRemove, end, chos
     {...(drag ? { opacity: live.drag(id).active.times(-0.5).plus(1) } : {})}>
     <box h={HEADER} />
     {/* One point inside the card's line, which lies under what the card holds; after its room, so a pointer finds it. */}
-    <row key={`${id}-header`} label={`Choose ${title}`} role="toolbar" group inset={[1, 1, 1, null]} h={HEADER - 1} pad={[1, 0]} gap={1} align="center"
+    <row key={`${id}-header`} label={`Choose ${title}`} role="toolbar" group inset={[1, 1, 1, null]} h={HEADER - 1} pad={[1, 0]} gap={1} align="center" justify="between"
       {...(drag ? { drag: { ...drag, id }, onDragEnd, radius: "md", hover: "fill" } : {})} {...(onChoose ? { onPress: onChoose } : {})}>
       {menu ? (
         <row key={`${id}-title`} label={menu.label} role="button" shrink h={height("sm")} pad={[2, 0]} gap={1} align="center" radius="md" hover="fill">
@@ -132,7 +132,7 @@ export const Frame = ({ id, title, menu, on = true, onPower, onRemove, end, chos
       ) : (
         <row pad={[2, 0]} shrink><text style="heading" color={on ? "text" : "text-muted"} truncate>{title}</text></row>
       )}
-      <row grow={1} gap={1} justify="end" align="center">
+      <row gap={1} align="center">
         {end}
         {onPower && <Quiet shown={!on}><HeaderIcon id={`${id}-power`} label={on ? `Turn ${title} off` : `Turn ${title} on`} icon="power" color={on ? "text-secondary" : "text-muted"} checked={on} tip={on ? "Turn off" : "Turn on"} onPress={onPower} /></Quiet>}
         {onRemove && <Quiet shown={false}><HeaderIcon id={`${id}-remove`} label={`Remove ${title}`} icon="x" color="text-secondary" tip="Remove" onPress={onRemove} /></Quiet>}
