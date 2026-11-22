@@ -1,86 +1,26 @@
-import { boolean, choice, Fragment, h, list, memo, Page, Rect, Show, Space, text, tool, Transport, untrack, type Accessor, type Connection, type Context, type Declaration, type Inputs, type MovedNumber, type Turn, type ValuesOf } from "./sdk";
-import { bus } from "./bus";
-import { ClipEditor, ROW as NOTE_ROW, type EditorMemory } from "./clip-editor";
-import type { Clipboard } from "./song-clips";
-import { songActions } from "./song-keys";
-import { Mixer } from "./song-mixer";
-import { BEAT, beatRuns, clamp, colourOf, LOW_ROW, pageOf, ROW, RULER, TEMPO, titleOf } from "./song-page";
-import { MasterPanel, Rack } from "./song-panel";
-import { Ruler, SectionName, type Editing, type Mark } from "./song-ruler";
-import { TempoLane } from "./song-tempo";
-import { ClipName, Timeline, TimelineFoot } from "./song-timeline";
-import { EmptySong, Heads, notesTrackOf, toggleRecordingOf } from "./song-tracks";
-import { tape } from "./tape";
-import { track } from "./track";
+import { h, live, tool, type Child, type Connection, type Declaration } from "./sdk";
+import { Editor } from "./ui/blocks/song/editor";
+import { PITCH } from "./ui/blocks/song/roll-view";
+import { Heads } from "./ui/blocks/song/heads";
+import { Mixer } from "./ui/blocks/song/mixer";
+import { Rack } from "./ui/blocks/song/rack";
+import { Ruler } from "./ui/blocks/song/ruler";
+import { Timeline } from "./ui/blocks/song/timeline";
+import { publish } from "./song/clips";
+import { actions } from "./song/keys";
+import { EDITOR, fields, itemAt, memory, parts } from "./song/model";
+import { notesTrackOf, trackEdits } from "./song/tracks";
+import { DIVIDER, MIXER, pageOf, RACK, ROW, SHORTEST, type Page } from "./song/view";
 
-// A song: tracks of clips in time, with their automation, a mixer strip per track, the devices
-// of the chosen track, and a note editor for one clip.
-export const parts = { master: "fader", limit: "limiter", quiet: "lane", "audio-*": tape, "ret-*": bus, "*": track } as const;
-const fields = { order: list(text(), { max: 128 }), solo: list(text(), { max: 64 }), sidechains: list({ effect: text(), from: text(), tap: choice({ options: ["pre_fx", "post_fx", "post_fader"], default: "post_fader" }) }, { max: 64 }), limit_off: boolean({ default: false }) };
-/** What the song's code gets: its view, the parts of its page and its actions. */
-export type Song = Context<ValuesOf<typeof fields>, Inputs, Memory, typeof parts>;
-/** How tall the note editor opens, and the shortest a drag makes it. */
-const [EDITOR, SHORTEST] = [352, 184];
-/** The line over the editor that drags, with the room around it the pointer finds. */
-const DIVIDER = 5;
-
-/** What shows under the timeline, one at a time: a track's panel, the master's, a clip's notes or the mixer. */
-type Below = { kind: "track"; name: string } | { kind: "master" } | { kind: "editor"; clip: string } | { kind: "mixer" } | null;
-
-type Memory = {
-  /** The chosen clips and regions, `row/name`. */
-  selected: Set<string>;
-  below: Below;
-  armed: Set<string>;
-  recording: number | null;
-  /** The track the keyboard plays, and the one whose name is typed. */
-  track: string | null;
-  /** The track whose head the pointer is over, which shows all its toggles. */
-  hovered: string | null;
-  renaming: string | null;
-  renamingClip: string | null;
-  /** The clip whose menu a key asked for, which the timeline opens. */
-  clipMenu: string | null;
-  clipboard: Clipboard | null;
-  /** Whether the tempo shows as a line under the ruler. */
-  tempoLane: boolean;
-  /** The tracks whose automation lanes show under them, and each lane's range by `track/target`. */
-  lanes: Set<string>;
-  ranges: Record<string, MovedNumber>;
-  editing: Editing;
-  /** The range the ruler shows to repeat, while the clock does not repeat: none until the composer made one. */
-  repeatRange: { from: number; to: number } | null;
-  /** Whether the returns show a row each, or fold to one. */
-  returnsOpen: boolean;
-  /** What each device of a track is called, by `track/path`, as its card's title says: for the lanes' names. */
-  names: Record<string, string>;
-  /** The chosen point of an automation lane, by its tick, which delete removes. */
-  point: { track: string; lane: string; tick: number } | null;
-  /** The chosen mark of the ruler, which delete removes. */
-  mark: Mark | null;
-  /** The chosen effect of a track's panel, by its name in the chain, which the keys move. */
-  effect: { track: string; name: string } | null;
-  /** Whether it showed the panel of its first track, as it does once, when it opens. */
-  opened: boolean;
-  /** How tall the note editor is, in points, and whether it is large: all the window but one track. */
-  editor: number;
-  editorLarge: boolean;
-} & EditorMemory;
-
+// A song: tracks of clips in time, and under them the devices of the chosen track, the notes of a
+// clip or the mixer. What it does is in `song/`; its blocks, in `ui/blocks/song/`, draw it.
 export const song = tool({
   name: "song",
   title: "Song",
-  when: "You change the song page: its tracks, clips, automation, mixer strips or note editor",
-  doc:
-    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. A track's R arms its recorder `rec`. The key R or the record button records from the playhead until pressed again or a stop: every armed track, the audio input into new regions, and the keyboard's notes into a new clip of the chosen track, or of the first while none is chosen, which the keyboard plays then. Drags, arrows and new clips land on the snap in the corner; cmd held drags off it. Clips and regions are one selection, and choosing one chooses its track: the panel below shows that track, and an open editor that clip. Drag one to move the chosen (alt copies them, up and down to another track of their kind; the automation under them goes along, a device's lane on its own track only), drag either end of a clip to resize it, double-click empty space to add one (shift-C adds one at the playhead, on the chosen track) and a clip (or enter) to edit its notes below, drag over empty space to choose what is there, shift- or cmd-click to add one; right-click it, or press alt-enter, to cut, copy, duplicate, rename, export its notes, render or delete it; alt-left and alt-right choose the clip before and the next on its track. A MIDI file of one part dropped on a track becomes a clip there, else each part a new track. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips and regions, cut and paste with the automation under them, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open, alt-up and alt-down step the chosen velocities, N adds a note after the chosen ones (at the playhead, or the start of the clip, while none is), Q quantizes the chosen notes (all while none is) to the snap, its menu (right-click the notes or its … button) sets the strength and swing, humanizes or makes them legato, its lane picker shows the clip's controller lanes and on a plugin's track any controller, its head says the chosen note, a word and a value each for its pitch, start, length and velocity, and a click on a value, or enter, types it, a line shows where the piece plays in it, the line over it drags it taller, shift-enter makes it large and puts it back, and escape closes it; escape with nothing chosen closes what shows below, a panel or the mixer. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, renders it, or deletes it; a render (Render to audio track…, which asks: with or without the tail) plays the track alone, after its effects, from its first chosen clip to its last (all its clips from a track's menu), onto a new audio track `audio-*` under it that takes the track's fader, sends, their automation, solo and post-fader sidechains, and mutes the track; drag a track's head onto another to move it there; delete on a track whose panel shows asks, then deletes it. A lane: press to add a point, chosen, and drag on to move it; drag a point to move it between its neighbours, alt-drag to erase the points it covers; drag the dot in the middle of a line up or down to bend it, double-click it to straighten it; delete removes the chosen one and alt-click any; the last point takes its lane along; a lane's name is a menu that moves its number with points, an LFO or an envelope (a track's notes play it), or removes it. An LFO or an envelope shows its controls under the lane's name, and the band its number moves in, whose low and high lines drag; an LFO draws its wave there. With Write automation on in the transport, dragging a knob or a fader a lane moves while the song plays writes into the lane from where it was grabbed to where it was let go. A song opens with the panel of its first track; in a panel an effect is dragged to another place in its chain, or moved a step by Move earlier and Move later in the menu of its title, or, the chosen one, by alt-left and alt-right: enter on its card, the menu of its title or adding it chooses it, which the fill around it shows, and escape lets go. The clips of a track whose instrument makes its own notes, such as a step sequencer, draw dimmed and say so under the pointer. The returns sit over the master's row under the tracks, each with a panel of its effects; a track's panel has a row per send at its right, its dial, its return and what it sends, which a click or enter types, one column that stays while its devices scroll and scrolls down itself past five, and so does its strip in the mixer, which the toggle of the master's row shows: the returns' and the master's stand after the tracks' and stay in view while those scroll; a strip says a number at its control, the gain over its fader and the pan under its dial, only away from where it rests, or under the pointer; a click on its name chooses it, a double click shows its panel. The ruler: click to play from there, click a section, time signature or tempo change to choose it (delete removes it, enter names a section), double-click to add a section, right-click to add a tempo change or a time signature, which the transport then changes, or a section, T adds a tempo change at the playhead, shift-T a time signature change and shift-S a section, alt-shift-left and alt-shift-right go to the mark before and the next and choose it, drag over it to repeat a range, which then shows as a bar at its foot; the tempo toggle left of it shows the tempo changes as a line under it, chosen and removed as in the ruler; click the repeat's bar at its foot to turn it on or off, drag it or an end to move it. A region chosen alone: an edge trims it, its handles change its gain and fades, alt-up and alt-down its gain. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays at `tap`: into its effects, out of them or out of its fader; a compressor's or a gate's card picks it behind its expand. The keys named here are the first keys of its `actions`, in `song-keys.ts`; the composer may have given them others.",
+  when: "You change the song page: its tracks, clips, panel or mixer",
+  doc: "Tracks of clips in time, the devices of the chosen track under them, and a mixer. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. Each return `ret-*` plays what the sends `send-<return>` of the tracks bring into the master too. A track's arm opens its recorder `rec`; R records every armed track and the keyboard's notes on the chosen track. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays at `tap`. Its keys are its `actions`, in `song/keys.ts`; what they and the view change, in `song/edits.ts`.",
   state: fields,
   children: parts,
-  memory: (): Memory => ({
-    selected: new Set(), below: null, armed: new Set(), recording: null, track: null, hovered: null, renaming: null, renamingClip: null, clipMenu: null,
-    clipboard: null, tempoLane: false, lanes: new Set(), ranges: {}, editing: null, repeatRange: null, returnsOpen: false, point: null, mark: null, effect: null, names: {}, opened: false, editor: EDITOR, editorLarge: false,
-    notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copied: null, strength: 1, swing: 0, humanized: 0,
-  }),
-  actions: songActions,
   behaviour: ({ state, children }): Declaration<typeof parts> => {
     const tracks = children.filter((child) => child.tool === "track" || child.tool === "tape");
     const returns = children.filter((child) => child.tool === "bus");
@@ -123,146 +63,67 @@ export const song = tool({
     }
     return { connections };
   },
-  view: (tool) => {
-    const { state, memory, clock, play } = tool;
-    const page = pageOf(tool);
-    const { rows, strips, starts, clipAt, editClips } = page;
-    // A song opens on its first track, chosen, with its panel: a click on a track shows the same.
-    if (!untrack(() => memory.opened)) {
+  memory,
+  actions,
+  tick: (song) => trackEdits(song).stopped(),
+  view: (self, ctx) => {
+    const { memory } = ctx;
+    const page = pageOf(self, ctx);
+    // A song opens on its first track, chosen, with its panel below.
+    if (!memory.opened) {
       memory.opened = true;
-      const first = untrack(rows)[0];
-      if (first) untrack(() => page.openPanel(first.name));
+      const first = page.tracks[0];
+      if (first && memory.below === null) [memory.below, memory.track] = [{ kind: "track", name: first.name }, first.name];
     }
-    const toggleRecording = () => toggleRecordingOf(tool, state.order);
-    // A pause or a stop ends the recording, as in the arrangement.
-    memo(() => {
-      if (!clock.playing && untrack(() => memory.recording) !== null) untrack(toggleRecording);
-    });
-
-    // One selection: what shows below follows the chosen clips, the panel to their track and the editor to the first of them.
-    memo(() => {
-      const first = [...memory.selected][0];
-      if (first === undefined) return;
-      untrack(() => {
-        const below = memory.below;
-        const name = first.split("/")[0] ?? "";
-        if (below?.kind === "track" && below.name !== name) memory.below = { kind: "track", name };
-        else if (below?.kind === "editor" && !memory.selected.has(below.clip)) {
-          memory.below = clipAt(first) ? { kind: "editor", clip: first } : { kind: "track", name };
-          memory.notes = new Set();
-        }
-      });
-    });
-
-    // The editor at its largest leaves the ruler, one track, the returns and the master over it.
-    const largest = () => Math.max(tool.size.height - DIVIDER - RULER - 1 - (memory.tempoLane ? TEMPO + 1 : 0) - ROW - page.returnsHeight() - LOW_ROW, SHORTEST);
-    const editorHeight = () => (memory.editorLarge ? largest() : clamp(memory.editor, SHORTEST, largest()));
-    const openKey = () => (memory.below?.kind === "editor" ? memory.below.clip : null);
-    const open = () => {
-      const key = openKey();
-      return key ? clipAt(key) : undefined;
-    };
-    const openEditor = () => {
-      const key = openKey();
-      const clip = open();
-      if (!key || !clip) return null;
-      const [trackName] = key.split("/");
-      return (
-        <ClipEditor
-          clip={() => open()?.state}
-          bars={() => starts().map((tick) => tick - (open()?.state.start ?? 0))}
-          name={() => {
-            const row = rows().find((each) => each.name === trackName);
-            return row ? titleOf(row) : trackName ?? "";
-          }}
-          title={() => open()?.state.title || ""}
-          colour={() => {
-            const row = rows().find((each) => each.name === trackName);
-            return row ? colourOf(row) : "blue";
-          }}
-          id={key}
-          memory={memory}
-          edit={(label, change) => editClips(label, [key], change)}
-          preview={(pitch) => play(pitch, { child: trackName as `audio-${string}`, seconds: 0.3 })}
-          seek={(tick) => clock.jump((open()?.state.start ?? 0) + tick)}
-          onClose={() => (memory.below = { kind: "track", name: trackName ?? "" })}
-          height={editorHeight}
-          large={() => memory.editorLarge}
-          onLarge={() => (memory.editorLarge = !memory.editorLarge)}
-          beats={() => beatRuns(page.runs())}
-          openMenu={page.openMenu}
-          hearsControllers={() => {
-            const row = rows().find((each) => each.name === trackName);
-            return row?.tool === "track" && row.children.some((child) => child.name === "synth" && String(child.tool) === "plugin");
-          }}
-        />
-      );
-    };
-
+    publish(ctx);
+    const below = memory.below;
+    const clip = below?.kind === "editor" && itemAt(self.children, below.clip)?.tool === "timeline" ? below.clip : null;
+    const large = clip !== null && memory.editorLarge;
     return (
-      <Page flush header={<Transport record={{ on: () => memory.recording !== null, press: toggleRecording }} computerKeys writeAutomation />}>
-        <div style={{ direction: "row", gap: "sm", align: "center" }}>
-          <SectionName page={page} />
-          <ClipName page={page} />
-        </div>
-        <div style={{ direction: "row", grow: true }}>
+      <col w="full" h="full" fill="background">
+        <Ruler page={page} />
+        <row w="full" {...(large ? { h: ROW + page.low } : { grow: 1 })}>
           <Heads page={page} />
-          <div style={{ width: 1, background: "border", keep: true }} />
-          <div style={{ grow: true }}>
-            <Ruler page={page} />
-            <div style={{ height: 1, background: "border", keep: true }} />
-            <Show when={() => memory.tempoLane}>
-              {() => (
-                <>
-                  <TempoLane page={page} />
-                  <div style={{ height: 1, background: "border", keep: true }} />
-                </>
-              )}
-            </Show>
-            <div style={{ grow: true }}>
-              <Timeline page={page} />
-              <Show when={() => rows().length === 0}>{() => <EmptySong page={page} />}</Show>
-            </div>
-            <TimelineFoot page={page} />
-          </div>
-        </div>
-        {() => {
-          const shown = memory.below;
-          const below =
-            shown?.kind === "editor" ? openEditor()
-            : shown?.kind === "mixer" ? <Mixer page={page} />
-            : shown?.kind === "master" ? <MasterPanel page={page} />
-            : shown?.kind === "track" && strips().some((each) => each.name === shown.name) ? <Rack page={page} name={shown.name} />
-            : null;
-          const resize = (height: number) => {
-            memory.editor = clamp(height, SHORTEST, largest());
-            memory.editorLarge = false;
-          };
-          return below === null ? null : (
-            <>
-              {shown?.kind === "editor" ? <Divider height={editorHeight} resize={resize} /> : <div style={{ height: 1, background: "border", keep: true }} />}
-              {below}
-            </>
-          );
-        }}
-      </Page>
+          <Timeline page={page} />
+        </row>
+        {clip !== null ? (
+          <col w="full" {...(large ? { grow: 1 } : { h: DIVIDER + Math.max(memory.editor, SHORTEST) })}>
+            <Divider page={page} />
+            <Editor page={page} clip={clip} />
+          </col>
+        ) : below?.kind === "mixer" ? (
+          <Below h={MIXER}><Mixer page={page} /></Below>
+        ) : below?.kind === "master" || (below?.kind === "track" && page.strips.some((each) => each.name === below.name)) ? (
+          <Below h={RACK}><Rack page={page} name={below.kind === "master" ? "master" : below.name} /></Below>
+        ) : null}
+      </col>
     );
   },
 });
 
-/**
- * The line over the note editor: a drag up makes the editor taller, a row of notes at a time,
- * and a double click puts it back as it opens. A tab stop, which the arrows turn.
- */
-const Divider = ({ height, resize }: { height: Accessor<number>; resize: (height: number) => void }) => {
-  let pressed = EDITOR;
-  const onTurn = (turn: Turn) => {
-    if ("reset" in turn) resize(EDITOR);
-    else if ("moved" in turn) resize((turn.held ? pressed : height()) + turn.moved * NOTE_ROW);
+/** What shows under the tracks, `tall` points, under a line: drawn over it, as a border would lie under what fills it. */
+const Below = ({ h: tall, children }: { h: number; children?: Child }) => (
+  <box w="full" h={tall}>
+    {children}
+    <box inset={[0, 0, 0, null]} h={1} fill="border-strong" inert />
+  </box>
+);
+
+/** How much a step of the editor's line makes it taller or shorter: a row of notes. */
+const STEP = PITCH;
+
+/** The line over the note editor: a drag makes the editor taller a row of notes at a time, a double click puts it back, the arrows step it. */
+const Divider = ({ page }: { page: Page }) => {
+  const { memory } = page.song;
+  const resize = (height: number) => {
+    memory.editor = Math.max(Math.round(height), SHORTEST);
+    memory.editorLarge = false;
   };
   return (
-    <Space key="editor-divider" height={DIVIDER} cursor="ns-resize" onPress={() => (pressed = height())} drag={{ y: { onTurn, step: 1, per: NOTE_ROW, default: EDITOR } }}>
-      <Rect x={0} y={(DIVIDER - 1) / 2} width={1e5} height={1} color="border" />
-    </Space>
+    <box key="editor-divider" label="Note editor height" role="slider" value={memory.editor} w="full" h={DIVIDER} drag={{ y: true, snap: [1, STEP], from: [0, 0] }}
+      onDragEnd={(p) => resize(memory.editor - Math.round(p.dy / STEP) * STEP)} onPress={(p) => p.clicks === 2 && resize(EDITOR)}
+      actions={{ increment: (by) => resize(memory.editor + by * STEP), decrement: (by) => resize(memory.editor - by * STEP), reset: () => resize(EDITOR) }}>
+      <box at={[0, live.drag("editor-divider").dy.plus((DIVIDER - 1) / 2)]} w={100000} h={1} fill="border-strong" />
+    </box>
   );
 };

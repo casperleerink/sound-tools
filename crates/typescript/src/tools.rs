@@ -26,7 +26,7 @@ use sound_signals::{
     ParameterSpec, Placed, Shown, Signals, SignalsUpdate, Values,
 };
 
-use sound_ui::shortcuts;
+use crate::shortcuts;
 
 use crate::behaviours::{self, Declaration, End, Key};
 use crate::bun::Bun;
@@ -67,6 +67,9 @@ pub(crate) struct ToolInfo {
     pub tick: bool,
     /// It draws its own view; without one, its default view is a card, and it has no page.
     pub view: bool,
+    /// Its file was written for the views of an older Sound Tools, which it is without.
+    #[serde(default)]
+    pub old_views: bool,
     /// It hears the computer keyboard, `onKey`.
     pub keys: bool,
     /// The keys it takes, by name such as `delete` or `cmd-c`; every plain key when `None`.
@@ -168,6 +171,9 @@ pub(crate) enum Field {
         /// `[]` when left out.
         default: Option<Value>,
         label: Option<String>,
+        /// Made by `pattern`: a card shows it as a row of steps.
+        #[serde(default)]
+        pattern: bool,
     },
     /// An item of a list that holds several fields.
     Object { fields: Named<Field> },
@@ -201,9 +207,9 @@ impl Input {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Unit {
+pub enum Unit {
     Hz,
     Ms,
     Seconds,
@@ -463,12 +469,11 @@ impl Named<Field> {
     }
 }
 
+#[allow(
+    dead_code,
+    reason = "the window uses it once it does all the old app did"
+)]
 impl ToolInfo {
-    /// Whether a card or a page of it takes the keys: for `onKey`, or for its actions.
-    pub(crate) fn hears_keys(&self) -> bool {
-        self.keys || !self.actions.0.is_empty()
-    }
-
     /// Whether its action `name` runs wherever the focus is.
     pub(crate) fn acts_everywhere(&self, name: &str) -> bool {
         let mut actions = self.actions.0.iter();
@@ -1084,6 +1089,7 @@ impl Sounds {
             .collect();
         // Only a tool that hears them writes what reaches its notes.
         let tap = (self.info.notes).then(|| context.tap::<NoteEvent>(NOTES_TAP));
+        let sounding = context.tap::<NoteEvent>(SOUNDING_TAP);
         let new_tap = context.changed("tap", u64::from(tap.is_some()));
         let sample_rate = context.prepare_config().sample_rate as f32;
         // A sound that reads no file in stereo runs a sample read once for both channels.
@@ -1117,6 +1123,9 @@ impl Sounds {
         })?;
         if created || new_tap {
             context.update(signals, SignalsUpdate::Tap(tap))?;
+        }
+        if created {
+            context.update(signals, SignalsUpdate::Sounding(Some(sounding)))?;
         }
         // A new processor already plays this code with these values.
         if !created {
@@ -1420,6 +1429,8 @@ fn kept_children<'a>(
 
 /// The name of the tap of what reaches the `notes` of a tool that hears them.
 pub(crate) const NOTES_TAP: &str = "notes";
+/// The tap of what the keys of a tool's sound do, whoever plays them.
+pub(crate) const SOUNDING_TAP: &str = "sounding";
 
 /// The name of the [`NoteFeed`] of the child `name` of an owner, which a performer plays it
 /// through.
@@ -1679,9 +1690,28 @@ fn is_region(name: &str, port: &str, context: &BehaviourContext<'_>) -> bool {
     port == AUDIO_OUTPUT && context.child_tool(name) == Some(region::NAME)
 }
 
+/// `a` before `b`, a run of digits read as a number: `take-9` before `take-10`.
+fn by_number(a: &str, b: &str) -> std::cmp::Ordering {
+    fn runs(name: &str) -> impl Iterator<Item = (usize, &str)> {
+        let mut rest = name;
+        std::iter::from_fn(move || {
+            let digits = rest.starts_with(|c: char| c.is_ascii_digit());
+            let end = (rest.find(|c: char| c.is_ascii_digit() != digits)).unwrap_or(rest.len());
+            let (run, after) = rest.split_at(end);
+            rest = after;
+            match digits {
+                true => Some(run.trim_start_matches('0')).map(|number| (number.len(), number)),
+                false => (!run.is_empty()).then_some((0, run)),
+            }
+        })
+    }
+    runs(a).cmp(runs(b)).then_with(|| a.cmp(b))
+}
+
 /// One player for the regions that play into each place, by that place: where one ends and the
-/// next starts they crossfade, and where they overlap the last by name is heard. A region whose
-/// file is not read yet is left out: it runs again when it is, and so does this.
+/// next starts they crossfade, and where they overlap the last by name is heard, a number in it
+/// as a number. A region whose file is not read yet is left out: it runs again when it is, and
+/// so does this.
 fn region_players(
     declaration: &Declaration,
     context: &mut BehaviourContext<'_>,
@@ -1710,6 +1740,8 @@ fn region_players(
         players.insert(to.clone(), OutputEndpoint::new(player, AudioPlayer::OUTPUT));
         let mut files = Vec::new();
         let mut regions = Vec::new();
+        let mut children = Vec::from_iter(children);
+        children.sort_by(|a, b| by_number(a, b));
         for name in children {
             let Some(region) = records.get(name).cloned() else {
                 continue;
@@ -2012,6 +2044,10 @@ pub(crate) fn scope_name(path: &str) -> String {
     format!("scope:{path}")
 }
 
+#[allow(
+    dead_code,
+    reason = "the window uses it once it does all the old app did"
+)]
 /// Asks `owner` to keep the sound its child at `path` plays, or with no path what it plays
 /// itself, for a wave of its view. Whether it kept none: then it must run its behaviour again.
 pub(crate) fn show_sound(assets: &Assets, owner: &InstanceId, path: &str) -> bool {

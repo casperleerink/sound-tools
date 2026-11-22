@@ -70,6 +70,12 @@ impl Plugins {
         scanning(&self.0.scanned).scan.clone()
     }
 
+    /// Whether a plugin the scan did not find is not on this machine: a cache that only
+    /// remembers looks at no new or changed bundle.
+    pub fn looked_everywhere(&self) -> bool {
+        scanning(&self.0.scanned).scan.not_looked_at == 0
+    }
+
     /// Goes up whenever the scan learns something, and once more when it ends, so a picker
     /// knows to fill its menu again. Cheap enough for every frame.
     pub fn scan_generation(&self) -> u64 {

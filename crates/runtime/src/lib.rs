@@ -1,33 +1,30 @@
-//! The runtime apart from its command line in `main.rs`: the bundled extensions and their
-//! views, the agent sidebar, templates, the project summary, offline rendering and the window.
-//! Tests of whole projects use this crate.
+//! The runtime without a window: the bundled extensions, templates, the project summary,
+//! offline rendering and the command line forms that open no window. Tests of whole projects
+//! use this crate.
 
 pub mod app;
+pub mod cli;
+pub mod files;
+pub mod input;
 pub mod log_file;
-pub mod recorder;
 pub mod report;
-#[cfg(target_os = "macos")]
-pub mod screenshot;
+pub mod session;
 pub mod templates;
 pub mod update;
-pub mod window;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Result, bail};
-use gpui::{App, AppContext as _, Context, Entity};
 use plugin_host::{
-    Isolation, Parameter, PluginFormat, PluginRecord, Plugins, ScanCache, ScanCommand, WeakPlugins,
-    default_search_paths,
+    Isolation, Parameter, PluginFormat, Plugins, ScanCache, ScanCommand, default_search_paths,
 };
-use sound_agent::{AgentSettings, Agents, AgentsPage, Sidebar};
 use sound_core::{
-    AgentDoc, Changes, Engine, EngineConfig, EngineControl, InstanceId, PortReference, Project,
-    ProjectError, Registry, SavedConnection, SavedDestination, SavedSource, Ticks, ToolSchema,
+    AgentDoc, Changes, Engine, EngineConfig, EngineControl, InputEndpoint, InstanceId,
+    PortReference, Project, ProjectError, Registry, SavedConnection, SavedDestination, SavedSource,
+    Ticks, ToolSchema,
 };
+use sound_notes::NOTES_INPUT;
 use sound_typescript::{Extensions, FirstLoad};
-use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
-use window::{LeftPanel, LeftPanelSlot, SettingsSlot, Shell};
 
 pub use templates::{TEMPLATES, Template};
 
@@ -138,10 +135,13 @@ pub fn plugins_refreshing_the_cache() -> Result<Plugins> {
     with_cache(Loading::None, ScanCache::of_this_machine().refreshing())
 }
 
-/// The host `--inspect` uses: it says which plugins this machine has and loads none of them.
-/// See [`Plugins::listing`] for why.
+/// The host of `--inspect` and a run without a window: it says which plugins the cache of
+/// this machine remembers, and loads or scans none of them. See [`Plugins::listing`] for why.
 pub fn plugins_for_inspecting() -> Result<Plugins> {
-    with_cache(Loading::None, ScanCache::of_this_machine())
+    with_cache(
+        Loading::None,
+        ScanCache::of_this_machine().only_remembered(),
+    )
 }
 
 /// How much of a plugin a host is for.
@@ -166,7 +166,7 @@ fn with_cache(loading: Loading, cache: ScanCache) -> Result<Plugins> {
     })
 }
 
-/// Every bundled extension registers here.
+/// Every bundled extension registers here, with the docs of writing tools.
 pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
     registry.keep_out_of_history(&sound_typescript::WRITTEN_BY_THE_RUNTIME);
@@ -175,10 +175,11 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
     // project can be recorded into, so its doc is one every project gets.
     registry.runtime_agent_doc(midi::AGENT_DOC)?;
-    for doc in sound_typescript::AGENT_DOCS {
-        registry.runtime_agent_doc(doc)?;
+    for doc in &sound_typescript::AGENT_DOCS {
+        registry.runtime_agent_doc(*doc)?;
     }
     register_extensions(&mut registry, Some(plugins))?;
+    sound_typescript::register_feeds(&mut registry);
     Ok(registry)
 }
 
@@ -224,178 +225,20 @@ pub fn tool_schemas() -> Result<Vec<ToolSchema>> {
     Ok(registry.tool_schemas())
 }
 
-/// Every bundled extension with a view registers it here, and the devices a composer can pick.
-/// The window names no view type and no instrument.
-pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
-    let mut views = Views::new();
-    let mut devices = Devices::new();
-    // The order here is the order of a picker: the instruments, then the effects group by
-    // group, and the plugins of this computer after the built-in devices.
-    instrument::view::register(&mut views, &mut devices);
-    wavetable::view::register(&mut views, &mut devices);
-    sampler::view::register(&mut views, &mut devices);
-    drum_pad::view::register(&mut views, &mut devices);
-    eq::view::register(&mut views, &mut devices);
-    filter::view::register(&mut views, &mut devices);
-    saturator::view::register(&mut views, &mut devices);
-    compressor::view::register(&mut views, &mut devices);
-    gate::view::register(&mut views, &mut devices);
-    limiter::view::register(&mut views, &mut devices);
-    modulation::view::register(&mut views, &mut devices);
-    vocoder::view::register(&mut views, &mut devices);
-    pitch_correction::view::register(&mut views, &mut devices);
-    delay::view::register(&mut views, &mut devices);
-    reverb::view::register(&mut views, &mut devices);
-    utility::view::register(&mut views, &mut devices);
-    analyzer::view::register(&mut views, &mut devices);
-    sound_typescript::register_views(&mut views);
-    plugin_host::view::register(&mut views, &mut devices, plugins.clone());
-    // What the picker says under its offers: that the scan of this machine is still running.
-    devices.notes({
-        let plugins = plugins.clone();
-        move || {
-            let scans = (plugins.upgrade()).is_some_and(|plugins| plugins.scan_is_running());
-            (scans.then(|| "Still looking for the plugins of this computer…".into()))
-                .into_iter()
-                .collect()
-        }
-    });
-    // The scan runs on a thread of its own, so what the plugin host offers grows while a
-    // window is open. This is what tells a picker that its list is not the list any more.
-    devices.offers_change({
-        let plugins = plugins.clone();
-        move || {
-            plugins
-                .upgrade()
-                .map_or(0, |plugins| plugins.scan_generation())
-        }
-    });
-    // One record serves both slots, so one function makes both lists. What a plugin says it is
-    // decides which list it is in; a record written by hand may name any plugin in any slot.
-    devices.instruments({
-        let plugins = plugins.clone();
-        move || plugin_offers(&plugins, plugin_host::Plugins::instruments)
-    });
-    devices.effects(move || plugin_offers(&plugins, plugin_host::Plugins::effects));
-    (views, devices)
-}
-
-/// The agent sidebar, in the left panel of the window, and the Agents section of the Settings
-/// page. The window names no agent type, so this is where the two meet. The agents and the
-/// settings are made once and shared by every window, so a change in one is a change in all.
-pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
-    let remembered = support.as_deref().map(app::left_panel_file);
-    let downloads = support.as_deref().map(app::agents_folder);
-    let threads = support.as_deref().map(app::threads_folder);
-    let file = support.as_deref().map(app::agent_settings_file);
-    let settings = cx.new(|cx| AgentSettings::new(file, cx));
-    // The agent checks the types of the project's tools with the Bun that runs them.
-    let bun_folder =
-        sound_typescript::bundled_bun().and_then(|bun| bun.parent().map(Path::to_path_buf));
-    let agents = cx.new(|cx| Agents::new(downloads, bun_folder, settings.clone(), cx));
-    SettingsSlot::new({
-        let agents = agents.clone();
-        move |window, cx| {
-            cx.new(|cx| AgentsPage::new(agents.clone(), window, cx))
-                .into()
-        }
-    })
-    .install(cx);
-    LeftPanelSlot::new(remembered, move |session, window, cx| {
-        let (agents, threads, settings) = (agents.clone(), threads.clone(), settings.clone());
-        let sidebar = cx.new(|cx| Sidebar::new(session, agents, threads, settings, window, cx));
-        sidebar_panel(sidebar, cx)
+/// What the code of a project reads of the built-in tools, for the types of its SDK: their
+/// records, every feed, and the JSON Schema of the facts of each tool that adds some (`*`: of
+/// every instance).
+pub fn built_in() -> Result<sound_typescript::BuiltIn> {
+    let mut registry = Registry::new();
+    register_extensions(&mut registry, Some(read_only_plugins()?))?;
+    sound_typescript::register_feeds(&mut registry);
+    Ok(sound_typescript::BuiltIn {
+        schemas: registry.tool_schemas(),
+        feeds: sound_core::feeds::names(&registry),
+        facts: sound_core::facts::describe(&registry),
+        commands: registry.commands(),
     })
 }
-
-/// The Agent tab of the left panel: the sidebar, with **New** beside the tabs.
-pub fn sidebar_panel(sidebar: Entity<Sidebar>, cx: &mut Context<Shell>) -> LeftPanel {
-    let (composer, asks) = (sidebar.clone(), sidebar.clone());
-    let new_button = sidebar.read(cx).new_button().clone();
-    LeftPanel::new(sidebar, Sidebar::is_busy, cx)
-        .with_header(new_button)
-        .with_composer(move |cx| composer.read(cx).composer().clone())
-        .with_ask(move |message, window, cx| {
-            asks.update(cx, |sidebar, cx| {
-                sidebar.ask_from_outside(message, window, cx)
-            })
-        })
-}
-
-/// The plugins `list` gives, as offers for a picker, one for a plugin installed in two formats.
-/// After them every bundle that could not be scanned, and `Scan again`. What a failed bundle
-/// holds is unknown, so both pickers list it.
-fn plugin_offers(
-    weak: &WeakPlugins,
-    list: fn(&plugin_host::Plugins) -> Vec<plugin_host::ScannedPlugin>,
-) -> Vec<DeviceOffer> {
-    let Some(plugins) = weak.upgrade() else {
-        return Vec::new();
-    };
-    let failures = plugins.failures();
-    let failed = failures.iter().map(|failure| {
-        let name = failure.path.file_stem().unwrap_or(failure.path.as_os_str());
-        DeviceOffer::unavailable(
-            format!("failed:{}", failure.path.display()),
-            name.to_string_lossy().into_owned(),
-            OfferGroup::Plugins,
-            format!("Could not be scanned: {}", failure.message),
-        )
-    });
-    let scan_again = (!failures.is_empty() && !plugins.scan_is_running()).then(|| {
-        let weak = weak.clone();
-        let run = move || {
-            if let Some(plugins) = weak.upgrade() {
-                plugins.scan_again();
-            }
-        };
-        DeviceOffer::command(SCAN_AGAIN, "Scan again", OfferGroup::Plugins, run)
-            .icon("search")
-            .with_detail("Try the plugins that could not be scanned")
-    });
-    let found = plugin_host::one_per_plugin(list(&plugins));
-    let found = found.into_iter().map(|found| {
-        let (id, name, format) = (found.id.clone(), found.name.clone(), found.format);
-        let offer =
-            DeviceOffer::new(
-                found.offer_key(),
-                found.name.clone(),
-                OfferGroup::Plugins,
-                move |project, slot, changes| {
-                    // A state file of its own that no plugin has ever written into, so a
-                    // plugin that is picked never comes up holding the sound an older one
-                    // left behind.
-                    let state_asset = plugin_host::new_state_asset(project.assets(), &name)
-                        .map_err(|error| ProjectError::InvalidState {
-                            id: slot.clone(),
-                            message: error.to_string(),
-                        })?;
-                    changes.create(
-                        slot.clone(),
-                        PluginRecord {
-                            format,
-                            plugin_id: id.clone(),
-                            state_asset,
-                            parameters: Default::default(),
-                        },
-                    );
-                    Ok(())
-                },
-            )
-            .needs(
-                plugin_host::EXTENSION,
-                "This project does not load plugins.",
-            );
-        match found.vendor.is_empty() {
-            true => offer,
-            false => offer.with_detail(found.vendor),
-        }
-    });
-    found.chain(failed).chain(scan_again).collect()
-}
-
-/// The key of the `Scan again` row of a picker, see [`plugin_offers`].
-pub const SCAN_AGAIN: &str = "plugins:scan-again";
 
 /// Opens the project with its lock. The app passes [`playing_plugins`]; a test passes a host
 /// that looks in a folder of its own.
@@ -433,7 +276,7 @@ pub fn open_with_extensions(
 ///
 /// The first step of every open that may write: nothing is written into a folder that is not a
 /// project.
-pub(crate) fn load_tools(folder: &Path, make_tools_folder: bool) -> Result<Option<FirstLoad>> {
+pub fn load_tools(folder: &Path, make_tools_folder: bool) -> Result<Option<FirstLoad>> {
     app::check_project_folder(folder)?;
     if make_tools_folder {
         std::fs::create_dir_all(folder.join(sound_typescript::FOLDER))?;
@@ -441,12 +284,22 @@ pub(crate) fn load_tools(folder: &Path, make_tools_folder: bool) -> Result<Optio
     if let Err(error) = templates::update(folder) {
         eprintln!("error: {error:#}");
     }
-    Ok(Extensions::load(folder, &tool_schemas()?, true))
+    Ok(Extensions::load(folder, &built_in()?, true))
+}
+
+/// Writes the SDK into `extensions/` of the project `folder`, when it has one, as an open does: for
+/// a run that opens a copy of the project.
+pub fn write_sdk(folder: &Path) -> Result<()> {
+    let extensions = folder.join(sound_typescript::FOLDER);
+    if folder.join(PROJECT_FILE).is_file() && extensions.is_dir() {
+        sound_typescript::write_sdk(&extensions, &built_in()?)?;
+    }
+    Ok(())
 }
 
 /// [`open_with_extensions`] with the tools of the project loaded already, see
 /// [`Extensions::load`].
-pub(crate) fn open_with_loaded(
+pub fn open_with_loaded(
     folder: &Path,
     control: EngineControl,
     plugins: Plugins,
@@ -495,6 +348,33 @@ pub fn listen_only(project: &mut Project, path: &str) -> Result<()> {
     Ok(())
 }
 
+/// The `notes` of `selected` or of the nearest parent of it that has them, as a parent gives its
+/// notes to each of its children that plays them. With nothing selected, those of the instance
+/// the page shows, or where it has none, of every instance at the top that has them.
+pub fn notes_inputs(project: &Project, selected: Option<&InstanceId>) -> Vec<InputEndpoint> {
+    let Some(selected) = selected else {
+        let main = (project.project_file().main.as_ref())
+            .and_then(|main| project.input_port(main, NOTES_INPUT));
+        if let Some(main) = main {
+            return vec![main];
+        }
+        let top = project
+            .instances()
+            .filter(|(id, _)| !id.as_str().contains('/'));
+        return top
+            .filter_map(|(id, _)| project.input_port(id, NOTES_INPUT))
+            .collect();
+    };
+    let mut at = Some(selected.clone());
+    while let Some(id) = at {
+        if let Some(port) = project.input_port(&id, NOTES_INPUT) {
+            return vec![port];
+        }
+        at = id.parent();
+    }
+    Vec::new()
+}
+
 /// Opens the project the way `--inspect` does: without its lock, and with a host that looks a
 /// plugin up and loads none ([`Plugins::listing`]). Inspecting prints a project and makes no
 /// sound, so no third-party code runs in this process and no plugin can end it.
@@ -521,7 +401,7 @@ pub fn open_read_only_at(
         ..OFFLINE
     });
     // A runtime that holds the project may be writing its log.
-    let extensions = Extensions::load(folder, &tool_schemas()?, false);
+    let extensions = Extensions::load(folder, &built_in()?, false);
     let (registry, extensions) = registry_of(plugins, extensions)?;
     let mut project = Project::open_read_only(folder, registry, control)?;
     if let Some(extensions) = &extensions {
@@ -781,10 +661,13 @@ pub fn tick(
     // A Sampler whose instrument was downloaded or loaded on a thread of its own. A render, an
     // inspect and the tests load at once, so there is nothing here for them.
     let loaded = sampler::take_ready(project.assets());
-    errors.extend(rebind(project, &loaded));
+    errors.extend(project.rebind_all(&loaded));
     // A tool of the project that owns children, whose behaviour Bun answered.
     let declared = sound_typescript::take_declared(project.assets());
-    errors.extend(rebind(project, &declared));
+    errors.extend(project.rebind_all(&declared));
+    // A sample, a region's file or its periods that were read on a thread of their own.
+    let read = sound_typescript::take_read(project.assets());
+    errors.extend(project.rebind_all(&read));
     sound_typescript::forget_gone(project);
     // The main-thread callbacks the plugins ask for, and the state they say changed.
     let mut problems = plugins.poll(project);
@@ -797,16 +680,8 @@ pub fn tick(
     errors.extend(plugins.follow_pins(project));
     // Records that were waiting for a plugin the scan had not reached, plugins that asked to be
     // loaded again, and plugins whose parameters changed. After the poll too.
-    errors.extend(rebind(project, &plugins.take_retries()));
+    errors.extend(project.rebind_all(&plugins.take_retries()));
     (problems, errors)
-}
-
-/// Runs the behaviour of each instance again, which is what makes it play what a service
-/// outside the project has ready now and takes its problem away. It is not an edit and is
-/// never undone.
-fn rebind(project: &mut Project, instances: &[InstanceId]) -> Vec<ProjectError> {
-    let failed = instances.iter().filter_map(|id| project.rebind(id).err());
-    failed.collect()
 }
 
 /// Waits for Bun to answer every behaviour it was asked, and runs each of them again, which
@@ -820,7 +695,7 @@ fn settle_behaviours(project: &mut Project) -> Vec<ProjectError> {
         if declared.is_empty() {
             return errors;
         }
-        errors.extend(rebind(project, &declared));
+        errors.extend(project.rebind_all(&declared));
     }
 }
 
@@ -829,7 +704,7 @@ fn settle_behaviours(project: &mut Project) -> Vec<ProjectError> {
 fn take_drum_sounds(project: &mut Project) -> Vec<ProjectError> {
     let ready = drum_pad::take_ready(project.assets());
     let instances: Vec<InstanceId> = ready.iter().map(|(instance, _)| instance.clone()).collect();
-    let errors = rebind(project, &instances);
+    let errors = project.rebind_all(&instances);
     // The sounds are let go of here, now that the kits hold them.
     drop(ready);
     errors

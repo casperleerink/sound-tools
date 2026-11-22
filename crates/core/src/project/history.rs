@@ -516,9 +516,10 @@ impl History {
     fn add_point(&mut self, tree: PointId, label: &str, merged: Option<PointId>) -> io::Result<()> {
         self.settle_undone()?;
         let parent = self.head;
-        let mut time = now_millis().max(self.commit(parent)?.time + 1);
-        if let Some(merged) = merged {
-            time = time.max(self.commit(merged)?.time + 1);
+        // Newer than every point, even one made in the same millisecond: the walk orders by time.
+        let mut time = now_millis();
+        for tip in (self.lines.iter().map(|line| line.tip)).chain([parent]) {
+            time = time.max(self.commit(tip)?.time + 1);
         }
         let commit = Commit {
             tree,
@@ -875,4 +876,31 @@ fn now_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
     since_epoch.as_millis() as u64
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::{CLOCK, Going, History, Origin};
+
+    #[test]
+    fn a_point_made_in_the_same_millisecond_is_still_newer_than_every_other() {
+        let folder = tempfile::tempdir().unwrap();
+        let edit = |history: &mut History, text: &str| {
+            std::fs::write(folder.path().join("project.json"), text).unwrap();
+            history.save(Origin::Edit, "Edit").unwrap();
+        };
+        CLOCK.set(Some(1_000));
+        let mut history = History::open(folder.path(), Vec::new()).unwrap();
+        edit(&mut history, "{}");
+        let split = history.current();
+        edit(&mut history, "[1]");
+        let left = history.current();
+        history.go(split, Going::Back).unwrap();
+        edit(&mut history, "[2]");
+        CLOCK.set(None);
+        let newest = history.points(2).unwrap();
+        assert_eq!(newest[1].id, left);
+        assert!(newest[0].time > newest[1].time);
+    }
 }

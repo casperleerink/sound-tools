@@ -7,17 +7,16 @@ publish.workspace = true
 [lints]
 workspace = true
 
-[features]
-# What `tooling/perf/ui.py` measures the window with: gpui's frame and view timings, its
-# allocation counter and the real text system. It rebuilds gpui, so `cargo verify` never sets it.
-perf = ["gpui/bench-support", "dep:bench_metrics", "dep:criterion", "dep:gpui_apple"]
+# The program of this crate's tests, not the app.
+[[bin]]
+name = "test-runtime"
+test = false
+doc = false
 
 [dependencies]
 analyzer.workspace = true
 anyhow.workspace = true
-bench_metrics = { workspace = true, optional = true }
 chrono.workspace = true
-criterion = { workspace = true, optional = true }
 compressor.workspace = true
 delay.workspace = true
 drum-pad.workspace = true
@@ -25,8 +24,6 @@ dunce.workspace = true
 eq.workspace = true
 filter.workspace = true
 gate.workspace = true
-gpui.workspace = true
-gpui_platform.workspace = true
 instrument.workspace = true
 limiter.workspace = true
 metronome.workspace = true
@@ -46,20 +43,12 @@ sound-export.workspace = true
 sound-media.workspace = true
 sound-notes.workspace = true
 sound-typescript.workspace = true
-sound-ui.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tone.workspace = true
 utility.workspace = true
 vocoder.workspace = true
 wavetable.workspace = true
-
-# `--screenshot` draws the window offscreen, which gpui offers under `test-support` and on
-# macOS only.
-[target.'cfg(target_os = "macos")'.dependencies]
-gpui = { workspace = true, features = ["test-support"] }
-gpui_apple = { workspace = true, optional = true }
-gpui_platform = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
@@ -72,24 +61,13 @@ windows-sys = { workspace = true, features = [
 ] }
 
 [build-dependencies]
-embed-resource.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
 sound-dsp.workspace = true
-sound-typescript = { workspace = true, features = ["test-support"] }
-gpui = { workspace = true, features = ["test-support"] }
-gpui_platform = { workspace = true, features = ["test-support"] }
 hound.workspace = true
-rusty_mp3.workspace = true
 sha2.workspace = true
 test-clap-plugin.workspace = true
 test-plugin-support.workspace = true
 test-vst3-plugin.workspace = true
-
-# Renders the window offscreen. It runs on the main thread (no test harness), because the Metal
-# renderer and the text system need it.
-[[test]]
-name = "snapshots"
-harness = false

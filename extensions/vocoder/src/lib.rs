@@ -5,11 +5,8 @@
 //!
 //! It works on the spectrum through [`sound_dsp::Stft`], the transform that `spectral` in a
 //! tool of the project uses too.
-//!
-//! [`view`] is the card of the vocoder, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -19,7 +16,8 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, SIDECHAIN_INPUT};
 
-pub use processor::{HIGHEST_HZ, LOWEST_HZ, SIZE, Vocoder};
+use processor::band_edge_hz;
+pub use processor::{SIZE, Vocoder};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "vocoder";
@@ -120,7 +118,17 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<VocoderState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Vocoder::AUTOMATION.parameters());
+        .schema(Vocoder::AUTOMATION.parameters())
+        .feed(
+            "bands",
+            "The edges of its bands, one more than it has bands, lowest first, in octaves above 20 Hz (as a response feed).",
+            |state, _| {
+                let bands = state.bands.round().max(1.0) as usize;
+                (0..=bands)
+                    .map(|edge| (band_edge_hz(bands, edge) / 20.0).log2())
+                    .collect::<Vec<f32>>()
+            },
+        );
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

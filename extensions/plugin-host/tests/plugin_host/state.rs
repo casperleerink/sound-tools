@@ -153,8 +153,8 @@ fn read_only_writes_no_state(format: PluginFormat) {
     assert!(!asset.exists(), "a read-only project wrote {asset:?}");
 }
 
-/// The app quits without unwinding and GPUI drops the views before any quit handler, so
-/// dropping the project is the one moment that always happens.
+/// An app may quit without unwinding, so dropping the project is the one moment that always
+/// happens.
 #[test]
 fn dropping_the_project_saves_the_state_of_every_plugin() {
     for format in FORMATS {

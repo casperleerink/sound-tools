@@ -1,15 +1,20 @@
 """Gives the app's agent a task in a fresh project and checks what it did.
 
-    python3 tooling/agent-eval/eval.py <scenario> [--runs n]
+    python3 tooling/agent-eval/eval.py <scenario>... [--runs n] [--model claude-opus-5-5]
+    python3 tooling/agent-eval/eval.py ui      # the scenarios with criteria for the council
 
-Each run starts from a new project made by the runtime (as the app makes one), with the files of
-the scenario, then runs Claude Code with the app's flags (`claude_run.py`), then checks the
-project. It prints one JSON line per run: whether the check passed, what it cost, how many
-turns, and which docs the agent opened. Logs go to /tmp/sound-tools-eval/.
+Each run starts from a new project made by `sound-tools` (as the app makes one), with the files of
+the scenario, then runs Claude Code with the app's flags (`claude_run.py`), one message after
+another in one conversation, then checks the project. A scenario in `CRITERIA` then goes to the
+council: Opus and GPT, each on a copy of its own, check each criterion by using the result
+through the app, score its UI and UX against DESIGN.md, and keep the screenshots that show it.
+It prints one JSON line per run: the checks, each message's cost and how the builder checked its
+work, and the council's verdicts. `report.py` puts runs side by side by `--label`. Logs go to
+~/.cache/sound-tools-eval/, which a restart keeps. `$SOUND_TOOLS_PROGRAM` picks another program
+to compare.
 
-`examples/` holds tools agents built in these runs, from one prompt each: a gravity harp view,
-a storm drone played from its display, a generative part in D dorian, and a grain cloud of a sample. Copy one into the
-`extensions/` folder of a project to try it.
+`examples/` holds tools agents built in these runs, from one prompt each: a grain cloud of a
+sample and a swaying tone. Copy one into the `extensions/` folder of a project to try it.
 """
 
 import argparse
@@ -17,16 +22,17 @@ import json
 import re
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import claude_run
 
-LOGS = Path("/tmp/sound-tools-eval")
+LOGS = claude_run.LOGS
 HERE = Path(__file__).resolve().parent
 
 
-def runtime(folder: Path, *arguments: str, stdin: str | None = None) -> str:
-    process = subprocess.run([str(claude_run.RUNTIME), str(folder), *arguments], input=stdin,
+def sound_tools(folder: Path, *arguments: str, stdin: str | None = None) -> str:
+    process = subprocess.run([str(claude_run.PROGRAM), str(folder), *arguments], input=stdin,
                              capture_output=True, text=True, timeout=300)
     return process.stdout + process.stderr
 
@@ -56,7 +62,8 @@ def piece(folder: Path) -> None:
     """A new DAW project whose tracks are a pad with four chords and a lead with a melody, both on
     the built-in synth."""
     setup_daw(folder)
-    shutil.rmtree(folder / SONG / "t00")
+    for track_folder in (folder / SONG).glob("t*/"):
+        shutil.rmtree(track_folder)
     chords = [[48, 55, 64], [45, 52, 60], [41, 48, 57], [43, 50, 59]]
     notes = [{"start": i * 3840, "length": 3800, "pitch": p, "velocity": 90}
              for i, chord in enumerate(chords) for p in chord]
@@ -79,7 +86,7 @@ def track_effects(folder: Path, track: str) -> list:
 
 
 def no_problems(folder: Path) -> bool:
-    return "problems: 0" in runtime(folder, "--inspect")
+    return "problems: 0" in sound_tools(folder, "--inspect")
 
 
 # Each scenario: what is in the project before, what the composer asks, and the check.
@@ -164,7 +171,7 @@ def instruments(folder: Path) -> dict:
 
 def sounds(folder: Path, only: str | None = None) -> bool:
     """Whether the project, or the instance `only`, plays anything in the first eight seconds."""
-    report = runtime(folder, "--analyze", "--seconds", "8", *(["--only", only] if only else []))
+    report = sound_tools(folder, "--analyze", "--seconds", "8", *(["--only", only] if only else []))
     match = re.search(r"loudness (-?[0-9.]+) LUFS", report)
     return bool(match) and float(match.group(1)) > -60
 
@@ -317,8 +324,8 @@ SONG = "state/song"
 
 
 def setup_daw(folder: Path) -> None:
-    """The folder as a new DAW project: the files of the template in the project the runtime made,
-    which enables every extension."""
+    """The folder as a new DAW project: the files of the template in the project `sound-tools`
+    made, which enables every extension."""
     project = json.loads((folder / "project.json").read_text())
     template = json.loads((DAW / "project.json").read_text())
     shutil.copytree(DAW, folder, dirs_exist_ok=True,
@@ -373,6 +380,10 @@ def check_grid(parts: int, effects: set, patterns: int):
     return check
 
 
+def check_daw_intact(folder: Path) -> dict:
+    return {"no problems": no_problems(folder)}
+
+
 SCENARIOS = {
     "builtin": (setup_builtin, check_builtin,
                 "Put a dotted-eighth echo on the lead, quieter than the dry sound, and make the "
@@ -407,6 +418,9 @@ SCENARIOS = {
                         "On Track 1, put an arpeggiator before its synth: it turns the chords I "
                         "hold into notes going up one at a time with the tempo, with a choice of "
                         "eighths or sixteenths and a knob for how many octaves it climbs."),
+    "daw-duplicate": (setup_daw_chords, check_daw_intact,
+                      "Let me duplicate a track from its row in the timeline: the copy, with the "
+                      "same instrument, effects, mix and clips, lands right under it."),
     "daw-return": (setup_daw, check_daw_return,
                    "Add a return track with a long reverb, and send Track 1 into it, fairly "
                    "quietly."),
@@ -503,39 +517,190 @@ SCENARIOS = {
                         "column lights up as it plays. Each part has a length of 1 to 4 bars and "
                         "I can switch which bar of it I'm looking at. Give me play and stop, and "
                         "start me off with a groove."),
+    # Follow-ups: the second message goes on in the same conversation, on what the first built.
+    "sequencer-followup": (setup_with_bass, check_track("bass"), [
+        "On the bass track I want a 16-step acid bass sequencer as its instrument: I click steps "
+        "on and off on its card and the step that is playing lights up, it plays along with the "
+        "tempo of the piece, and it has knobs for the filter cutoff, the resonance and the note "
+        "it plays. Make a pattern that grooves to start with.",
+        "Nice. Now give each step a velocity: dragging a step up or down sets how hard it plays, "
+        "and the step shows it by its height. And add a button that shuffles the pattern."]),
+    "life-followup": (setup_tape_builder, check_screen, [
+        "Turn this project into a generative toy instead of a song, just one screen and no "
+        "timeline: a Game of Life grid. I click cells to bring them to life or kill them, the "
+        "grid steps on by itself, and a cursor sweeps across it column by column, playing the "
+        "living cells of its column as a chord: lower rows are lower notes of a pentatonic scale.",
+        "Love it. Let me paint living cells by dragging across the grid, and add a control for "
+        "how fast it steps and a button that clears the grid."]),
+    "daw-peak": (setup_daw_chords, check_daw_intact,
+                 "Over each strip of the mixer, show the loudest level of the last few seconds as "
+                 "a number in dB; it drops back after about three seconds."),
 }
 
 
-def evaluate(scenario: str, number: int) -> dict:
-    setup, check, prompt = SCENARIOS[scenario]
-    folder = LOGS / f"{scenario}-{number}"
+# What the composer asked for, as the QA council checks it by using the result. Hidden from the
+# builder. These scenarios are the `ui` set: new tools, changes to the DAW template, and
+# follow-ups on what an agent built.
+CRITERIA = {
+    "sequencer-builder": {
+        "steps": "Clicking a step on the bass's card turns it on, clicking it again turns it off, and the record changes with it.",
+        "playing step": "While the piece plays, the playing step is lit and moves with the tempo.",
+        "knobs": "The card has labelled controls for the filter cutoff, the resonance and the note it plays.",
+        "groove": "Before any click, the pattern has steps on and the bass plays notes.",
+    },
+    "ui-piano": {
+        "keyboard": "The lead's card shows a small piano keyboard, white and black keys in the right pattern.",
+        "click plays": "Clicking a key plays that note on the lead.",
+        "pressed": "A key shows that it is down while it is pressed or sounding.",
+        "lead plays": "The lead's clips still play through the new instrument.",
+    },
+    "life-builder": {
+        "one screen": "The window is one screen with a grid of cells and no timeline.",
+        "click cells": "Clicking a dead cell brings it to life; clicking a living cell kills it.",
+        "steps": "While it plays, the grid steps on by itself by the rules of the Game of Life.",
+        "cursor": "A cursor sweeps across the grid column by column while it plays.",
+        "chord": "The living cells of the cursor's column sound, lower rows lower notes.",
+    },
+    "launcher-builder": {
+        "grid": "One screen with three lanes (bass, chords, lead) of four patterns each, and no timeline.",
+        "launch": "Clicking a pattern shows it waiting, then playing from the next bar.",
+        "scenes": "A scene button launches a whole row of patterns at once.",
+        "transport": "There is play and stop, and pressing play starts the first scene.",
+        "sounds": "The lanes play through a filter, a reverb and a delay, and the patterns groove together in A minor.",
+    },
+    "daw-duplicate": {
+        "way": "Each track's row in the timeline has a visible way to duplicate it: a button or a menu item.",
+        "copy": "Using it adds a track right under the original with the same instrument, effects, mix and clips.",
+        "name": "The copy is named after the original, such as 'Track 1 copy'.",
+        "intact": "The other tracks, their clips and the mixer still work and look as before.",
+    },
+    "daw-peak": {
+        "readout": "While the piece plays, each mixer strip shows the loudest recent level as a number in dB near its meter.",
+        "hold": "The number holds the loudest level for a few seconds, then drops back.",
+        "intact": "The mixer's faders, pan, mute and solo, and the rest of the song page, still work and look as before.",
+    },
+    "sequencer-followup": {
+        "velocity": "Dragging a step up or down sets how hard it plays; the step shows it by its height, and the record keeps it.",
+        "shuffle": "A button shuffles the pattern: the steps change and it still plays.",
+        "still works": "Steps still turn on and off with a click, the playing step lights, and the knobs still work.",
+    },
+    "life-followup": {
+        "paint": "Dragging across the grid brings every cell it passes to life.",
+        "speed": "A control changes how fast the grid steps on, and the change shows while it plays.",
+        "clear": "A button clears the grid.",
+        "still works": "Clicking single cells, the stepping and the sweeping cursor still work.",
+    },
+}
+
+DESIGN = Path(__file__).resolve().parents[2] / "DESIGN.md"
+# Each member checks on a copy of its own: a provider and a model.
+COUNCIL = {"opus": ("claude", "claude-opus-5-5"), "sol": ("codex", "gpt-6.1-sol")}
+
+
+def prompts(scenario: str) -> list:
+    asked = SCENARIOS[scenario][2]
+    return asked if isinstance(asked, list) else [asked]
+
+
+def last_json(text: str) -> dict:
+    for line in reversed(text.strip().splitlines()):
+        try:
+            return json.loads(line[line.index("{"):])
+        except ValueError:
+            continue
+    return {}
+
+
+def review(folder: Path, scenario: str, member: str) -> dict:
+    """One council member checks each criterion on a copy of the project by using it, and scores
+    the UI and the UX."""
+    provider, model = COUNCIL[member]
+    copy = folder.with_name(f"{folder.name}-{member}")
+    shutil.rmtree(copy, ignore_errors=True)
+    shutil.copytree(folder, copy, symlinks=True, ignore=shutil.ignore_patterns(".sound-tools.lock"))
+    scratch = LOGS / "scratch" / copy.name
+    shutil.rmtree(scratch, ignore_errors=True)
+    scratch.mkdir(parents=True)
+    asked = "\n".join(f"{n + 1}. \"{text}\"" for n, text in enumerate(prompts(scenario)))
+    criteria = "\n".join(f"- {name}: {text}" for name, text in CRITERIA[scenario].items())
+    prompt = (
+        f"An agent just built this in a music project for a composer, who asked, message by "
+        f"message:\n{asked}\n\n"
+        "Test the result as a strict QA tester and a demanding product designer. Change no code "
+        "under extensions/. Check everything by using the project the way the app lets an agent: "
+        "`sound-tools --help`, AGENTS.md and agent-docs/: screenshots (`--snap`), what is on "
+        "screen with its labels (`--tree`), clicks, drags and keys (`--act`, `--script`), playing "
+        "(`--play`), `--inspect`, `--analyze` and the records under state/. Keep screenshots and "
+        f"scratch files in {scratch}, and look at every screenshot you take.\n\n"
+        f"Criteria:\n{criteria}\n\n"
+        "For each criterion give pass, fail, or unverifiable when you found no way to check it, "
+        "with the evidence. Then score from 1 to 5, as a demanding designer:\n"
+        f"- ui: how it looks, against the \"Principles\" of {DESIGN}. 5 calm and polished, 3 "
+        "works but crowded, misaligned or inconsistent, 1 broken or unreadable.\n"
+        "- ux: how it works for a composer, against \"Using the app\" in the same file: can they "
+        "find each feature without being told, does each action give clear feedback, do the "
+        "gestures follow the app's. 5 obvious and pleasant, 3 works but something is hidden, "
+        "surprising or slow, 1 cannot be used.\n\n"
+        "End with one line of JSON and nothing after it: {\"criteria\": {\"<name>\": "
+        "{\"verdict\": \"pass|fail|unverifiable\", \"evidence\": \"...\"}}, \"ui\": n, "
+        "\"ui_why\": \"...\", \"ux\": n, \"ux_why\": \"...\", \"workflow\": [{\"shot\": "
+        "\"<absolute path>\", \"caption\": \"what it shows, one line\"}]} with the 3 to 6 "
+        "screenshots, in order, that best show how it looks and works."
+    )
+    log = LOGS / f"{copy.name}.log"
+    if provider == "claude":
+        run = claude_run.run(copy, prompt, log=log, model=model, tools="Bash,Read,Glob,Grep")
+    else:
+        run = claude_run.codex(copy, prompt, model, log=log)
+    return {"member": member, "model": model, "verdict": last_json(run.result), "cost": run.summary()}
+
+
+def evaluate(scenario: str, number: int, model: str | None, label: str, council: list) -> dict:
+    setup, check, _ = SCENARIOS[scenario]
+    folder = LOGS / f"{label}-{scenario}-{number}"
     shutil.rmtree(folder, ignore_errors=True)
     folder.mkdir(parents=True)
     # As the app makes a project, and writes its docs while it has it open.
-    runtime(folder, "--headless", stdin="quit\n")
+    sound_tools(folder, "--headless", stdin="quit\n")
     setup(folder)
     # The window makes this folder for every project it opens.
     (folder / "extensions").mkdir(exist_ok=True)
-    runtime(folder, "--headless", stdin="quit\n")
-    run = claude_run.run(folder, prompt, log=LOGS / f"{folder.name}.log")
+    sound_tools(folder, "--headless", stdin="quit\n")
+    messages, session = [], ""
+    for turn, prompt in enumerate(prompts(scenario), start=1):
+        run = claude_run.run(folder, prompt, log=LOGS / f"{folder.name}-{turn}.log", model=model,
+                             resume=session)
+        session = run.session
+        messages.append(run.summary())
     checks = check(folder)
-    return {"scenario": scenario, "run": number,
-            "passed": all(checks.values()), "checks": checks, **run.summary()}
+    result = {"scenario": scenario, "run": number, "label": label, "model": model,
+              "passed": all(checks.values()), "checks": checks, "messages": messages}
+    if scenario in CRITERIA:
+        with ThreadPoolExecutor() as pool:
+            result["council"] = list(pool.map(lambda member: review(folder, scenario, member), council))
+    return result
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenario", choices=SCENARIOS)
+    parser.add_argument("scenarios", nargs="+", choices=[*SCENARIOS, "ui"])
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--first", type=int, default=1, help="the number of the first run, so "
                         "evals of one scenario can run side by side")
+    parser.add_argument("--model", default="claude-opus-5-5")
+    parser.add_argument("--council", nargs="+", choices=list(COUNCIL), default=list(COUNCIL),
+                        help="the members who check a scenario with criteria")
+    parser.add_argument("--label", default="rune", help="what is being compared, such as the "
+                        "SDK: results and folders carry it, and report.py puts labels side by side")
     arguments = parser.parse_args()
-    LOGS.mkdir(exist_ok=True)
-    for number in range(arguments.first, arguments.first + arguments.runs):
-        result = evaluate(arguments.scenario, number)
-        print(json.dumps(result), flush=True)
-        with open(LOGS / "results.jsonl", "a") as results:
-            results.write(json.dumps(result) + "\n")
+    LOGS.mkdir(parents=True, exist_ok=True)
+    scenarios = [one for name in arguments.scenarios for one in (CRITERIA if name == "ui" else [name])]
+    for scenario in scenarios:
+        for number in range(arguments.first, arguments.first + arguments.runs):
+            result = evaluate(scenario, number, arguments.model, arguments.label, arguments.council)
+            print(json.dumps(result), flush=True)
+            with open(LOGS / "results.jsonl", "a") as results:
+                results.write(json.dumps(result) + "\n")
 
 
 if __name__ == "__main__":

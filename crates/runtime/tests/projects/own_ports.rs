@@ -48,7 +48,7 @@ fn keyboard_into_the_top(mut harness: Harness) -> Vec<f32> {
     // Bun's answer, which wires the parent.
     let mut heard = harness.render(64);
     let mut keyboard = Keyboard::attach(harness.project.engine()).unwrap();
-    let notes = runtime::window::live_input::notes_inputs(&harness.project, None);
+    let notes = runtime::notes_inputs(&harness.project, None);
     keyboard
         .play_into(harness.project.engine(), &notes)
         .unwrap();

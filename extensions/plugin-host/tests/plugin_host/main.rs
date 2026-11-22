@@ -9,8 +9,10 @@ static ALLOCATOR: support::CountingAllocator = support::CountingAllocator;
 
 mod background;
 mod consistency;
+// Only Unix runs a plugin in a process of its own.
 #[cfg(unix)]
 mod crashing;
+mod desktop;
 mod editing;
 mod effects;
 mod lanes;

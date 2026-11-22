@@ -6,11 +6,8 @@
 //!
 //! One device and not two: the shaper is two numbers on the level the gate hears already, so
 //! a device of its own would be a second crate, record, card and doc around them.
-//!
-//! [`view`] is the card of the gate, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -152,12 +149,32 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
     markdown: include_str!("../agent-doc.md"),
 };
 
+/// The levels its curve shows, in dBFS: the range of the threshold.
+const LEVELS: [f64; 2] = [-60.0, 0.0];
+
 /// Registers the gate tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<GateState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Gate::AUTOMATION.parameters());
+        .schema(Gate::AUTOMATION.parameters())
+        .feed(
+            "level",
+            "The loudest it heard since the last frame, in dBFS (-120 for silence).",
+            |_, context| context.peak_db(Meters::LEVEL),
+        )
+        .feed(
+            "reduction",
+            "The most it turned the sound down since the last frame, in dB, 0 or more.",
+            |_, context| context.peaks(Meters::REDUCTION)[0],
+        )
+        .feed(
+            "transfer",
+            "Its curve: the level out, in dBFS, of a steady sound at each of `points` levels in (61 unless the binding says), evenly from -60 to 0 dBFS unless the binding shows another range: a step at its threshold.",
+            |state, context| {
+                context.curve(LEVELS, 61, |input| input + static_gain_db(state, input))
+            },
+        );
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

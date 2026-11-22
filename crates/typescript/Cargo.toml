@@ -7,13 +7,8 @@ publish.workspace = true
 [lints]
 workspace = true
 
-[features]
-# What tests of the window read: what live values last showed.
-test-support = []
-
 [dependencies]
 dunce.workspace = true
-gpui.workspace = true
 notify.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -25,7 +20,6 @@ sound-dsp.workspace = true
 sound-media.workspace = true
 sound-notes.workspace = true
 sound-signals.workspace = true
-sound-ui.workspace = true
 tempfile.workspace = true
 
 [dev-dependencies]

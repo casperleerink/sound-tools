@@ -11,15 +11,14 @@
 use std::collections::BTreeMap;
 
 use serde_json::Value;
-use sound_core::{InstanceId, Project, ProjectEdit, ProjectError, Ticks};
-use sound_ui::{GestureFollower, Playhead};
+use sound_core::{EngineStatus, InstanceId, Project, ProjectEdit, ProjectError, Ticks};
 
 use crate::lane::{self, LanePlayer, LaneUpdate};
 use crate::path;
 
 /// The drag that writes into lanes, see the module.
 #[derive(Default)]
-pub(crate) struct Writer {
+pub struct Writer {
     touches: Vec<Touch>,
     /// The records the drag moved, as they were before it, read once.
     before: BTreeMap<InstanceId, Option<Value>>,
@@ -40,25 +39,28 @@ struct Touch {
     playing: bool,
 }
 
-impl GestureFollower for Writer {
-    fn follow(
+impl Writer {
+    /// After each publish into the open gesture (`published`) and on each poll while it is
+    /// open. `writes` is whether automation is written.
+    pub fn follow(
         &mut self,
         project: &mut Project,
         gesture: &ProjectEdit,
-        playhead: Playhead,
+        status: EngineStatus,
         published: bool,
         writes: bool,
     ) -> Result<(), ProjectError> {
-        if published && writes && playhead.playing {
-            self.take_over(project, gesture, playhead)?;
+        if published && writes && status.playing {
+            self.take_over(project, gesture, status)?;
         }
         for touch in &mut self.touches {
-            touch.sample(project, playhead);
+            touch.sample(project, status);
         }
         Ok(())
     }
 
-    fn finish(
+    /// Right before the gesture finishes: what it publishes joins the gesture's undo step.
+    pub fn finish(
         &mut self,
         project: &mut Project,
         gesture: &mut ProjectEdit,
@@ -76,20 +78,19 @@ impl GestureFollower for Writer {
         written.and(released).and(restored)
     }
 
-    fn cancel(&mut self, project: &mut Project) -> Result<(), ProjectError> {
+    /// Right before the gesture is cancelled, which puts the state before it back.
+    pub fn cancel(&mut self, project: &mut Project) -> Result<(), ProjectError> {
         self.before.clear();
         let touches = std::mem::take(&mut self.touches);
         self.let_go(project, &touches)
     }
-}
 
-impl Writer {
     /// Each number a lane moves that the gesture changed and no hand holds yet: its lane lets go.
     fn take_over(
         &mut self,
         project: &mut Project,
         gesture: &ProjectEdit,
-        playhead: Playhead,
+        status: EngineStatus,
     ) -> Result<(), ProjectError> {
         let mut taken = Vec::new();
         for instance in gesture.published() {
@@ -105,7 +106,7 @@ impl Writer {
                 serde_json::from_str(&json).ok()
             });
             let mut played = Vec::new();
-            lanes.values_at(playhead.tick, &mut played);
+            lanes.values_at(status.playhead_tick, &mut played);
             for (number, _) in played {
                 let held = (self.touches.iter())
                     .any(|touch| touch.instance == *instance && *touch.number == *number);
@@ -122,7 +123,7 @@ impl Writer {
                     lane: lane.clone(),
                     before: was.cloned(),
                     runs: Vec::new(),
-                    jumps: playhead.jumps,
+                    jumps: status.jumps,
                     playing: false,
                 });
             }
@@ -151,10 +152,10 @@ impl Writer {
 
 impl Touch {
     /// What the hand plays at the playhead, while the project plays.
-    fn sample(&mut self, project: &Project, playhead: Playhead) {
-        let went_on = self.playing && playhead.jumps == self.jumps;
-        (self.jumps, self.playing) = (playhead.jumps, playhead.playing);
-        if !playhead.playing {
+    fn sample(&mut self, project: &Project, status: EngineStatus) {
+        let went_on = self.playing && status.jumps == self.jumps;
+        (self.jumps, self.playing) = (status.jumps, status.playing);
+        if !status.playing {
             return;
         }
         let number = project.automation(&self.instance, &self.number);
@@ -177,9 +178,9 @@ impl Touch {
             return;
         };
         match run.last_mut() {
-            Some((tick, last)) if *tick == playhead.tick => *last = value,
-            Some((tick, _)) if *tick > playhead.tick => {}
-            _ => run.push((playhead.tick, value)),
+            Some((tick, last)) if *tick == status.playhead_tick => *last = value,
+            Some((tick, _)) if *tick > status.playhead_tick => {}
+            _ => run.push((status.playhead_tick, value)),
         }
     }
 

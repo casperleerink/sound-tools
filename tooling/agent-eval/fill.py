@@ -2,7 +2,7 @@
 
     python3 -I tooling/agent-eval/fill.py <png>...
 
-Takes the PNG `runtime <project> --screenshot <png>` writes. The page is the window under
+Takes the PNG `sound-tools <project> --snap <png>` writes. The page is the window under
 its title row; its own colour is the colour at its top left, and what differs from it is drawn.
 """
 

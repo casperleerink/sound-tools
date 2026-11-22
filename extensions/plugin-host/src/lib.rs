@@ -9,6 +9,7 @@ mod backend;
 #[cfg(unix)]
 mod bridge;
 mod clap;
+mod facts;
 mod host;
 #[cfg(target_os = "windows")]
 mod library;
@@ -16,12 +17,12 @@ mod parameters;
 mod placements;
 mod processor;
 mod scan;
-pub mod view;
 mod vst3;
 mod window;
 
 use std::collections::BTreeMap;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, AssetError, AssetName, Assets, BehaviourContext, BehaviourError, InputEndpoint,
@@ -30,18 +31,21 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 
-use crate::parameters::lane_of_pin;
 use crate::processor::{AutomatedPin, AutomatedPins, HostedPlugin, HostedUpdate};
 
 #[cfg(unix)]
 pub use bridge::{PLAY_ARGUMENT, remember_this_program, serve as serve_plugin};
 pub use host::{Isolation, PluginProblem, Plugins, WeakPlugins};
 pub use parameters::{
-    MAX_NAMED_STEPS, Parameter, ParameterValue, StepName, Steps, read_parameters,
+    MAX_NAMED_STEPS, Parameter, ParameterValue, StepName, Steps, lane_of_pin, read_parameters,
 };
 pub use scan::{
     SCAN_ARGUMENT, ScanCache, ScanCommand, ScanFailure, ScannedPlugin, default_search_paths,
     one_per_plugin, scan_one_bundle,
+};
+pub use window::{
+    Display, Key, KeyDirection, Keystroke, Modifiers, ParentView, Placement, WindowCommand,
+    WindowId, WindowPlace, WindowSize,
 };
 
 /// The name to enable in `project.json`.
@@ -60,7 +64,9 @@ const STATE_EXTENSION: &str = "bin";
 
 /// In the order a picker prefers them for a plugin installed in both: CLAP gives a parameter in
 /// its own units, so a pin and a lane hold 1000 Hz, where VST 3 gives 0 to 1.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum PluginFormat {
     Clap,
@@ -159,21 +165,23 @@ impl From<StateAsset> for String {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PluginRecord {
     pub format: PluginFormat,
     /// The id its maker gave it, such as `com.u-he.diva`; for VST 3 the class id.
     pub plugin_id: String,
-    /// The plugin's own state, opaque bytes.
+    /// The plugin's own state, opaque bytes: the name of `assets/plugin-state/<name>.bin`.
+    #[schemars(with = "String")]
     pub state_asset: StateAsset,
     /// Pins, by the plugin's id of each parameter. A pin wins over the state asset, and what
     /// the plugin changes of it itself is written back here.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schemars(with = "BTreeMap<String, Pin>")]
     pub parameters: BTreeMap<u32, Pin>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Pin {
     /// Only for the reader: the id counts, so a plugin that renames it still finds it.
@@ -200,6 +208,15 @@ impl PluginRecord {
 
     fn asset(&self) -> AssetName {
         self.state_asset.0.clone()
+    }
+
+    /// Whether a lane may move `parameter`: one not pinned yet only while the record has room
+    /// to pin it.
+    pub fn can_take_lane(&self, parameter: &Parameter) -> bool {
+        match self.parameters.get(&parameter.id) {
+            Some(pin) => parameter.takes_lane_at(pin),
+            None => parameter.takes_lane() && self.parameters.len() < MAX_AUTOMATED,
+        }
     }
 }
 
@@ -243,9 +260,42 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 };
 
 pub fn register(registry: &mut Registry, plugins: Plugins) -> Result<(), RegistryError> {
+    let shown = plugins.clone();
     registry
         .tool::<PluginRecord>(EXTENSION)?
-        .behaviour(move |state, context| apply(&plugins, state, context));
+        .behaviour({
+            let plugins = plugins.clone();
+            move |state, context| apply(&plugins, state, context)
+        })
+        // Its numbers are the plugin's, which no schema lists: a card finds them in its facts.
+        .schema(&[])
+        .facts(move |record, context| facts::Facts::of(&shown, record, context.instance()))
+        .command("start_again", {
+            let plugins = plugins.clone();
+            move |_, context, _| {
+                plugins.start_again(context.instance);
+                None
+            }
+        })
+        .command("close_window", {
+            let plugins = plugins.clone();
+            move |_, context, _| {
+                plugins.close_window(context.instance);
+                None
+            }
+        })
+        // Pins the parameter of the id sent at what the plugin plays now, so pinning changes no
+        // sound.
+        .command("pin", move |record, context, parameter| {
+            let id = context.instance;
+            let parameter = u32::try_from(parameter? as i64).ok()?;
+            let parameters = plugins.parameters(id)?;
+            let pin = plugins.pin_now(id, parameters.get(&parameter)?);
+            let mut record = record.clone();
+            let label = format!("Add {}", pin.name);
+            record.parameters.insert(parameter, pin);
+            Some((label, record))
+        });
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

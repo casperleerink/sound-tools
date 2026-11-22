@@ -28,14 +28,12 @@
 //!   quarter of the sample rate. The default ceiling of -1 dB leaves some room for it.
 //! - A change of the lookahead starts the delay again from silence, as a change of latency
 //!   moves the track in time anyway.
-//!
-//! [`view`] is the card of the limiter, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sound_core::feeds::FeedContext;
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
     RegistryError, Scale, State, ranges,
@@ -198,12 +196,81 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
     markdown: include_str!("../agent-doc.md"),
 };
 
+fn reduction_db(context: &FeedContext<'_>) -> f32 {
+    // The peaks hold the factor the sound was above what came out, 1 or more.
+    sound_core::feeds::db(context.peaks(Meters::REDUCTION)[0]).max(0.0)
+}
+
+/// What the limiter sent out over the last [`HISTORY_COLUMNS`] stretches of
+/// [`HISTORY_SECONDS`], while a view shows it.
+struct History {
+    columns: std::collections::VecDeque<f32>,
+    /// The loudest of the stretch that is not over yet, and its seconds so far.
+    loudest: f32,
+    seconds: f32,
+    /// The frame it last heard, so a second read in a frame hears nothing twice.
+    frame: Option<u64>,
+}
+
+const HISTORY_COLUMNS: usize = 50;
+const HISTORY_SECONDS: f32 = 0.08;
+
+impl Default for History {
+    fn default() -> Self {
+        Self {
+            columns: std::iter::repeat_n(0.0, HISTORY_COLUMNS).collect(),
+            loudest: 0.0,
+            seconds: 0.0,
+            frame: None,
+        }
+    }
+}
+
+impl History {
+    fn hear(&mut self, frame: u64, seconds: f32, loudest: f32) -> Vec<f32> {
+        if self.frame != Some(frame) {
+            self.frame = Some(frame);
+            self.loudest = self.loudest.max(loudest);
+            self.seconds += seconds;
+            while self.seconds >= HISTORY_SECONDS {
+                self.seconds -= HISTORY_SECONDS;
+                self.columns.pop_front();
+                self.columns.push_back(std::mem::take(&mut self.loudest));
+            }
+        }
+        (self.columns.iter())
+            .map(|loudest| sound_core::feeds::db(*loudest))
+            .collect()
+    }
+}
+
 /// Registers the limiter tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<LimiterState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Limiter::AUTOMATION.parameters());
+        .schema(Limiter::AUTOMATION.parameters())
+        .feed(
+            "output",
+            "The loudest it sent out since the last frame, in dBFS (-120 for silence).",
+            |_, context| context.peak_db(Meters::OUTPUT),
+        )
+        .feed(
+            "reduction",
+            "The most it turned the sound down since the last frame, in dB, 0 or more.",
+            |_, context| reduction_db(context),
+        )
+        .feed(
+            "history",
+            "What it sent out over the last 4 s: the loudest of each 80 ms, oldest first, 50 numbers in dBFS (-120 for silence).",
+            |_, context| {
+                let (frame, seconds) = (context.frame(), context.seconds());
+                let loudest = context.peaks(Meters::OUTPUT);
+                context.kept("history", |history: &mut History| {
+                    history.hear(frame, seconds, loudest[0].max(loudest[1]))
+                })
+            },
+        );
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

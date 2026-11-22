@@ -1,14 +1,13 @@
 //! A plugin's window that the composer resizes by dragging its edge, and keys typed into it.
-//! GPUI's test platform resizes a window as a drag of its edge would.
 
 use std::path::Path;
 
-use gpui::{AnyWindowHandle, KeyUpEvent, Keystroke, PlatformInput, TestAppContext, px, size};
-use plugin_host::PluginFormat;
+use plugin_host::{Key, KeyDirection, Keystroke, Modifiers, PluginFormat};
 use test_plugin_support::{
     NO_ADJUST_VARIABLE, RESIZABLE_VARIABLE, SMALLEST_WINDOW, WINDOW_HEIGHT, WINDOW_WIDTH,
 };
 
+use crate::desktop::Desktop;
 use crate::support::{
     FORMATS, Harness, id, lifecycle, record, tell_the_plugin,
     tell_the_plugin_to_ask_again_from_inside_the_answer,
@@ -34,63 +33,50 @@ fn window_calls(log: &Path) -> Vec<String> {
         .collect()
 }
 
-fn open(format: PluginFormat, log: &Path, cx: &mut TestAppContext) -> (Harness, AnyWindowHandle) {
+fn open(format: PluginFormat, log: &Path, desktop: &mut Desktop) -> Harness {
     tell_the_plugin(Some(log), None);
     let mut harness = Harness::in_process();
     harness.add_track(record(format, "piano"), Vec::new());
     harness.play(512);
-    cx.update(|cx| harness.plugins.open_window(&id(SLOT), cx))
-        .expect("the window opens");
-    let handle = cx.update(|cx| cx.windows().first().copied()).unwrap();
-    (harness, handle)
-}
-
-/// A test platform window has no title bar, so its bounds are its content.
-fn content_size(handle: AnyWindowHandle, cx: &mut TestAppContext) -> (u32, u32) {
-    let content = cx
-        .update(|cx| handle.update(cx, |_, window, _| window.bounds().size))
-        .expect("the window is there");
-    (
-        f32::from(content.width) as u32,
-        f32::from(content.height) as u32,
-    )
+    desktop.open(&harness.plugins, &id(SLOT));
+    harness
 }
 
 /// The plugin adjusts the size (CLAP's `adjust_size`, VST 3's `checkSizeConstraint`) and takes
-/// it (`set_size`, `onSize`).
-#[gpui::test]
-fn a_window_the_plugin_allows_to_resize_follows_a_drag_within_what_the_plugin_takes(
-    cx: &mut TestAppContext,
-) {
+/// it (`set_size`, `onSize`). On a display of twice the pixels, so the plugin is told points.
+#[test]
+fn a_window_the_plugin_allows_to_resize_follows_a_drag_within_what_the_plugin_takes() {
     tell_the_plugin_it_may_be_resized(true);
     for format in FORMATS {
-        resizing_within_limits(format, cx);
+        resizing_within_limits(format);
     }
     tell_the_plugin_it_may_be_resized(false);
 }
 
-fn resizing_within_limits(format: PluginFormat, cx: &mut TestAppContext) {
+fn resizing_within_limits(format: PluginFormat) {
     let folder = tempfile::tempdir().unwrap();
     let log = folder.path().join("calls.txt");
-    let (harness, handle) = open(format, &log, cx);
-    assert_eq!(content_size(handle, cx), (WINDOW_WIDTH, WINDOW_HEIGHT));
+    let mut desktop = Desktop::new(2.0);
+    let harness = open(format, &log, &mut desktop);
+    assert!(desktop.window().resizable);
+    assert_eq!(desktop.content(), (WINDOW_WIDTH, WINDOW_HEIGHT));
     let before = window_calls(&log).len();
 
-    cx.simulate_window_resize(handle, size(px(640.), px(480.)));
+    desktop.drag_edge(&harness.plugins, (640, 480));
     let calls = window_calls(&log).split_off(before);
     assert_eq!(calls, ["gui_adjust_size", "gui_on_size"], "{format:?}");
-    cx.update(|cx| harness.plugins.settle_windows(cx));
-    assert_eq!(content_size(handle, cx), (640, 480), "{format:?}");
+    desktop.settle(&harness.plugins);
+    assert_eq!(desktop.content(), (640, 480), "{format:?}");
 
-    cx.simulate_window_resize(handle, size(px(100.), px(100.)));
-    cx.update(|cx| harness.plugins.settle_windows(cx));
-    assert_eq!(content_size(handle, cx), SMALLEST_WINDOW, "{format:?}");
+    desktop.drag_edge(&harness.plugins, (100, 100));
+    desktop.settle(&harness.plugins);
+    assert_eq!(desktop.content(), SMALLEST_WINDOW, "{format:?}");
     // The size the host gave is not told to the plugin again.
     let told = window_calls(&log);
-    cx.update(|cx| harness.plugins.settle_windows(cx));
+    desktop.settle(&harness.plugins);
     assert_eq!(window_calls(&log), told);
 
-    cx.update(|cx| harness.plugins.close_window(&id(SLOT), cx));
+    harness.plugins.close_window(&id(SLOT));
 }
 
 fn tell_the_plugin_not_to_adjust(not: bool) {
@@ -104,21 +90,22 @@ fn tell_the_plugin_not_to_adjust(not: bool) {
 }
 
 /// CLAP's `adjust_size` says nothing and VST 3's `checkSizeConstraint` leaves the rectangle.
-#[gpui::test]
-fn a_plugin_that_does_not_adjust_a_size_takes_it_as_it_was_dragged(cx: &mut TestAppContext) {
+#[test]
+fn a_plugin_that_does_not_adjust_a_size_takes_it_as_it_was_dragged() {
     tell_the_plugin_it_may_be_resized(true);
     tell_the_plugin_not_to_adjust(true);
     for format in FORMATS {
         let folder = tempfile::tempdir().unwrap();
         let log = folder.path().join("calls.txt");
-        let (harness, handle) = open(format, &log, cx);
+        let mut desktop = Desktop::new(1.0);
+        let harness = open(format, &log, &mut desktop);
         let before = window_calls(&log).len();
-        cx.simulate_window_resize(handle, size(px(100.), px(90.)));
+        desktop.drag_edge(&harness.plugins, (100, 90));
         let calls = window_calls(&log).split_off(before);
         assert_eq!(calls, ["gui_adjust_size", "gui_on_size"], "{format:?}");
-        cx.update(|cx| harness.plugins.settle_windows(cx));
-        assert_eq!(content_size(handle, cx), (100, 90), "{format:?}");
-        cx.update(|cx| harness.plugins.close_window(&id(SLOT), cx));
+        desktop.settle(&harness.plugins);
+        assert_eq!(desktop.content(), (100, 90), "{format:?}");
+        harness.plugins.close_window(&id(SLOT));
     }
     tell_the_plugin_not_to_adjust(false);
     tell_the_plugin_it_may_be_resized(false);
@@ -126,62 +113,125 @@ fn a_plugin_that_does_not_adjust_a_size_takes_it_as_it_was_dragged(cx: &mut Test
 
 /// `onSize` is never called inside `onSize`. The window ends on the size the view then says it
 /// has.
-#[gpui::test]
-fn a_view_that_asks_for_a_size_inside_the_answer_to_a_drag_is_not_answered_inside_it(
-    cx: &mut TestAppContext,
-) {
+#[test]
+fn a_view_that_asks_for_a_size_inside_the_answer_to_a_drag_is_not_answered_inside_it() {
     tell_the_plugin_it_may_be_resized(true);
     tell_the_plugin_to_ask_again_from_inside_the_answer(500, 400);
     let folder = tempfile::tempdir().unwrap();
     let log = folder.path().join("calls.txt");
-    let (harness, handle) = open(PluginFormat::Vst3, &log, cx);
+    let mut desktop = Desktop::new(1.0);
+    let harness = open(PluginFormat::Vst3, &log, &mut desktop);
     let before = window_calls(&log).len();
-    cx.simulate_window_resize(handle, size(px(640.), px(480.)));
+    desktop.drag_edge(&harness.plugins, (640, 480));
     let calls = window_calls(&log).split_off(before);
     assert_eq!(
         calls,
         ["gui_adjust_size", "gui_on_size", "gui_request_resize"],
         "{calls:?}"
     );
-    cx.update(|cx| harness.plugins.settle_windows(cx));
-    assert_eq!(content_size(handle, cx), (500, 400));
-    cx.update(|cx| harness.plugins.close_window(&id(SLOT), cx));
+    desktop.settle(&harness.plugins);
+    assert_eq!(desktop.content(), (500, 400));
+    harness.plugins.close_window(&id(SLOT));
     tell_the_plugin_to_ask_again_from_inside_the_answer(0, 0);
     tell_the_plugin_it_may_be_resized(false);
 }
 
-#[gpui::test]
-fn a_window_the_plugin_does_not_allow_to_resize_asks_it_nothing(cx: &mut TestAppContext) {
+#[test]
+fn a_window_the_plugin_does_not_allow_to_resize_asks_it_nothing() {
     tell_the_plugin_it_may_be_resized(false);
     for format in FORMATS {
         let folder = tempfile::tempdir().unwrap();
         let log = folder.path().join("calls.txt");
-        let (harness, handle) = open(format, &log, cx);
-        cx.simulate_window_resize(handle, size(px(640.), px(480.)));
-        cx.update(|cx| harness.plugins.settle_windows(cx));
+        let mut desktop = Desktop::new(1.0);
+        let harness = open(format, &log, &mut desktop);
+        assert!(!desktop.window().resizable);
+        desktop.drag_edge(&harness.plugins, (640, 480));
+        desktop.settle(&harness.plugins);
         let calls = window_calls(&log);
         assert!(!calls.contains(&"gui_adjust_size".to_string()), "{calls:?}");
         assert!(!calls.contains(&"gui_on_size".to_string()), "{calls:?}");
-        cx.update(|cx| harness.plugins.close_window(&id(SLOT), cx));
+        harness.plugins.close_window(&id(SLOT));
+    }
+}
+
+/// Both formats count physical pixels in a Win32 window, and the plugin is told the scale
+/// before it is shown. The CLAP test plugin grows with it.
+#[test]
+fn a_plugin_in_a_win32_window_is_told_the_scale_first_and_counts_physical_pixels() {
+    tell_the_plugin_it_may_be_resized(true);
+    let folder = tempfile::tempdir().unwrap();
+    let log = folder.path().join("calls.txt");
+    let mut desktop = Desktop::new(1.5).with_win32_views();
+    let harness = open(PluginFormat::Clap, &log, &mut desktop);
+    let calls = window_calls(&log);
+    let scaled = calls.iter().position(|call| call == "gui_set_scale[1.5]");
+    let parent = calls.iter().position(|call| call == "gui_set_parent");
+    assert!(scaled.is_some() && scaled < parent, "{calls:?}");
+    // 320 by 240 at one and a half.
+    desktop.settle(&harness.plugins);
+    assert_eq!(desktop.window().content, (480, 360), "{calls:?}");
+    // Past the largest the plugin takes, 1200 by 900 of its pixels, which a plugin told points
+    // would take as it is.
+    desktop.drag_edge(&harness.plugins, (1500, 1200));
+    desktop.settle(&harness.plugins);
+    assert_eq!(desktop.window().content, (1200, 900));
+    harness.plugins.close_window(&id(SLOT));
+    tell_the_plugin_it_may_be_resized(false);
+}
+
+fn typed(text: &str, modifiers: Modifiers) -> Keystroke {
+    Keystroke {
+        key: Key::Text(text.to_string()),
+        modifiers,
     }
 }
 
 /// A key the plugin's own view does not take reaches the window, and the host passes it on with
-/// `IPlugView::onKeyDown` and `onKeyUp`. CLAP has no such call.
-#[gpui::test]
-fn a_key_typed_in_a_plugins_window_reaches_a_vst3_view(cx: &mut TestAppContext) {
+/// `IPlugView::onKeyDown` and `onKeyUp`. CLAP has no such call, so the app plays it.
+#[test]
+fn a_key_typed_in_a_plugins_window_reaches_a_vst3_view() {
     for format in FORMATS {
         let folder = tempfile::tempdir().unwrap();
         let log = folder.path().join("calls.txt");
-        let (harness, handle) = open(format, &log, cx);
-        // `secondary` is command on macOS and control on Windows, which VST 3 both calls command.
-        cx.simulate_keystrokes(handle, "a shift-b enter secondary-c");
-        let up = PlatformInput::KeyUp(KeyUpEvent {
-            keystroke: Keystroke::parse("a").unwrap(),
-        });
-        cx.update(|cx| handle.update(cx, |_, window, cx| window.dispatch_event(up, cx)))
-            .unwrap();
-        let keys: Vec<String> = window_calls(&log)
+        let mut desktop = Desktop::new(1.0);
+        let harness = open(format, &log, &mut desktop);
+        let none = Modifiers::default();
+        let keys = [
+            (typed("a", none), KeyDirection::Down),
+            (
+                typed(
+                    "B",
+                    Modifiers {
+                        shift: true,
+                        ..none
+                    },
+                ),
+                KeyDirection::Down,
+            ),
+            (
+                Keystroke {
+                    key: Key::Enter,
+                    modifiers: none,
+                },
+                KeyDirection::Down,
+            ),
+            (
+                typed(
+                    "c",
+                    Modifiers {
+                        command: true,
+                        ..none
+                    },
+                ),
+                KeyDirection::Down,
+            ),
+            (typed("a", none), KeyDirection::Up),
+        ];
+        let used: Vec<bool> = keys
+            .iter()
+            .map(|(key, direction)| desktop.type_key(&harness.plugins, key, *direction))
+            .collect();
+        let logged: Vec<String> = window_calls(&log)
             .into_iter()
             .filter(|call| call.starts_with("gui_key"))
             .collect();
@@ -197,7 +247,22 @@ fn a_key_typed_in_a_plugins_window_reaches_a_vst3_view(cx: &mut TestAppContext) 
                 "gui_key_up[97,0,0]",
             ],
         };
-        assert_eq!(keys, expected, "{format:?}");
-        cx.update(|cx| harness.plugins.close_window(&id(SLOT), cx));
+        assert_eq!(logged, expected, "{format:?}");
+        assert_eq!(used, [format == PluginFormat::Vst3; 5], "{format:?}");
+
+        // A window that went hands on nothing.
+        let window = desktop.only();
+        harness.plugins.close_window(&id(SLOT));
+        let late = harness
+            .plugins
+            .window_key(window, &typed("a", none), KeyDirection::Down);
+        assert!(!late);
+        assert_eq!(
+            window_calls(&log)
+                .iter()
+                .filter(|call| call.starts_with("gui_key"))
+                .count(),
+            expected.len()
+        );
     }
 }

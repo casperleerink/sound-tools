@@ -78,8 +78,11 @@ fn stops_and_comes_back(harness: &mut Harness, format: PluginFormat) {
     harness.render(1024);
     assert!(harness.plugins.has_stopped(&id), "{format:?}");
 
-    // Start again: the next note sounds through both.
-    harness.plugins.start_again(&id);
+    // Start again, as the card's button sends it: the next note sounds through both.
+    assert_eq!(
+        harness.project.command(&id, "start_again", None).ok(),
+        Some(true)
+    );
     harness.rebind_retries();
     assert_eq!(
         instrument_problems(harness),

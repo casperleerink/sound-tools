@@ -1,4 +1,4 @@
-"""Measures the runtime of git commits: offline render CPU, live playback, null tests. See README.md."""
+"""Measures `sound-tools` of git commits: offline render CPU, live playback, null tests. See README.md."""
 
 import argparse
 import json
@@ -26,13 +26,6 @@ ENV = dict(os.environ, HOME=str(ROOT / "home"), SOUND_TOOLS_NO_UPDATES="1",
            PATH=os.pathsep.join([str(Path.home() / ".bun/bin"), os.environ.get("PATH", "")]))
 # ru_maxrss is bytes on macOS and kilobytes on Linux.
 MAXRSS_BYTES = 1 if platform.system() == "Darwin" else 1024
-# A `+edit` live run changes the `root` choice of the gravity-harp track every few seconds, so
-# its sound is built again while the piece plays. A save of a tool file would do the same, but
-# only the window reloads tool files; headless does not.
-EDIT_EVERY = 5
-ROOTS = ["C", "E", "F", "G", "A", "D"]
-# Tools that are silent without a window: their sound only starts from their page.
-SILENT = {"one-gravity-harp": "plucks only when a ball drops on its page"}
 
 
 def git(*arguments, cwd=REPO):
@@ -47,17 +40,20 @@ class Build:
         self.sha = git("rev-parse", "--short=12", f"{ref}^{{commit}}")
         self.base = ROOT / self.sha
         self.source = self.base / "src"
-        self.runtime = self.base / "runtime"
-        if self.runtime.exists():
+        self.program = self.base / "sound-tools"
+        if self.program.exists():
             return
         if not self.source.exists():
             git("worktree", "add", "--detach", str(self.source), self.sha)
         print(f"building {ref} ({self.sha})", file=sys.stderr, flush=True)
         # One target folder for all commits: dependencies build once, each commit links its own.
         target = ROOT / "target"
-        subprocess.run(["cargo", "build", "--release", "-p", "runtime", "--locked"], cwd=self.source, check=True,
+        # The program is `sound-tools` of crates/window; before it, `runtime` of crates/runtime.
+        package, program = ("runtime", "runtime") if (self.source / "crates/runtime/src/main.rs").exists() \
+            else ("sound-window", "sound-tools")
+        subprocess.run(["cargo", "build", "--release", "-p", package, "--locked"], cwd=self.source, check=True,
                        env=dict(os.environ, CARGO_TARGET_DIR=str(target)))
-        shutil.copy(target / "release/runtime", self.runtime)
+        shutil.copy(target / "release" / program, self.program)
 
     def __str__(self):
         return f"{self.ref} ({self.sha[:7]})"
@@ -66,16 +62,16 @@ class Build:
         return self.base / "projects" / name
 
     def make_projects(self, names):
-        for name in dict.fromkeys(name.removesuffix("+edit") for name in names):
-            projects.make(self.runtime, self.source, self.project(name), name, ENV)
+        for name in dict.fromkeys(names):
+            projects.make(self.program, self.source, self.project(name), name, ENV)
 
 
 def check_output(text, what):
-    """Fails on any problem or error the runtime printed: a tool that did not load is one."""
+    """Fails on any problem or error `sound-tools` printed: a tool that did not load is one."""
     bad = [line for line in text.splitlines()
            if line.startswith("error") or (line.startswith("problems:") and line != "problems: 0")]
     if bad:
-        raise SystemExit(f"{what}: the runtime reported problems:\n" + "\n".join(bad))
+        raise SystemExit(f"{what}: sound-tools reported problems:\n" + "\n".join(bad))
 
 
 def render_once(build, name, seconds, wav):
@@ -84,7 +80,7 @@ def render_once(build, name, seconds, wav):
     log.parent.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
     with log.open("w") as out:
-        process = subprocess.Popen([build.runtime, build.project(name), "--render", wav, "--seconds", str(seconds)],
+        process = subprocess.Popen([build.program, build.project(name), "--render", wav, "--seconds", str(seconds)],
                                    env=ENV, stdout=out, stderr=subprocess.STDOUT)
         _, status, usage = os.wait4(process.pid, 0)
     wall = time.perf_counter() - started
@@ -120,7 +116,7 @@ def render(builds, names, runs, seconds):
 
     print(f"\nRender, median of {runs}. dsp: CPU of {seconds} s minus CPU of 1 s, as % of one core. "
           "Spread: (slowest - fastest) / median of the long render. "
-          "Startup: a render of 0 s. MB: peak RSS of the runtime.\n")
+          "Startup: a render of 0 s. MB: peak RSS of sound-tools.\n")
     print("| project | commit | dsp % of a core | spread % | startup cpu s | startup wall s | peak MB |")
     print("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
     for name in names:
@@ -157,19 +153,13 @@ def process_tree(root):
     return found
 
 
-def edit_choice(folder, edits):
-    record = {"tool": "gravity-harp", "state": {"root": ROOTS[edits % len(ROOTS)]}}
-    (folder / "state/song/gravity-harp/synth.json").write_text(json.dumps(record))
-
-
 def live_once(build, job, window):
     """Plays a copy of a project headless at -60 dB for `window` seconds."""
-    name = job.removesuffix("+edit")
-    folder = build.base / "live" / name
+    folder = build.base / "live" / job
     shutil.rmtree(folder, ignore_errors=True)
-    shutil.copytree(build.project(name), folder)
+    shutil.copytree(build.project(job), folder)
     projects.set_master_gain(folder, -60.0)
-    process = subprocess.Popen([build.runtime, folder, "--headless"], env=ENV, text=True, bufsize=1,
+    process = subprocess.Popen([build.program, folder, "--headless"], env=ENV, text=True, bufsize=1,
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     lines = []
 
@@ -187,15 +177,12 @@ def live_once(build, job, window):
     process.stdin.write("play\n")
     time.sleep(2)  # past the first blocks of playback
     before, started = process_tree(process.pid), time.monotonic()
-    rss, bun_rss, edits = [], [], 0
-    while (elapsed := time.monotonic() - started) < window:
+    rss, bun_rss = [], []
+    while time.monotonic() - started < window:
         time.sleep(1)
         tree = process_tree(process.pid)
         rss.append(sum(row[1] for row in tree.values()))
         bun_rss.append(sum(row[1] for row in tree.values() if "bun" in row[2]))
-        if job.endswith("+edit") and elapsed // EDIT_EVERY > edits:
-            edit_choice(folder, edits)
-            edits += 1
     after, elapsed = process_tree(process.pid), time.monotonic() - started
     process.stdin.write("status\nquit\n")
     process.stdin.flush()
@@ -229,7 +216,7 @@ def live(builds, jobs, runs, window):
                 results.setdefault((job, build.sha), []).append(live_once(build, job, window))
     save("live", {"|".join(key): value for key, value in results.items()})
     print(f"\nLive, {runs} runs of {window} s, master at -60 dB. CPU and MB: median, process tree "
-          "(runtime and Bun). Late, xruns and slowest callback: each run, over the whole session.\n")
+          "(sound-tools and Bun). Late, xruns and slowest callback: each run, over the whole session.\n")
     print("| project | commit | cpu % | bun cpu % | MB | bun MB | late callbacks | xruns | slowest callback "
           "| engine edits |")
     print("| --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- |")
@@ -248,59 +235,8 @@ def live(builds, jobs, runs, window):
                   f"| {each('engine edits')} |")
 
 
-def press_space(pid):
-    """Brings the window of `pid` to the front and presses space: play, or pause. macOS only; the
-    terminal needs Accessibility in System Settings."""
-    subprocess.run(["osascript", "-e", f"tell application \"System Events\" to set frontmost of (first process "
-                    f"whose unix id is {pid}) to true", "-e", "delay 0.5", "-e",
-                    "tell application \"System Events\" to keystroke \" \""], check=True, capture_output=True)
-
-
-def window_once(build, job, window):
-    """Opens a copy of a project in the window at -60 dB, plays it for a `+play` job, and measures
-    the process tree for `window` seconds."""
-    name = job.removesuffix("+play")
-    folder = build.base / "window" / name
-    shutil.rmtree(folder, ignore_errors=True)
-    shutil.copytree(build.project(name), folder)
-    projects.set_master_gain(folder, -60.0)
-    process = subprocess.Popen([build.runtime, folder], env=ENV, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(8)  # past the startup: Bun, the first frames
-    if job.endswith("+play"):
-        press_space(process.pid)
-        time.sleep(2)
-    before, started = process_tree(process.pid), time.monotonic()
-    rss = []
-    while time.monotonic() - started < window:
-        time.sleep(1)
-        rss.append(sum(row[1] for row in process_tree(process.pid).values()))
-    after, elapsed = process_tree(process.pid), time.monotonic() - started
-    process.terminate()
-    process.wait(timeout=30)
-    cpu = sum(row[0] for row in after.values()) - sum(row[0] for row in before.values())
-    return {"cpu": cpu / elapsed * 100, "mb": statistics.median(rss) / 2**20, "peak mb": max(rss) / 2**20}
-
-
-def window_mode(builds, jobs, runs, window):
-    results = {}
-    for run in range(runs):
-        print(f"window run {run + 1} of {runs}", file=sys.stderr, flush=True)
-        for job in jobs:
-            for build in builds:
-                results.setdefault((job, build.sha), []).append(window_once(build, job, window))
-    save("window", {"|".join(key): value for key, value in results.items()})
-    print(f"\nWindow, {runs} runs of {window} s, master at -60 dB. Median of runs; process tree (runtime and "
-          "Bun). MB: median RSS over the window, peak MB: highest.\n")
-    print("| project | commit | cpu % | MB | peak MB |\n| --- | --- | ---: | ---: | ---: |")
-    for job in jobs:
-        for build in builds:
-            rows = results[(job, build.sha)]
-            cells = [statistics.median(row[field] for row in rows) for field in ("cpu", "mb", "peak mb")]
-            print(f"| {job} | {build} | {cells[0]:.1f} | {cells[1]:.0f} | {cells[2]:.0f} |")
-
-
 def read_wav(path):
-    """The float samples of a WAV the runtime wrote (32-bit float, any channels)."""
+    """The float samples of a WAV `sound-tools` wrote (32-bit float, any channels)."""
     data = path.read_bytes()
     at = 12
     while at < len(data):
@@ -322,7 +258,7 @@ def null(builds, names, seconds):
             wav = ROOT / "null" / f"{name}-{index}.wav"
             wav.parent.mkdir(exist_ok=True)
             peak = render_once(build, name, seconds, wav)["peak"]
-            if peak < 1e-4 and name not in SILENT:
+            if peak < 1e-4:
                 raise SystemExit(f"{name} on {build} rendered silence (peak {peak})")
             renders.append(read_wav(wav))
         first, second = renders
@@ -331,8 +267,7 @@ def null(builds, names, seconds):
         difference = max((abs(a - b) for a, b in zip(first, second)), default=0.0)
         db = 20 * math.log10(difference) if difference > 0 else float("-inf")
         failed |= db > -100
-        note = f" (silent: {SILENT[name]})" if name in SILENT else ""
-        rows.append(f"| {name} | {max(map(abs, first)):.3f} | {db:.1f}{note} |")
+        rows.append(f"| {name} | {max(map(abs, first)):.3f} | {db:.1f} |")
     print(f"\nNull test, {seconds} s, {builds[0]} against {builds[1]}. Target: under -100 dB.\n")
     print("| project | peak | peak difference dB |\n| --- | ---: | ---: |")
     print("\n".join(rows))
@@ -343,7 +278,7 @@ def null(builds, names, seconds):
 def profile(build, name, seconds):
     """Samples a render with macOS `sample` and prints the functions most often on top of the stack."""
     # Longer than the sampling takes at any speed; it is stopped when the sampling ends.
-    process = subprocess.Popen([build.runtime, build.project(name), "--render", ROOT / "out.wav", "--seconds", "3600"],
+    process = subprocess.Popen([build.program, build.project(name), "--render", ROOT / "out.wav", "--seconds", "3600"],
                                env=ENV, stdout=subprocess.DEVNULL)
     time.sleep(2)  # past the startup
     report = ROOT / f"profile-{build.sha}-{name}.txt"
@@ -369,7 +304,7 @@ def save(kind, results):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["render", "live", "window", "null", "profile"])
+    parser.add_argument("mode", choices=["render", "live", "null", "profile"])
     parser.add_argument("refs", nargs="+", help="commits or branches, such as main HEAD")
     parser.add_argument("--projects", help="comma separated; see projects.names(), or a group of projects.GROUPS")
     parser.add_argument("--runs", type=int, default=3)
@@ -378,8 +313,7 @@ def main():
     arguments = parser.parse_args()
     defaults = {
         "render": projects.names(),
-        "live": ["builtin12", "mixed", "mixed-x2", "mixed+edit"],
-        "window": ["empty", "builtin12+play", "mixed", "mixed+play"],
+        "live": ["builtin12", "mixed", "mixed-x2"],
         "null": [name for name in projects.names() if name.startswith(("one-", *projects.REBUILDS))],
         "profile": ["one-grain-cloud"],
     }
@@ -388,13 +322,11 @@ def main():
     (ROOT / "home").mkdir(parents=True, exist_ok=True)
     builds = [Build(ref) for ref in arguments.refs]
     for build in builds:
-        build.make_projects([name.removesuffix("+play") for name in names])
+        build.make_projects(names)
     if arguments.mode == "render":
         render(builds, names, arguments.runs, arguments.seconds or 61)
     elif arguments.mode == "live":
         live(builds, names, arguments.runs, arguments.window)
-    elif arguments.mode == "window":
-        window_mode(builds, names, arguments.runs, arguments.window)
     elif arguments.mode == "null":
         null(builds, names, arguments.seconds or 20)
     else:

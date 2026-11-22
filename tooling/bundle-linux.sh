@@ -22,13 +22,13 @@ version="${SOUND_TOOLS_VERSION:-0.0.0}"
 # x86_64 or aarch64.
 name="sound-tools-$version-linux-$(uname -m)"
 
-cargo build --release -p runtime --locked
+cargo build --release -p sound-window --locked
 target="$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
 
 scratch="$(mktemp -d)"
 folder="$scratch/$name"
 mkdir -p "$folder"
-cp "$target/release/runtime" "$folder/sound-tools"
+cp "$target/release/sound-tools" "$folder/sound-tools"
 # The release profile keeps line tables for backtraces, and on Linux they are in the program.
 # They are most of its size. The names of the functions stay.
 strip --strip-debug "$folder/sound-tools"

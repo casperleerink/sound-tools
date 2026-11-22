@@ -17,7 +17,8 @@
 //! - [`Shifter`] moves the pitch of one voice and keeps its length, for pitch correction.
 //! - [`Periods`] are what a region with warp points needs to play longer or shorter than its
 //!   file at its pitch.
-//! - [`Overview`] is what a waveform of it draws, made from the file and never saved.
+//! - [`Overview`] is what a waveform of it draws, made from the file and never saved;
+//!   [`Waves`] makes and keeps them away from the thread that draws.
 //! - [`TakeFile`] is a recording on its way in: a WAV file that grows while it records.
 //! - [`analysis`] measures a sound: its loudness, peaks, spectrum and pitch.
 
@@ -32,6 +33,7 @@ mod stream;
 mod stretch;
 mod take;
 mod varispeed;
+mod waves;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -50,8 +52,8 @@ pub use file::{Audio, Container, Encoding, FormatError, Info, SAMPLE_RATES, Samp
 pub use loader::{Keep, Loader, Read, Stamp, load_in_background};
 pub use overview::{FINEST_FRAMES, Overview};
 pub use player::{
-    AudioPlayer, AudioSnapshot, AudioUpdate, DECLICK_SECONDS, Region, WarpPoint, file_frames,
-    snapshot,
+    AudioPlayer, AudioSnapshot, AudioUpdate, DECLICK_SECONDS, Region, WarpPoint, faded,
+    file_frames, snapshot,
 };
 pub use resample::{Resampler, SCRATCH_FRAMES};
 pub use shifter::{Shift, Shifter};
@@ -59,6 +61,7 @@ pub use stream::{HEAD_SECONDS, ReadAhead};
 pub use stretch::Periods;
 pub use take::{TakeFile, TakeOverview};
 pub use varispeed::{MAX_STEP, Varispeed, varispeed};
+pub use waves::{Wake, Waves};
 
 /// The folder of audio files, under `assets/`.
 pub const AUDIO_FOLDER: &str = "audio";
@@ -384,6 +387,43 @@ pub fn cached(assets: &Assets, asset: &AudioAsset) -> Cached {
         Some(Outcome::DoesNotPlay(error)) => Cached::DoesNotPlay(error.clone()),
         Some(Outcome::Missing) => Cached::Missing,
         None => Cached::Unknown,
+    }
+}
+
+/// What a view knows of a file a record names, from memory only, see [`cached`]: for the facts
+/// of a tool that plays one.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct FileFacts {
+    /// Its file name, as the record holds it.
+    pub name: String,
+    pub state: FileState,
+    /// How long it plays at its own rate, while it plays.
+    pub seconds: Option<f64>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FileState {
+    Plays,
+    Missing,
+    DoesNotPlay,
+    /// Not looked at yet.
+    Unknown,
+}
+
+impl FileFacts {
+    pub fn of(assets: &Assets, asset: &AudioAsset) -> Self {
+        let (state, seconds) = match cached(assets, asset) {
+            Cached::Plays(info) => (FileState::Plays, Some(info.seconds())),
+            Cached::DoesNotPlay(_) => (FileState::DoesNotPlay, None),
+            Cached::Missing => (FileState::Missing, None),
+            Cached::Unknown => (FileState::Unknown, None),
+        };
+        Self {
+            name: asset.to_string(),
+            state,
+            seconds,
+        }
     }
 }
 

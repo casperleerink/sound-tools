@@ -15,18 +15,17 @@
 //! The level stays where it was as the drive goes up: the saturator turns its output down by
 //! what the drive adds to a sine at -12 dBFS. So the drive changes the colour of the sound and
 //! not how loud it is.
-//!
-//! [`view`] is the card of the saturator, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sound_core::feeds::db;
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
     RegistryError, Scale, State, ranges,
 };
+use sound_dsp::amplitude;
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
 pub use processor::{LATENCY, Saturator, auto_gain, response, transfer};
@@ -155,9 +154,34 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<SaturatorState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Saturator::AUTOMATION.parameters());
+        .schema(Saturator::AUTOMATION.parameters())
+        .feed(
+            "transfer",
+            "Its curve: the level out, in dBFS, of a steady sound at each of `points` levels in (61 unless the binding says), evenly from -48 to 6 dBFS unless the binding shows another range.",
+            |state, context| {
+                context.curve([-48.0, 6.0], 61, |input| {
+                    db(transfer(state, amplitude(input)).abs())
+                })
+            },
+        )
+        .feed(
+            "auto_gain",
+            "What it turns the saturated sound down by so a sine at -12 dBFS keeps its level, in dB.",
+            |state, _| db(auto_gain(state.curve, state.drive_db)),
+        )
+        .feed(
+            "bend",
+            "The level out, in dBFS, of a steady sound at the bend: the level in that the drive takes to full scale, minus the drive in dB. The point of the `transfer` curve where a card puts the handle of the drive.",
+            |state, _| bend_db(state),
+        );
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
+}
+
+/// The level out, in dBFS, at the bend of the curve: the level in, `-drive_db` dBFS, that the
+/// drive takes to full scale, where every curve has bent.
+pub fn bend_db(state: &SaturatorState) -> f32 {
+    db(transfer(state, amplitude(-state.drive_db)).abs())
 }
 
 /// Runs for every valid state, from every source. The processor is kept between runs, so the
@@ -187,6 +211,35 @@ mod tests {
             check_parameter_ranges(&state, &PARAMETERS, |state| state),
             Ok(())
         );
+    }
+
+    /// The handle of the drive is at the bend: below it the curve still follows the level in,
+    /// dB for dB, above it it has flattened.
+    #[test]
+    fn the_bend_is_where_the_curve_turns_from_straight_to_flat() {
+        for curve in [Curve::Soft, Curve::Clip] {
+            for drive_db in [6.0, 18.0, 30.0] {
+                let state = SaturatorState {
+                    curve,
+                    drive_db,
+                    ..SaturatorState::default()
+                };
+                let out = |input_db: f32| db(transfer(&state, amplitude(input_db)).abs());
+                let slope = |input_db: f32| (out(input_db + 1.0) - out(input_db - 1.0)) / 2.0;
+                let bend = -drive_db;
+                assert!(
+                    (slope(bend - 12.0) - 1.0).abs() < 0.1,
+                    "{curve:?} {drive_db}: {}",
+                    slope(bend - 12.0)
+                );
+                assert!(
+                    slope(bend + 6.0) < 0.5,
+                    "{curve:?} {drive_db}: {}",
+                    slope(bend + 6.0)
+                );
+                assert_eq!(bend_db(&state), out(bend));
+            }
+        }
     }
 
     #[test]

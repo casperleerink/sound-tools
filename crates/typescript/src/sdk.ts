@@ -1,5 +1,5 @@
 // The SDK of the project's own tools. Sound Tools writes this file and `sdk/` when the project
-// opens, so an edit there is lost. Read `agent-docs/extensions.md` first.
+// opens, so an edit there is lost. Read `agent-docs/tools.md` first.
 //
 // Below is every name a tool may import, by the module of `sdk/` that declares it with its doc.
 
@@ -36,65 +36,32 @@ export type {
   OwnedChild, OwnNotes, Parent, Part, Performer, ProjectTool, SendTo, StateOfTool, Take, Takes,
   TakingTool, Tick, ToolName, ToolSpec
 } from "./sdk/tools";
-// live values (`now`), drags, pointer events, keys and menus
-export {
-  Live, now
-} from "./sdk/live";
+// the clock and keys
 export type {
-  ActionId, ActionKey, Channel, Clock, Drag, DragResult, DragTurns, DragValues, Dropped, KeyName,
-  MenuItem, MenuOptions, Modifiers, MovedNumber, Now, Num, Offer, Offers, PlainKey, PointerEvents,
-  Press, Section, Shortcut, SpaceValues, TakeList, TempoMap, Turn, View, WaveList
-} from "./sdk/live";
-// what runs again when a value changes: `memo`, `signal`, `timeout`
+  ActionKey, Clock, KeyName, Modifiers, PlainKey, Section, TempoMap
+} from "./sdk/clock";
+// live values: what moves every frame without running a view
 export {
-  batch, interval, memo, onCleanup, selector, signal, timeout, untrack
-} from "./sdk/reactivity";
+  Live
+} from "./sdk/values";
 export type {
-  Accessor, Bind, Memory
-} from "./sdk/reactivity";
-// `For`, `Show`, `Switch`, `Popover` and `Dialog`
+  Num
+} from "./sdk/values";
+// a view: its elements, where live values start, `memo`, and the checks a test runs
 export {
-  Dialog, For, Fragment, Match, Popover, Show, Switch
-} from "./sdk/nodes";
+  act, apply, find, Fragment, h, live, memo, press, render
+} from "./sdk/view";
 export type {
-  Child, OverlayProps, ShapeLiteral, UiNode
-} from "./sdk/nodes";
-// the elements of a view: `div` and its `Style`, `Row`, `Text`, `Space` and its shapes, `Button`, `Input`
-export {
-  alpha, Arc, blend, Button, Circle, DeviceCard, Group, h, Icon, Input, Label, Line, Notes, Path,
-  Rect, Row, Space, Text, Toggle, Wave
-} from "./sdk/drawing";
+  Actions, BoxProps, Card, Child, ChildProps, Color, ColorToken, Drag, Drawn, Dropped, Facts, FeedList,
+  FieldInfo, FieldProps, IconProps, Lines, Node, Offer, Plane, Pointer, Radius, Rects, Role,
+  Self, Shadow, ShapesProps, Space, TextProps, TextStyle
+} from "./sdk/view";
 export type {
-  ButtonProps, CardSelect, Color, ControlSize, DeviceCardProps, IconName, InputProps, Look, Paint,
-  PathPoint, PathPoints, Radius, RowProps, Shape, SpaceProps, Spacing, Style, TextPart, TextProps,
-  TextVariant, ThemeColor, ToggleProps, Tone
-} from "./sdk/drawing";
-// controls made of them: `Knob`, `Fader`, `NumberBox`, `Select`, `Steps`, `Pad`
-export {
-  Fader, Knob, Meter, Notice, NumberBox, Pad, positionOf, SegmentedControl, Select,
-  Slider, Steps, valueAt, words
-} from "./sdk/components";
-export type {
-  FaderProps, Kept, KnobProps, MeterProps, NumberBoxProps, PadProps, Peaks, Quiet,
-  SegmentedControlProps, SelectOption, SelectProps, SliderProps, StepsProps, Travel, ValueProps
-} from "./sdk/components";
-// a view that fills the window: `Page`, `Panel` and `Transport`
-export {
-  Page, Panel, Transport
-} from "./sdk/page";
-export type {
-  PageProps, PanelProps, TransportProps
-} from "./sdk/page";
-// the parts of a device card: `Display`, `StepGrid`, `Controls` and `Cell`
-export {
-  Cell, Controls, defaultView, Display, StepGrid
-} from "./sdk/card";
-export type {
-  DisplayProps, DisplayScale, StepGridProps
-} from "./sdk/card";
+  IconName
+} from "./sdk/icons";
 // what the runtime calls
 export {
-  host
-} from "./sdk/host";
+  registry as host
+} from "./sdk/tools";
 // the records of the built-in tools, from their Rust types
 export * from "./sdk/records";

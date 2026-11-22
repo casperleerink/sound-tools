@@ -20,7 +20,6 @@ use sound_core::{InstanceId, Sections, TempoMap};
 use sound_signals::Graph;
 
 use crate::tools::ToolInfo;
-use crate::tree::Op;
 use crate::{NoteMessage, behaviours};
 
 /// How long one step of a load, the start of Bun or a file, may take before Bun counts as
@@ -51,6 +50,10 @@ const LOG_LINES: usize = 200;
 pub(crate) type Skipped = BTreeMap<String, String>;
 
 /// What the window tells.
+#[allow(
+    dead_code,
+    reason = "the window uses it once it does all the old app did"
+)]
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Request<'a> {
@@ -63,27 +66,6 @@ pub(crate) enum Request<'a> {
         /// has the edits it sent after those.
         edits: u64,
     },
-    /// A view opens: its code makes its nodes once.
-    Mount {
-        card: u64,
-        instance: &'a InstanceId,
-        /// The last value of each watch of the instance, by name.
-        watches: &'a BTreeMap<String, f32>,
-        /// The room the window gives the view: the whole window, or the body of a card.
-        size: PageSize,
-        #[serde(flatten)]
-        clock: Clock,
-    },
-    /// The view has another room.
-    Resize {
-        card: u64,
-        size: PageSize,
-    },
-    /// The watches of an instance moved, and a binding of its cards reads them.
-    Watches {
-        instance: &'a InstanceId,
-        watches: &'a BTreeMap<String, f32>,
-    },
     /// The clock started or stopped, or its repeat or click changed: what bindings follow. Also
     /// before an event, so its handler reads where the playhead is.
     Clock {
@@ -95,15 +77,6 @@ pub(crate) enum Request<'a> {
     Song {
         tempo_map: &'a TempoMap,
         sections: &'a Sections,
-    },
-    /// A press, a release, a click, or a drag that ended, on a node: `payload` is what its
-    /// handler hears.
-    Event {
-        card: u64,
-        node: u64,
-        kind: EventKind,
-        payload: Value,
-        time: f64,
     },
     /// One step of the control loop of every instance whose tool has one.
     Frame {
@@ -150,15 +123,8 @@ pub(crate) enum Request<'a> {
         #[serde(flatten)]
         clock: Clock,
     },
-    Drop {
-        card: u64,
-    },
-    /// The answer to a question of a tool: `openFile`, `render`, `openMenu`, `confirm`, `offers`
-    /// or `numbers`.
-    Answer {
-        question: u64,
-        answer: Answer<'a>,
-    },
+    /// The answer to a question of a tool: `openFile`, `render`, `exportNotes` or `confirm`.
+    Answer { question: u64, answer: &'a Answer },
     /// What the behaviour of an owner declares for its record and its children, as Bun was
     /// told them.
     Behaviour {
@@ -166,119 +132,46 @@ pub(crate) enum Request<'a> {
         tool: &'a str,
         instance: &'a InstanceId,
     },
-}
-
-/// What happened on a node, which names the handler that hears it.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum EventKind {
-    Press,
-    /// The button of a press went up, wherever the pointer is.
-    Release,
-    /// A left press and release on a node, with no drag between.
-    Click,
-    /// The pointer came over a div, or left it.
-    Hover,
-    End,
-    /// Text a field tells.
-    Commit,
-    /// Escape in a field.
-    Cancel,
-    /// An edit of a field's text, or a pick of a segmented control: the place of its option.
-    Change,
-    /// Files, or what a drag of a node carried, let go on a node.
-    Drop,
-    /// The power icon of an embedded card.
-    Power,
-    /// The close icon of an embedded card.
-    Close,
-    /// A key a div takes, while the focus is in it.
-    Key,
-    /// How far a drag or a key moved what code keeps, and on which axis of its drag.
-    Turn,
-    /// The title of an embedded card, which is a menu.
-    Title,
-    /// A pick in a select of the sidechain picker of an embedded card.
-    Sidechain,
-}
-
-/// A number a lane or a cable moves, as code gets it: its range, and how a knob travels it.
-#[derive(Debug, Serialize)]
-pub(crate) struct Moved {
-    pub name: String,
-    /// What a person reads for it: as its device names it, or its field in plain words.
-    pub label: String,
-    pub min: f32,
-    pub max: f32,
-    /// `"linear"`, `"log"` or `"fader"`, as the knob of the number travels.
-    pub scale: &'static str,
-    /// How a value of it reads, see `unit_of` of the window.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unit: Option<&'static str>,
-    /// What its record holds now.
-    pub value: Option<f32>,
-}
-
-/// What the window answers a tool that asked.
-#[derive(Serialize)]
-#[serde(untagged)]
-pub(crate) enum Answer<'a> {
-    /// The name under `assets/audio/` of the file the composer chose and the runtime copied
-    /// there, or that a render wrote, or none.
-    Asset(Option<&'a str>),
-    /// The place of the item the composer picked in a menu, or none.
-    Item(Option<usize>),
-    /// What the window offers that takes what was asked for, and what its pickers say under
-    /// them.
-    Offers {
-        offers: Vec<Offered>,
-        notes: Vec<String>,
-        /// The key of the offer at the child it was asked about, as a picker ticks it.
-        here: Option<String>,
+    /// The instances whose views the window shows: each new one sends its tree, and each
+    /// again when a record of it or inside it changes.
+    Show {
+        instances: Vec<&'a InstanceId>,
+        /// The shown instances whose tools have no view, which a card draws.
+        cards: &'a BTreeSet<InstanceId>,
+        /// The numbers a lane moves of each shown instance, as its `held` names them.
+        held: &'a BTreeMap<InstanceId, Vec<String>>,
+        /// What the window knows of each shown instance, its children and grandchildren that
+        /// no record holds: `Facts` in `sdk/view.ts`.
+        facts: &'a BTreeMap<InstanceId, Value>,
+        /// What `addOffer` puts: `Offer` in `sdk/view.ts`.
+        catalog: &'a Value,
+        /// The key of each action now, by `<tool>.<action>`, or none.
+        keys: &'a BTreeMap<String, Option<String>>,
     },
-    /// What a lane or a cable can move of the child asked about.
-    Numbers(Vec<Moved>),
+    /// An action on the element `key` of the view of `instance`: `press`, `drag` with `{dx, dy}`,
+    /// or one the element names, such as `toggle` or `set` with a number.
+    Act {
+        instance: &'a InstanceId,
+        key: &'a str,
+        action: &'a str,
+        value: Option<Value>,
+    },
+}
+
+/// What the window answers a question of code.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum Answer {
+    /// The name under `assets/audio/` of the file the composer chose and the window copied
+    /// there, or that a render wrote, or none.
+    Asset(Option<String>),
     /// Whether the composer said yes to a question, or a file was written.
     Confirmed(bool),
 }
 
-/// A device the window offers, as code gets it: what `addOffer` names it by.
-#[derive(Debug, Serialize)]
-pub(crate) struct Offered {
-    pub key: String,
-    pub name: String,
-    pub detail: Option<String>,
-    pub group: String,
-    /// The icon a picker shows beside it.
-    pub icon: String,
-    /// Why it cannot be picked here, or `None` when it can.
-    pub unavailable: Option<String>,
-}
-
-/// An item of a menu code opens.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct MenuItemSpec {
-    pub label: String,
-    #[serde(default)]
-    pub disabled: bool,
-    #[serde(default)]
-    pub checked: bool,
-    pub icon: Option<String>,
-    /// A quiet second line.
-    pub detail: Option<String>,
-    /// The heading it goes under, with the items before and after it of the same group.
-    pub group: Option<String>,
-    /// A line above it.
-    #[serde(default)]
-    pub separator: bool,
-    /// The keys that do it too, as `cmd-c`.
-    pub shortcut: Option<String>,
-}
-
 /// Where the sound and the piece are, which all code of a tool gets.
 #[derive(Clone, Copy, Debug, Serialize)]
-pub(crate) struct Clock {
+pub struct Clock {
     /// Engine time in seconds: the clock `at` of an event counts on.
     pub time: f64,
     pub transport: Transport,
@@ -292,16 +185,9 @@ pub(crate) struct ToldRecord<'a> {
     pub state: Value,
 }
 
-/// The room a page has, in whole points.
-#[derive(Clone, Copy, PartialEq, Debug, Serialize)]
-pub(crate) struct PageSize {
-    pub width: u32,
-    pub height: u32,
-}
-
 /// Where the project plays, as the window's playhead shows it, and how the clock plays.
 #[derive(Clone, Copy, PartialEq, Debug, Serialize)]
-pub(crate) struct Transport {
+pub struct Transport {
     pub playing: bool,
     pub tick: u64,
     pub bar: u64,
@@ -383,12 +269,10 @@ pub(crate) struct Heard {
     pub at: f64,
 }
 
-/// An instance whose code runs, with its watches as they are now. Its record is what Bun was
-/// told.
+/// An instance whose code runs. Its record is what Bun was told.
 #[derive(Serialize)]
 pub(crate) struct Played<'a> {
     pub instance: &'a InstanceId,
-    pub watches: BTreeMap<String, f32>,
 }
 
 /// One record an `update` of a tool changed: its own, or one of a child, by name.
@@ -422,24 +306,29 @@ pub(crate) enum Event {
     Framed,
     /// The tick of a tool, or a click on its card, failed: the first time.
     Failed { tool: String, message: String },
-    /// What changed on the nodes of a card, or why it failed. Read by [`read_line`].
-    #[serde(skip_deserializing)]
-    Ops {
-        card: u64,
-        ops: Result<Vec<Op>, String>,
-        /// The ops make all of it again, as after a new Bun.
-        mount: bool,
-        /// They answer a press or a drag, whose preview lets go with them.
-        event: bool,
-    },
-    /// What the bindings of an instance read now: the window tells Bun at once only of that.
-    Reads { instance: InstanceId, reads: Reads },
     /// The code of an instance changed its record or those of its children, as one edit
     /// called `label`.
     Edit {
         instance: InstanceId,
         label: String,
         changes: Vec<RecordEdit>,
+        /// An action on a view made it: one step of undo with the others of
+        /// that action, up to its [`Event::Acted`].
+        #[serde(default)]
+        gesture: bool,
+    },
+    /// An action on a view ran, or why it did not.
+    Acted {
+        #[serde(default)]
+        error: Option<String>,
+    },
+    /// A view ran: its tree, or none for a tool without one, or why it failed.
+    Tree {
+        instance: InstanceId,
+        #[serde(default)]
+        tree: Option<Value>,
+        #[serde(default)]
+        error: Option<String>,
     },
     /// Code moved a number input of an instance, or of its child `child`, or sent a bang when
     /// there is no value: at `at`, engine time in seconds, or at once.
@@ -447,7 +336,8 @@ pub(crate) enum Event {
         instance: InstanceId,
         child: Option<String>,
         name: String,
-        value: Option<f32>,
+        /// A whole `f64`: a plugin's parameter id does not fit an `f32`.
+        value: Option<f64>,
         at: Option<f64>,
     },
     /// A card or a control loop played a note of an instance, or of its child `child`: a key
@@ -499,46 +389,25 @@ pub(crate) enum Event {
         detail: Option<String>,
         confirm: String,
     },
-    /// Code opens a menu of `items` where the pointer is: the answer goes to its `question`.
-    OpenMenu {
-        question: u64,
-        items: Vec<MenuItemSpec>,
-        /// Quiet lines under the items.
-        #[serde(default)]
-        notes: Vec<String>,
-        /// How wide it is, and how tall its items go before they scroll, in points.
-        #[serde(default)]
-        width: Option<f32>,
-        #[serde(default, rename = "maxHeight")]
-        max_height: Option<f32>,
-        /// A field above the items that keeps those whose label holds what is typed.
-        #[serde(default)]
-        search: bool,
-    },
-    /// Code asks what the window offers that takes `takes`, `"notes"` or `"audio"`.
-    /// With `at`, the answer says which offer is at that child of `instance` now.
-    Offers {
-        question: u64,
-        takes: String,
-        instance: InstanceId,
-        #[serde(default)]
-        at: Option<String>,
-    },
-    /// Code asks what a lane or a cable can move of the child of `instance` at `path`.
-    Numbers {
-        question: u64,
-        instance: InstanceId,
-        path: String,
-    },
-    /// The code of `instance` puts the offer `key` at its child `path`, as one edit `label`.
+    /// The code of `instance` puts the offer `key` at its child `path`, as one edit `label`:
+    /// with `gesture`, one with the others of the action that runs.
     AddOffer {
         instance: InstanceId,
         path: String,
         key: String,
         label: String,
+        #[serde(default)]
+        gesture: bool,
     },
     /// The code of `instance` opens the window of its own of its child at `path`.
     OpenWindow { instance: InstanceId, path: String },
+    /// The code of `instance` shows a range of the plane `key` of its view, across and down.
+    ShowRange {
+        instance: InstanceId,
+        key: String,
+        x: Option<[f32; 2]>,
+        y: Option<[f32; 2]>,
+    },
     /// The code of `instance` selected its child at `path`, or nothing, and the ticks `span`.
     Select {
         instance: InstanceId,
@@ -557,32 +426,14 @@ pub(crate) enum Event {
         label: String,
         tempo_map: Value,
         sections: Value,
+        #[serde(default)]
+        gesture: bool,
     },
     /// Bun hung or stopped, the last thing it says: `why`, and the tool and the code of it that
     /// it ran then, which are to blame. Nothing to blame when it ran no tool's code, such as
     /// code a timer of a tool ran.
     #[serde(skip_deserializing)]
     Ended { blame: Option<Runs>, why: String },
-}
-
-/// What the bindings of the cards of an instance read, so the window tells Bun at once only of a
-/// change of that. `state` and `watches` name what they read, or are `None` for all of it.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub(crate) struct Reads {
-    pub state: Option<Vec<String>>,
-    pub children: bool,
-    pub watches: Option<Vec<String>>,
-}
-
-/// Before Bun says, its cards read everything.
-impl Default for Reads {
-    fn default() -> Self {
-        Self {
-            state: None,
-            children: true,
-            watches: None,
-        }
-    }
 }
 
 /// The code of a tool Bun runs: its tool, and which code, such as `tick`.
@@ -681,6 +532,10 @@ pub(crate) struct LoadFailure {
 struct Busy {
     /// How many things it was told and has not done.
     pending: usize,
+    /// How many things it was told, and how many it said it did, in that order: a thing that
+    /// never will be, as it hung or stopped, is not counted.
+    sent: u64,
+    said_done: u64,
     /// When it last took a step: started the code of a tool, finished what it was told, or was
     /// told something when it had nothing to do.
     since: Instant,
@@ -698,6 +553,8 @@ pub(crate) struct Bun {
     lines: mpsc::SyncSender<String>,
     busy: Arc<Mutex<Busy>>,
     events: smol::channel::Receiver<Event>,
+    /// Called once Bun said something, from the thread that hears it.
+    waker: Arc<Mutex<Option<Waker>>>,
     /// Ended by [`Bun::end`], or when the runtime lets go of it. `None` once ended. The tools
     /// it loaded hold it too, so their records keep asking it outside the window.
     child: Mutex<Option<Child>>,
@@ -715,14 +572,16 @@ struct Told {
     /// How many edits of Bun the runtime heard, and how many of them Bun was told of.
     edits: u64,
     edits_told: u64,
-    /// The records a behaviour told it since the window last looked: one of a group that did
-    /// not apply is not what the project holds.
-    unconfirmed: BTreeSet<InstanceId>,
+    /// How many records it was told, for a test that a frame tells none again.
+    count: u64,
 }
 
 /// A record to tell Bun: its id, and its tool, its key (see [`record_key`]) and `state` as
 /// JSON, or `None` when it is gone.
 pub(crate) type Telling<'a> = (&'a InstanceId, Option<(&'a str, u64, &'a str)>);
+
+/// What wakes a window that waits for nothing else: Bun said something.
+pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
 /// What tells one record apart from another: its tool and its state as JSON.
 pub(crate) fn record_key(tool: &str, state: &str) -> u64 {
@@ -732,52 +591,6 @@ pub(crate) fn record_key(tool: &str, state: &str) -> u64 {
 static NEXT_BUN: AtomicU64 = AtomicU64::new(0);
 
 static NEXT_OPENING: AtomicU64 = AtomicU64::new(0);
-
-static SENT_BYTES: AtomicU64 = AtomicU64::new(0);
-static SENT_UPDATES: AtomicU64 = AtomicU64::new(0);
-static SENT_EVENTS: AtomicU64 = AtomicU64::new(0);
-static HEARD_BATCHES: AtomicU64 = AtomicU64::new(0);
-static HEARD_BYTES: AtomicU64 = AtomicU64::new(0);
-static LAST_BUN_MICROS: AtomicU64 = AtomicU64::new(0);
-static LAST_APPLY_MICROS: AtomicU64 = AtomicU64::new(0);
-
-/// How many bytes this process told every Bun, for a test of what a frame costs.
-pub fn sent_bytes() -> u64 {
-    SENT_BYTES.load(Ordering::Relaxed)
-}
-
-/// How many times this process told every Bun something that changes what cards show (records,
-/// watches, the transport, a card that opens) and how many presses and drags it told, for a
-/// test that a drag does not cross to Bun.
-pub fn sent_updates_and_events() -> (u64, u64) {
-    (
-        SENT_UPDATES.load(Ordering::Relaxed),
-        SENT_EVENTS.load(Ordering::Relaxed),
-    )
-}
-
-/// How many batches of ops the windows of this process applied, for a measurement of how long
-/// one takes to come.
-pub fn heard_batches() -> u64 {
-    HEARD_BATCHES.load(Ordering::Relaxed)
-}
-
-/// How many bytes of ops this process heard from every Bun, for a measurement of their size.
-pub fn heard_bytes() -> u64 {
-    HEARD_BYTES.load(Ordering::Relaxed)
-}
-
-/// What the last batch of ops cost, in milliseconds: Bun's work for its request, and the
-/// window's to apply it.
-pub fn last_batch() -> (f64, f64) {
-    let millis = |micros: &AtomicU64| micros.load(Ordering::Relaxed) as f64 / 1000.0;
-    (millis(&LAST_BUN_MICROS), millis(&LAST_APPLY_MICROS))
-}
-
-pub(crate) fn count_batch(apply: Duration) {
-    HEARD_BATCHES.fetch_add(1, Ordering::Relaxed);
-    LAST_APPLY_MICROS.store(apply.as_micros() as u64, Ordering::Relaxed);
-}
 
 /// A number for one opening of a project, which every Bun of it runs for: the first, and those
 /// the window starts again after a change of the code. A project opened again in the same
@@ -833,16 +646,20 @@ impl Bun {
         let (printing, printed) = mpsc::channel::<()>();
         let busy = Arc::new(Mutex::new(Busy {
             pending: 0,
+            sent: 0,
+            said_done: 0,
             since: Instant::now(),
             runs: None,
         }));
         // From here a failure drops it, which ends the process.
+        let waker: Arc<Mutex<Option<Waker>>> = Arc::default();
         let bun = Self {
             number,
             opening,
             lines,
             busy: busy.clone(),
             events: received,
+            waker: waker.clone(),
             child: Mutex::new(Some(child)),
             printed: Mutex::new(printed),
             told: Mutex::default(),
@@ -881,7 +698,15 @@ impl Bun {
                 Ok(Line::Loaded(loaded)) => {
                     std::thread::Builder::new()
                         .name("bun-events".into())
-                        .spawn(move || hear(number, &heard, &busy, &events))
+                        .spawn(move || {
+                            let wake = || {
+                                let waker = waker.lock().unwrap_or_else(PoisonError::into_inner);
+                                if let Some(wake) = waker.as_ref() {
+                                    wake();
+                                }
+                            };
+                            hear(number, &heard, &busy, &events, wake);
+                        })
                         .map_err(|error| failure(error.to_string()))?;
                     return Ok((bun, loaded));
                 }
@@ -896,19 +721,42 @@ impl Bun {
         Err(LoadFailure { file, why })
     }
 
-    #[cfg(feature = "test-support")]
+    /// Whether it did all it was told, and the window heard all it said.
     pub(crate) fn is_idle(&self) -> bool {
+        self.is_done() && self.events.is_empty()
+    }
+
+    /// How many things it was told: the number of the last.
+    pub(crate) fn sent(&self) -> u64 {
+        self.busy
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .sent
+    }
+
+    /// How many things it said it did: those numbered up to this ran, and what they said waits
+    /// in [`Bun::events`].
+    pub(crate) fn said_done(&self) -> u64 {
+        (self.busy.lock().unwrap_or_else(PoisonError::into_inner)).said_done
+    }
+
+    /// Whether it did all it was told: what it said for it waits in [`Bun::events`].
+    pub(crate) fn is_done(&self) -> bool {
         self.busy
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .pending
             == 0
-            && self.events.is_empty()
     }
 
     /// What Bun says after its load, in order, up to [`Event::Ended`].
     pub(crate) fn events(&self) -> smol::channel::Receiver<Event> {
         self.events.clone()
+    }
+
+    /// Calls `waker` each time Bun says something from now on: an event or a behaviour's answer.
+    pub(crate) fn wake_with(&self, waker: Waker) {
+        *self.waker.lock().unwrap_or_else(PoisonError::into_inner) = Some(waker);
     }
 
     pub(crate) fn number(&self) -> u64 {
@@ -937,21 +785,10 @@ impl Bun {
                 busy.since = Instant::now();
             }
             busy.pending += 1;
+            busy.sent += 1;
         }
-        let length = line.len() as u64;
         let sent = self.lines.try_send(line).is_ok();
-        if sent {
-            SENT_BYTES.fetch_add(length, Ordering::Relaxed);
-            match request {
-                Request::Records { .. }
-                | Request::Mount { .. }
-                | Request::Resize { .. }
-                | Request::Watches { .. }
-                | Request::Clock { .. } => SENT_UPDATES.fetch_add(1, Ordering::Relaxed),
-                Request::Event { .. } => SENT_EVENTS.fetch_add(1, Ordering::Relaxed),
-                _ => 0,
-            };
-        } else {
+        if !sent {
             done(&mut lock());
         }
         sent
@@ -962,7 +799,14 @@ impl Bun {
     pub(crate) fn tell<'a>(&self, records: impl IntoIterator<Item = Telling<'a>>) -> bool {
         let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
         let edits = told.edits;
-        self.tell_in(&mut told, records, edits).is_some()
+        self.tell_in(&mut told, records, edits)
+    }
+
+    pub(crate) fn records_told(&self) -> u64 {
+        self.told
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .count
     }
 
     /// Tells Bun the record of `owner` and of each of its `children` as its behaviour gets
@@ -986,20 +830,16 @@ impl Bun {
             .collect();
         records.extend(held.iter().map(|child| (child, None)));
         let edits = told.edits_told;
-        let Some(sent) = self.tell_in(&mut told, records, edits) else {
-            return false;
-        };
-        told.unconfirmed.extend(sent);
-        true
+        self.tell_in(&mut told, records, edits)
     }
 
-    /// The ids it told, or `None` when it did not go: what did not go is told again next time.
+    /// Whether it went: what did not go is told again next time.
     fn tell_in<'a>(
         &self,
         told: &mut Told,
         records: impl IntoIterator<Item = Telling<'a>>,
         edits: u64,
-    ) -> Option<Vec<InstanceId>> {
+    ) -> bool {
         let mut new = Vec::new();
         let mut keys = Vec::new();
         let mut gone = Vec::new();
@@ -1022,7 +862,7 @@ impl Bun {
             }
         }
         if new.is_empty() && gone.is_empty() && edits == told.edits_told {
-            return Some(Vec::new());
+            return true;
         }
         let request = Request::Records {
             records: new,
@@ -1030,16 +870,15 @@ impl Bun {
             edits,
         };
         if !self.send(&request) {
-            return None;
+            return false;
         }
         told.edits_told = edits;
+        told.count += keys.len() as u64;
         for id in &gone {
             told.records.remove(*id);
         }
-        let mut sent: Vec<InstanceId> = gone.into_iter().cloned().collect();
-        sent.extend(keys.iter().map(|(id, _)| id.clone()));
         told.records.extend(keys);
-        Some(sent)
+        true
     }
 
     /// The runtime heard an edit Bun sent, applied or not.
@@ -1047,63 +886,6 @@ impl Bun {
         let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
         told.edits += 1;
     }
-
-    /// The records a behaviour told Bun since the last call, to tell it again as they are.
-    pub(crate) fn take_unconfirmed(&self) -> BTreeSet<InstanceId> {
-        let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
-        std::mem::take(&mut told.unconfirmed)
-    }
-}
-
-/// The `type` of a line, which every line has.
-#[derive(Deserialize)]
-struct Kind<'a> {
-    #[serde(rename = "type", borrow)]
-    kind: std::borrow::Cow<'a, str>,
-}
-
-/// The ops of a card, as [`Event::Ops`].
-#[derive(Deserialize)]
-struct OpsLine<'a> {
-    card: u64,
-    #[serde(borrow)]
-    ops: Option<&'a serde_json::value::RawValue>,
-    error: Option<String>,
-    #[serde(default)]
-    mount: bool,
-    #[serde(default)]
-    event: bool,
-    #[serde(default)]
-    took: f64,
-}
-
-/// A line of Bun. Ops are read on their own road, here on the thread that hears Bun, not the
-/// window's: the first ops of a page of thousands of notes are megabytes.
-fn read_line(line: &str) -> serde_json::Result<Line> {
-    if serde_json::from_str::<Kind>(line)?.kind != "ops" {
-        return serde_json::from_str(line);
-    }
-    let OpsLine {
-        card,
-        ops,
-        error,
-        mount,
-        event,
-        took,
-    } = serde_json::from_str(line)?;
-    HEARD_BYTES.fetch_add(line.len() as u64, Ordering::Relaxed);
-    LAST_BUN_MICROS.store((took * 1000.0) as u64, Ordering::Relaxed);
-    let ops = match (ops, error) {
-        (_, Some(error)) => Err(error),
-        (Some(ops), None) => serde_json::from_str(ops.get()).map_err(|error| error.to_string()),
-        (None, None) => Ok(Vec::new()),
-    };
-    Ok(Line::Event(Event::Ops {
-        card,
-        ops,
-        mount,
-        event,
-    }))
 }
 
 /// Reads what Bun says until it stops, and passes it on to `said`.
@@ -1116,7 +898,7 @@ fn read(stdout: ChildStdout, said: &mpsc::Sender<Line>) {
                 break;
             }
         };
-        match read_line(&line) {
+        match serde_json::from_str(&line) {
             Ok(line) => {
                 if said.send(line).is_err() {
                     break;
@@ -1179,6 +961,7 @@ fn hear(
     heard: &mpsc::Receiver<Line>,
     busy: &Mutex<Busy>,
     events: &smol::channel::Sender<Event>,
+    wake: impl Fn(),
 ) {
     let lock = || busy.lock().unwrap_or_else(PoisonError::into_inner);
     let ended = |why: String| {
@@ -1191,6 +974,7 @@ fn hear(
         drop(busy);
         // Outside the window nobody hears it.
         events.try_send(Event::Ended { blame, why }).ok();
+        wake();
     };
     loop {
         match heard.recv_timeout(HANG_TIMEOUT / 4) {
@@ -1203,6 +987,7 @@ fn hear(
             Ok(Line::Done) => {
                 let mut busy = lock();
                 busy.since = Instant::now();
+                busy.said_done += 1;
                 done(&mut busy);
                 busy.runs = None;
             }
@@ -1212,6 +997,7 @@ fn hear(
             }
             Ok(Line::Event(event)) => {
                 events.try_send(event).ok();
+                wake();
             }
             Ok(Line::Declared {
                 question,
@@ -1229,6 +1015,7 @@ fn hear(
                     })
                 });
                 behaviours::answered(question, answer, reads);
+                wake();
             }
             // Bun loads once.
             Ok(Line::Loading { .. } | Line::Loaded(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -1262,6 +1049,16 @@ impl Bun {
         (self.printed.lock().unwrap_or_else(PoisonError::into_inner))
             .recv_timeout(Duration::from_secs(1))
             .ok();
+    }
+
+    /// Stops the process at once, without waiting for it: what it said before comes in
+    /// [`Bun::events`], up to [`Event::Ended`].
+    pub(crate) fn kill(&self) {
+        let mut child = self.child.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(child) = child.as_mut() {
+            // Already ended: nothing to stop.
+            child.kill().ok();
+        }
     }
 }
 

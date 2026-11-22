@@ -65,7 +65,7 @@ struct Index {
 
 /// A thread that is not the current one, for **Open recent**.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RecentThread {
+pub struct RecentThread {
     pub id: String,
     /// Its first message, on one line and cut short.
     pub title: String,

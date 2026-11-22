@@ -89,6 +89,9 @@ pub enum SignalsUpdate {
     /// From the behaviour: where to write what comes in on [`Signals::NOTES`], for the
     /// interface, or nowhere. The one it replaces rides back.
     Tap(Option<EventTap<NoteEvent>>),
+    /// From the behaviour: where to write what its keys do, whoever plays them, for the
+    /// interface to show which sound. The one it replaces rides back.
+    Sounding(Option<EventTap<NoteEvent>>),
 }
 
 /// What the interface plays at a frame.
@@ -141,6 +144,8 @@ pub struct Signals {
     holds: Holds,
     watches: Vec<Watch>,
     tap: Option<EventTap<NoteEvent>>,
+    /// Where to write what its keys do, whoever plays them, for the interface.
+    sounding: Option<EventTap<NoteEvent>>,
     sending: Sending,
     /// Where the transport was in the last frame: it stands still while stopped.
     beat: f64,
@@ -333,6 +338,7 @@ impl Signals {
             holds: Holds::default(),
             watches,
             tap: None,
+            sounding: None,
             sending: Sending {
                 bangs: [false; MAX_OUTPUTS],
                 notes: [None; MAX_OUTPUTS],
@@ -453,7 +459,17 @@ impl Signals {
     /// Follows `event`, which the interface played or not.
     fn follow(&mut self, event: NoteEvent, performed: bool) {
         self.holds.follow(event, performed);
+        told(&self.sounding, event);
         play(&mut self.players, &mut self.bend, event);
+    }
+}
+
+/// Writes `event` to `sounding` when it moves a key.
+fn told(sounding: &Option<EventTap<NoteEvent>>, event: NoteEvent) {
+    if let (Some(sounding), NoteEvent::On { .. } | NoteEvent::Off { .. } | NoteEvent::AllOff) =
+        (sounding, event)
+    {
+        sounding.write(std::iter::once((0, event)));
     }
 }
 
@@ -838,11 +854,16 @@ impl Processor for Signals {
                     holds,
                     players,
                     bend,
+                    sounding,
                     ..
                 } = self;
-                holds.performer_gone(|event| play(players, bend, event));
+                holds.performer_gone(|event| {
+                    told(sounding, event);
+                    play(players, bend, event);
+                });
             }
             SignalsUpdate::Tap(tap) => std::mem::swap(&mut self.tap, tap),
+            SignalsUpdate::Sounding(tap) => std::mem::swap(&mut self.sounding, tap),
         }
     }
 

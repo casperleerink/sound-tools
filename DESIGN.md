@@ -1,6 +1,6 @@
 # Design
 
-The design principles of the Sound Tools UI and its use. Colours, sizes and components live in `crates/ui` (see [crates/ui/README.md](crates/ui/README.md)); `crates/gallery` shows every component in every state. Mockups drawn for review are in `docs/mockups/`.
+The design principles of the Sound Tools UI and its use. Colours and sizes are the tokens of `theme.json`; `templates/daw/extensions/gallery.tsx` shows every component. Mockups drawn for review are in `docs/mockups/`.
 
 ## Principles
 
@@ -47,7 +47,7 @@ A meter is the one place colour fills an area, because level is a signal. Otherw
 
 What is chosen has one look: a row takes the selected fill; on a canvas a box gets a bright outline and a small mark turns bright.
 
-Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/ui/src/theme.rs` checks the text roles.
+Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/window/src/theme.rs` checks the text roles of `theme.json`.
 
 ### Type and sizes
 
@@ -86,7 +86,7 @@ The DAW template follows these rules; its own gestures and keys are its code, in
 - What a key does in the app and its templates has a name. Settings lists them under Shortcuts, where the composer gives any of them another key or none; nobody has to. A tooltip and a menu show the key as it is now.
 - A group of options is one tab stop, such as a segmented control or the drum pads. The arrows move inside it.
 - Escape lets go, closes what is open, or gives the focus back.
-- The computer keys (cmd-K) play what is selected like a MIDI keyboard, and their letters then do nothing else. Both play it whether the project plays or not.
+- The computer keys (cmd-K) play what is selected like a MIDI keyboard; a letter a tool uses keeps its action. Both play it whether the project plays or not.
 
 ### The agent
 

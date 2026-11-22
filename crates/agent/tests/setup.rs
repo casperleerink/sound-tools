@@ -52,7 +52,6 @@ fn the_sign_in_opens_the_browser_and_cancel_ends_it() {
     let signing_in = smol::block_on(future::or(
         async { Some(status.choices[0].run(&installed, steps, answers).await) },
         async {
-            #[allow(clippy::disallowed_methods)]
             smol::Timer::after(Duration::from_secs(10)).await;
             None
         },

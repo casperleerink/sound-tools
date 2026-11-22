@@ -7,13 +7,15 @@ use std::sync::Arc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sound_core::feeds::FeedContext;
 use sound_core::{
-    Assets, BehaviourContext, BehaviourError, InstanceId, JsonTool, JsonToolDoc, Project, State,
-    Ticks, ToolSchema,
+    Assets, BehaviourContext, BehaviourError, InstanceId, JsonTool, JsonToolDoc, Project, Registry,
+    State, Ticks, ToolSchema,
 };
 use sound_dsp::amplitude;
 use sound_media::{
-    AUDIO_FOLDER, Audio, AudioAsset, Keep, Loader, Periods, Region, Stamp, WarpPoint,
+    AUDIO_FOLDER, Audio, AudioAsset, Cached, FileFacts, Keep, Loader, Periods, Region, Stamp,
+    WarpPoint, faded,
 };
 
 pub(crate) const NAME: &str = "region";
@@ -75,6 +77,61 @@ pub(crate) fn json_tool() -> JsonTool {
         required_children: Vec::new(),
         end: Some(Box::new(end)),
     }
+}
+
+/// Columns of its wave a feed gives unless the binding asks for another number.
+const POINTS: usize = 96;
+
+/// Its feed `wave` and its facts.
+pub(crate) fn register_feeds(registry: &mut Registry) {
+    registry
+        .shows::<Record>()
+        .feed(
+            "wave",
+            "The loudest sample, 0 to 1, of each of `points` equal stretches (96 unless the binding says) of the region as it plays, with its gain and fades, across the ticks after its start the binding shows (all of it unless it says): as `rects` that draw it mirrored about its middle with `units` [across, 1]; empty while its file is missing or read.",
+            wave,
+        )
+        .facts(|record, context| Facts {
+            seconds: context.watched(SECONDS).filter(|seconds| *seconds > 0.0),
+            file: FileFacts::of(context.assets(), &record.asset),
+        });
+}
+
+/// What a view of a region knows that is no record.
+#[derive(Serialize, JsonSchema)]
+struct Facts {
+    /// How long it plays, in seconds; null while its file is not there.
+    seconds: Option<f32>,
+    file: FileFacts,
+}
+
+/// See the feed `wave`.
+fn wave(record: &Record, context: &FeedContext<'_>) -> Vec<f32> {
+    let region = region(record);
+    let Cached::Plays(file) = sound_media::cached(context.assets(), &region.asset) else {
+        return Vec::new();
+    };
+    let clock = context.clock();
+    let (start, end) = (region.start, region.end(&file, clock));
+    let at = |after: f64| Ticks(start.0 + after.max(0.0) as u64);
+    let columns = context.points_or(POINTS);
+    let length = end.0.saturating_sub(start.0) as f64;
+    let edges: Vec<f64> = context.across([0.0, length], columns + 1).collect();
+    let seconds: Vec<f64> = (edges.iter())
+        .map(|after| region.file_seconds_at(at(*after), clock))
+        .collect();
+    let Some(peaks) = context.wave(region.asset.asset_name(), &seconds) else {
+        return Vec::new();
+    };
+    let frame = |tick: Ticks| clock.frame_of(tick).0;
+    let frames = frame(end).saturating_sub(frame(start));
+    let (fade_in, fade_out) = region.fade_frames(clock.sample_rate());
+    let heights = (peaks.into_iter().zip(edges.windows(2))).map(|(peak, edge)| {
+        let middle = frame(at((edge[0] + edge[1]) / 2.0)).saturating_sub(frame(start));
+        let level = faded(middle, frames, fade_in, fade_out) * f64::from(region.gain);
+        peak * level as f32
+    });
+    sound_core::feeds::band(&edges, heights)
 }
 
 /// The record of the region, for the SDK.

@@ -31,11 +31,8 @@
 //!   than they held, as the damping filter lets go.
 //! - The power icon bypasses the slot with a hard switch, the same for every effect. The tail
 //!   stops at once, and on a loud tail it may click.
-//!
-//! [`view`] is the card of the reverb, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -215,7 +212,17 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<ReverbState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Reverb::AUTOMATION.parameters());
+        .schema(Reverb::AUTOMATION.parameters())
+        .feed(
+            "reflections",
+            "When each early reflection comes after the pre-delay, as a part of when the last one comes, 0 to 1. The same at every size.",
+            |_, _| reflections().to_vec(),
+        )
+        .feed(
+            "high_decay",
+            "The time in which its tail falls by 60 dB at 5 kHz, in seconds: the damped highs. The rest falls in the decay time.",
+            |state, _| high_decay_seconds(state),
+        );
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

@@ -4,18 +4,23 @@
 //! of a field is its TSDoc, as the agent docs say it too.
 
 use serde_json::Value;
+use sound_core::feeds::{FeedKind, FeedName};
 use sound_core::{FieldDoc, RecordSchema, ToolSchema, type_doc};
 
 use crate::built_in_schemas;
 
 /// `sdk/records.ts` for the tools of `schemas` and the built-in children.
-pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
+pub(crate) fn sdk_records(
+    schemas: &[ToolSchema],
+    commands: &[(&'static str, Vec<&'static str>)],
+) -> String {
     let built_in = built_in_schemas();
     let mut tools: Vec<&ToolSchema> = schemas.iter().chain(&built_in).collect();
     tools.sort_by_key(|schema| schema.tool);
     let mut text = String::from("// Built-in tools: their records, from their Rust types.\n");
     for schema in &tools {
-        text.push_str(&Writer::new(schema).types());
+        let doc = format!("The `state` of a record of the built-in `{}`.", schema.tool);
+        text.push_str(&Writer::new(schema).types("State", &doc));
     }
     text.push_str(
         "\n/**\n * Every built-in tool by its name: what its records hold, the numbers a cable moves (`number`),\n * the number inputs `send` plays (`input`), its bang inputs (`bang`) and the numbers it sends\n * out (`out`).\n */\nexport interface Tools {\n",
@@ -34,6 +39,13 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
         );
         let input = names(inputs.collect());
         let out = names(schema.outputs.iter().map(|output| quoted(output)).collect());
+        let bang = (commands.iter()).find(|(tool, _)| *tool == schema.tool);
+        let bang = names(
+            bang.into_iter()
+                .flat_map(|(_, bangs)| bangs)
+                .map(|bang| quoted(bang))
+                .collect(),
+        );
         let defaults = names(
             defaults_of(schema)
                 .keys()
@@ -41,7 +53,7 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
                 .collect(),
         );
         text.push_str(&format!(
-            "  {}: {{ state: {}; number: {number}; input: {input}; bang: never; out: {out}; defaults: {defaults} }};\n",
+            "  {}: {{ state: {}; number: {number}; input: {input}; bang: {bang}; out: {out}; defaults: {defaults} }};\n",
             property_name(schema.tool),
             type_name(schema.tool, "State"),
         ));
@@ -61,6 +73,72 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
         "\n/** The numbers of the record of each built-in tool that have a range, by their path with `*` for a place in a list or a key of a map: what a control on one turns it over. */\nexport const builtInNumbers: Record<string, Record<string, {{ min?: number; max?: number; scale: \"linear\" | \"log\" | \"fader\"; default?: number }}>> = {};\n",
         Value::Object(numbers)
     ));
+    text
+}
+
+/// `sdk/feeds.ts`: what views read of the built-in tools besides their records, by tool: the
+/// name, kind and doc of each feed, the type of the facts of each tool that adds some, and the
+/// title and fields of each, which a test of a card gets. The facts every instance has, its
+/// title and fields, are `Facts` of `sdk/view.ts`.
+pub(crate) fn sdk_feeds(
+    feeds: &[FeedName],
+    facts: &[(&'static str, Value)],
+    schemas: &[ToolSchema],
+) -> String {
+    let mut text = String::from(
+        "// What views read of the built-in tools besides their records, from their Rust types.\n",
+    );
+    let built_in = built_in_schemas();
+    let cards: serde_json::Map<String, Value> = (schemas.iter().chain(&built_in))
+        .map(|schema| {
+            let card = sound_core::facts::card(schema.tool, &schema.schema);
+            let card = serde_json::json!({ "title": card.title, "fields": card.fields });
+            (schema.tool.to_string(), card)
+        })
+        .collect();
+    text.push_str(&format!(
+        "\n/** The title and fields of each built-in tool, as the window gives them in its facts. */\nexport const cards: Record<string, {{ title: string; fields: unknown[] }}> = {};\n",
+        Value::Object(cards)
+    ));
+    let facts: Vec<ToolSchema> = (facts.iter())
+        .filter(|(tool, _)| *tool != "*")
+        .map(|(tool, schema)| ToolSchema {
+            tool,
+            schema: schema.clone(),
+            numbers: Vec::new(),
+            live: &[],
+            outputs: &[],
+            check: |_| Ok(()),
+        })
+        .collect();
+    for schema in &facts {
+        let doc = format!(
+            "What a view of a `{}` knows that no record holds.",
+            schema.tool
+        );
+        text.push_str(&Writer::new(schema).types("Facts", &doc));
+    }
+    text.push_str("\n/** The facts each built-in tool adds to `title` and `fields`, by its name. */\nexport interface ToolFacts {\n");
+    for schema in &facts {
+        let name = type_name(schema.tool, "Facts");
+        text.push_str(&format!("  {}: {name};\n", property_name(schema.tool)));
+    }
+    text.push_str("}\n\n/**\n * The feeds of each built-in tool by its name, `\"*\"` those of every instance: a number, or a\n * list (`number[]`) for a `shapes`: in `lines` its numbers are heights, evenly across, as a\n * curve's are; in `rects`, four numbers each (x y w h).\n */\nexport interface ToolFeeds {\n");
+    let mut tools: Vec<&str> = feeds.iter().map(|feed| feed.tool).collect();
+    tools.dedup();
+    for tool in tools {
+        text.push_str(&format!("  {}: {{\n", property_name(tool)));
+        for feed in feeds.iter().filter(|feed| feed.tool == tool) {
+            let kind = match feed.kind {
+                FeedKind::Number => "number",
+                FeedKind::List => "number[]",
+            };
+            text.push_str(&tsdoc(feed.doc, "    "));
+            text.push_str(&format!("    {}: {kind};\n", property_name(feed.name)));
+        }
+        text.push_str("  };\n");
+    }
+    text.push_str("}\n");
     text
 }
 
@@ -157,12 +235,14 @@ impl<'a> Writer<'a> {
         writer
     }
 
-    /// The type of the record, and a named type for each object type in it.
-    fn types(&self) -> String {
+    /// The type of the schema, named for its tool and `suffix`, and a named type for each
+    /// object type in it.
+    fn types(&self, suffix: &str, doc: &str) -> String {
         let tool = self.schema.tool;
         let mut text = format!(
-            "\n/** The `state` of a record of the built-in `{tool}`. */\nexport type {} = {};\n",
-            type_name(tool, "State"),
+            "\n{}export type {} = {};\n",
+            tsdoc(doc, ""),
+            type_name(tool, suffix),
             self.object_or_type(&self.schema.schema, 0),
         );
         for name in &self.objects {

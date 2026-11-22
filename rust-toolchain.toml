@@ -1,4 +1,4 @@
-# Match the toolchain Zed pins at the gpui revision in Cargo.toml.
+# Rune's repository pins 1.99.1, but Rune at the rev in Cargo.toml builds on this one.
 [toolchain]
 channel = "1.98.1"
 profile = "minimal"

@@ -1,6 +1,6 @@
 # Engineering guide
 
-How to work in this codebase: the rules for code, the audio thread, and testing. Product decisions are in [ARCHITECTURE.md](ARCHITECTURE.md). The engine API for extension authors is in [crates/core/README.md](crates/core/README.md), and the view API in [crates/ui/README.md](crates/ui/README.md). Commands to build and check are in [README.md](README.md), "Checks".
+How to work in this codebase: the rules for code, the audio thread, and testing. Product decisions are in [ARCHITECTURE.md](ARCHITECTURE.md). The engine API for extension authors is in [crates/core/README.md](crates/core/README.md). Commands to build and check are in [README.md](README.md), "Checks".
 
 ## Rules for writing code
 
@@ -9,23 +9,15 @@ Rules are traps to avoid, not general advice. Add a rule only when it is non-obv
 - Correctness and clarity first. Optimize only the audio path or measured hot spots.
 - Comments and docs: see [AGENTS.md](AGENTS.md), "Docs and comments".
 - No `unwrap()` or panicking indexing outside tests. Propagate with `?`.
-- Never discard errors with `let _ =`. Use `?`, `.log_err()` or an explicit `match`. Errors from background work must reach the UI.
+- Never discard errors with `let _ =`. Use `?`, an `error:` line on stderr (the log keeps it) or an explicit `match`. Errors from background work must reach the window.
 - Full-word variable names.
-- Before an `async move`, shadow clones inside a block:
-  ```rust
-  executor.spawn({
-      let state = state.clone();
-      async move { state.update(); }
-  });
-  ```
-- GPUI: no `cx.notify()` or entity updates inside `render`. See the gpui skills in [.agents/skills/](.agents/skills/).
-- Main thread: small record writes are fine there. Work whose size or time the user controls (assets, plugin state, folder listings, downloads, processes) goes to `cx.background_spawn`; its result and errors come back with `this.update`. Code inside `cx.spawn` still runs on the main thread.
+- Main thread: small record writes are fine there. Work whose size or time the user controls (assets, plugin state, folder listings, downloads, processes) goes to a thread of its own, which sends its result or error through a channel and wakes the window; the next frame reads it.
 - Audio thread: nothing from "What may not happen on the audio thread" below.
 - Check a crate's current version and changelog before using it from memory: agents write for older APIs.
-- A record field read with `deserialize_with` needs `#[schemars(with = ...)]` naming the type it really reads, or its `sdk.ts` type is wrong.
+- A record field read with `deserialize_with` needs `#[schemars(with = ...)]` naming the type it really reads, or its type in `sdk/` is wrong.
 - Every dependency is declared once in `[workspace.dependencies]`. Every crate uses the workspace lints.
-- Before writing DSP math, a knob or a file picker in an extension, look in `sound_dsp` and `sound_ui`: extensions kept copying them. A helper a second crate needs moves there, not into a copy.
-- Extensions depend on the SDK and on small shared contract crates, never on each other. `tooling/workspace-rules` fails the tests if one does. This keeps the build wide and parallel.
+- Before writing DSP math in an extension, look in `sound_dsp`: extensions kept copying it. A helper a second crate needs moves there, not into a copy.
+- Extensions depend on the core, `sound_dsp` and small shared crates, never on each other. `tooling/workspace-rules` fails the tests if one does. This keeps the build wide and parallel.
 - Warnings fail CI only (`.cargo/ci-config.toml`), never a local build: a warning in agent-written code must not break a composer's build.
 - Never vary `rustflags` or environment variables between builds. Any change rebuilds everything. CI's `RTSAN_ENABLE=1` is the one exception.
 
@@ -37,14 +29,14 @@ The engine is in `crates/core`. It follows what Pure Data, Elementary and simila
 
 | Thread | Owns | May |
 | --- | --- | --- |
-| Main (GPUI), the "control side" in engine code | Views, project, graph, compiler, tempo map, plugin handles | Allocate, lock, small I/O. Compiles schedules and builds processors. |
+| Main, the "control side" in engine code | Window, project, graph, compiler, tempo map, plugin handles | Allocate, lock, small I/O. Compiles schedules and builds processors. |
 | Audio (device callback) | Live processors, current schedule, buffers | Only preallocated work. |
 
 The engine is a value, not global state. The device callback, offline rendering and tests all call the same `Engine::process_block`. Pd needed years to add multiple instances because it started with globals.
 
 ### What may not happen on the audio thread
 
-No allocation, no freeing, no locks, no I/O, no logging, no GPUI calls. So no `Mutex`, no `Vec::push` past capacity, no `Box::new`, no `Arc` drops, no `String` formatting.
+No allocation, no freeing, no locks, no I/O, no logging, no UI calls. So no `Mutex`, no `Vec::push` past capacity, no `Box::new`, no `Arc` drops, no `String` formatting.
 
 How the engine keeps to that:
 
@@ -80,32 +72,35 @@ How the engine keeps to that:
 
 ## Testing
 
-- DSP, graph, clock and project state tests are plain `#[test]` with no GPUI. Offline rendering through `process_block` makes audio testable: render frames, then assert on samples or snapshot a summary with `insta`.
+- DSP, graph, clock and project state tests are plain `#[test]`. Offline rendering through `process_block` makes audio testable: render frames, then assert on samples or snapshot a summary with `insta`.
 - A test that changes a file tells the code, as the watcher does: `Project::apply_outside_changes`, or `Opened::save_code` for tools. A busy Mac drops file events for minutes, so only CI runs the tests that start the system's watcher.
-- Property tests (`proptest`) cover the graph compiler, the clock round trips, transport events over random tempo maps and buffer sizes, and state application.
-- `#[gpui::test]` only for views and entities. In GPUI tests use `cx.background_executor().timer(..)`, never `smol::Timer::after`, or `run_until_parked()` fails.
-- Window behaviour is tested with a simulated mouse and keys on an offline engine run by hand (`crates/runtime/tests/window/`). The tests check the project, the undo history and the files after every gesture.
+- Property tests (`proptest`) cover the graph compiler, the clock, transport events and state application.
 - Recording is tested with a simulated input device and output timing. No test needs real hardware.
 - A test that runs tools of the project needs Bun and fails without it (`tooling/fetch-bun.sh`), so no test passes by skipping. It waits for Bun's answers, never for a fixed time.
-- Render budgets (`crates/runtime/tests/window/tools/scenarios.rs`) count how often each part of the window renders in a scenario, one number per rule.
-- The two snapshot tests render the component gallery and the window to PNGs without a display. Look at the PNGs after a UI change. `WINDOW_SNAPSHOT_ONLY` picks a subset of window states.
 - A file under `tests/` with helper functions starts with `#![allow(clippy::unwrap_used)]`, because `allow-unwrap-in-tests` covers only `#[test]` functions.
 - Verify with `cargo verify`, never the whole workspace: it tests the crates the branch changed and runs clippy on those and every crate that uses them, one run at a time per machine, so parallel agents fit in 8 GB. Its arguments go to nextest: `-E 'test(name)'` while iterating, `-p runtime -E 'test(song)'` when you changed behaviour a dependent tests. The pull request's Linux job runs every test, and main runs them on all three systems.
 
 CI runs the commands of [README.md](README.md), "Checks", side by side, with the realtime sanitizer on for the macOS tests. A pull request runs only lint, the Linux tests and clippy on Windows, to stay fast; main runs everything, and a release needs main green on its commit. Add Miri for new unsafe code.
 
-To try Linux from a Mac: an `ubuntu:24.04` Docker container with the README packages, `CARGO_TARGET_DIR` on a volume, run as a normal user (root can write into the read-only folders some tests make). For the window add `xvfb` and `mesa-vulkan-drivers` and a null sound card. Set `CARGO_BUILD_JOBS=4` on Docker Desktop's default memory.
+To try Linux from a Mac: an `ubuntu:24.04` Docker container with the README packages, `CARGO_TARGET_DIR` on a volume, run as a normal user (root can write into the read-only folders some tests make). Set `CARGO_BUILD_JOBS=4` on Docker Desktop's default memory.
 
-To check Windows from a Mac: `cargo install cargo-xwin`, `brew install llvm`, `rustup target add x86_64-pc-windows-msvc`, then `cargo xwin clippy --target x86_64-pc-windows-msvc --workspace --all-targets` with `/opt/homebrew/opt/llvm/bin` on the `PATH`. It catches compile errors in minutes; only the Windows CI job on main runs the tests. If gpui's build script says llvm-rc cannot find `resources/windows/gpui.manifest.xml`, copy gpui's `resources/windows` folder into the `out/resources/` folder of that build.
+To check Windows from a Mac: `cargo install cargo-xwin`, `brew install llvm`, `rustup target add x86_64-pc-windows-msvc`, then `cargo xwin clippy --target x86_64-pc-windows-msvc --workspace --all-targets` with `/opt/homebrew/opt/llvm/bin` on the `PATH`. It catches compile errors in minutes; only the Windows CI job on main runs the tests.
 
-## GPUI version
+### Seeing the window without one
 
-`gpui` and `gpui_platform` come from Zed git, pinned to the commit of a stable Zed release in the root `Cargo.toml`, because the crates.io release is old and lacks what we use (offscreen rendering, arcs, the split platform crate). `rust-toolchain.toml` matches the toolchain Zed pins at that commit. To upgrade: move both together, compare the gallery snapshots with the previous PNGs, and update the gpui skills in the same change.
+With these, `sound-tools <project>` runs on the offline engine, silent, on every OS (no folder: the start screen):
+
+- `--snap out.png` draws it. Look at the picture after any change to the looks, against [DESIGN.md](DESIGN.md).
+- `--tree out.json`: every control (key, label, role, value, actions), planes, feeds, problems, warnings of a view's looks.
+- `--act steps.json` runs actions on controls by label or key, in the folder itself; the rest use a copy. `--script steps.json` plays timed pointer, wheel and key events.
+- `--play <seconds>` plays first; `--main <instance>` shows another one (`gallery`: every component); `--size <w>x<h>`; `--scene <name>`: the agent sidebar in one of its states.
+
+In a project's `extensions/`, `bun check -p .` and `bun test` check its tools; a test in `crates/window` runs both on a new project. Speed: the budget tests in `crates/window`, and [tooling/perf](tooling/perf/README.md) on a release build. After a change to the SDK, `tools.md` or the template, `tooling/agent-eval/eval.py` has an agent build a tool and others check it through the app; it costs API money.
 
 ## Reference repos
 
 Clone them next to this repo and read them before designing something they already solved.
 
-- [Zed](https://github.com/zed-industries/zed): GPUI itself and how a large GPUI app is built. Its `Cargo.toml` profiles and lints, `.rules`, `clippy.toml`, `tooling/xtask/src/workspace.rs` (dependency rules), `crates/gpui_util` (`log_err` and friends).
+- [Rune](https://github.com/anomalyco/rune): the window's toolkit, at the rev the root `Cargo.toml` pins.
 - [Pure Data](https://github.com/pure-data/pure-data): the classic audio graph. `src/d_ugen.c` (graph sort, buffers), `src/m_sched.c` (scheduler, clocks), `src/g_canvas.c` (rebuilding the graph), `src/d_delay.c` (feedback delay). Also what not to copy: globals, silently dropped cycles, sort-dependent delays.
 - [Elementary](https://github.com/elemaudio/elementary): compiled schedules swapped into a realtime runtime. `runtime/elem/Runtime.h` (schedule swap, garbage collection), `runtime/elem/GraphRenderSequence.h`, `runtime/elem/builtins/Feedback.h`. Also what not to copy: dropping a schedule when its queue is full, freeing on the audio thread, crossfading the whole output on every edit.

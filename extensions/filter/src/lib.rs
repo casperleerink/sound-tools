@@ -23,16 +23,14 @@
 //! ```
 //!
 //! The filter is the first built-in effect and the pattern the others follow: `Parameter`
-//! constants next to the state, a card in [`view`], and an agent doc whose table of fields the
+//! constants next to the state, and an agent doc whose table of fields the
 //! runtime writes from the schema of the state.
-//!
-//! [`view`] is the card of the filter, and the only module here that uses GPUI.
 
 mod processor;
-pub mod view;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sound_core::feeds::{AUDIBLE_OCTAVES, db, hz_at};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
     RegistryError, Scale, State, ranges,
@@ -179,9 +177,46 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<FilterState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Filter::AUTOMATION.parameters());
+        .schema(Filter::AUTOMATION.parameters())
+        .feed("response", "Its response: the gain of a steady sine in dB at each of `points` places (157 unless the binding says), evenly in octaves above 20 Hz from 0 to 9.97 (20 kHz) unless the binding shows another range.", |state, context| {
+            let rate = context.sample_rate as f32;
+            context.curve(AUDIBLE_OCTAVES, 157, |octaves| {
+                db(response(state, hz_at(octaves), rate))
+            })
+        })
+        .facts(|state, _| Facts::of(state));
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
+}
+
+/// What the card of a filter knows besides its record.
+#[derive(Serialize, JsonSchema)]
+struct Facts {
+    /// The gain of a low pass at its cutoff in dB at this slope, with no resonance and with
+    /// full resonance. In between it is a straight line, so a handle at the cutoff whose height
+    /// is the resonance sits on the peak of the curve.
+    peak_db: [f32; 2],
+}
+
+impl Facts {
+    fn of(state: &FilterState) -> Self {
+        Self {
+            peak_db: [0.0, 1.0].map(|resonance| peak_db(state.slope, resonance, 1_000.0)),
+        }
+    }
+}
+
+/// The gain in dB of a low pass of `slope` at its cutoff, at 48 kHz.
+fn peak_db(slope: Slope, resonance: f32, cutoff_hz: f32) -> f32 {
+    let low_pass = FilterState {
+        kind: FilterType::LowPass,
+        cutoff_hz,
+        resonance,
+        slope,
+        mix: 1.0,
+        ..FilterState::default()
+    };
+    db(response(&low_pass, cutoff_hz, 48_000.0))
 }
 
 /// Runs for every valid state, from every source. The processor is kept between runs, so the
@@ -200,6 +235,30 @@ mod tests {
     use sound_core::testing::check_parameter_ranges;
 
     use super::*;
+
+    /// The card puts the handle at the resonance on a straight line between the two ends of
+    /// `peak_db`: it is on the curve at every resonance and every cutoff the scale shows well.
+    #[test]
+    fn the_peak_at_the_cutoff_is_a_straight_line_in_db_over_the_resonance() {
+        for slope in [Slope::Twelve, Slope::TwentyFour] {
+            let [none, full] = Facts::of(&FilterState {
+                slope,
+                ..FilterState::default()
+            })
+            .peak_db;
+            assert!(full > none + 6.0, "{slope:?}: {none} {full}");
+            for cutoff_hz in [100.0, 1_000.0, 5_000.0] {
+                for resonance in [0.0, 0.3, 0.7, 1.0] {
+                    let line = none + (full - none) * resonance;
+                    let curve = peak_db(slope, resonance, cutoff_hz);
+                    assert!(
+                        (curve - line).abs() < 0.3,
+                        "{slope:?} {cutoff_hz} {resonance}: {curve} {line}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {

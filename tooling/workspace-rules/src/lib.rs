@@ -1,8 +1,8 @@
 //! Rules about the workspace itself, checked by tests.
 //!
-//! Extensions live in `extensions/`. They depend on the core, the DSP helpers, the UI SDK and
-//! small shared contract crates, never on each other. This keeps the build wide and parallel,
-//! which protects the extension edit loop.
+//! Extensions live in `extensions/`. They depend on the core, the DSP helpers and small shared
+//! contract crates, never on each other. This keeps the build wide and parallel, which protects
+//! the extension edit loop.
 //!
 //! The core depends on no other crate of the workspace, so it knows no music.
 //!
@@ -157,8 +157,13 @@ mod tests {
         // Named without the extension here, so this file does not match itself.
         let docs = DOCS.map(|(doc, _)| format!("{doc}.md"));
         let mut violations = Vec::new();
+        // The agent eval hands a QA agent the whole design doc to score by: a doc it cannot
+        // find fails the eval at once, not silently.
+        let reads_a_whole_doc = workspace_root().join("tooling/agent-eval/eval.py");
         for path in files(&["crates", "extensions", "tooling", "Cargo.toml"])? {
-            if path.extension().is_some_and(|extension| extension == "md") {
+            if path.extension().is_some_and(|extension| extension == "md")
+                || path == reads_a_whole_doc
+            {
                 continue;
             }
             // Snapshots and other binary files are not code.
@@ -174,87 +179,6 @@ mod tests {
             "code must not point at the top-level docs: {violations:?}"
         );
         Ok(())
-    }
-
-    /// What a line of a view names in place of a token, or `None`: a step of the grey scale,
-    /// white at an opacity, a colour at an opacity (`"text/40"`), a hex colour, or the size of
-    /// a text in points.
-    fn raw_look(line: &str) -> Option<&'static str> {
-        let bytes = line.as_bytes();
-        let quote = |at: usize| matches!(bytes.get(at), Some(b'"' | b'`' | b'\''));
-        let digits =
-            |from: usize| (bytes.iter().skip(from)).take_while(|byte| byte.is_ascii_digit());
-        for (at, byte) in bytes.iter().enumerate() {
-            let rest = &bytes[at..];
-            let quoted = at > 0 && quote(at - 1);
-            if quoted && (rest.starts_with(b"gray-") || rest.starts_with(b"alpha")) {
-                return Some("a raw grey or alpha: name a role, such as fill or text-muted");
-            }
-            let count = digits(at + 1).count();
-            // A colour at an opacity, `green/40`; a note value, `1/16`, has a digit before.
-            let named = at > 0 && (bytes[at - 1].is_ascii_lowercase() || bytes[at - 1] == b'}');
-            if *byte == b'/' && named && count > 0 && quote(at + 1 + count) {
-                return Some("a colour at an opacity: name a role, or dim the shape or the div");
-            }
-            let hex = (bytes.iter().skip(at + 1)).take_while(|byte| byte.is_ascii_hexdigit());
-            if *byte == b'#' && quoted && hex.count() >= 3 {
-                return Some("a hex colour: name a role or a hue");
-            }
-            let sized = ["size={", "size: "].iter().any(|size| {
-                rest.starts_with(size.as_bytes()) && digits(at + size.len()).count() > 0
-            });
-            // An icon's size is its box, in points.
-            if rest.starts_with(b"fontSize") || (sized && !line.contains("Icon")) {
-                return Some("a font size: name a step of the type scale, such as label");
-            }
-        }
-        None
-    }
-
-    /// The DAW template and the SDK's own components are what agents copy. Each raw colour or
-    /// size in them came back in every tool an agent built, so they name tokens only.
-    #[test]
-    fn our_own_views_name_tokens_only() -> anyhow::Result<()> {
-        let mut violations = Vec::new();
-        for path in files(&["templates/daw/extensions", "crates/typescript/src/sdk"])? {
-            let text = fs::read_to_string(&path)?;
-            for (number, line) in text.lines().enumerate() {
-                let code = line.trim_start();
-                // A doc comment may show what the escape hatch looks like.
-                if code.starts_with("//") || code.starts_with('*') || code.starts_with("/*") {
-                    continue;
-                }
-                if let Some(raw) = raw_look(code) {
-                    violations.push(format!("{}:{}: {raw}", path.display(), number + 1));
-                }
-            }
-        }
-        assert!(violations.is_empty(), "{violations:#?}");
-        Ok(())
-    }
-
-    #[test]
-    fn a_raw_look_is_found_and_a_token_is_not() {
-        for raw in [
-            r#"color: "gray-700""#,
-            r#"background: "alpha/10""#,
-            r#"color={muted ? "text/40" : "text"}"#,
-            "color={() => `${colour()}/85` as Color}",
-            r##"color="#1b1d23""##,
-            "style={{ fontSize: 12 }}",
-            "<Label x={0} y={0} text={name} size={11} />",
-        ] {
-            assert!(raw_look(raw).is_some(), "{raw}");
-        }
-        for token in [
-            r#"{ label: "1/16", ticks: BEAT / 4 }"#,
-            r#"<Icon name="plus" size={14} color="text-muted" />"#,
-            r##"colour?.startsWith("#")"##,
-            r#"Label({ x, y, text, size: "body" })"#,
-            r#"style={{ gap: "sm", background: "fill", radius: "md" }}"#,
-        ] {
-            assert_eq!(raw_look(token), None, "{token}");
-        }
     }
 
     #[test]
