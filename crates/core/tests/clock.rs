@@ -498,6 +498,34 @@ fn a_rit_takes_the_time_of_an_even_slowing_down() {
 }
 
 #[test]
+fn a_rit_and_a_fermata_play_as_these_steps_in_the_sdk_too() {
+    // The same piece and steps are in the DAW template's `song/time.test.ts`.
+    let json = r#"{"time_signatures":[{"signature":"6/8","bars":1},{"signature":"4/4","bars":1}],"tempo_changes":[{"tick":0,"bpm":120,"to":60},{"tick":720,"bpm":90}],"fermatas":[{"tick":1440,"hold":1.5}]}"#;
+    let map: TempoMap = serde_json::from_str(json).unwrap();
+    let steps: Vec<(u64, f64)> = (map.steps().iter())
+        .map(|step| (step.tick.0, step.bpm.bpm()))
+        .collect();
+    let expected = [
+        (0, 115.0),
+        (120, 105.0),
+        (240, 95.0),
+        (360, 85.0),
+        (480, 75.0),
+        (600, 65.0),
+        (720, 90.0),
+        (1440, 60.0),
+        (1920, 90.0),
+    ];
+    assert_eq!(steps, expected);
+    // A next change far away takes longer steps, not more of them.
+    let far = saved(
+        r#"[{"tick":0,"bpm":120,"to":60},{"tick":1000000000,"bpm":60}]"#,
+        "[]",
+    );
+    assert!(far.steps().len() <= 4097);
+}
+
+#[test]
 fn a_moving_tempo_on_the_last_change_plays_as_a_step() {
     let moving = Clock::new(saved(r#"[{"tick":0,"bpm":120,"to":60}]"#, "[]"), 48_000);
     let step = Clock::new(tempo_map(&[(0, 120.0)]), 48_000);

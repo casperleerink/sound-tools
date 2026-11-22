@@ -33,6 +33,16 @@ test("a rit. and a fermata take the time the clock plays them in", () => {
   expect(secondsBetween(held, BAR, 2 * BAR)).toBe(2);
 });
 
+test("a rit. and a fermata play as the same steps as in the clock", () => {
+  // The same piece and steps are in the clock's tests, `crates/core/tests/clock.rs`.
+  const steps = tempoSteps({
+    time_signatures: [{ signature: "6/8", bars: 1 }, { signature: "4/4", bars: 1 }],
+    tempo_changes: [{ tick: 0, bpm: 120, to: 60 }, { tick: 720, bpm: 90 }],
+    fermatas: [{ tick: 1440, hold: 1.5 }],
+  });
+  expect(steps.map(({ tick, bpm }) => [tick, bpm])).toEqual([[0, 115], [120, 105], [240, 95], [360, 85], [480, 75], [600, 65], [720, 90], [1440, 60], [1920, 90]]);
+});
+
 test("a bar is found by a search, not by counting the bars from the song's start each time", () => {
   let read = 0;
   const counted = runs.map((run) => new Proxy(run, { get: (target, key: keyof typeof run) => (key === "signature" && read++, target[key]) }));

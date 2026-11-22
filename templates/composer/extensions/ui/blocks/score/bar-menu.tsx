@@ -33,7 +33,7 @@ export const BarMenu = ({ page, score, id }: { page: Page; score: Score; id: str
   const only = tickOfBar(runs, 2) >= score.end;
   const items: Item[] = [
     { text: "Add a bar before", icon: "plus", onPress: () => score.edits.addBars(bar) },
-    { text: "Add a bar after", icon: "plus", onPress: () => score.edits.addBars(bar + 1) },
+    { text: "Add a bar after", icon: "plus", onPress: () => score.edits.addBars(bar, 1, true) },
     { text: "Remove the bar", icon: "trash-2", danger: true, ...(only ? { disabled: ONLY } : {}), onPress: () => score.edits.removeBar(bar) },
     { text: "Start a section here", icon: "section", line: true, ...(clock.sections.some((each) => each.bar === bar) ? { disabled: HERE } : {}), onPress: () => edits.marks.addSection(start) },
     { text: "Change the time signature here", icon: "time-signature", onPress: () => (memory.typing = { kind: "signature", bar }) },

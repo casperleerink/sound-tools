@@ -59,20 +59,13 @@ export interface TempoMap {
   fermatas?: { tick: number; hold: number }[];
 }
 
-/** A tempo map as the clock gives it, which code reads and does not change. */
-type ReadTempoMap = {
-  readonly time_signatures: readonly { readonly signature: string; readonly bars: number }[];
-  readonly tempo_changes: readonly { readonly tick: number; readonly bpm: number; readonly to?: number }[];
-  readonly fermatas?: readonly { readonly tick: number; readonly hold: number }[];
-};
-
-/** A 32nd note, how finely the clock cuts a tempo that moves. */
-const GLIDE_STEP = 120;
+/** A 32nd note, how finely the clock cuts a tempo that moves, and the most steps it cuts one into. */
+const [GLIDE_STEP, MOST_STEPS] = [120, 4096];
 const [SLOWEST, FASTEST] = [10, 1000];
 const tempo = (bpm: number) => Math.round(Math.min(Math.max(bpm, SLOWEST), FASTEST) * 1000) / 1000;
 
 /** The ticks of a beat of the time signature that plays at `tick`. */
-function beatAt(runs: ReadTempoMap["time_signatures"], tick: number): number {
+function beatAt(runs: Frozen<TempoMap>["time_signatures"], tick: number): number {
   let start = 0;
   for (const [index, run] of runs.entries()) {
     const [count, unit] = run.signature.split("/").map(Number);
@@ -83,20 +76,26 @@ function beatAt(runs: ReadTempoMap["time_signatures"], tick: number): number {
   return 960;
 }
 
+/** The steps of each tempo map read, which the clock keeps as long as it does not change. */
+const stepsOf = new WeakMap<object, readonly { tick: number; bpm: number }[]>();
+
 /**
  * The tempo as it plays, in plain steps, as the clock plays it: a change that moves cut into a
  * step every 32nd note, each at the tempo halfway through it; a fermata's beat at the tempo
  * divided by its hold.
  */
-export function tempoSteps(map: ReadTempoMap): { tick: number; bpm: number }[] {
+export function tempoSteps(map: Frozen<TempoMap>): readonly { tick: number; bpm: number }[] {
+  const known = stepsOf.get(map);
+  if (known) return known;
   const changes = map.tempo_changes;
   const steps = changes.flatMap(({ tick, bpm, to }, index) => {
     const end = changes[index + 1]?.tick;
     if (to === undefined || end === undefined) return [{ tick, bpm }];
     const length = end - tick;
-    return Array.from({ length: Math.ceil(length / GLIDE_STEP) }, (_, step) => {
-      const at = tick + step * GLIDE_STEP;
-      return { tick: at, bpm: tempo(bpm + ((to - bpm) * (Math.min(at + GLIDE_STEP / 2, end) - tick)) / length) };
+    const size = Math.max(GLIDE_STEP, Math.ceil(length / MOST_STEPS));
+    return Array.from({ length: Math.ceil(length / size) }, (_, step) => {
+      const at = tick + step * size;
+      return { tick: at, bpm: tempo(bpm + ((to - bpm) * (Math.min(at + Math.floor(size / 2), end) - tick)) / length) };
     });
   });
   const split = (tick: number) => {
@@ -107,11 +106,13 @@ export function tempoSteps(map: ReadTempoMap): { tick: number; bpm: number }[] {
   };
   for (const { tick, hold } of map.fermatas ?? []) {
     const end = tick + beatAt(map.time_signatures, tick);
+    const times = Math.round(hold * 1000) / 1000;
     split(tick);
     split(end);
     // Slower than a composer types, as the clock holds it.
-    for (const step of steps) if (step.tick >= tick && step.tick < end) step.bpm = Math.max(Math.round((step.bpm * 1000) / hold), 1) / 1000;
+    for (const step of steps) if (step.tick >= tick && step.tick < end) step.bpm = Math.max(Math.round((step.bpm * 1000) / times), 1) / 1000;
   }
+  stepsOf.set(map, steps);
   return steps;
 }
 

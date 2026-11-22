@@ -100,7 +100,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Every audio port is stereo: no channel negotiation, no half-connected cable, and a plugin's stereo output fits one port.
 - Time signatures are runs of whole bars and sections start at a bar number, so neither falls inside a bar. Rejected: ticks.
 - Changing the time signatures moves bar lines and sections, never notes. Rejected: keeping bar positions, which moves every clip and breaks those off the bar lines.
-- A rit. or an accel. is a tempo change with a `to`; a fermata divides the tempo of its beat. The clock plays both as steps every 32nd note, so conversions stay exact. Rejected: a curve, with no exact inverse; steps a tool writes, which lose the mark.
+- A rit. or accel. is a tempo change with `to`; a fermata divides its beat's tempo. Both play as 32nd-note steps, so conversions stay exact. Rejected: a curve (no exact inverse); steps a tool writes (the mark is lost).
 - Bar math lives in `TimeSignatures`, so no extension assumes a fixed bar length.
 - The loop, and a jump at a tick, go back on the frame of their end, and each processor ahead of the device on its own frame first, so processors need no loop code. Rejected: a seek when the device gets there, which with latency cut what rang one latency early: a click on every repeat.
 - The engine runs every processor every block, playing or not, so live keys and effect tails keep sounding while stopped.
@@ -115,7 +115,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 `templates/`, `crates/runtime/src/templates.rs`.
 
 - A project keeps its own copy of the template's code. Rejected: the template loaded from the app, which makes a project look different under two releases and needs an "eject" to change one file; hashes of the files, which leave a merge nothing to merge from.
-- Composer is the DAW's song drawn as a score, sharing all its code but `song.tsx`. Every beat is as wide, so a tempo moves no music; adding or taking out a bar moves all after it, as notation does. Rejected: records of its own; seconds across.
+- Composer draws the DAW's song as a score. Quarter notes are equally wide, so a tempo moves no music; adding or removing a bar moves what follows. Rejected: records of its own; seconds across.
 - A saved template is laid out as one of `templates/`, so it can be shared as it is. "Tools only" keeps the records at the top and the children their tools require by name (a song's master, no track), and no sections or later tempo: the core cannot tell a tool's setup from its music, but a tool says which children it must have. A project made from one keeps no template code: nothing newer to update from.
 
 ## Audio files and the Sampler
@@ -131,7 +131,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 `crates/export`, `--render`.
 
 - The engine renders at the chosen rate, 44.1 or 48 kHz, as on a device of that rate. Rejected: resampling a 48 kHz render, code for what the engine already gives.
-- Loudness is gain alone, from a measure of the whole render. Its true peak stays 1 dB under full scale before encoding, the room an MP3 needs. Rejected: a limiter, which changes the sound; rendering twice, which a plugin may not repeat.
+- Loudness is gain alone, from a measure of the whole render, which waits in a temporary file. Its true peak stays 1 dB under full scale before encoding, the room an MP3 needs. Rejected: a limiter, which changes the sound; rendering twice, which a plugin may not repeat.
 - MP3 comes from a pure Rust encoder, pinned. Rejected: LAME (LGPL, C). No FLAC yet: the pure Rust encoder holds the whole file in memory.
 
 ## Recording
@@ -159,9 +159,9 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 - What a plugin sends out is dropped or read into fixed-size queues, so a plugin cannot make our audio thread allocate. What its own process sends back is read only as numbers held to a bound.
 - Inspect loads no plugin: printing a project must not run third-party code.
-- A session that plays runs every plugin in a process of its own, so a crash or a hang costs only its slot, until Start again. Rejected: one process for all plugins, where one crash silences all; one per track, which this host cannot know.
+- A session that plays runs every plugin in a process of its own, so a crash or a hang costs its slot: silent (an effect lets the sound through), a problem, back only by Start again. Rejected: one process for all plugins, where one crash silences all; one per track, which this host cannot know.
 - The audio thread waits for each sub-block of a plugin's process, one round trip of about 10 µs. Rejected: playing a block behind, a block of latency per plugin in a chain.
-- A child is hung when its main thread is gone 10 s, longer while it loads or saves: the app waits that long, and a longer freeze is worse than a lost plugin.
+- A child is hung after 10 s without its main thread, longer while it loads or saves: a longer freeze is worse than a lost plugin.
 - Renders stay in their own process, so a crash fails the render instead of leaving a plugin out. Windows (the OS) plays plugins in-process for now: Rust has no Unix sockets there. So does a window session on macOS.
 - Plugins that talk between their own instances see only the ones in their process.
 
@@ -171,7 +171,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 - **Rune, because an agent can check a window.** It draws one headless on every OS (`--snap`), lists its controls by key and label (`--tree`) and acts on them (`--act`, `--script`), so agents and tests use it as a composer would. A control declares its meaning once: role, label, state, actions. Rejected: keeping GPUI (pictures on macOS only, no tree, every frame redrawn); both side by side; running older projects' view code: they play, their views do not.
 - **Rune is pre-release**: pinned at one rev with its patches (root `Cargo.toml`), and it takes no pull requests.
-- **Only `crates/window` knows the toolkit.** It builds the one binary. `crates/runtime`, `crates/typescript`, `crates/agent` and the extensions are plain Rust with plain tests.
+- **Only `crates/window` knows the toolkit.** It builds the one binary. Every other crate is plain Rust with plain tests.
 - **Four layers for what a project draws**, each built only from those below: (1) theme tokens, `extensions/theme.json`; (2) primitives, behaviours and live values, `sdk/view.ts` and the window; (3) components, `extensions/ui/`; (4) blocks, `extensions/ui/blocks/`. Only layer 2 is the SDK. Growth goes to 3 and 4, code the project owns. A new primitive or prop needs a reason no layer above can meet; a more general primitive beats a new one. Rejected: components in the SDK, which grew to 329 exports an agent had to read and no project could change.
 - **The window owns what moves; code hears the end.** A camera (`plane`), a hand (`drag`) and a source (`feed`), each named by a key, move each frame. Code reads them as live values and hears a press, a drag's end, a drop or a commit. A view runs again only when meaning changes (records, memory, facts, clock flags, keymap), never for scroll, zoom, a drag's moves, the playhead, meters or hover. Rejected: `onMove`, every pointer move through Bun.
 - **A drag plays before it saves**: its `plays` reach the engine unsaved; the `update` at its end is one undo step; Escape puts the sound back. A number an automation lane holds is refused by the host (an `update`) and the window (a drag), unless write automation takes it (Recording), so components need no branches for it.
@@ -187,7 +187,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 ## Tests
 
 - Logic is tested by plain `#[test]`s where it lives; the window by key and label, on the offline engine with Bun (`crates/window`); the template by `bun test`s beside it. Never by pixel: a label says what a control means, a pixel only where it is.
-- Looks are `--snap` pictures an agent judges against DESIGN.md, and rules `--tree` warns of to the view's writer, not the composer, such as a background lying over a border. Rejected: golden pictures, which fail on every change and get accepted unseen; switching a rule off.
+- Looks are `--snap` pictures an agent judges against DESIGN.md, and rules `--tree` warns of to the view's writer, not the composer: a background flush with one edge of its frame and a few points in from the next, or lying over a border around it. Rejected: golden pictures, which fail on every change and get accepted unseen; switching a rule off.
 - Budgets, in `crates/window`: a frame that scrolls, plays, zooms or drags 500 clips or 2,000 notes, or plays the mixer of 64 tracks, costs under 4 ms of the window's work and runs no view. It is the thread's CPU against a fixed piece of work, so a busy machine does not fail it. A run without a window waits for Bun each frame, so it repeats.
 
 ## Shortcuts

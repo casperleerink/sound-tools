@@ -3,19 +3,19 @@
 // instrument's notes opened. Each is one undo step, the tempo map and the records together.
 import { tempoSteps, type TempoMap } from "../sdk";
 import { freeName } from "../track";
-import { addClip, choose } from "../song/clips";
+import { addClip, choose, lengthOf } from "../song/clips";
 import { changeBars, FASTEST, SLOWEST, withoutSignature, withSignature } from "../song/marks";
 import { isRow, type Song } from "../song/model";
 import { barAt, tickOfBar } from "../song/time";
 import { PLANE } from "../song/view";
-import { AFTER, moveMusic, pieceEnd, signatureOf, ticksOfSignature, withBars, type Item } from "./bars";
+import { AFTER, moveMusic, pieceEnd, signatureOf, ticksOfSignature, withBars } from "./bars";
 
 type Changes = TempoMap["tempo_changes"];
 /** A tempo map as the clock gives it, to read. */
 type Read = Parameters<typeof tempoSteps>[0];
 
-/** How much slower a new rit. ends than it starts: three quarters, as scores mostly mean it. */
-const RIT = 0.75;
+/** Where a new rit. is first offered to go: three quarters of the tempo, as scores mostly mean it. */
+export const RIT = 0.75;
 /** How long a new rit. is when nothing after it ends it, in bars. */
 const RIT_BARS = 2;
 /** How many times as long a new fermata holds its beat, and the choices its menu offers. */
@@ -38,7 +38,7 @@ export function tempoMarks(changes: Read["tempo_changes"]): TempoMark[] {
 }
 
 /** The tempo that plays at `tick`, a rit. or an accel. as far as it got, a fermata left out. */
-const playingAt = (map: Read, tick: number) => bpmOf(tempoSteps({ ...map, fermatas: [] }).findLast((step) => step.tick <= tick)?.bpm ?? 120);
+export const playingAt = (map: Read, tick: number) => bpmOf(tempoSteps({ ...map, fermatas: [] }).findLast((step) => step.tick <= tick)?.bpm ?? 120);
 
 /** The changes without one that adds nothing: after tick 0, the tempo that already plays, with no move to start or end. */
 const needed = (changes: Changes): Changes =>
@@ -74,12 +74,15 @@ export const scoreEdits = (song: Song) => {
     const [, unit] = signatureOf(runs(), bar).split("/").map(Number);
     return next - 3840 / (unit ?? 4);
   };
-  /** Adds `count` bars before `bar`, or takes `-count` out from it, with all after them: one undo step, the whole piece shown again. */
-  const bars = (label: string, bar: number, count: number) => {
-    const from = tickOfBar(runs(), bar);
+  /**
+   * Adds `count` bars of the time signature of `bar` before it, or after it when `after`, or takes
+   * `-count` out from it, with all after them: one undo step, the whole piece shown again.
+   */
+  const bars = (label: string, bar: number, count: number, after = false) => {
+    const from = tickOfBar(runs(), after ? bar + 1 : bar);
     const by = count * ticksOfSignature(signatureOf(runs(), bar));
     const last = end();
-    clock.update(label, (piece) => Object.assign(piece, withBars(piece, bar, count)));
+    clock.update(label, (piece) => Object.assign(piece, withBars(piece, bar, count, after)));
     song.update(label, ({ children }) => {
       const rows = children.filter(isRow);
       // A piece with no music yet keeps its length in an empty clip, which then grows or shrinks.
@@ -87,72 +90,71 @@ export const scoreEdits = (song: Song) => {
       if (first?.tool === "track" && !rows.some((row) => row.children.some((child) => child.tool === "timeline" || child.tool === "region"))) {
         first.children.push({ name: freeName(first.children.map((child) => child.name), "music"), tool: "timeline", state: { start: 0, length: last, notes: [] } });
       }
-      moveMusic(rows as Item[], from, by);
+      // Bars added at the end line: the clip that ends last reaches it first, so it grows with them.
+      if (by > 0 && from >= last) {
+        const clips = rows.flatMap((row) => row.children.flatMap((child) => (child.tool === "timeline" ? [child.state] : [])));
+        const latest = clips.reduce<(typeof clips)[number] | undefined>((best, clip) => (best && best.start + lengthOf(best) >= clip.start + lengthOf(clip) ? best : clip), undefined);
+        if (latest) latest.length = last - latest.start;
+      }
+      moveMusic(children, from, by);
     });
     song.show(PLANE, { x: [0, end() + AFTER] });
   };
   return {
     /** Where the piece ends: the final bar line. */
     end,
-    /** `count` bars of the time signature there added before bar `bar`; all after them moves later. */
-    addBars: (bar: number, count = 1) => bars(count === 1 ? "Add a bar" : "Add bars", bar, count),
+    /** `count` bars of the time signature of bar `bar` added before it, or after it when `after`; all after them moves later. */
+    addBars: (bar: number, count = 1, after = false) => bars(count === 1 ? "Add a bar" : "Add bars", bar, count, after),
     /** Bar `bar` taken out with what is in it; all after it moves earlier. The last bar stays. */
     removeBar(bar: number): boolean {
       if (tickOfBar(runs(), 2) >= end()) return false;
       bars("Remove a bar", bar, -1);
       return true;
     },
-    /** The tempo at the start of bar `bar` typed where it stands: a change there, playing the tempo that plays, until it is typed. */
+    /** The tempo at the start of bar `bar`, typed where it stands; nothing changes until it is. */
     addTempo(bar: number) {
-      const tick = tickOfBar(runs(), bar);
-      if (!clock.tempo_map.tempo_changes.some((change) => change.tick === tick)) {
-        const bpm = playingAt(clock.tempo_map, tick);
-        changesOf("Add a tempo mark", (changes) => inserted(changes, { tick, bpm }));
-      }
-      memory.typing = { kind: "tempo", tick };
+      memory.typing = { kind: "tempo", tick: tickOfBar(runs(), bar) };
     },
-    /** A rit. from bar `bar` to three quarters of the tempo there, ending at the next change, or two bars on; where it goes is then typed. */
+    /** A rit. or an accel. from bar `bar`, to where it goes, typed where it stands; nothing changes until it is. */
     addGlide(bar: number) {
-      const tick = tickOfBar(runs(), bar);
-      const bpm = playingAt(clock.tempo_map, tick);
-      const to = bpmOf(bpm * RIT);
-      changesOf("Add a rit.", (changes) => {
-        const at = changes.find((change) => change.tick === tick);
-        const all = at ? changes.map((change) => (change === at ? { ...change, to } : change)) : inserted(changes, { tick, bpm, to });
-        if (!all.some((change) => change.tick > tick)) all.push({ tick: tickOfBar(runs(), bar + RIT_BARS), bpm: to });
-        return all.sort((a, b) => a.tick - b.tick);
-      });
-      memory.typing = { kind: "target", tick };
+      memory.typing = { kind: "target", tick: tickOfBar(runs(), bar) };
     },
     /**
-     * What was typed on the mark being typed: a tempo, where a rit. or an accel. goes, or a time
-     * signature. Nothing typed takes the mark out; words the clock does not take leave it as it was.
+     * What was typed on the mark being typed, as one undo step: a tempo, where a rit. or an accel.
+     * goes, or a time signature. Nothing typed takes the mark out; Escape, or words the clock does
+     * not take, leave it as it was.
      */
     typed(text: string | null) {
       const typing = memory.typing;
       memory.typing = null;
-      if (!typing) return;
+      if (!typing || text === null) return;
       if (typing.kind === "signature") return this.signature(typing.bar, text);
-      const number = text === null ? NaN : Number(text.replace(",", "."));
       const { tick } = typing;
-      if (typing.kind === "tempo") {
-        if (text !== null && text.trim() === "" && tick > 0) return changesOf("Remove a tempo mark", (changes) => changes.filter((change) => change.tick !== tick));
-        const bpm = Number.isFinite(number) ? bpmOf(number) : null;
-        changesOf("Change the tempo", (changes) => needed(changes.map((change) => (change.tick === tick && bpm !== null ? { ...change, bpm } : change))));
+      const was = clock.tempo_map.tempo_changes.find((change) => change.tick === tick);
+      if (text.trim() === "") {
+        if (typing.kind === "target") this.removeGlide(tick);
+        else if (was && tick > 0) changesOf("Remove a tempo mark", (changes) => needed(changes.filter((change) => change.tick !== tick)));
         return;
       }
-      if (text !== null && text.trim() === "") return this.removeGlide(tick);
+      const number = Number(text.replace(",", "."));
       if (!Number.isFinite(number)) return;
-      const to = bpmOf(number);
-      changesOf("Change where the tempo goes", (changes) => {
-        const index = changes.findIndex((change) => change.tick === tick);
-        const [at, next] = [changes[index], changes[index + 1]];
-        if (!at) return changes;
-        // The change that held where it went holds where it goes now.
-        if (next && next.to === undefined && next.bpm === at.to) next.bpm = to;
-        if (to === at.bpm) delete at.to;
-        else at.to = to;
-        return needed(changes);
+      const bpm = bpmOf(number);
+      if (typing.kind === "tempo") {
+        changesOf(was ? "Change the tempo" : "Add a tempo mark", (changes) =>
+          needed(was ? changes.map((change) => (change.tick === tick ? { ...change, bpm } : change)) : inserted(changes, { tick, bpm })));
+        return;
+      }
+      const starts = was?.bpm ?? playingAt(clock.tempo_map, tick);
+      changesOf(was?.to !== undefined ? "Change where the tempo goes" : bpm < starts ? "Add a rit." : "Add an accel.", (changes) => {
+        const all = was ? changes : inserted(changes, { tick, bpm: starts });
+        const at = all.find((change) => change.tick === tick)!;
+        const next = all.find((change) => change.tick > tick);
+        // The change that held where it went holds where it goes now; with none after it, one two bars on holds it.
+        if (next && next.to === undefined && at.to !== undefined && next.bpm === at.to) next.bpm = bpm;
+        if (!next) all.push({ tick: tickOfBar(runs(), barAt(runs(), tick).bar + RIT_BARS), bpm });
+        if (bpm === at.bpm) delete at.to;
+        else at.to = bpm;
+        return needed(all.sort((a, b) => a.tick - b.tick));
       });
     },
     /** The rit. or accel. from `tick` taken out: the tempo holds, and a change that only held where it went goes too. */

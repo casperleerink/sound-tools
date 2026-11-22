@@ -1,7 +1,7 @@
 import { h, live, memo, type Num } from "../../../sdk";
 import { barStarts, BEAT } from "../../../song/time";
 import { GUTTER, HEAD, PLANE, type Page } from "../../../song/view";
-import { bpmOf, tempoMarks, type TempoMark } from "../../../score/edits";
+import { bpmOf, playingAt, RIT, tempoMarks, type TempoMark } from "../../../score/edits";
 import { TextField } from "../../text-field";
 import { HOLD, HOLDS } from "../../../score/edits";
 import { MenuList } from "../../menu";
@@ -129,6 +129,19 @@ const Tempos = ({ page, score }: { page: Page; score: Score }) => {
           </box>
         );
       })}
+      {typing && typing.kind !== "signature" && !marks.some((mark) => mark.tick === typing.tick && (typing.kind === "tempo" || mark.glide)) && (
+        <box place={[typing.tick, TEMPOS - 2, 0, 0]}>
+          <row at={[4, 0]} gap={1} align="center" pad={[1, 0]} radius="sm" fill="background">
+            {typing.kind === "tempo" ? (
+              [<icon name="note" size={14} color="text-secondary" />,
+                <TextField id="tempo-field" label={`Tempo at bar ${barTicks(page, typing.tick).bar}`} value={String(playingAt(clock.tempo_map, typing.tick))} focus size="sm" w={FIELD} onCommit={typed} />]
+            ) : (
+              [<text style="label" color="text-secondary">rit. or accel. to</text>,
+                <TextField id="target-field" label={`Where the tempo goes from bar ${barTicks(page, typing.tick).bar}`} value={String(bpmOf(playingAt(clock.tempo_map, typing.tick) * RIT))} focus size="sm" w={FIELD} onCommit={typed} />]
+            )}
+          </row>
+        </box>
+      )}
       {(clock.tempo_map.fermatas ?? []).map((fermata) => <Fermata page={page} score={score} tick={fermata.tick} hold={fermata.hold} />)}
     </box>
   );

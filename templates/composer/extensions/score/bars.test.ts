@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test";
 import { clipOf, laneOf, regionOf, tapeOf, trackOf } from "../song/fake";
 import { BAR, BEAT } from "../song/time";
-import type { Child } from "../song/model";
-import { moveMusic, pieceEnd, withBars, type Item } from "./bars";
+import type { Child, Draft } from "../song/model";
+import { moveMusic, pieceEnd, withBars } from "./bars";
 
 const note = (start: number, length = BEAT) => ({ start, length, pitch: 60, velocity: 100 });
 /** Tracks as an update gets them. */
-const tracksOf = (...tracks: unknown[]) => tracks as Item[];
+const tracksOf = (...tracks: unknown[]) => tracks as Draft["children"];
 /** The state of what `track` holds at `index`, the fader first. */
-const stateOf = <T>(tracks: Item[], track: number, index: number) => tracks[track]?.children?.[index]?.state as T;
+const stateOf = <T>(tracks: Draft["children"], track: number, index: number) => (tracks as unknown as { children: { state: T }[] }[])[track]?.children[index]?.state as T;
 
 /** Eight bars of 4/4 then 3/4; sections at bars 1 and 9; a rit. in bar 9 to bar 10; a fermata on the last beat of bar 8. */
 const piece = () => ({
@@ -43,6 +43,9 @@ test("a bar taken out takes its notes, its tempo change and its fermata, cuts a 
   expect(taken.tempo_map.tempo_changes.map((change) => change.tick)).toEqual([0, 7 * BAR, 7 * BAR + 3 * BEAT]);
   expect(taken.tempo_map.fermatas).toBeUndefined();
   expect(taken.sections).toEqual([{ bar: 1, name: "Opening" }, { bar: 8, name: "Theme" }]);
+  // The only bar of a run between two of one time signature leaves one run.
+  const between = { ...piece(), tempo_map: { ...piece().tempo_map, time_signatures: [{ signature: "4/4", bars: 2 }, { signature: "3/4", bars: 1 }, { signature: "4/4", bars: 1 }] } };
+  expect(withBars(between, 3, -1).tempo_map.time_signatures).toEqual([{ signature: "4/4", bars: 3 }]);
 
   // A change inside the bar still plays after it, from where the bar was, unless the bar after it changes the tempo too.
   const changes = (...tempo_changes: { tick: number; bpm: number }[]) => ({ ...piece(), tempo_map: { ...piece().tempo_map, tempo_changes } });
@@ -58,7 +61,7 @@ test("a bar taken out takes its notes, its tempo change and its fermata, cuts a 
 
 test("the piece ends on the bar line after its music, audio as long as it plays, and bars added at its end are in its clips", () => {
   const tempo_map = { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] };
-  const end = (tracks: Item[]) => pieceEnd(tracks as unknown as Child[], tempo_map);
+  const end = (tracks: Draft["children"]) => pieceEnd(tracks as unknown as Child[], tempo_map);
   expect(end(tracksOf(trackOf("t00", [clipOf("music", 0, 6 * BAR - BEAT)])))).toBe(6 * BAR);
   expect(end(tracksOf(trackOf("t00")))).toBe(16 * BAR);
   // A minute at 120 is 30 bars.

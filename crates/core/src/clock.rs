@@ -598,8 +598,10 @@ pub struct Fermata {
 }
 
 /// How finely a tempo that moves is cut into steps: a 32nd note. A rit. over a bar of 4/4 is 32
-/// steps, too fine to hear, and every step is a plain tempo the clock converts exactly.
+/// steps, too fine to hear, and every step is a plain tempo the clock converts exactly. One over
+/// more than `MOST_STEPS` of them takes longer steps, so a far next change costs no more.
 const GLIDE_STEP: u64 = TICKS_PER_QUARTER / 8;
+const MOST_STEPS: u64 = 4096;
 
 /// The saved musical clock of a project: the time signatures and the tempo changes.
 ///
@@ -702,8 +704,8 @@ impl TempoMap {
     }
 
     /// The tempo as plain steps, which is how it plays: each change that moves cut into a step
-    /// every 32nd note, each at the tempo halfway through it so the steps last as long as
-    /// the even move; and the beat of each fermata at its tempo divided by its hold.
+    /// every 32nd note, each at the tempo halfway through it so the steps last about as long
+    /// as the even move; and the beat of each fermata at its tempo divided by its hold.
     pub fn steps(&self) -> Vec<TempoChange> {
         let mut steps = Vec::with_capacity(self.tempo_changes.len());
         for (index, change) in self.tempo_changes.iter().enumerate() {
@@ -713,11 +715,11 @@ impl TempoMap {
                 continue;
             };
             let length = end - change.tick.0;
-            let count = length.div_ceil(GLIDE_STEP);
+            let size = GLIDE_STEP.max(length.div_ceil(MOST_STEPS));
             let (from, to) = (change.bpm.bpm(), to.bpm());
-            for step in 0..count {
-                let tick = change.tick.0 + step * GLIDE_STEP;
-                let middle = (tick + GLIDE_STEP / 2).min(end) - change.tick.0;
+            for step in 0..length.div_ceil(size) {
+                let tick = change.tick.0 + step * size;
+                let middle = (tick + size / 2).min(end) - change.tick.0;
                 let bpm = from + (to - from) * middle as f64 / length as f64;
                 steps.push(TempoChange::step(Ticks(tick), Tempo::clamped(bpm)));
             }

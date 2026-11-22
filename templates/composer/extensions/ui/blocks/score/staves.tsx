@@ -1,5 +1,6 @@
 import { h, live, memo, type Color } from "../../../sdk";
 import { changeBars } from "../../../song/marks";
+import { lengthAt } from "../../../song/clips";
 import { colourOf, muted } from "../../../song/model";
 import { barStarts } from "../../../song/time";
 import { GUTTER, laneGroups, PLANE, ROW, TIME, type Page, type Row, type Track } from "../../../song/view";
@@ -80,15 +81,18 @@ const Lines = ({ page, end }: { page: Page; end: number }) => {
 
 /**
  * One instrument's line: the line under it, and the notes of all its clips as a score's are, with
- * no clip around them, from its lowest to its highest pitch and at least an octave.
+ * no clip around them, from its lowest to its highest pitch and at least an octave; or its audio,
+ * a band as long as each part plays.
  */
 const Staff = ({ page, row, end }: { page: Page; row: Row; end: number }) => {
   const track: Track = row.track;
   const colour = colourOf(track);
   const dim = muted(track) ? DIM : 1;
-  return memo(`staff-${track.name}`, [track.children, colour, dim, row.top, end], () => {
-    const notes = track.children.flatMap((child) => (child.tool === "timeline" ? child.state.notes.map((note) => ({ ...note, start: child.state.start + note.start })) : []));
+  const { song } = page;
+  return memo(`staff-${track.name}`, [track.children, song.clock.tempo_map, colour, dim, row.top, end], () => {
     const tall = ROW - 2 * INSET;
+    const audio = track.children.flatMap((child) => (child.tool === "region" ? [child.state.start, tall / 2 - 2, lengthAt(song, `${track.name}/${child.name}`), 4] : []));
+    const notes = track.children.flatMap((child) => (child.tool === "timeline" ? child.state.notes.map((note) => ({ ...note, start: child.state.start + note.start })) : []));
     const pitches = notes.map((note) => note.pitch);
     const [lowest, highest] = [Math.min(...pitches), Math.max(...pitches)];
     const range = highest - lowest + 1;
@@ -96,11 +100,11 @@ const Staff = ({ page, row, end }: { page: Page; row: Row; end: number }) => {
     const step = (tall - 16) / shown;
     const thick = Math.min(Math.max(step, 2), 3);
     const bottom = tall - 8 - ((shown - range) / 2) * step;
-    const rects = notes.flatMap((note) => [note.start, bottom - (note.pitch - lowest + 0.5) * step - thick / 2, note.length, thick]);
+    const rects = [...notes.flatMap((note) => [note.start, bottom - (note.pitch - lowest + 0.5) * step - thick / 2, note.length, thick]), ...audio];
     return (
       <box>
         <box place={[0, row.top, end, 1]} border="border" borderSides={[0, 0, 1, 0]} inert />
-        {notes.length > 0 && <shapes place={[0, row.top, end, 1]} inset={[0, INSET, 0, INSET]} units={[end, tall]} opacity={dim} rects={[{ color: colour, rects }]} />}
+        {rects.length > 0 && <shapes place={[0, row.top, end, 1]} inset={[0, INSET, 0, INSET]} units={[end, tall]} opacity={dim} rects={[{ color: colour, rects }]} />}
       </box>
     );
   });
