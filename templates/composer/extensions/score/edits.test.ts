@@ -140,11 +140,13 @@ test("a piece of audio and no clip gains a bar at its end", () => {
   expect(edits.end()).toBe(5 * BAR);
 });
 
-test("taking out the bar of the last clip moves the end line one bar, not to the music before it", () => {
-  const f = fakeSong({ children: [trackOf("t00", [clipOf("first", 0, BAR), clipOf("last", 2 * BAR, BAR)])] });
+test("taking out the bar of the last clip moves the end line one bar, and no note before it plays longer", () => {
+  const held = { start: 0, length: 2 * BAR, pitch: 60, velocity: 100 };
+  const f = fakeSong({ children: [trackOf("t00", [clipOf("first", 0, BAR, [held]), clipOf("last", 2 * BAR, BAR)])] });
   const edits = scoreEdits(f.song);
   edits.removeBar(3);
   expect(edits.end()).toBe(2 * BAR);
+  expect(childOf(f.self, 0, 1)).toMatchObject({ state: { length: BAR } });
 });
 
 test("a press after a clip that is as long as its notes opens what is there, not that clip", () => {
