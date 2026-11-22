@@ -129,8 +129,8 @@ export function moveMusic(children: Draft["children"], from: number, by: number)
         const noteStart = first + note.start;
         const moved = retimed(noteStart, from, by);
         if (moved === null) return [];
-        // A note sounds to its clip's end at most; a clip that grows must not make it longer.
-        const length = Math.min(note.length, last - noteStart);
+        // A note sounds to its clip's end at most; the clip bars go into must not make it longer.
+        const length = noteStart < from && from < last ? Math.min(note.length, last - noteStart) : note.length;
         const cut = by < 0 && noteStart < from ? Math.max(Math.min(noteStart + length, end) - from, 0) : 0;
         return [{ ...note, start: moved - start, length: length - cut }];
       });
