@@ -160,6 +160,8 @@ export type BoxProps = Interactive & Placed & {
   label?: string;
   role?: Role;
   grow?: number;
+  /** Narrower than what it holds when its row has no room, so a `truncate` text in it cuts. */
+  shrink?: true;
   /** Steps of the spacing scale on every side, or `[across, down]`. */
   pad?: Space | [x: Space, y: Space];
   gap?: Space;
