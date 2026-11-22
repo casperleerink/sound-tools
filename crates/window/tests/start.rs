@@ -14,6 +14,8 @@ fn start(home: &Path, steps: &[Value]) -> (Output, Option<Value>) {
     let tree = home.join("tree.json");
     let ran = Command::new(env!("CARGO_BIN_EXE_sound-tools"))
         .env("HOME", home)
+        .env("USERPROFILE", home)
+        .env("LOCALAPPDATA", home)
         .arg("--tree")
         .arg(&tree)
         .arg("--act")

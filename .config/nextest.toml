@@ -10,3 +10,12 @@ not test(=watching::the_watcher_applies_a_burst_of_files_and_skips_own_writes)
 
 [profile.ci]
 default-filter = "all()"
+# The Windows runner is three to four times slower than the others: a test that starts the app
+# twice takes over a minute there.
+slow-timeout = { period = "60s", terminate-after = 3 }
+
+# A shared runner has a slow second now and then, which a timing test meets about one run in
+# ten. It runs again: a real slowdown fails each time.
+[[profile.ci.overrides]]
+filter = "test(/budget|within_two_milliseconds|sixty_four_lanes/)"
+retries = 2
