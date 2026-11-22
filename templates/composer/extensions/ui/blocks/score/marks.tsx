@@ -1,13 +1,14 @@
 import { h, live, memo, type Num } from "../../../sdk";
-import { barStarts, BEAT } from "../../../song/time";
+import { changeBars } from "../../../song/marks";
+import { barAt, barStarts, BEAT, tickOfBar } from "../../../song/time";
 import { GUTTER, HEAD, PLANE, type Page } from "../../../song/view";
-import { bpmOf, HOLD, HOLDS, playingAt, RIT, tempoMarks, type TempoMark, type Typing } from "../../../score/edits";
+import { bpmOf, chosenBars, HOLD, HOLDS, playingAt, RIT, tempoMarks, type TempoMark, type Typing } from "../../../score/edits";
 import { MenuList } from "../../menu";
 import { TextField } from "../../text-field";
-import { BarMenu, barTicks, type Score } from "./bar-menu";
+import { BarMenu, barsOf, barTicks, type Score } from "./bar-menu";
 
-/** The band over the music, its lines from the top: the sections, the tempo marks, the bar numbers. */
-export const [BAND, SECTIONS, TEMPOS, NUMBERS] = [76, 6, 32, 56];
+/** The bars track over the music, its lines from the top: the sections, the tempo marks, the time signatures and the bar numbers. */
+export const [BAND, SECTIONS, TEMPOS, SIGNATURES, NUMBERS] = [100, 6, 32, 58, 62];
 /** The least points between two bar numbers. */
 const APART = 28;
 
@@ -21,28 +22,62 @@ export const pinned = (from: number, inset = 4): Num => {
 export const letterOf = (index: number) => String.fromCharCode(65 + (index % 26)) + (index >= 26 ? String(Math.floor(index / 26) + 1) : "");
 
 /**
- * The band over the music, in its time: each section's rehearsal letter and name, each tempo mark,
- * rit. and accel. to where they go, the fermatas, and the bar numbers. A mark is changed where it
- * stands: a press on a tempo types it, on a section chooses it and plays from it. A press on the
- * band plays from there, a double press starts a section, a right press opens the bar's menu.
+ * The bars track over the music, in its time: each section's rehearsal letter and name, each
+ * tempo mark, rit. and accel. to where they go, the fermatas, the bar numbers and the time
+ * signatures. A mark is changed where it stands: a press on a tempo types it, on a section
+ * chooses it and plays from it. A press elsewhere chooses its bar and plays from it, Shift adds
+ * to the choice, a drag chooses the bars it goes over; a right press opens their menu, as the
+ * chosen bars' button in its head does.
  */
 export const Marks = ({ page, score }: { page: Page; score: Score }) => {
-  const { song, edits } = page;
+  const { song } = page;
   const { clock, memory } = song;
   const end = score.end;
+  const runs = clock.tempo_map.time_signatures;
+  const chosen = chosenBars(memory);
+  const drag = live.drag("score-marks");
+  const barOf = (tick: number) => barAt(runs, Math.min(Math.max(tick, 0), end - 1)).bar;
   return (
     <row w="full" h={BAND} border="border" borderSides={[0, 0, 1, 0]}>
-      <box w={HEAD} h="full" border="border" borderSides={[0, 1, 0, 0]} />
+      <Head page={page} score={score} />
       <box w={GUTTER} />
-      <box key="score-marks" label="Marks" grow={1} h={BAND} plane={{ x: PLANE }}
-        onPress={(p) => (p.right ? (memory.rulerMenu = { x: p.x, mark: null }) : edits.marks.press(p))}>
-        {memo("score-sections", [clock.sections, clock.tempo_map.time_signatures, end, memory.mark, memory.renamingSection], () => <Sections page={page} end={end} />)}
+      <box key="score-marks" label="Bars" grow={1} h={BAND} plane={{ x: PLANE }} drag={{ x: true }}
+        onPress={(p) => {
+          const bar = barOf(p.x);
+          if (p.right) return void (chosen && bar >= chosen.first && bar <= chosen.last ? null : score.edits.choose(bar));
+          score.edits.choose(bar, p.shift);
+          clock.jump(tickOfBar(runs, bar));
+        }}
+        onDragEnd={(p) => score.edits.chooseAcross(barOf(p.x), barOf(p.x + p.dx))}>
+        {chosen && <box place={[tickOfBar(runs, chosen.first), 0, tickOfBar(runs, chosen.last + 1) - tickOfBar(runs, chosen.first), BAND]} fill="selected" inert />}
+        <box place={[drag.x.min(drag.x.plus(drag.dx)), 0, drag.dx.abs(), BAND]} fill="selected" opacity={drag.active} inert />
+        {memo("score-sections", [clock.sections, runs, end, memory.mark, memory.renamingSection], () => <Sections page={page} end={end} />)}
         {memo("score-tempos", [clock.tempo_map, end, memory.typing], () => <Tempos page={page} score={score} />)}
-        {memo("score-numbers", [clock.tempo_map.time_signatures, end], () => <Numbers starts={barStarts(clock.tempo_map.time_signatures, end)} />)}
+        {memo("score-numbers", [runs, end], () => <Numbers starts={barStarts(runs, end)} changes={changeBars(runs)} />)}
+        {memo("score-signatures", [runs, end, memory.typing], () => <Signatures page={page} score={score} />)}
         <box place={[live.playhead, BAND - 5]} w={7} h={7} radius="full" fill="text" inert />
         <BarMenu page={page} score={score} id="marks-menu" />
       </box>
     </row>
+  );
+};
+
+/** The head of the bars track: its name, and while bars are chosen, a button that opens their menu. */
+const Head = ({ page, score }: { page: Page; score: Score }) => {
+  const chosen = chosenBars(page.song.memory);
+  return (
+    <col w={HEAD} h="full" pad={[3, 2]} gap={1} border="border" borderSides={[0, 1, 0, 0]}>
+      <text style="label" color="text-secondary">Bars</text>
+      {chosen ? (
+        <row key="bars-button" label={`What to do with ${barsOf(chosen.first, chosen.last).toLowerCase()}`} role="button" h={24} pad={[2, 0]} gap={1} align="center" radius="md" fill="fill" hover="fill-strong">
+          <text style="label" color="text">{barsOf(chosen.first, chosen.last)}</text>
+          <icon name="chevron-down" size={14} color="text-secondary" />
+          <BarMenu page={page} score={score} id="bars-button-menu" open="press" />
+        </row>
+      ) : (
+        <text style="label" color="text-muted">Choose bars to change them</text>
+      )}
+    </col>
   );
 };
 
@@ -195,8 +230,8 @@ const Fermata = ({ page, score, tick, hold }: { page: Page; score: Score; tick: 
   );
 };
 
-/** The bar numbers at the foot: as the score zooms out, every second, fourth, eighth … shows, the first always. */
-const Numbers = ({ starts }: { starts: number[] }) => {
+/** The bar numbers at the foot, after the time signature where one starts: as the score zooms out, every second, fourth, eighth … shows, the first always. */
+const Numbers = ({ starts, changes }: { starts: number[]; changes: number[] }) => {
   const { zoom } = live.plane(PLANE);
   return (
     <box>
@@ -206,10 +241,52 @@ const Numbers = ({ starts }: { starts: number[] }) => {
         const shows = index === 0 ? 1 : zoom.ge(APART / Math.max(next - tick, 1));
         return (
           <box place={[tick, NUMBERS, 0, 0]} opacity={shows} inert>
-            <text at={[4, 0]} style="number" color="text-muted">{index + 1}</text>
+            <text at={[changes.includes(index + 1) ? SIGNATURE + 10 : 4, 0]} style="number" color="text-muted">{index + 1}</text>
           </box>
         );
       })}
+    </box>
+  );
+};
+
+/** How wide a time signature's numbers are, in points. */
+const SIGNATURE = 14;
+
+/** The time signature where it changes, its two numbers stacked as a score writes them, kept at the left edge while it holds: a press types another there. */
+const Signatures = ({ page, score }: { page: Page; score: Score }) => {
+  const { song } = page;
+  const { memory } = song;
+  const runs = song.clock.tempo_map.time_signatures;
+  const starts = barStarts(runs, score.end);
+  const firsts = changeBars(runs);
+  const typing = memory.typing?.kind === "signature" ? memory.typing : null;
+  const field = (bar: number, value: string) => (
+    <box place={[starts[bar - 1] ?? 0, NUMBERS - 4, 0, 0]}>
+      <box at={[4, 0]}>
+        <TextField id="signature-field" label={`Time signature at bar ${bar}`} value={value} placeholder="3/4" focus size="sm" w={64} onCommit={(text) => score.edits.typed({ kind: "signature", bar }, text)} />
+      </box>
+    </box>
+  );
+  return (
+    <box>
+      {firsts.map((bar, index) => {
+        const from = starts[bar - 1];
+        if (from === undefined || from >= score.end) return null;
+        const signature = runs[index]!.signature;
+        if (typing?.bar === bar) return field(bar, signature);
+        const to = Math.min(starts[(firsts[index + 1] ?? Infinity) - 1] ?? score.end, score.end);
+        const [count, unit] = signature.split("/");
+        return (
+          <box place={[from, SIGNATURES, to - from, 34]} clip>
+            <col key={`signature-${bar}`} label={`Time signature ${signature} at bar ${bar}`} role="button" at={[pinned(from, 0), 0]} w={SIGNATURE + 6} align="center" radius="sm" fill="background" hover="fill"
+              onPress={() => (memory.typing = { kind: "signature", bar })}>
+              <text style="heading" color="text-secondary">{count}</text>
+              <text style="heading" color="text-secondary">{unit}</text>
+            </col>
+          </box>
+        );
+      })}
+      {typing && !firsts.includes(typing.bar) && field(typing.bar, "")}
     </box>
   );
 };

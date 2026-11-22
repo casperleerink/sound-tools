@@ -148,3 +148,19 @@ export function moveMusic(children: Draft["children"], from: number, by: number)
     }
   }
 }
+
+/** The notes that start from `from` to before `to` taken out of every clip, and one ringing into them cut where they start; the bars stay. */
+export function clearNotes(children: Draft["children"], from: number, to: number) {
+  for (const track of children) {
+    if (!isRow(track)) continue;
+    for (const child of track.children) {
+      if (child.tool !== "timeline") continue;
+      const first = child.state.start;
+      child.state.notes = child.state.notes.flatMap((note) => {
+        const start = first + note.start;
+        if (start >= from && start < to) return [];
+        return start < from && start + note.length > from ? [{ ...note, length: from - start }] : [note];
+      });
+    }
+  }
+}

@@ -24,14 +24,14 @@ export const lostOf = ({ state, facts }: Region) =>
   facts.file.state === "missing" ? `${state.asset} is missing` : facts.file.state === "does_not_play" ? `${state.asset} does not play` : null;
 
 /**
- * Inside the box of `region` at `path`, under its name: its sound as it plays from `x` in the row
- * at `y`, `length` ticks, rising from the foot. A long file reads only what
- * the plane shows; a trim cuts it, as the box clips it.
+ * Inside the box of `region` at `path`, `top` points under its top, its name's room by default:
+ * its sound as it plays from `x` in the row at `y`, `length` ticks, rising from the foot. A long
+ * file reads only what the plane shows; a trim cuts it, as the box clips it.
  */
-export const RegionWave = ({ region, path, x, y, length, colour }: { region: Region; path: string; x: Live; y: Live; length: number; colour: Color }) => {
+export const RegionWave = ({ region, path, x, y, length, colour, top = WAVE }: { region: Region; path: string; x: Live; y: Live; length: number; colour: Color; top?: number }) => {
   const lost = lostOf(region);
   return lost === null ? (
-    <shapes key={`wave-${path}`} place={[x, y, length, 1]} inset={[0, INSET + WAVE, 0, INSET + 1]} units={[length, 1]}
+    <shapes key={`wave-${path}`} place={[x, y, length, 1]} inset={[0, INSET + top, 0, INSET + 1]} units={[length, 1]}
       rects={[{ color: tint(colour, 60), rects: live.feed("wave", path) }]} />
   ) : (
     <row label={lost} at={[8, 28]} gap={1} align="center">

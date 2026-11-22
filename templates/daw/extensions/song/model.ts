@@ -40,7 +40,9 @@ export type Memory = {
   renamingClip: string | null;
   renamingSection: { bar: number; tick: number } | null;
   /** The mark of the score whose value is typed where it stands: a tempo, where a rit. or an accel. goes, a time signature. */
-  typing: { kind: "tempo" | "target"; tick: number } | { kind: "signature"; bar: number } | null;
+  typing: { kind: "tempo"; tick: number } | { kind: "target"; tick: number; end?: number } | { kind: "signature"; bar: number } | null;
+  /** The chosen bars of the score, from 1: where the choice started and where it goes to, either way. */
+  bars: { from: number; to: number } | null;
   /** The chosen mark of the ruler, points of a lane and effect of a panel: delete and the keys act on it. */
   mark: Mark | null;
   /** The lane open for editing, whose points take the pointer, and its chosen points. */
@@ -80,7 +82,7 @@ export type Memory = {
 export const EDITOR = 352;
 
 export const memory = (): Memory => ({
-  selected: [], below: null, track: null, published: null, armed: [], recording: null, clipboard: null, renaming: null, renamingClip: null, renamingSection: null, typing: null,
+  selected: [], below: null, track: null, published: null, armed: [], recording: null, clipboard: null, renaming: null, renamingClip: null, renamingSection: null, typing: null, bars: null,
   mark: null, point: null, effect: null, lanes: [], tempoLane: false, returnsOpen: false, rulerMenu: { x: 0, mark: null }, repeatRange: null, snap: SNAP, editor: EDITOR, editorLarge: false, opened: false, regionMore: false,
   notes: [], rolls: {}, lane: "velocity", length: BEAT / 2, copied: null, strength: 1, swing: 0, humanized: 0,
 });

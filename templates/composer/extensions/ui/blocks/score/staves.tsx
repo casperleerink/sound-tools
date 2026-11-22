@@ -1,18 +1,17 @@
-import { h, live, memo, type Color } from "../../../sdk";
-import { changeBars } from "../../../song/marks";
+import { h, live, Live, memo, type Color } from "../../../sdk";
 import { lengthAt, lengthOf } from "../../../song/clips";
 import { colourOf, muted } from "../../../song/model";
-import { BAR, barStarts } from "../../../song/time";
+import { BAR, barAt, barStarts, tickOfBar } from "../../../song/time";
 import { GUTTER, laneGroups, PLANE, ROW, TIME, type Page, type Row, type Track } from "../../../song/view";
 import { Button } from "../../button";
-import { TextField } from "../../text-field";
 import { EmptyState } from "../empty-state";
 import { DIM } from "../song/heads";
 import { LaneTimes } from "../song/lanes";
+import { RegionWave, tint } from "../song/regions";
 import { INSET, Playhead } from "../time";
 import { AFTER } from "../../../score/bars";
+import { chosenBars } from "../../../score/edits";
 import { BarMenu, type Score } from "./bar-menu";
-import { pinned } from "./marks";
 
 /** How much further out than the DAW's tracks the score zooms, so a long piece shows whole: 256 bars of 4/4 in 250 points. */
 const ZOOM_OUT = 10;
@@ -21,30 +20,35 @@ const [DOUBLE, THICK] = [3, 3];
 
 /**
  * The music in time, one line an instrument, with the lines a score has: a bar line at each bar,
- * a double one where a section ends, the end line, a line between instruments, and the time
- * signature in every staff where it changes, kept at the left edge while it holds. It opens on
+ * a double one where a section ends, the end line and a line between instruments. It opens on
  * the whole piece. A press on an instrument's line opens its notes there; a right press opens
- * the bar's menu.
+ * the menu of the chosen bars, choosing its bar first when it is not one of them.
  */
 export const Staves = ({ page, score }: { page: Page; score: Score }) => {
   const { song, rows, tracks, height, low } = page;
   const { memory } = song;
   const end = score.end;
+  const runs = song.clock.tempo_map.time_signatures;
+  const chosen = chosenBars(memory);
   return (
     <col grow={1} h="full">
       <row grow={1} w="full">
         <box w={GUTTER} h="full" />
         <box key={PLANE} label="Score" grow={1} h="full" plane={{ x: [0, end + AFTER], y: TIME.y, zoom: [TIME.zoom[0] / ZOOM_OUT, TIME.zoom[1]], follow: live.playhead }}
           onPress={(p) => {
-            if (p.right) return void (memory.rulerMenu = { x: p.x, mark: null });
+            if (p.right) {
+              const { bar } = barAt(runs, Math.min(Math.max(p.x, 0), end - 1));
+              if (!chosen || bar < chosen.first || bar > chosen.last) score.edits.choose(bar);
+              return;
+            }
             const row = rows.find((each) => p.y >= each.top && p.y < each.top + each.height);
             if (row?.kind === "track") score.edits.openMusic(row.track.name, p.x);
           }}>
           <box place={[0, 0, end, height + 1]} />
+          {chosen && <box place={[tickOfBar(runs, chosen.first), 0, tickOfBar(runs, chosen.last + 1) - tickOfBar(runs, chosen.first), height]} fill="selected" inert />}
           {rows.map((row) => (row.kind === "track" ? <Staff page={page} row={row} end={end} /> : null))}
           {laneGroups(rows).map((lanes) => <LaneTimes page={page} rows={lanes} />)}
           {memo("score-lines", [song.clock.tempo_map.time_signatures, song.clock.sections, end, height], () => <Lines page={page} end={end} />)}
-          {memo("score-signatures", [song.clock.tempo_map.time_signatures, end, rows, memory.typing], () => <Signatures page={page} score={score} />)}
           <BarMenu page={page} score={score} id="score-menu" />
           <Playhead plane={PLANE} />
         </box>
@@ -85,7 +89,7 @@ const Lines = ({ page, end }: { page: Page; end: number }) => {
 /**
  * One instrument's line: the line under it, and the notes of all its clips as a score's are, with
  * no clip around them, from its lowest to its highest pitch and at least an octave; or its audio,
- * a band as long as each part plays.
+ * the sound of each part as it plays.
  */
 const Staff = ({ page, row, end }: { page: Page; row: Row; end: number }) => {
   const track: Track = row.track;
@@ -94,7 +98,6 @@ const Staff = ({ page, row, end }: { page: Page; row: Row; end: number }) => {
   const { song } = page;
   return memo(`staff-${track.name}`, [track.children, song.clock.tempo_map, colour, dim, row.top, end], () => {
     const tall = ROW - 2 * INSET;
-    const audio = track.children.flatMap((child) => (child.tool === "region" ? [child.state.start, tall / 2 - 2, lengthAt(song, `${track.name}/${child.name}`), 4] : []));
     // A note is drawn as long as it sounds: to the end of its clip at most.
     const notes = track.children.flatMap((child) => {
       if (child.tool !== "timeline") return [];
@@ -108,60 +111,22 @@ const Staff = ({ page, row, end }: { page: Page; row: Row; end: number }) => {
     const step = (tall - 16) / shown;
     const thick = Math.min(Math.max(step, 2), 3);
     const bottom = tall - 8 - ((shown - range) / 2) * step;
-    const rects = [...notes.flatMap((note) => [note.start, bottom - (note.pitch - lowest + 0.5) * step - thick / 2, note.length, thick]), ...audio];
+    const rects = notes.flatMap((note) => [note.start, bottom - (note.pitch - lowest + 0.5) * step - thick / 2, note.length, thick]);
     return (
       <box>
         <box place={[0, row.top, end, 1]} border="border" borderSides={[0, 0, 1, 0]} inert />
         {rects.length > 0 && <shapes key={`notes-${track.name}`} place={[0, row.top, end, 1]} inset={[0, INSET, 0, INSET]} units={[end, tall]} opacity={dim} rects={[{ color: colour, rects }]} />}
+        {track.children.map((child) => {
+          if (child.tool !== "region") return null;
+          const path = `${track.name}/${child.name}`;
+          const [start, length] = [child.state.start, lengthAt(song, path)];
+          return (
+            <box place={[start, row.top, length, 1]} inset={[0, INSET, 0, INSET]} radius="sm" fill={tint(colour, 12)} opacity={dim} clip inert>
+              <RegionWave region={child} path={path} x={Live.of(start)} y={Live.of(row.top)} length={length} colour={colour} top={0} />
+            </box>
+          );
+        })}
       </box>
     );
   });
-};
-
-/**
- * The time signature where it changes, its two numbers stacked as a score writes them, in every
- * staff: a press types another there.
- */
-const Signatures = ({ page, score }: { page: Page; score: Score }) => {
-  const { song, rows } = page;
-  const { memory } = song;
-  const runs = song.clock.tempo_map.time_signatures;
-  const starts = barStarts(runs, score.end);
-  const firsts = changeBars(runs);
-  const staves = rows.filter((row) => row.kind === "track");
-  const typing = memory.typing;
-  return (
-    <box>
-      {firsts.map((bar, index) => {
-        const from = starts[bar - 1];
-        if (from === undefined || from >= score.end) return null;
-        const to = Math.min(starts[(firsts[index + 1] ?? Infinity) - 1] ?? score.end, score.end);
-        const [count, unit] = runs[index]!.signature.split("/");
-        const label = `Time signature ${runs[index]!.signature} at bar ${bar}`;
-        const open = typing?.kind === "signature" && typing.bar === bar;
-        return staves.map((row, at) => (
-          <box place={[from, row.top, to - from, 1]} clip={!open}>
-            {open && at === 0 ? (
-              <box at={[4, 8]}>
-                <TextField id="signature-field" label={`Time signature at bar ${bar}`} value={runs[index]!.signature} focus size="sm" w={64} onCommit={(text) => score.edits.typed({ kind: "signature", bar }, text)} />
-              </box>
-            ) : (
-              <col key={`signature-${bar}-${row.track.name}`} label={label} role="button" at={[pinned(from, 3), 9]} w={14} pad={[0, 0]} align="center" radius="sm" fill="background" hover="fill"
-                onPress={() => (memory.typing = { kind: "signature", bar })}>
-                <text style="heading" color="text-secondary">{count}</text>
-                <text style="heading" color="text-secondary">{unit}</text>
-              </col>
-            )}
-          </box>
-        ));
-      })}
-      {typing?.kind === "signature" && !firsts.includes(typing.bar) && staves[0] && (
-        <box place={[starts[typing.bar - 1] ?? 0, staves[0].top, 0, 0]}>
-          <box at={[4, 8]}>
-            <TextField id="signature-field" label={`Time signature at bar ${typing.bar}`} value="" placeholder="3/4" focus size="sm" w={64} onCommit={(text) => score.edits.typed(typing, text)} />
-          </box>
-        </box>
-      )}
-    </box>
-  );
 };

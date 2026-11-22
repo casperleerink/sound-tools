@@ -1,14 +1,13 @@
-// What the score does to the piece where the composer points at it: bars added and taken out,
-// tempo marks, rit. and accel., fermatas and time signatures typed on the music, and an
-// instrument's notes opened. Each is one undo step, the tempo map and the records together.
+// What the score does to the piece where the composer points at it: bars chosen, added, taken
+// out and cleared, tempo marks, rit. and accel., fermatas and time signatures typed on the music,
+// and an instrument's notes opened. Each is one undo step, the tempo map and the records together.
 import { tempoSteps, type Frozen, type TempoMap } from "../sdk";
 import { freeName } from "../track";
 import { addClip, choose, lengthOf } from "../song/clips";
 import { changeBars, FASTEST, SLOWEST, withoutSignature, withSignature } from "../song/marks";
 import { isRow, type Memory, type Song } from "../song/model";
 import { barAt, tickOfBar } from "../song/time";
-import { PLANE } from "../song/view";
-import { AFTER, endLine, moveMusic, pieceEnd, placesOf, retimed, signatureOf, ticksOfSignature, withBars } from "./bars";
+import { clearNotes, endLine, moveMusic, pieceEnd, placesOf, retimed, signatureOf, ticksOfSignature, withBars } from "./bars";
 
 type Changes = TempoMap["tempo_changes"];
 type Read = Frozen<TempoMap>;
@@ -17,8 +16,6 @@ export type Typing = NonNullable<Memory["typing"]>;
 
 /** Where a new rit. is first offered to go: three quarters of the tempo, as scores mostly mean it. */
 export const RIT = 0.75;
-/** How long a new rit. is when nothing after it ends it, in bars. */
-const RIT_BARS = 2;
 /** How many times as long a new fermata holds its beat, and the choices its menu offers. */
 export const [HOLD, HOLDS] = [2, [1.5, 2, 3]] as const;
 
@@ -59,6 +56,9 @@ function inserted(changes: Changes, change: Changes[number]): Changes {
 const sameTyping = (one: Typing | null, other: Typing) =>
   one !== null && (one.kind === "signature" ? other.kind === "signature" && one.bar === other.bar : other.kind === one.kind && one.tick === other.tick);
 
+/** The chosen bars, first and last, from 1. */
+export const chosenBars = ({ bars }: Pick<Memory, "bars">) => bars && { first: Math.min(bars.from, bars.to), last: Math.max(bars.from, bars.to) };
+
 /** A time signature as typed, `"3/4"`, when the clock takes it. */
 export function signatureFrom(text: string): string | null {
   const match = /^\s*(\d+)\s*\/\s*(\d+)\s*$/.exec(text);
@@ -81,7 +81,7 @@ export const scoreEdits = (song: Song) => {
   };
   /**
    * Adds `count` bars of the time signature of `bar` before it, or after it when `after`, or takes
-   * `-count` out from it, with all after them: one undo step, the whole piece shown again.
+   * `-count` out from it, with all after them: one undo step.
    */
   const bars = (label: string, bar: number, count: number, after = false) => {
     const from = tickOfBar(runs(), after ? bar + 1 : bar);
@@ -104,26 +104,45 @@ export const scoreEdits = (song: Song) => {
       if (empty) empty.length = last + by - empty.start;
       else if (first?.tool === "track") first.children.push({ name: freeName(first.children.map((child) => child.name), "music"), tool: "timeline", state: { start: reach, length: last + by - reach, notes: [] } });
     });
-    song.show(PLANE, { x: [0, end() + AFTER] });
   };
   return {
     /** Where the piece ends: the final bar line. */
     end,
-    /** `count` bars of the time signature of bar `bar` added before it, or after it when `after`; all after them moves later. */
-    addBars: (bar: number, count = 1, after = false) => bars(count === 1 ? "Add a bar" : "Add bars", bar, count, after),
-    /** Bar `bar` taken out with what is in it; all after it moves earlier. The last bar stays. */
-    removeBar(bar: number): boolean {
-      if (tickOfBar(runs(), 2) >= end()) return false;
-      bars("Remove a bar", bar, -1);
+    /** Bar `bar` alone chosen, or with `extend` the bars from where the choice started to it. */
+    choose(bar: number, extend = false) {
+      memory.bars = { from: extend && memory.bars ? memory.bars.from : bar, to: bar };
+      [memory.mark, memory.notes] = [null, []];
+    },
+    /** The bars from `from` to `to`, either way, chosen. */
+    chooseAcross(from: number, to: number) {
+      memory.bars = { from, to };
+      [memory.mark, memory.notes] = [null, []];
+    },
+    /** `count` bars of the time signature of bar `bar` added before it, or after it when `after`; all after them moves later, the chosen bars with them. */
+    addBars(bar: number, count = 1, after = false) {
+      bars(count === 1 ? "Add a bar" : "Add bars", bar, count, after);
+      const chosen = chosenBars(memory);
+      if (chosen && (after ? bar < chosen.first : bar <= chosen.first)) memory.bars = { from: chosen.first + count, to: chosen.last + count };
+    },
+    /** Bars `first` to `last` taken out with what is in them; all after them moves earlier. A bar stays. */
+    removeBars(first: number, last: number): boolean {
+      if (first === 1 && tickOfBar(runs(), last + 1) >= end()) return false;
+      for (let bar = last; bar >= first; bar--) bars(first === last ? "Remove a bar" : "Remove bars", bar, -1);
+      memory.bars = null;
       return true;
+    },
+    /** The notes in bars `first` to `last` taken out, and one ringing into them cut short; the bars stay. */
+    clearNotes(first: number, last: number) {
+      const [from, to] = [tickOfBar(runs(), first), tickOfBar(runs(), last + 1)];
+      song.update("Clear the notes", ({ children }) => clearNotes(children, from, to));
     },
     /** The tempo at the start of bar `bar`, typed where it stands; nothing changes until it is. */
     addTempo(bar: number) {
       memory.typing = { kind: "tempo", tick: tickOfBar(runs(), bar) };
     },
-    /** A rit. or an accel. from bar `bar`, to where it goes, typed where it stands; nothing changes until it is. */
-    addGlide(bar: number) {
-      memory.typing = { kind: "target", tick: tickOfBar(runs(), bar) };
+    /** A rit. or an accel. over bars `first` to `last`, to where it goes, typed where it stands; nothing changes until it is. */
+    addGlide(first: number, last = first) {
+      memory.typing = { kind: "target", tick: tickOfBar(runs(), first), end: tickOfBar(runs(), last + 1) };
     },
     /**
      * What was typed on the mark `typing` names, as one undo step: a tempo, where a rit. or an
@@ -155,9 +174,10 @@ export const scoreEdits = (song: Song) => {
         const all = was ? changes : inserted(changes, { tick, bpm: starts });
         const at = all.find((change) => change.tick === tick)!;
         const next = all.find((change) => change.tick > tick);
-        // The change that held where it went holds where it goes now; with none after it, one two bars on holds it.
+        // The change that held where it went holds where it goes now; a new one goes to the end of its bars, or to the next change before it.
         if (next && next.to === undefined && at.to !== undefined && next.bpm === at.to) next.bpm = bpm;
-        if (!next) all.push({ tick: tickOfBar(runs(), barAt(runs(), tick).bar + RIT_BARS), bpm });
+        const stop = typing.end ?? barAt(runs(), tick).end;
+        if (!was?.to && (!next || next.tick > stop)) all.push({ tick: stop, bpm });
         if (bpm === at.bpm) delete at.to;
         else at.to = bpm;
         return needed(all.sort((a, b) => a.tick - b.tick));
@@ -225,6 +245,7 @@ export const scoreEdits = (song: Song) => {
         key = addClip(song, track, start, Math.min(end(), ...later) - start);
       }
       if (!key) return;
+      memory.bars = null;
       choose(song, [key]);
       memory.below = { kind: "editor", clip: key };
       memory.notes = [];
