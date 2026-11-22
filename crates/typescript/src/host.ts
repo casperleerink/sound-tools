@@ -4,7 +4,7 @@
 // stderr, so it cannot break a message.
 
 import { readFileSync, realpathSync, writeSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import type { Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, NoteEvent, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
 const folder = process.cwd();
@@ -46,7 +46,8 @@ Bun.plugin({
     build.onLoad({ filter: /\.tsx?$/ }, ({ path }) => {
       const text = readFileSync(path, "utf8");
       const loader = path.endsWith(".tsx") ? "tsx" : "ts";
-      if (!path.startsWith(`${realFolder}/`) || path.startsWith(join(realFolder, "sdk"))) return { contents: text, loader };
+      const real = realpathSync(path);
+      if (!real.startsWith(`${realFolder}${sep}`) || real.startsWith(join(realFolder, "sdk"))) return { contents: text, loader };
       // A name with no value: a type, which Bun leaves out unless the code uses it as a value, or gone.
       // The list runs to the first `}` outside a comment.
       const empty: string[] = [];
@@ -56,7 +57,7 @@ Bun.plugin({
           const [name, local = name] = part.split(/\s+as\s+/);
           if (part === "" || part.startsWith("type ") || name! in sdk) return part !== "";
           empty.push(local!);
-          if (!sdkNames.has(name!)) oldViews.add(path);
+          if (!sdkNames.has(name!)) oldViews.add(real);
           return false;
         });
         // On as many lines as it was, so an error names the line of the file.
