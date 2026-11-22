@@ -13,7 +13,7 @@ type Region = FilledStateOfTool<"region">;
 type Scale = FilledStateOfTool<"lane">["scale"];
 
 /** How long a timeline plays: its `length`, else to the end of its last note. */
-export const lengthOf = (clip: Frozen<Clip>) => clip.length ?? Math.max(1, ...clip.notes.map((note) => note.start + note.length));
+export const lengthOf = (clip: { readonly length?: number | null; readonly notes: readonly { readonly start: number; readonly length: number }[] }) => clip.length ?? Math.max(1, ...clip.notes.map((note) => note.start + note.length));
 
 /**
  * How long the clip or the region `key` names is on the timeline, in ticks: a region to its last

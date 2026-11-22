@@ -368,6 +368,18 @@ fn a_bare_project_has_the_kit_and_no_problem() {
     run_bun(&state, &["test"]);
 }
 
+/// Composer shares the DAW's song and draws it as a score: its piece loads whole, and checks.
+#[test]
+fn a_composer_project_has_no_problem_and_its_tests_pass() {
+    let scratch = tempfile::tempdir().unwrap();
+    let folder = scratch.path().join("piece");
+    runtime::templates::write(&folder, runtime::templates::named("Composer").unwrap()).unwrap();
+    let state = opened(&folder);
+    assert_eq!(state.project().problems(), []);
+    run_bun(&state, &["check", "-p", "."]);
+    run_bun(&state, &["test"]);
+}
+
 /// Rune moves a live size only with both: the other in points, never `"full"` or left out.
 #[test]
 fn a_live_width_or_height_needs_the_other_in_points() {
