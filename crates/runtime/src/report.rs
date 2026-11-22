@@ -12,7 +12,7 @@ const MOST_ROWS: u64 = 32;
 pub enum Timeline {
     /// A render of a project from `from` to `to`, with the tail after `to` when `tail`.
     Project {
-        clock: Clock,
+        clock: Box<Clock>,
         from: Ticks,
         to: Ticks,
         tail: bool,
@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn a_long_span_has_rows_of_bars_and_a_short_one_rows_of_beats() {
         let project = |from, to, tail| Timeline::Project {
-            clock: clock(120.0),
+            clock: Box::new(clock(120.0)),
             from: Ticks(from),
             to: Ticks(to),
             tail,
@@ -508,7 +508,7 @@ mod tests {
         let signatures = TimeSignatures::new(runs.to_vec()).unwrap();
         let tempo_map = TempoMap::constant(signatures, Tempo::from_bpm(120.0).unwrap());
         let timeline = Timeline::Project {
-            clock: Clock::new(tempo_map, 48_000),
+            clock: Box::new(Clock::new(tempo_map, 48_000)),
             from: Ticks(0),
             to: Ticks(8 * 3840 + 3360 + 31 * 3840),
             tail: false,
@@ -532,7 +532,7 @@ mod tests {
         let signatures = TimeSignatures::new(runs.to_vec()).unwrap();
         let tempo_map = TempoMap::constant(signatures, Tempo::from_bpm(120.0).unwrap());
         let timeline = Timeline::Project {
-            clock: Clock::new(tempo_map, 48_000),
+            clock: Box::new(Clock::new(tempo_map, 48_000)),
             from: Ticks(0),
             to: Ticks(3840 + 60 * 1920),
             tail: false,

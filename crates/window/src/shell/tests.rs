@@ -154,7 +154,7 @@ fn new_project_lists_the_templates_keys_pick_and_escape_makes_nothing() {
         .filter(|control| control.role == "radio")
         .map(|control| control.label)
         .collect();
-    assert_eq!(labels, ["DAW", "Bare"]);
+    assert_eq!(labels, ["DAW", "Bare", "Composer"]);
     assert_eq!(focused(&window).as_deref(), Some("input"));
     tab_to(&mut window, "template-1");
     press(&mut window, Key::Text(" ".into()));

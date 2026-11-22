@@ -785,9 +785,14 @@ fn a_peak_held_three_seconds_shows_in_decibels_then_drops() {
     let scratch = new_project();
     let folder = scratch.path().join("song");
     let song = folder.join("extensions/song.tsx");
-    let loudest = r#"<Ruler page={page} /><text key="loudest" live={live.feed("peak", "t00/mix").hold(3).decibels()} digits={1} />"#;
+    let loudest = r#"band={<col w="full"><Ruler page={page} /><text key="loudest" live={live.feed("peak", "t00/mix").hold(3).decibels()} digits={1} /></col>}"#;
     let code = std::fs::read_to_string(&song).unwrap();
-    std::fs::write(&song, code.replace("<Ruler page={page} />", loudest)).unwrap();
+    std::fs::write(
+        &song,
+        code.replace("band={<Ruler page={page} />}", loudest)
+            .replace("import { h, tool }", "import { h, live, tool }"),
+    )
+    .unwrap();
     let mut state = opened(&folder);
     play(&mut state, 0.0, 1.0);
     state.session.background(|project| project.engine().stop());
@@ -1109,9 +1114,14 @@ fn a_live_text_with_no_width_is_as_wide_as_the_widest_it_showed() {
     let scratch = new_project();
     let folder = scratch.path().join("song");
     let song = folder.join("extensions/song.tsx");
-    let loudest = r#"<Ruler page={page} /><row><text key="loudest" live={live.feed("peak", "t00/mix").decibels()} unit="db" /></row>"#;
+    let loudest = r#"band={<col w="full"><Ruler page={page} /><row><text key="loudest" live={live.feed("peak", "t00/mix").decibels()} unit="db" /></row></col>}"#;
     let code = std::fs::read_to_string(&song).unwrap();
-    std::fs::write(&song, code.replace("<Ruler page={page} />", loudest)).unwrap();
+    std::fs::write(
+        &song,
+        code.replace("band={<Ruler page={page} />}", loudest)
+            .replace("import { h, tool }", "import { h, live, tool }"),
+    )
+    .unwrap();
     let mut window = laid_out(opened(&folder));
     window
         .state
@@ -2210,12 +2220,16 @@ fn a_device_whose_code_does_not_load_says_so_where_it_sits_and_as_the_main_view(
 fn with_lane_button(scratch: &tempfile::TempDir) {
     let song = scratch.path().join("song/extensions/song.tsx");
     let code = std::fs::read_to_string(&song).unwrap();
-    let button = r#"<Ruler page={page} /><box key="add-lane" label="Add lane" w={20} h={20} onPress={() => ctx.update("Lane", (draft) => {
+    let button = r#"band={<col w="full"><Ruler page={page} /><box key="add-lane" label="Add lane" w={20} h={20} onPress={() => ctx.update("Lane", (draft) => {
       const first = draft.children.find((child) => child.name === "t00");
       first.state.automation = [{ lane: "lane-held", target: "mix.gain_db" }];
       first.children.push({ name: "lane-held", tool: "lane", state: { points: [{ tick: 0, value: -24 }] }, children: [] });
-    })} />"#;
-    std::fs::write(&song, code.replacen("<Ruler page={page} />", button, 1)).unwrap();
+    })} /></col>}"#;
+    std::fs::write(
+        &song,
+        code.replacen("band={<Ruler page={page} />}", button, 1),
+    )
+    .unwrap();
 }
 
 fn acted(scratch: &tempfile::TempDir, steps: Value) -> State {

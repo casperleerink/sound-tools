@@ -574,10 +574,10 @@ fn analyze(path: &Path, options: &Options) -> Result<()> {
             from: Ticks(0),
             to: clock.tick_at_seconds(seconds),
             tail: false,
-            clock: clock.clone(),
+            clock: Box::new(clock.clone()),
         },
         Span::Range(from, to, tail) => Timeline::Project {
-            clock: clock.clone(),
+            clock: Box::new(clock.clone()),
             from,
             to,
             tail,

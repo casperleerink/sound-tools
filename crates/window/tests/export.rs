@@ -114,8 +114,8 @@ fn a_track_renders_onto_a_new_audio_track_in_one_undo_step() {
     // The song's menus are the view's: a button here asks what its menu would.
     let view = song.join("extensions/song.tsx");
     let code = std::fs::read_to_string(&view).unwrap().replacen(
-        "<Ruler page={page} />",
-        r#"<Ruler page={page} /><box key="render" label="Render Bass" w={20} h={10} onPress={() => void page.edits.tracks.render("t00", ["t00/bass"], false)} />"#,
+        "band={<Ruler page={page} />}",
+        r#"band={<col w="full"><Ruler page={page} /><box key="render" label="Render Bass" w={20} h={10} onPress={() => void page.edits.tracks.render("t00", ["t00/bass"], false)} /></col>}"#,
         1,
     );
     std::fs::write(&view, code).unwrap();

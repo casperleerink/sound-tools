@@ -22,7 +22,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 
 - Every device shows what it does to the sound: a display at the left of its card, whose handles drag, then a few knobs. Every value a handle moves also has a knob, visible or behind expand: the path for the keys.
 - A value is one bright line on dark: the arc of a knob, the thumb on a meter, a curve and its handles. Values are never coloured. Only what the composer drags is bright in a display: a level, a history or a reduction is one soft fill under at most one line.
-- One control per value. The tempo is a drag number in the transport; a mark in the ruler or the tempo lane selects and seeks.
+- One control per value. The tempo is a drag number in the transport; a ruler's mark selects and seeks, a score's is typed in place.
 - Every drag control shares one gesture: a press never jumps, shift is ten times finer, double click or backspace sets the default, escape puts a drag back. A click on a value, or enter, types it.
 - A value an automation lane of the track moves is not the composer's to drag: its control shows what the lane plays at the playhead and stays put, and its keys and reset do nothing. It stays a tab stop, and a small dot and a tooltip say why. Taking the lane out gives the control back the record. While Write automation is on and the piece plays, it drags from what plays and writes into the lane (touch).
 - Two-finger scroll never changes a value. A control that took it would change a sound scrolled past.
@@ -47,7 +47,7 @@ A meter is the one place colour fills an area, because level is a signal. Otherw
 
 What is chosen has one look: a row takes the selected fill; on a canvas a box gets a bright outline and a small mark turns bright.
 
-Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/window/src/theme.rs` checks the text roles of `theme.json`.
+Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `theme.rs` checks the text roles of `theme.json`.
 
 ### Type and sizes
 
@@ -61,7 +61,7 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 
 ## Using the app
 
-The DAW template follows these rules; its own gestures and keys are its code, in `templates/daw/extensions`.
+The DAW and Composer follow these rules; their own gestures and keys are their code, in `templates/`.
 
 ### Gestures
 

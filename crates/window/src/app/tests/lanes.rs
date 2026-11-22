@@ -14,10 +14,10 @@ use crate::app::State;
 fn lanes_shown(scratch: &tempfile::TempDir) {
     let song = scratch.path().join("song/extensions/song.tsx");
     let code = std::fs::read_to_string(&song).unwrap();
-    let opening = "    const page = pageOf(self, ctx);";
+    let opening = "    const page = openPage(self, ctx);";
     assert!(code.contains(opening));
     let shown = format!(
-        "    if (!memory.opened) memory.lanes = self.children.map((each) => each.name);\n{opening}"
+        "    if (!ctx.memory.opened) ctx.memory.lanes = self.children.map((each) => each.name);\n{opening}"
     );
     std::fs::write(&song, code.replace(opening, &shown)).unwrap();
 }
