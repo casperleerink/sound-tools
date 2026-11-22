@@ -2,7 +2,7 @@ import { h, live, memo, type Color } from "../../../sdk";
 import { changeBars } from "../../../song/marks";
 import { lengthAt } from "../../../song/clips";
 import { colourOf, muted } from "../../../song/model";
-import { barStarts } from "../../../song/time";
+import { BAR, barStarts } from "../../../song/time";
 import { GUTTER, laneGroups, PLANE, ROW, TIME, type Page, type Row, type Track } from "../../../song/view";
 import { Button } from "../../button";
 import { TextField } from "../../text-field";
@@ -14,6 +14,8 @@ import { AFTER } from "../../../score/bars";
 import { BarMenu, type Score } from "./bar-menu";
 import { pinned } from "./marks";
 
+/** How much further out than the DAW's tracks the score zooms, so a long piece shows whole: 256 bars of 4/4 in 250 points. */
+const ZOOM_OUT = 10;
 /** How far apart the two lines of a double bar line are, and how thick the end line is, in points. */
 const [DOUBLE, THICK] = [3, 3];
 
@@ -32,7 +34,7 @@ export const Staves = ({ page, score }: { page: Page; score: Score }) => {
     <col grow={1} h="full">
       <row grow={1} w="full">
         <box w={GUTTER} h="full" />
-        <box key={PLANE} label="Score" grow={1} h="full" plane={{ ...TIME, x: [0, end + AFTER], follow: live.playhead }}
+        <box key={PLANE} label="Score" grow={1} h="full" plane={{ x: [0, end + AFTER], y: TIME.y, zoom: [TIME.zoom[0] / ZOOM_OUT, TIME.zoom[1]], follow: live.playhead }}
           onPress={(p) => {
             if (p.right) return void (memory.rulerMenu = { x: p.x, mark: null });
             const row = rows.find((each) => p.y >= each.top && p.y < each.top + each.height);
@@ -64,12 +66,14 @@ const Lines = ({ page, end }: { page: Page; end: number }) => {
   const { song, height } = page;
   const starts = barStarts(song.clock.tempo_map.time_signatures, end).filter((tick) => tick < end);
   const sections = new Set(song.clock.sections.map((section) => starts[section.bar - 1]).filter((tick) => tick !== undefined && tick > 0));
-  const single = starts.filter((tick) => !sections.has(tick)).flatMap((tick) => [tick, 0, tick, height]);
+  // Zoomed out, every fourth bar line stays and the others show once bars are 12 points apart.
+  const lines = (every: boolean) => starts.filter((tick, index) => !sections.has(tick) && (index % 4 === 0) !== every).flatMap((tick) => [tick, 0, tick, height]);
   const tall = height * ROW;
   const line = (x: number, color: Color, w = 1) => <box at={[x, 0]} w={w} h={tall} fill={color} />;
   return (
     <box>
-      <shapes place={[0, 0, end, height]} lines={[{ color: "border-strong", width: 1, points: single }]} />
+      <shapes place={[0, 0, end, height]} lines={[{ color: "border-strong", width: 1, points: lines(false) }]} />
+      <shapes place={[0, 0, end, height]} opacity={live.plane(PLANE).zoom.ge(12 / BAR)} lines={[{ color: "border-strong", width: 1, points: lines(true) }]} />
       {[...sections].map((tick) => (
         <box place={[tick, 0, 0, height]} inert>{line(-DOUBLE - 1, "text-muted")}{line(0, "text-muted")}</box>
       ))}

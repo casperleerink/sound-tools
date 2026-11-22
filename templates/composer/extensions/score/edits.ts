@@ -85,19 +85,14 @@ export const scoreEdits = (song: Song) => {
     const last = end();
     clock.update(label, (piece) => Object.assign(piece, withBars(piece, bar, count, after)));
     song.update(label, ({ children }) => {
-      const rows = children.filter(isRow);
-      // A piece with no clip yet keeps its length in an empty one, which then grows or shrinks.
-      const first = children.find((child) => child.name === rows.find((row) => row.tool === "track")?.name);
-      if (first?.tool === "track" && !rows.some((row) => row.children.some((child) => child.tool === "timeline"))) {
-        first.children.push({ name: freeName(first.children.map((child) => child.name), "music"), tool: "timeline", state: { start: 0, length: last, notes: [] } });
-      }
-      // Bars added at the end line: the clip that ends last reaches it first, so it grows with them.
-      if (by > 0 && from >= last) {
-        const clips = rows.flatMap((row) => row.children.flatMap((child) => (child.tool === "timeline" ? [child.state] : [])));
-        const latest = clips.reduce<(typeof clips)[number] | undefined>((best, clip) => (best && best.start + lengthOf(best) >= clip.start + lengthOf(clip) ? best : clip), undefined);
-        if (latest) latest.length = last - latest.start;
-      }
       moveMusic(children, from, by);
+      // The end line moves by the bars too: the clip that ends last reaches it, or a new empty one on the first instrument.
+      const rows = children.filter(isRow);
+      const clips = rows.flatMap((row) => row.children.flatMap((child) => (child.tool === "timeline" ? [child.state] : [])));
+      const latest = clips.reduce<(typeof clips)[number] | undefined>((best, clip) => (best && best.start + lengthOf(best) >= clip.start + lengthOf(clip) ? best : clip), undefined);
+      if (latest && latest.start + lengthOf(latest) < last + by) latest.length = last + by - latest.start;
+      const first = children.find((child) => child.name === rows.find((row) => row.tool === "track")?.name);
+      if (!latest && first?.tool === "track") first.children.push({ name: freeName(first.children.map((child) => child.name), "music"), tool: "timeline", state: { start: 0, length: last + by, notes: [] } });
     });
     song.show(PLANE, { x: [0, end() + AFTER] });
   };
@@ -211,7 +206,7 @@ export const scoreEdits = (song: Song) => {
       const owner = song.children.find((child) => child.name === track);
       if (owner?.tool !== "track" || tick >= end()) return;
       const clips = owner.children.flatMap((child) => (child.tool === "timeline" ? [child] : []));
-      const here = clips.find((clip) => clip.state.start <= tick && tick < clip.state.start + (clip.state.length ?? Infinity));
+      const here = clips.find((clip) => clip.state.start <= tick && tick < clip.state.start + lengthOf(clip.state));
       let key = here ? `${track}/${here.name}` : undefined;
       if (!key) {
         const start = clips.length === 0 ? 0 : barAt(runs(), tick).start;
