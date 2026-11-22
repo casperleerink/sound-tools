@@ -26,7 +26,7 @@ use crate::{
 pub const PREVIEW_SECONDS: f32 = 0.3;
 
 /// How many notes one player can hold at a time. A note that would be one more is not played
-/// and counts in `EngineStatus::event_overflows`. The synth has 16 voices.
+/// and counts in `EngineStatus::event_overflows`.
 pub const HELD_CAPACITY: usize = 128;
 
 /// What [`PlayerWatches`] show for no pattern.

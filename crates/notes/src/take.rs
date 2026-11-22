@@ -1,23 +1,13 @@
 //! The saved raw take: what arrived while recording, in real time, and the clip it becomes.
 //!
-//! The take is the record of the performance and the [`Clip`] is the edit of it. Two parts of
-//! the application read a take and neither may depend on the other: the MIDI extension writes
-//! one when a recording ends, and the fit extension reads one to find the beats and to make the
-//! clip again. So the saved form lives in the note contract crate, as the clip does, and the
-//! core knows nothing about either.
-//!
-//! Times are microseconds and never ticks, because ticks mean nothing without a tempo map and
-//! the whole point of a fit is that the tempo map changes. Every message therefore carries two:
-//! [`RawEvent::time_us`], when it reached this process, which is the performance as it was
-//! played, and [`RawEvent::sounded_us`], when the engine sounded it, which is what a clip has
-//! to reproduce to sound the same. Both count from the moment recording began, and
+//! The take is the record of the performance and the [`Clip`] is the edit of it. Times are
+//! microseconds and never ticks, so a take keeps its place in real time when the tempo map
+//! changes. Both times of a message count from the moment recording began, and
 //! [`RawTake::start_us`] says where that moment is on the project timeline.
 //!
-//! A take has a name of its own, never one made from a clip: a clip id changes when the clip
-//! moves to another track or an agent renames its file, and then nothing would find the take
-//! again. The clip names its take in a saved field instead, which travels with it through
-//! every edit. A name is never used twice, and the file is created and never opened again, so
-//! nothing this program does can write over a performance.
+//! A take has a name of its own, never one made from a clip, whose name changes. A name is
+//! never used twice, and the file is created and never opened again, so nothing this program
+//! does can write over a performance.
 
 use serde::{Deserialize, Serialize};
 use sound_core::{AssetError, AssetName, Assets, InvalidAssetName, Ticks};
@@ -114,8 +104,7 @@ pub enum RawEvent {
 }
 
 impl RawEvent {
-    /// When the message reached this process: the performance as it was played. The beat finder
-    /// works from these.
+    /// When the message reached this process: the performance as it was played.
     pub fn time_us(self) -> u64 {
         match self {
             Self::On { time_us, .. }
@@ -141,10 +130,7 @@ impl RawEvent {
     }
 }
 
-/// The saved form of a take. An agent reads it, and the fit extension reads it back.
-///
-/// It names no clip: the take is written before the clip is made, and a clip id changes. The
-/// clip names the take.
+/// The saved form of a take. It names no clip: the take is written before the clip is made.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawTake {
@@ -263,10 +249,8 @@ impl RawTake {
     /// The clip of this take, with every message at the tick `tick_of` gives for its place on
     /// the project timeline in microseconds.
     ///
-    /// This is the one place that turns a performance into a clip. Recording calls it with the
-    /// clock of the moment, so a note lands on the tick the engine sounded it. A fit calls it
-    /// with the clock of the fitted tempo map, so the notes keep their place in real time under
-    /// the new grid. The rules are the same either way:
+    /// Recording calls it with the clock of the moment, so a note lands on the tick the engine
+    /// sounded it. The rules:
     ///
     /// - A note that was still held at the end ends there.
     /// - A note off with no note on before it, from a key that was already down when recording
@@ -387,8 +371,6 @@ impl RawTake {
                 value: Pedal::UP,
             });
         }
-        // The agent doc asks an agent to keep notes in this order, so the runtime writes them
-        // that way too.
         notes.sort_by_key(|note| (note.start, note.pitch));
         let mut clip = Clip::new(start, length, notes);
         clip.pedal = pedal;

@@ -3,8 +3,7 @@
 //! number of a device, as a place on the travel of its knob.
 //!
 //! A lane is a list of points. Between two points the value moves in a straight line, before
-//! the first point it holds the first value, and after the last it holds the last. Everyone
-//! who plays or draws a lane reads it through [`value_at`], so they all agree.
+//! the first point it holds the first value, and after the last it holds the last.
 
 use std::fmt::Debug;
 use std::ops::Range;
@@ -304,8 +303,7 @@ pub fn cut<V: LaneValue>(points: &[Point<V>], range: Range<Ticks>) -> Vec<Point<
 }
 
 /// The controller lanes inside `range`, as [`cut`] does, but a lane plays only from its first
-/// point: a range that ends at or before it leaves no lane, and one that starts before it adds
-/// no point at its start, which `cut` already does not.
+/// point: a range that ends at or before it leaves no lane.
 pub fn cut_controllers(controllers: &Controllers, range: Range<Ticks>) -> Controllers {
     let lanes = controllers.iter().filter_map(|(controller, points)| {
         let first = points.first()?;

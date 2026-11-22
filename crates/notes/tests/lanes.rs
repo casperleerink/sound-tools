@@ -1,7 +1,6 @@
 //! The expression lanes of a clip: the saved form, the rules, the line between points, and
 //! the clip a take with the wheels becomes.
 
-// Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them.
 #![allow(clippy::unwrap_used)]
 
 use sound_core::Ticks;

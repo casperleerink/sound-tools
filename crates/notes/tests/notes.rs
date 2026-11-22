@@ -1,6 +1,5 @@
 //! The saved note format and the pitch helper.
 
-// Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them.
 #![allow(clippy::unwrap_used)]
 
 use sound_core::Ticks;
