@@ -95,7 +95,7 @@ function points<P>(list: readonly P[], at: (point: P) => number, set: (point: P,
 /**
  * The clips, audio and lanes of the song's `children` with `by` ticks added at `from` (above 0)
  * or taken out from it (below 0). A clip over `from` grows or shrinks, and one that ends there
- * grows too, so bars added at the end of the piece are in it. A note that starts in what is taken
+ * grows too. A note that starts in what is taken
  * out goes, and one before it loses what lay in it; audio that starts in it starts where it was.
  */
 export function moveMusic(children: Draft["children"], from: number, by: number) {

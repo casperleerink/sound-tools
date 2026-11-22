@@ -34,6 +34,14 @@ test("typing nothing where a rit. goes takes it out, and the mark that held wher
   expect(f.piece.tempo_map.tempo_changes).toEqual([{ tick: 0, bpm: 100 }]);
 });
 
+test("clearing where a rit. goes on a bar with a tempo mark and no rit. leaves the mark", () => {
+  const f = songOf({ tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 100 }, { tick: 4 * BAR, bpm: 72 }] } });
+  const edits = scoreEdits(f.song);
+  edits.addGlide(5);
+  edits.typed(f.memory.typing!, "");
+  expect([f.piece.tempo_map.tempo_changes, f.steps]).toEqual([[{ tick: 0, bpm: 100 }, { tick: 4 * BAR, bpm: 72 }], []]);
+});
+
 test("a tempo mark is one step when typed, Escape adds nothing, and the tempo that already plays takes it out", () => {
   const f = songOf();
   const edits = scoreEdits(f.song);

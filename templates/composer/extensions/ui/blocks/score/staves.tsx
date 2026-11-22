@@ -133,10 +133,10 @@ const Signatures = ({ page, score }: { page: Page; score: Score }) => {
         const to = Math.min(starts[(firsts[index + 1] ?? Infinity) - 1] ?? score.end, score.end);
         const [count, unit] = runs[index]!.signature.split("/");
         const label = `Time signature ${runs[index]!.signature} at bar ${bar}`;
-        const typing = memory.typing?.kind === "signature" && memory.typing.bar === bar;
+        const open = typing?.kind === "signature" && typing.bar === bar;
         return staves.map((row, at) => (
-          <box place={[from, row.top, to - from, 1]} clip={!typing}>
-            {typing && at === 0 ? (
+          <box place={[from, row.top, to - from, 1]} clip={!open}>
+            {open && at === 0 ? (
               <box at={[4, 8]}>
                 <TextField id="signature-field" label={`Time signature at bar ${bar}`} value={runs[index]!.signature} focus size="sm" w={64} onCommit={(text) => score.edits.typed({ kind: "signature", bar }, text)} />
               </box>

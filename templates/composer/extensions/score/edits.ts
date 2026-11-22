@@ -55,6 +55,10 @@ function inserted(changes: Changes, change: Changes[number]): Changes {
   return [...ended, change].sort((a, b) => a.tick - b.tick);
 }
 
+/** Whether two marks being typed are the same mark. */
+const sameTyping = (one: Typing | null, other: Typing) =>
+  one !== null && (one.kind === "signature" ? other.kind === "signature" && one.bar === other.bar : other.kind === one.kind && one.tick === other.tick);
+
 /** A time signature as typed, `"3/4"`, when the clock takes it. */
 export function signatureFrom(text: string): string | null {
   const match = /^\s*(\d+)\s*\/\s*(\d+)\s*$/.exec(text);
@@ -121,14 +125,15 @@ export const scoreEdits = (song: Song) => {
      * clock does not take, leave it as it was.
      */
     typed(typing: Typing, text: string | null) {
-      if (JSON.stringify(memory.typing) === JSON.stringify(typing)) memory.typing = null;
+      if (sameTyping(memory.typing, typing)) memory.typing = null;
       if (text === null) return;
       if (typing.kind === "signature") return this.signature(typing.bar, text);
       const { tick } = typing;
       const was = clock.tempo_map.tempo_changes.find((change) => change.tick === tick);
       if (text.trim() === "") {
-        if (typing.kind === "target" && was?.to !== undefined) this.removeGlide(tick);
-        else if (was && tick > 0) changesOf("Remove a tempo mark", (changes) => needed(changes.filter((change) => change.tick !== tick)));
+        if (typing.kind === "target") {
+          if (was?.to !== undefined) this.removeGlide(tick);
+        } else if (was && tick > 0) changesOf("Remove a tempo mark", (changes) => needed(changes.filter((change) => change.tick !== tick)));
         return;
       }
       const number = Number(text.replace(",", "."));
