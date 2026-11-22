@@ -1,6 +1,6 @@
 import { h, live, memo, type Color } from "../../../sdk";
 import { changeBars } from "../../../song/marks";
-import { lengthAt } from "../../../song/clips";
+import { lengthAt, lengthOf } from "../../../song/clips";
 import { colourOf, muted } from "../../../song/model";
 import { BAR, barStarts } from "../../../song/time";
 import { GUTTER, laneGroups, PLANE, ROW, TIME, type Page, type Row, type Track } from "../../../song/view";
@@ -95,7 +95,12 @@ const Staff = ({ page, row, end }: { page: Page; row: Row; end: number }) => {
   return memo(`staff-${track.name}`, [track.children, song.clock.tempo_map, colour, dim, row.top, end], () => {
     const tall = ROW - 2 * INSET;
     const audio = track.children.flatMap((child) => (child.tool === "region" ? [child.state.start, tall / 2 - 2, lengthAt(song, `${track.name}/${child.name}`), 4] : []));
-    const notes = track.children.flatMap((child) => (child.tool === "timeline" ? child.state.notes.map((note) => ({ ...note, start: child.state.start + note.start })) : []));
+    // A note is drawn as long as it sounds: to the end of its clip at most.
+    const notes = track.children.flatMap((child) => {
+      if (child.tool !== "timeline") return [];
+      const length = lengthOf(child.state);
+      return child.state.notes.filter((note) => note.start < length).map((note) => ({ ...note, start: child.state.start + note.start, length: Math.min(note.length, length - note.start) }));
+    });
     const pitches = notes.map((note) => note.pitch);
     const [lowest, highest] = [Math.min(...pitches), Math.max(...pitches)];
     const range = highest - lowest + 1;
@@ -107,7 +112,7 @@ const Staff = ({ page, row, end }: { page: Page; row: Row; end: number }) => {
     return (
       <box>
         <box place={[0, row.top, end, 1]} border="border" borderSides={[0, 0, 1, 0]} inert />
-        {rects.length > 0 && <shapes place={[0, row.top, end, 1]} inset={[0, INSET, 0, INSET]} units={[end, tall]} opacity={dim} rects={[{ color: colour, rects }]} />}
+        {rects.length > 0 && <shapes key={`notes-${track.name}`} place={[0, row.top, end, 1]} inset={[0, INSET, 0, INSET]} units={[end, tall]} opacity={dim} rects={[{ color: colour, rects }]} />}
       </box>
     );
   });
