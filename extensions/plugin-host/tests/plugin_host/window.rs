@@ -651,3 +651,21 @@ fn a_window_whose_plugin_went_while_it_was_made_is_closed_and_a_refused_one_is_s
     let calls = window_calls(&log);
     assert!(!calls.contains(&"gui_removed".to_string()), "{calls:?}");
 }
+
+/// Every plugin made with nih-plug refuses `show`, with its view already on screen.
+#[test]
+fn a_clap_plugin_that_refuses_show_keeps_its_window() {
+    let folder = log_folder();
+    let log = folder.path().join("calls.txt");
+    // SAFETY: as in `tell_the_plugin`.
+    unsafe { std::env::set_var(test_plugin_support::REFUSES_SHOW_VARIABLE, "1") };
+    let harness = open(PluginFormat::Clap, &log);
+    let slot = id(SLOT);
+    let mut desktop = Desktop::new(1.0);
+    desktop.open(&harness.plugins, &slot);
+    assert_eq!(last_call(&log).as_deref(), Some("gui_show"));
+    assert!(harness.plugins.window_is_open(&slot));
+    assert_eq!(desktop.shown.len(), 1, "{:?}", desktop.commands);
+    let problems = harness.plugins.poll(&harness.project);
+    assert!(problems.is_empty(), "{problems:?}");
+}

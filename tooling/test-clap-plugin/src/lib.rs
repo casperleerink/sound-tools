@@ -314,6 +314,9 @@ impl PluginGuiImpl for TestToneMainThread<'_> {
             self.shared.close_the_window.store(true, Ordering::Release);
             self.host.shared().request_callback();
         }
+        if support::told_to(support::REFUSES_SHOW_VARIABLE) {
+            return Err(PluginError::Message("this plugin refuses every show"));
+        }
         Ok(())
     }
 
