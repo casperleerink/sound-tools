@@ -116,9 +116,17 @@ impl Tempo {
     }
 
     /// `bpm`, or the nearest end of the range outside it.
-    pub fn clamped(bpm: f64) -> Self {
+    fn clamped(bpm: f64) -> Self {
         Self {
             milli_bpm: (bpm.clamp(Self::MIN_BPM, Self::MAX_BPM) * 1000.0).round() as u32,
+        }
+    }
+
+    /// A tempo `hold` times as slow, as a fermata plays it: below the slowest a composer types
+    /// too, since only a faster tempo makes ticks shorter than frames.
+    fn held(self, hold: Hold) -> Self {
+        Self {
+            milli_bpm: (f64::from(self.milli_bpm) / hold.times()).round().max(1.0) as u32,
         }
     }
 
@@ -727,7 +735,7 @@ impl TempoMap {
                 .iter_mut()
                 .filter(|step| step.tick >= start && step.tick < end)
             {
-                step.bpm = Tempo::clamped(step.bpm.bpm() / fermata.hold.times());
+                step.bpm = step.bpm.held(fermata.hold);
             }
         }
         steps

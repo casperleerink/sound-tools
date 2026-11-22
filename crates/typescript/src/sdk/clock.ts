@@ -109,7 +109,8 @@ export function tempoSteps(map: ReadTempoMap): { tick: number; bpm: number }[] {
     const end = tick + beatAt(map.time_signatures, tick);
     split(tick);
     split(end);
-    for (const step of steps) if (step.tick >= tick && step.tick < end) step.bpm = tempo(step.bpm / hold);
+    // Slower than a composer types, as the clock holds it.
+    for (const step of steps) if (step.tick >= tick && step.tick < end) step.bpm = Math.max(Math.round((step.bpm * 1000) / hold), 1) / 1000;
   }
   return steps;
 }

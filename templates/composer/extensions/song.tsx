@@ -1,7 +1,7 @@
 import { h, tool } from "./sdk";
 import { behaviour } from "./song/behaviour";
 import { actions } from "./song/keys";
-import { fields, isRow, memory, parts } from "./song/model";
+import { fields, memory, parts } from "./song/model";
 import { trackEdits } from "./song/tracks";
 import { pieceEnd } from "./score/bars";
 import { scoreEdits } from "./score/edits";
@@ -25,7 +25,7 @@ export const song = tool({
   tick: (song) => trackEdits(song).stopped(),
   view: (self, ctx) => {
     const page = openPage(self, ctx);
-    const score = { end: pieceEnd(page.tracks.filter(isRow), ctx.clock.tempo_map.time_signatures), edits: scoreEdits(ctx) };
+    const score = { end: pieceEnd(ctx.children, ctx.clock.tempo_map), edits: scoreEdits(ctx) };
     return <SongPage page={page} band={<Marks page={page} score={score} />} time={<Staves page={page} score={score} />} />;
   },
 });

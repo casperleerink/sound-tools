@@ -512,6 +512,13 @@ fn a_fermata_holds_its_beat_and_the_tempo_comes_back_after() {
     assert_eq!(clock.seconds_of(Ticks(3840)), 2.5);
     assert_eq!(clock.tempo_at(Ticks(2880)), bpm(60.0));
     assert_eq!(clock.tempo_at(Ticks(3840)), bpm(120.0));
+
+    // As slow as a tempo goes, a fermata still holds its beat as long as it says.
+    let slowest = Clock::new(
+        saved(r#"[{"tick":0,"bpm":10}]"#, r#"[{"tick":0,"hold":2}]"#),
+        48_000,
+    );
+    assert_eq!(slowest.seconds_of(Ticks(960)), 12.0);
 }
 
 #[test]

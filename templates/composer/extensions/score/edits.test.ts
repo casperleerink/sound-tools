@@ -31,6 +31,26 @@ test("typing nothing where a rit. goes takes it out, and the mark that held wher
   expect(f.piece.tempo_map.tempo_changes).toEqual([{ tick: 0, bpm: 100 }]);
 });
 
+test("a tempo mark added inside a rit. ends the rit. at the tempo it had reached", () => {
+  const f = songOf({ tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120, to: 60 }, { tick: 4 * BAR, bpm: 60 }] } });
+  scoreEdits(f.song).addTempo(3);
+  const [first, added] = f.piece.tempo_map.tempo_changes;
+  expect(added).toMatchObject({ tick: 2 * BAR });
+  expect(first?.to).toBe(added?.bpm);
+});
+
+test("a piece with no music still gains and loses bars, and a press past its end makes no clip", () => {
+  const f = fakeSong({ children: [trackOf("t00")] });
+  const edits = scoreEdits(f.song);
+  edits.addBars(17);
+  expect(edits.end()).toBe(17 * BAR);
+  edits.removeBar(1);
+  edits.removeBar(1);
+  expect(edits.end()).toBe(15 * BAR);
+  edits.openMusic("t00", 15 * BAR + BEAT);
+  expect(f.memory.below).toBe(null);
+});
+
 test("a tempo typed on a mark changes it, and the tempo that already plays takes the mark out", () => {
   const f = songOf();
   const edits = scoreEdits(f.song);

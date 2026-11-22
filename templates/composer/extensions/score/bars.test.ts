@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { clipOf, laneOf, regionOf, tapeOf, trackOf } from "../song/fake";
 import { BAR, BEAT } from "../song/time";
+import type { Child } from "../song/model";
 import { moveMusic, pieceEnd, withBars, type Item } from "./bars";
 
 const note = (start: number, length = BEAT) => ({ start, length, pitch: 60, velocity: 100 });
@@ -43,9 +44,10 @@ test("a bar taken out takes its notes, its tempo change and its fermata, cuts a 
   expect(taken.tempo_map.fermatas).toBeUndefined();
   expect(taken.sections).toEqual([{ bar: 1, name: "Opening" }, { bar: 8, name: "Theme" }]);
 
-  // A change inside the bar still plays after it, from where the bar was.
-  const inside = withBars({ ...piece(), tempo_map: { ...piece().tempo_map, tempo_changes: [{ tick: 0, bpm: 120 }, { tick: 2 * BAR + BEAT, bpm: 70 }] } }, 3, -1);
-  expect(inside.tempo_map.tempo_changes).toEqual([{ tick: 0, bpm: 120 }, { tick: 2 * BAR, bpm: 70 }]);
+  // A change inside the bar still plays after it, from where the bar was, unless the bar after it changes the tempo too.
+  const changes = (...tempo_changes: { tick: number; bpm: number }[]) => ({ ...piece(), tempo_map: { ...piece().tempo_map, tempo_changes } });
+  expect(withBars(changes({ tick: 0, bpm: 120 }, { tick: 2 * BAR + BEAT, bpm: 70 }), 3, -1).tempo_map.tempo_changes).toEqual([{ tick: 0, bpm: 120 }, { tick: 2 * BAR, bpm: 70 }]);
+  expect(withBars(changes({ tick: 0, bpm: 120 }, { tick: BAR, bpm: 70 }, { tick: 2 * BAR, bpm: 90 }), 2, -1).tempo_map.tempo_changes).toEqual([{ tick: 0, bpm: 120 }, { tick: BAR, bpm: 90 }]);
 
   const tracks = tracksOf(trackOf("t00", [clipOf("music", 0, 4 * BAR, [note(BAR - BEAT, 2 * BEAT), note(BAR + BEAT), note(3 * BAR)])]));
   moveMusic(tracks, BAR, -BAR);
@@ -54,11 +56,14 @@ test("a bar taken out takes its notes, its tempo change and its fermata, cuts a 
   expect(clip.length).toBe(3 * BAR);
 });
 
-test("the piece ends on the bar line after its music, and bars added at its end are in its clips", () => {
-  const runs = [{ signature: "4/4", bars: 1 }];
-  expect(pieceEnd(tracksOf(trackOf("t00", [clipOf("music", 0, 6 * BAR - BEAT)])), runs)).toBe(6 * BAR);
-  expect(pieceEnd(tracksOf(trackOf("t00")), runs)).toBe(16 * BAR);
+test("the piece ends on the bar line after its music, audio as long as it plays, and bars added at its end are in its clips", () => {
+  const tempo_map = { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] };
+  const end = (tracks: Item[]) => pieceEnd(tracks as unknown as Child[], tempo_map);
+  expect(end(tracksOf(trackOf("t00", [clipOf("music", 0, 6 * BAR - BEAT)])))).toBe(6 * BAR);
+  expect(end(tracksOf(trackOf("t00")))).toBe(16 * BAR);
+  // A minute at 120 is 30 bars.
+  expect(end(tracksOf(tapeOf("audio-1", [regionOf("voice", 0, 60)])))).toBe(30 * BAR);
   const ending = tracksOf(trackOf("t00", [clipOf("music", 0, 6 * BAR)]));
   moveMusic(ending, 6 * BAR, 2 * BAR);
-  expect(pieceEnd(ending, runs)).toBe(8 * BAR);
+  expect(end(ending)).toBe(8 * BAR);
 });

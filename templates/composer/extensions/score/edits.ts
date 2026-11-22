@@ -2,6 +2,7 @@
 // tempo marks, rit. and accel., fermatas and time signatures typed on the music, and an
 // instrument's notes opened. Each is one undo step, the tempo map and the records together.
 import { tempoSteps, type TempoMap } from "../sdk";
+import { freeName } from "../track";
 import { addClip, choose } from "../song/clips";
 import { changeBars, FASTEST, SLOWEST, withoutSignature, withSignature } from "../song/marks";
 import { isRow, type Song } from "../song/model";
@@ -46,6 +47,13 @@ const needed = (changes: Changes): Changes =>
     return !before || change.to !== undefined || before.to !== undefined || before.bpm !== change.bpm;
   });
 
+/** `changes` with `change` added: a rit. or an accel. it falls inside ends there, at the tempo `change` starts with. */
+function inserted(changes: Changes, change: Changes[number]): Changes {
+  const before = changes.findLast((each) => each.tick < change.tick);
+  const ended = changes.map((each) => (each === before && each.to !== undefined ? { ...each, to: change.bpm } : each));
+  return [...ended, change].sort((a, b) => a.tick - b.tick);
+}
+
 /** A time signature as typed, `"3/4"`, when the clock takes it. */
 export function signatureFrom(text: string): string | null {
   const match = /^\s*(\d+)\s*\/\s*(\d+)\s*$/.exec(text);
@@ -57,7 +65,7 @@ export function signatureFrom(text: string): string | null {
 export const scoreEdits = (song: Song) => {
   const { clock, memory } = song;
   const runs = () => clock.tempo_map.time_signatures;
-  const end = () => pieceEnd(song.children.filter(isRow), runs());
+  const end = () => pieceEnd(song.children, clock.tempo_map);
   const changesOf = (label: string, change: (changes: Changes) => Changes) =>
     clock.update(label, (piece) => (piece.tempo_map.tempo_changes = change(piece.tempo_map.tempo_changes.map((each) => ({ ...each })))));
   /** The tick of the beat a fermata at the end of bar `bar` holds: its last. */
@@ -70,8 +78,17 @@ export const scoreEdits = (song: Song) => {
   const bars = (label: string, bar: number, count: number) => {
     const from = tickOfBar(runs(), bar);
     const by = count * ticksOfSignature(signatureOf(runs(), bar));
+    const last = end();
     clock.update(label, (piece) => Object.assign(piece, withBars(piece, bar, count)));
-    song.update(label, ({ children }) => moveMusic(children.filter(isRow) as Item[], from, by));
+    song.update(label, ({ children }) => {
+      const rows = children.filter(isRow);
+      // A piece with no music yet keeps its length in an empty clip, which then grows or shrinks.
+      const first = children.find((child) => child.name === rows.find((row) => row.tool === "track")?.name);
+      if (first?.tool === "track" && !rows.some((row) => row.children.some((child) => child.tool === "timeline" || child.tool === "region"))) {
+        first.children.push({ name: freeName(first.children.map((child) => child.name), "music"), tool: "timeline", state: { start: 0, length: last, notes: [] } });
+      }
+      moveMusic(rows as Item[], from, by);
+    });
     song.show(PLANE, { x: [0, end() + AFTER] });
   };
   return {
@@ -90,7 +107,7 @@ export const scoreEdits = (song: Song) => {
       const tick = tickOfBar(runs(), bar);
       if (!clock.tempo_map.tempo_changes.some((change) => change.tick === tick)) {
         const bpm = playingAt(clock.tempo_map, tick);
-        changesOf("Add a tempo mark", (changes) => [...changes, { tick, bpm }].sort((a, b) => a.tick - b.tick));
+        changesOf("Add a tempo mark", (changes) => inserted(changes, { tick, bpm }));
       }
       memory.typing = { kind: "tempo", tick };
     },
@@ -101,7 +118,7 @@ export const scoreEdits = (song: Song) => {
       const to = bpmOf(bpm * RIT);
       changesOf("Add a rit.", (changes) => {
         const at = changes.find((change) => change.tick === tick);
-        const all = at ? changes.map((change) => (change === at ? { ...change, to } : change)) : [...changes, { tick, bpm, to }];
+        const all = at ? changes.map((change) => (change === at ? { ...change, to } : change)) : inserted(changes, { tick, bpm, to });
         if (!all.some((change) => change.tick > tick)) all.push({ tick: tickOfBar(runs(), bar + RIT_BARS), bpm: to });
         return all.sort((a, b) => a.tick - b.tick);
       });
@@ -186,7 +203,7 @@ export const scoreEdits = (song: Song) => {
     /** The notes of `track` at `tick`, open in the editor below: of the clip there, or of a new one from that bar to the end of the piece. */
     openMusic(track: string, tick: number) {
       const owner = song.children.find((child) => child.name === track);
-      if (owner?.tool !== "track") return;
+      if (owner?.tool !== "track" || tick >= end()) return;
       const clips = owner.children.flatMap((child) => (child.tool === "timeline" ? [child] : []));
       const here = clips.find((clip) => clip.state.start <= tick && tick < clip.state.start + (clip.state.length ?? Infinity));
       let key = here ? `${track}/${here.name}` : undefined;

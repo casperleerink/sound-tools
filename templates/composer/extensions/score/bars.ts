@@ -3,7 +3,8 @@
 // and the song's records: its tracks' clips, audio, lanes.
 import type { Section, TempoMap } from "../sdk";
 import { changeBars } from "../song/marks";
-import { lengthOf } from "../song/clips";
+import { lengthAt, lengthOf } from "../song/clips";
+import { isRow, type Child } from "../song/model";
 import { barStarts, tickOfBar, type Runs } from "../song/time";
 
 /** How many bars a piece with no music shows. */
@@ -16,7 +17,8 @@ type Piece = { tempo_map: TempoMap; sections: Section[] };
 type Read = { readonly tempo_map: { readonly time_signatures: Runs; readonly tempo_changes: readonly TempoMap["tempo_changes"][number][]; readonly fermatas?: readonly { tick: number; hold: number }[] }; readonly sections: readonly Section[] };
 type Note = { start: number; length: number };
 type Point = { tick: number };
-type Clip = { start: number; length?: number | null; notes: Note[]; pedal: { start: number }[]; bend: Point[]; mod_wheel: Point[]; pressure: Point[]; controllers: Record<string, Point[]> };
+/** A clip as an update gets it: one made in the same update has only what it was made with. */
+type Clip = { start: number; length?: number | null; notes: Note[]; pedal?: { start: number }[]; bend?: Point[]; mod_wheel?: Point[]; pressure?: Point[]; controllers?: Record<string, Point[]> };
 /** A track or what is in it, as an update gets them, as far as time goes. */
 export type Item = { name: string; tool: unknown; state: unknown; children?: Item[] };
 
@@ -33,15 +35,11 @@ export function signatureOf(runs: Runs, bar: number): string {
 }
 
 /** Where the piece ends: on the bar line after its last clip or audio; with none, after `FIRST_BARS`. */
-export function pieceEnd(tracks: readonly { readonly children?: readonly { tool: unknown; state: unknown }[] }[], runs: Runs): number {
-  const ends = tracks.flatMap((track) =>
-    (track.children ?? []).flatMap((child) => {
-      if (child.tool === "timeline") {
-        const clip = child.state as Clip;
-        return [clip.start + lengthOf(clip)];
-      }
-      return child.tool === "region" ? [(child.state as { start: number }).start] : [];
-    }),
+export function pieceEnd(children: readonly Child[], tempo_map: Read["tempo_map"]): number {
+  const runs = tempo_map.time_signatures;
+  const song = { children, clock: { tempo_map } };
+  const ends = children.filter(isRow).flatMap((track) =>
+    track.children.flatMap((child) => (child.tool === "timeline" || child.tool === "region" ? [child.state.start + lengthAt(song, `${track.name}/${child.name}`)] : [])),
   );
   const end = ends.length === 0 ? tickOfBar(runs, FIRST_BARS + 1) : Math.max(...ends, 1);
   return barStarts(runs, end).find((start) => start >= end) ?? end;
@@ -69,8 +67,9 @@ export function withBars({ tempo_map, sections }: Read, bar: number, count: numb
     .map((run, at) => (at === index && at < runs.length - 1 ? { ...run, bars: run.bars + count } : { ...run }))
     .filter((run) => run.bars > 0);
   const taken = (tick: number) => count < 0 && tick >= from && tick < from - by;
-  // What a taken-out bar changed the tempo to still plays after it: the last change in it moves to where it was.
-  const kept = tempo_map.tempo_changes.filter((change) => !taken(change.tick) || change === tempo_map.tempo_changes.findLast((each) => taken(each.tick)));
+  // What a taken-out bar changed the tempo to plays after it, unless the bar after it changes it again.
+  const next = tempo_map.tempo_changes.some((change) => change.tick === from - by);
+  const kept = tempo_map.tempo_changes.filter((change) => !taken(change.tick) || (!next && change === tempo_map.tempo_changes.findLast((each) => taken(each.tick))));
   const tempo_changes = kept.map((change) => ({ ...change, tick: change.tick === 0 ? 0 : (retimed(change.tick, from, by) ?? from) }));
   const fermatas = (tempo_map.fermatas ?? []).flatMap((fermata) => {
     const tick = retimed(fermata.tick, from, by);
@@ -137,11 +136,11 @@ export function moveMusic(tracks: Item[], from: number, by: number) {
         start,
         ...(clip.length === null || clip.length === undefined ? {} : { length }),
         notes,
-        pedal: relative(clip.pedal, (each) => each.start, (each, tick) => ({ ...each, start: tick })),
-        bend: relative(clip.bend, (each) => each.tick, point),
-        mod_wheel: relative(clip.mod_wheel, (each) => each.tick, point),
-        pressure: relative(clip.pressure, (each) => each.tick, point),
-        controllers: Object.fromEntries(Object.entries(clip.controllers).map(([number, list]) => [number, relative(list, (each) => each.tick, point)])),
+        pedal: relative(clip.pedal ?? [], (each) => each.start, (each, tick) => ({ ...each, start: tick })),
+        bend: relative(clip.bend ?? [], (each) => each.tick, point),
+        mod_wheel: relative(clip.mod_wheel ?? [], (each) => each.tick, point),
+        pressure: relative(clip.pressure ?? [], (each) => each.tick, point),
+        controllers: Object.fromEntries(Object.entries(clip.controllers ?? {}).map(([number, list]) => [number, relative(list, (each) => each.tick, point)])),
       };
       return [child];
     });

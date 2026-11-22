@@ -90,9 +90,14 @@ export const markEdits = (song: Song) => {
   const tempoAt = (tick: number) => {
     const changes = clock.tempo_map.tempo_changes;
     if (!changes.some((change) => change.tick === tick)) {
-      // A change inside a rit. or an accel. ends it: the new one plays the tempo the move had reached.
+      // A change inside a rit. or an accel. ends it at the tempo it had reached, and plays that.
       const bpm = Math.round(bpmAt(tempoSteps({ ...clock.tempo_map, fermatas: [] }), tick) * 10) / 10;
-      clock.update("Add a tempo change", (piece) => (piece.tempo_map.tempo_changes = [...piece.tempo_map.tempo_changes, { tick, bpm }].sort((a, b) => a.tick - b.tick)));
+      clock.update("Add a tempo change", (piece) => {
+        const changes = piece.tempo_map.tempo_changes;
+        const before = changes.findLast((change) => change.tick < tick);
+        if (before?.to !== undefined) before.to = bpm;
+        piece.tempo_map.tempo_changes = [...changes, { tick, bpm }].sort((a, b) => a.tick - b.tick);
+      });
     }
     const starts = barStarts(runs(), tick + 1);
     choose({ kind: "tempo", bar: Math.max(starts.findIndex((start) => start > tick), 1), tick });
