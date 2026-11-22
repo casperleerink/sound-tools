@@ -90,7 +90,7 @@ export function tempoSteps(map: Frozen<TempoMap>): readonly { tick: number; bpm:
   const changes = map.tempo_changes;
   const steps = changes.flatMap(({ tick, bpm, to }, index) => {
     const end = changes[index + 1]?.tick;
-    if (to === undefined || end === undefined) return [{ tick, bpm }];
+    if (to === undefined || end === undefined) return [{ tick, bpm: tempo(bpm) }];
     const length = end - tick;
     const size = Math.max(GLIDE_STEP, Math.ceil(length / MOST_STEPS));
     return Array.from({ length: Math.ceil(length / size) }, (_, step) => {
@@ -110,7 +110,7 @@ export function tempoSteps(map: Frozen<TempoMap>): readonly { tick: number; bpm:
     split(tick);
     split(end);
     // Slower than a composer types, as the clock holds it.
-    for (const step of steps) if (step.tick >= tick && step.tick < end) step.bpm = Math.max(Math.round((step.bpm * 1000) / times), 1) / 1000;
+    for (const step of steps) if (step.tick >= tick && step.tick < end) step.bpm = Math.max(Math.round(Math.round(step.bpm * 1000) / times), 1) / 1000;
   }
   stepsOf.set(map, steps);
   return steps;

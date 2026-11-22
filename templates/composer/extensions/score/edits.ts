@@ -1,18 +1,19 @@
 // What the score does to the piece where the composer points at it: bars added and taken out,
 // tempo marks, rit. and accel., fermatas and time signatures typed on the music, and an
 // instrument's notes opened. Each is one undo step, the tempo map and the records together.
-import { tempoSteps, type TempoMap } from "../sdk";
+import { tempoSteps, type Frozen, type TempoMap } from "../sdk";
 import { freeName } from "../track";
 import { addClip, choose, lengthOf } from "../song/clips";
 import { changeBars, FASTEST, SLOWEST, withoutSignature, withSignature } from "../song/marks";
-import { isRow, type Song } from "../song/model";
+import { isRow, type Memory, type Song } from "../song/model";
 import { barAt, tickOfBar } from "../song/time";
 import { PLANE } from "../song/view";
 import { AFTER, moveMusic, pieceEnd, signatureOf, ticksOfSignature, withBars } from "./bars";
 
 type Changes = TempoMap["tempo_changes"];
-/** A tempo map as the clock gives it, to read. */
-type Read = Parameters<typeof tempoSteps>[0];
+type Read = Frozen<TempoMap>;
+/** A mark being typed. */
+export type Typing = NonNullable<Memory["typing"]>;
 
 /** Where a new rit. is first offered to go: three quarters of the tempo, as scores mostly mean it. */
 export const RIT = 0.75;
@@ -85,9 +86,9 @@ export const scoreEdits = (song: Song) => {
     clock.update(label, (piece) => Object.assign(piece, withBars(piece, bar, count, after)));
     song.update(label, ({ children }) => {
       const rows = children.filter(isRow);
-      // A piece with no music yet keeps its length in an empty clip, which then grows or shrinks.
+      // A piece with no clip yet keeps its length in an empty one, which then grows or shrinks.
       const first = children.find((child) => child.name === rows.find((row) => row.tool === "track")?.name);
-      if (first?.tool === "track" && !rows.some((row) => row.children.some((child) => child.tool === "timeline" || child.tool === "region"))) {
+      if (first?.tool === "track" && !rows.some((row) => row.children.some((child) => child.tool === "timeline"))) {
         first.children.push({ name: freeName(first.children.map((child) => child.name), "music"), tool: "timeline", state: { start: 0, length: last, notes: [] } });
       }
       // Bars added at the end line: the clip that ends last reaches it first, so it grows with them.
@@ -120,19 +121,18 @@ export const scoreEdits = (song: Song) => {
       memory.typing = { kind: "target", tick: tickOfBar(runs(), bar) };
     },
     /**
-     * What was typed on the mark being typed, as one undo step: a tempo, where a rit. or an accel.
-     * goes, or a time signature. Nothing typed takes the mark out; Escape, or words the clock does
-     * not take, leave it as it was.
+     * What was typed on the mark `typing` names, as one undo step: a tempo, where a rit. or an
+     * accel. goes, or a time signature. Nothing typed takes the mark out; Escape, or words the
+     * clock does not take, leave it as it was.
      */
-    typed(text: string | null) {
-      const typing = memory.typing;
-      memory.typing = null;
-      if (!typing || text === null) return;
+    typed(typing: Typing, text: string | null) {
+      if (JSON.stringify(memory.typing) === JSON.stringify(typing)) memory.typing = null;
+      if (text === null) return;
       if (typing.kind === "signature") return this.signature(typing.bar, text);
       const { tick } = typing;
       const was = clock.tempo_map.tempo_changes.find((change) => change.tick === tick);
       if (text.trim() === "") {
-        if (typing.kind === "target") this.removeGlide(tick);
+        if (typing.kind === "target" && was?.to !== undefined) this.removeGlide(tick);
         else if (was && tick > 0) changesOf("Remove a tempo mark", (changes) => needed(changes.filter((change) => change.tick !== tick)));
         return;
       }
@@ -167,6 +167,10 @@ export const scoreEdits = (song: Song) => {
         delete at.to;
         return needed(kept);
       });
+    },
+    /** The fermata at `tick` taken out. */
+    removeFermata(tick: number) {
+      clock.update("Remove a fermata", (piece) => (piece.tempo_map.fermatas = (piece.tempo_map.fermatas ?? []).filter((each) => each.tick !== tick)));
     },
     /** The fermata over the last beat of bar `bar`: added holding it twice as long, or taken out. */
     toggleFermata(bar: number) {

@@ -1,10 +1,9 @@
 import { h, live, memo, type Num } from "../../../sdk";
 import { barStarts, BEAT } from "../../../song/time";
 import { GUTTER, HEAD, PLANE, type Page } from "../../../song/view";
-import { bpmOf, playingAt, RIT, tempoMarks, type TempoMark } from "../../../score/edits";
-import { TextField } from "../../text-field";
-import { HOLD, HOLDS } from "../../../score/edits";
+import { bpmOf, HOLD, HOLDS, playingAt, RIT, tempoMarks, type TempoMark, type Typing } from "../../../score/edits";
 import { MenuList } from "../../menu";
+import { TextField } from "../../text-field";
 import { BarMenu, barTicks, type Score } from "./bar-menu";
 
 /** The band over the music, its lines from the top: the sections, the tempo marks, the bar numbers. */
@@ -104,7 +103,7 @@ const Tempos = ({ page, score }: { page: Page; score: Score }) => {
   const { clock, memory } = song;
   const marks = tempoMarks(clock.tempo_map.tempo_changes);
   const typing = memory.typing;
-  const typed = (text: string | null) => score.edits.typed(text);
+  const typed = (target: Typing) => (text: string | null) => score.edits.typed(target, text);
   return (
     <box>
       {marks.map((mark, index) => {
@@ -115,7 +114,7 @@ const Tempos = ({ page, score }: { page: Page; score: Score }) => {
           <box>
             {field ? (
               <box place={[mark.tick, TEMPOS - 2, 0, 0]}>
-                <box at={[4, 0]}><TextField id="tempo-field" label={`Tempo at bar ${bar}`} value={String(bpmOf(mark.bpm))} focus size="sm" w={FIELD} onCommit={typed} /></box>
+                <box at={[4, 0]}><TextField id="tempo-field" label={`Tempo at bar ${bar}`} value={String(bpmOf(mark.bpm))} focus size="sm" w={FIELD} onCommit={typed({ kind: "tempo", tick: mark.tick })} /></box>
               </box>
             ) : mark.shows && (
               <box place={[mark.tick, TEMPOS, Math.max(to - mark.tick, 0), 20]} clip>
@@ -134,10 +133,10 @@ const Tempos = ({ page, score }: { page: Page; score: Score }) => {
           <row at={[4, 0]} gap={1} align="center" pad={[1, 0]} radius="sm" fill="background">
             {typing.kind === "tempo" ? (
               [<icon name="note" size={14} color="text-secondary" />,
-                <TextField id="tempo-field" label={`Tempo at bar ${barTicks(page, typing.tick).bar}`} value={String(playingAt(clock.tempo_map, typing.tick))} focus size="sm" w={FIELD} onCommit={typed} />]
+                <TextField id="tempo-field" label={`Tempo at bar ${barTicks(page, typing.tick).bar}`} value={String(playingAt(clock.tempo_map, typing.tick))} focus size="sm" w={FIELD} onCommit={typed(typing)} />]
             ) : (
               [<text style="label" color="text-secondary">rit. or accel. to</text>,
-                <TextField id="target-field" label={`Where the tempo goes from bar ${barTicks(page, typing.tick).bar}`} value={String(bpmOf(playingAt(clock.tempo_map, typing.tick) * RIT))} focus size="sm" w={FIELD} onCommit={typed} />]
+                <TextField id="target-field" label={`Where the tempo goes from bar ${barTicks(page, typing.tick).bar}`} value={String(bpmOf(playingAt(clock.tempo_map, typing.tick) * RIT))} focus size="sm" w={FIELD} onCommit={typed(typing)} />]
             )}
           </row>
         </box>
@@ -148,7 +147,7 @@ const Tempos = ({ page, score }: { page: Page; score: Score }) => {
 };
 
 /** A rit. or an accel. from `mark`: its word `after` points in, a dashed line, and where it goes at its end; a press on the word or the tempo types where it goes. */
-const Glide = ({ page, mark, glide, after, typed }: { page: Page; mark: TempoMark; glide: NonNullable<TempoMark["glide"]>; after: number; typed: (text: string | null) => void }) => {
+const Glide = ({ page, mark, glide, after, typed }: { page: Page; mark: TempoMark; glide: NonNullable<TempoMark["glide"]>; after: number; typed: (target: Typing) => (text: string | null) => void }) => {
   const { memory } = page.song;
   const word = glide.to < mark.bpm ? "rit." : "accel.";
   const bar = barTicks(page, mark.tick).bar;
@@ -167,7 +166,7 @@ const Glide = ({ page, mark, glide, after, typed }: { page: Page; mark: TempoMar
       </box>
       <box place={[glide.end, TEMPOS - (typing ? 2 : 0), 0, 0]}>
         {typing ? (
-          <box at={[-FIELD - 4, 0]}><TextField id="target-field" label={`Where the ${word} from bar ${bar} goes`} value={String(bpmOf(glide.to))} focus size="sm" w={FIELD} onCommit={typed} /></box>
+          <box at={[-FIELD - 4, 0]}><TextField id="target-field" label={`Where the ${word} from bar ${bar} goes`} value={String(bpmOf(glide.to))} focus size="sm" w={FIELD} onCommit={typed({ kind: "target", tick: mark.tick })} /></box>
         ) : (
           <row key={`target-${mark.tick}`} label={`The ${word} from bar ${bar} goes to ${bpmOf(glide.to)}`} role="button" at={[-40, 0]} w={36} h={20} pad={[1, 0]} justify="end" align="center" radius="sm" fill="background" hover="fill" onPress={type}>
             <text style="number" color="text-secondary">{String(bpmOf(glide.to))}</text>
@@ -184,7 +183,7 @@ const Fermata = ({ page, score, tick, hold }: { page: Page; score: Score; tick: 
   const id = `fermata-${tick}`;
   const items = [
     ...HOLDS.map((times) => ({ text: times === HOLD ? "Hold twice as long" : `Hold ${times} times as long`, checked: hold === times, onPress: () => score.edits.hold(tick, times) })),
-    { text: "Remove the fermata", icon: "trash-2" as const, danger: true, line: true, onPress: () => score.edits.toggleFermata(bar) },
+    { text: "Remove the fermata", icon: "trash-2" as const, danger: true, line: true, onPress: () => score.edits.removeFermata(tick) },
   ];
   return (
     <box place={[tick + beat, SECTIONS, 0, 0]}>

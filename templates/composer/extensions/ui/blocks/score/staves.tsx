@@ -17,7 +17,6 @@ import { pinned } from "./marks";
 /** How far apart the two lines of a double bar line are, and how thick the end line is, in points. */
 const [DOUBLE, THICK] = [3, 3];
 
-
 /**
  * The music in time, one line an instrument, with the lines a score has: a bar line at each bar,
  * a double one where a section ends, the end line, a line between instruments, and the time
@@ -121,6 +120,7 @@ const Signatures = ({ page, score }: { page: Page; score: Score }) => {
   const starts = barStarts(runs, score.end);
   const firsts = changeBars(runs);
   const staves = rows.filter((row) => row.kind === "track");
+  const typing = memory.typing;
   return (
     <box>
       {firsts.map((bar, index) => {
@@ -134,7 +134,7 @@ const Signatures = ({ page, score }: { page: Page; score: Score }) => {
           <box place={[from, row.top, to - from, 1]} clip={!typing}>
             {typing && at === 0 ? (
               <box at={[4, 8]}>
-                <TextField id="signature-field" label={`Time signature at bar ${bar}`} value={runs[index]!.signature} focus size="sm" w={64} onCommit={(text) => score.edits.typed(text)} />
+                <TextField id="signature-field" label={`Time signature at bar ${bar}`} value={runs[index]!.signature} focus size="sm" w={64} onCommit={(text) => score.edits.typed({ kind: "signature", bar }, text)} />
               </box>
             ) : (
               <col key={`signature-${bar}-${row.track.name}`} label={label} role="button" at={[pinned(from, 3), 9]} w={14} pad={[0, 0]} align="center" radius="sm" fill="background" hover="fill"
@@ -146,10 +146,10 @@ const Signatures = ({ page, score }: { page: Page; score: Score }) => {
           </box>
         ));
       })}
-      {memory.typing?.kind === "signature" && !firsts.includes(memory.typing.bar) && staves[0] && (
-        <box place={[starts[memory.typing.bar - 1] ?? 0, staves[0].top, 0, 0]}>
+      {typing?.kind === "signature" && !firsts.includes(typing.bar) && staves[0] && (
+        <box place={[starts[typing.bar - 1] ?? 0, staves[0].top, 0, 0]}>
           <box at={[4, 8]}>
-            <TextField id="signature-field" label={`Time signature at bar ${memory.typing.bar}`} value="" placeholder="3/4" focus size="sm" w={64} onCommit={(text) => score.edits.typed(text)} />
+            <TextField id="signature-field" label={`Time signature at bar ${typing.bar}`} value="" placeholder="3/4" focus size="sm" w={64} onCommit={(text) => score.edits.typed(typing, text)} />
           </box>
         </box>
       )}

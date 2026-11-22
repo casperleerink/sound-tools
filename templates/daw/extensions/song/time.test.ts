@@ -41,6 +41,8 @@ test("a rit. and a fermata play as the same steps as in the clock", () => {
     fermatas: [{ tick: 1440, hold: 1.5 }],
   });
   expect(steps.map(({ tick, bpm }) => [tick, bpm])).toEqual([[0, 115], [120, 105], [240, 95], [360, 85], [480, 75], [600, 65], [720, 90], [1440, 60], [1920, 90]]);
+  const held = tempoSteps({ time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 16.005 }], fermatas: [{ tick: 0, hold: 2 }] });
+  expect(held.map(({ tick, bpm }) => [tick, bpm])).toEqual([[0, 8.003], [960, 16.005]]);
 });
 
 test("a bar is found by a search, not by counting the bars from the song's start each time", () => {

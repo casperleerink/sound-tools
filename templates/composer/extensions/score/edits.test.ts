@@ -14,10 +14,10 @@ test("a rit. is written once where it goes is typed, held two bars on; typing it
   const edits = scoreEdits(f.song);
   edits.addGlide(3);
   expect([f.memory.typing, f.steps]).toEqual([{ kind: "target", tick: 2 * BAR }, []]);
-  edits.typed("75");
+  edits.typed(f.memory.typing!, "75");
   expect(f.piece.tempo_map.tempo_changes).toEqual([{ tick: 0, bpm: 100 }, { tick: 2 * BAR, bpm: 100, to: 75 }, { tick: 4 * BAR, bpm: 75 }]);
   f.memory.typing = { kind: "target", tick: 2 * BAR };
-  edits.typed("120");
+  edits.typed(f.memory.typing!, "120");
   expect(f.piece.tempo_map.tempo_changes).toEqual([{ tick: 0, bpm: 100 }, { tick: 2 * BAR, bpm: 100, to: 120 }, { tick: 4 * BAR, bpm: 120 }]);
   // Where it goes above where it starts makes it an accel.; the mark that held it says nothing new.
   expect(tempoMarks(f.piece.tempo_map.tempo_changes).map((mark) => mark.shows)).toEqual([true, false, false]);
@@ -28,9 +28,9 @@ test("typing nothing where a rit. goes takes it out, and the mark that held wher
   const f = songOf();
   const edits = scoreEdits(f.song);
   edits.addGlide(3);
-  edits.typed("75");
+  edits.typed(f.memory.typing!, "75");
   f.memory.typing = { kind: "target", tick: 2 * BAR };
-  edits.typed("");
+  edits.typed(f.memory.typing!, "");
   expect(f.piece.tempo_map.tempo_changes).toEqual([{ tick: 0, bpm: 100 }]);
 });
 
@@ -38,14 +38,14 @@ test("a tempo mark is one step when typed, Escape adds nothing, and the tempo th
   const f = songOf();
   const edits = scoreEdits(f.song);
   edits.addTempo(6);
-  edits.typed(null);
+  edits.typed(f.memory.typing!, null);
   edits.addTempo(5);
   expect(f.memory.typing).toEqual({ kind: "tempo", tick: 4 * BAR });
-  edits.typed("72");
+  edits.typed(f.memory.typing!, "72");
   expect(f.piece.tempo_map.tempo_changes).toEqual([{ tick: 0, bpm: 100 }, { tick: 4 * BAR, bpm: 72 }]);
   expect(f.steps).toEqual(["Add a tempo mark"]);
   f.memory.typing = { kind: "tempo", tick: 4 * BAR };
-  edits.typed("100");
+  edits.typed(f.memory.typing!, "100");
   expect(f.piece.tempo_map.tempo_changes).toEqual([{ tick: 0, bpm: 100 }]);
 });
 
@@ -53,7 +53,7 @@ test("a tempo mark typed inside a rit. ends the rit. on its tempo, with no jump"
   const f = songOf({ tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120, to: 60 }, { tick: 4 * BAR, bpm: 60 }] } });
   const edits = scoreEdits(f.song);
   edits.addTempo(3);
-  edits.typed("90");
+  edits.typed(f.memory.typing!, "90");
   expect(f.piece.tempo_map.tempo_changes).toEqual([{ tick: 0, bpm: 120, to: 90 }, { tick: 2 * BAR, bpm: 90 }, { tick: 4 * BAR, bpm: 60 }]);
 });
 
@@ -75,6 +75,24 @@ test("a fermata goes over the last beat of its bar, in the beat of its time sign
   expect(f.piece.tempo_map.fermatas).toEqual([{ tick: BAR + 3 * BEAT - BEAT / 2, hold: 2 }]);
   edits.toggleFermata(2);
   expect(f.piece.tempo_map.fermatas).toEqual([]);
+});
+
+test("a fermata's menu takes out that fermata, also one a time signature change left off its bar's last beat", () => {
+  const f = songOf();
+  const edits = scoreEdits(f.song);
+  edits.toggleFermata(2);
+  edits.signature(2, "3/4");
+  edits.removeFermata(BAR + 3 * BEAT);
+  expect(f.piece.tempo_map.fermatas).toEqual([]);
+});
+
+test("a value typed in one field lands on its own mark, whichever field is open", () => {
+  const f = songOf();
+  const edits = scoreEdits(f.song);
+  edits.addTempo(9);
+  edits.typed({ kind: "tempo", tick: 4 * BAR }, "72");
+  expect(f.piece.tempo_map.tempo_changes).toEqual([{ tick: 0, bpm: 100 }, { tick: 4 * BAR, bpm: 72 }]);
+  expect(f.memory.typing).toEqual({ kind: "tempo", tick: 8 * BAR });
 });
 
 test("a bar added keeps the notes, the tempo map and the sections as one step, and shows the whole piece again", () => {
@@ -104,6 +122,14 @@ test("audio that starts in a bar taken out starts where the bar was", () => {
   const f = fakeSong({ children: [trackOf("t00", [clipOf("music", 0, 4 * BAR)]), tapeOf("audio-1", [regionOf("voice", BAR + BEAT, 1)])] });
   scoreEdits(f.song).removeBar(2);
   expect(childOf(f.self, 1, 1)).toMatchObject({ state: { start: BAR } });
+});
+
+test("a piece of audio and no clip gains a bar at its end", () => {
+  const f = fakeSong({ children: [trackOf("t00"), tapeOf("audio-1", [regionOf("voice", 0, 8)])] });
+  const edits = scoreEdits(f.song);
+  expect(edits.end()).toBe(4 * BAR);
+  edits.addBars(4, 1, true);
+  expect(edits.end()).toBe(5 * BAR);
 });
 
 test("a piece with no music still gains and loses bars, and a press past its end makes no clip", () => {

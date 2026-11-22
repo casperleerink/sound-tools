@@ -517,6 +517,11 @@ fn a_rit_and_a_fermata_play_as_these_steps_in_the_sdk_too() {
         (1920, 90.0),
     ];
     assert_eq!(steps, expected);
+    let held = saved(r#"[{"tick":0,"bpm":16.005}]"#, r#"[{"tick":0,"hold":2}]"#);
+    let held: Vec<(u64, f64)> = (held.steps().iter())
+        .map(|step| (step.tick.0, step.bpm.bpm()))
+        .collect();
+    assert_eq!(held, [(0, 8.003), (960, 16.005)]);
     // A next change far away takes longer steps, not more of them.
     let far = saved(
         r#"[{"tick":0,"bpm":120,"to":60},{"tick":1000000000,"bpm":60}]"#,
