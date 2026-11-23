@@ -114,9 +114,9 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 
 `templates/`, `crates/runtime/src/templates.rs`.
 
-- A project keeps its own copy of the template's code. Rejected: the template loaded from the app, which makes a project look different under two releases and needs an "eject" to change one file; hashes of the files, which leave a merge nothing to merge from.
-- Composer draws the DAW's song as a score. Quarter notes are equally wide, so a tempo moves no music; adding or removing a bar moves what follows. Rejected: records of its own; seconds across.
-- A saved template is laid out as one of `templates/`, so it can be shared as it is. "Tools only" keeps the records at the top and the children their tools require by name (a song's master, no track), and no sections or later tempo: the core cannot tell a tool's setup from its music, but a tool says which children it must have. A project made from one keeps no template code: nothing newer to update from.
+- A project keeps its own copy of the template's code. Rejected: the template loaded from the app, which looks different under two releases and needs an "eject" to change a file; file hashes, which leave a merge nothing to merge from.
+- Composer draws the DAW's song as a score. Quarter notes are equally wide, so a tempo moves no music. Bars, and a time signature's beats, added or removed move what follows; other bars keep their beats. Rejected: own records; seconds across; re-barring.
+- A saved template is laid out as one of `templates/`, to share as is. "Tools only" keeps the records at the top and the children their tools require by name (a song's master, no track), and no sections or later tempo: the core cannot tell a tool's setup from its music, but a tool says which children it must have. A project made from one keeps no template code: nothing newer to update from.
 
 ## Audio files and the Sampler
 

@@ -74,8 +74,22 @@ export function withBars({ tempo_map, sections }: Frozen<Piece>, bar: number, co
       else all.push(run);
       return all;
     }, []);
-  const taken = (tick: number) => count < 0 && tick >= from && tick < from - by;
-  // What a taken-out bar changed the tempo to plays after it, unless the bar after it changes it again.
+  const moved = sections.flatMap((section) => {
+    if (section.bar < at) return [{ ...section }];
+    if (count > 0) return [{ ...section, bar: section.bar + count }];
+    // A section that started in a taken-out bar starts at the bar after it, unless one does.
+    return section.bar < at - count && sections.some((each) => each.bar === at - count) ? [] : [{ ...section, bar: Math.max(section.bar + count, at) }];
+  });
+  return { tempo_map: shifted({ ...tempo_map, time_signatures }, from, by), sections: moved };
+}
+
+/**
+ * `tempo_map` with `by` ticks added at `from` (above 0) or taken out from it (below 0): its tempo
+ * changes and fermatas after `from` move; those taken out go, but what the last change taken out
+ * set plays on after them, unless a change starts where they end.
+ */
+function shifted(tempo_map: Frozen<TempoMap>, from: number, by: number): TempoMap {
+  const taken = (tick: number) => by < 0 && tick >= from && tick < from - by;
   const next = tempo_map.tempo_changes.some((change) => change.tick === from - by);
   const kept = tempo_map.tempo_changes.filter((change) => !taken(change.tick) || (!next && change === tempo_map.tempo_changes.findLast((each) => taken(each.tick))));
   const tempo_changes = kept.map((change) => ({ ...change, tick: change.tick === 0 ? 0 : (retimed(change.tick, from, by) ?? from) }));
@@ -83,13 +97,33 @@ export function withBars({ tempo_map, sections }: Frozen<Piece>, bar: number, co
     const tick = retimed(fermata.tick, from, by);
     return tick === null ? [] : [{ ...fermata, tick }];
   });
-  const moved = sections.flatMap((section) => {
-    if (section.bar < at) return [{ ...section }];
-    if (count > 0) return [{ ...section, bar: section.bar + count }];
-    // A section that started in a taken-out bar starts at the bar after it, unless one does.
-    return section.bar < at - count && sections.some((each) => each.bar === at - count) ? [] : [{ ...section, bar: Math.max(section.bar + count, at) }];
-  });
-  return { tempo_map: { time_signatures, tempo_changes, ...(fermatas.length > 0 ? { fermatas } : {}) }, sections: moved };
+  return { time_signatures: tempo_map.time_signatures.map((run) => ({ ...run })), tempo_changes, ...(fermatas.length > 0 ? { fermatas } : {}) };
+}
+
+/**
+ * The tempo map with bars `first` to `last` in `signature`, the bar after them in the one it had:
+ * each bar longer or shorter at its end, by beats added or taken out, everything after moving.
+ * Also where time goes in or out, `[from, by]` from the end back, for `moveMusic`.
+ */
+export function inSignature(tempo_map: Frozen<TempoMap>, first: number, last: number, signature: string): { tempo_map: TempoMap; moves: [from: number, by: number][] } {
+  const runs = tempo_map.time_signatures;
+  const counted = runs.reduce((sum, run) => sum + run.bars, 0);
+  const bars = Array.from({ length: Math.max(counted, last + 1) }, (_, index) => (index + 1 >= first && index + 1 <= last ? signature : signatureOf(runs, index + 1)));
+  const time_signatures = bars.reduce<{ signature: string; bars: number }[]>((all, each) => {
+    const run = all.at(-1);
+    if (run?.signature === each) run.bars += 1;
+    else all.push({ signature: each, bars: 1 });
+    return all;
+  }, []);
+  const moves: [number, number][] = [];
+  for (let bar = last; bar >= first; bar--) {
+    const by = ticksOfSignature(signature) - ticksOfSignature(signatureOf(runs, bar));
+    const end = tickOfBar(runs, bar + 1);
+    if (by !== 0) moves.push([by > 0 ? end : end + by, by]);
+  }
+  let moved = shifted({ ...tempo_map, time_signatures }, 0, 0);
+  for (const [from, by] of moves) moved = shifted(moved, from, by);
+  return { tempo_map: moved, moves };
 }
 
 /** Points of a clip or a lane, each at `at` ticks from 0, retimed; those taken out gone. */

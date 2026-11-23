@@ -45,7 +45,7 @@ export const BarMenu = ({ page, score, id, open = "menu" }: { page: Page; score:
     { text: one ? "Remove the bar" : "Remove the bars", icon: "trash-2", danger: true, keys: song.shortcut("remove_bars"), ...(all ? { disabled: ONLY } : {}), onPress: () => score.edits.removeBars(first, last) },
     { text: "Clear the notes", icon: "eraser", keys: song.shortcut("clear_bars"), onPress: () => score.edits.clearNotes(first, last) },
     { text: "Start a section here", icon: "section", line: true, ...(clock.sections.some((each) => each.bar === first) ? { disabled: HERE } : {}), onPress: () => edits.marks.addSection(start) },
-    { text: "Change the time signature here", icon: "time-signature", onPress: () => (memory.typing = { kind: "signature", bar: first }) },
+    { text: "Change the time signature", icon: "time-signature", onPress: () => (memory.typing = { kind: "signature", bar: first, last }) },
     { text: "Change the tempo here", icon: "tempo-change", onPress: () => score.edits.addTempo(first) },
     { text: one ? "rit. or accel. over the bar" : "rit. or accel. over the bars", icon: "tempo-change", onPress: () => score.edits.addGlide(first, last) },
     { text: one ? "Fermata at the end of the bar" : "Fermata at the end of the bars", icon: "fermata", checked: fermata, onPress: () => score.edits.toggleFermata(last) },

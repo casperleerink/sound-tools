@@ -2,6 +2,7 @@ import { h, live, memo, type Num } from "../../../sdk";
 import { changeBars } from "../../../song/marks";
 import { barAt, barStarts, BEAT, tickOfBar } from "../../../song/time";
 import { GUTTER, HEAD, PLANE, type Page } from "../../../song/view";
+import { signatureOf } from "../../../score/bars";
 import { bpmOf, chosenBars, HOLD, HOLDS, playingAt, RIT, tempoMarks, type TempoMark, type Typing } from "../../../score/edits";
 import { MenuList } from "../../menu";
 import { TextField } from "../../text-field";
@@ -252,7 +253,7 @@ const Numbers = ({ starts, changes }: { starts: number[]; changes: number[] }) =
 /** How wide a time signature's numbers are, in points. */
 const SIGNATURE = 14;
 
-/** The time signature where it changes, its two numbers stacked as a score writes them, kept at the left edge while it holds: a press types another there. */
+/** The time signature where it changes, its two numbers stacked as a score writes them, kept at the left edge while it holds: a press types another for its bars. */
 const Signatures = ({ page, score }: { page: Page; score: Score }) => {
   const { song } = page;
   const { memory } = song;
@@ -260,10 +261,10 @@ const Signatures = ({ page, score }: { page: Page; score: Score }) => {
   const starts = barStarts(runs, score.end);
   const firsts = changeBars(runs);
   const typing = memory.typing?.kind === "signature" ? memory.typing : null;
-  const field = (bar: number, value: string) => (
-    <box place={[starts[bar - 1] ?? 0, NUMBERS - 4, 0, 0]}>
+  const field = (typed: NonNullable<typeof typing>) => (
+    <box place={[starts[typed.bar - 1] ?? 0, NUMBERS - 4, 0, 0]}>
       <box at={[4, 0]}>
-        <TextField id="signature-field" label={`Time signature at bar ${bar}`} value={value} placeholder="3/4" focus size="sm" w={64} onCommit={(text) => score.edits.typed({ kind: "signature", bar }, text)} />
+        <TextField id="signature-field" label={`Time signature at bar ${typed.bar}`} value={signatureOf(runs, typed.bar)} focus size="sm" w={64} onCommit={(text) => score.edits.typed(typed, text)} />
       </box>
     </box>
   );
@@ -273,20 +274,21 @@ const Signatures = ({ page, score }: { page: Page; score: Score }) => {
         const from = starts[bar - 1];
         if (from === undefined || from >= score.end) return null;
         const signature = runs[index]!.signature;
-        if (typing?.bar === bar) return field(bar, signature);
+        if (typing?.bar === bar) return field(typing);
         const to = Math.min(starts[(firsts[index + 1] ?? Infinity) - 1] ?? score.end, score.end);
+        const last = barAt(runs, to - 1).bar;
         const [count, unit] = signature.split("/");
         return (
           <box place={[from, SIGNATURES, to - from, 34]} clip>
             <col key={`signature-${bar}`} label={`Time signature ${signature} at bar ${bar}`} role="button" at={[pinned(from, 0), 0]} w={SIGNATURE + 6} align="center" radius="sm" fill="background" hover="fill"
-              onPress={() => (memory.typing = { kind: "signature", bar })}>
+              onPress={() => (memory.typing = { kind: "signature", bar, last })}>
               <text style="heading" color="text-secondary">{count}</text>
               <text style="heading" color="text-secondary">{unit}</text>
             </col>
           </box>
         );
       })}
-      {typing && !firsts.includes(typing.bar) && field(typing.bar, "")}
+      {typing && !firsts.includes(typing.bar) && field(typing)}
     </box>
   );
 };

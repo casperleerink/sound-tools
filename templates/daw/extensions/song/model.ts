@@ -40,7 +40,7 @@ export type Memory = {
   renamingClip: string | null;
   renamingSection: { bar: number; tick: number } | null;
   /** The mark of the score whose value is typed where it stands: a tempo, where a rit. or an accel. goes, a time signature. */
-  typing: { kind: "tempo"; tick: number } | { kind: "target"; tick: number; end?: number } | { kind: "signature"; bar: number } | null;
+  typing: { kind: "tempo"; tick: number } | { kind: "target"; tick: number; end?: number } | { kind: "signature"; bar: number; last: number } | null;
   /** The chosen bars of the score, from 1: where the choice started and where it goes to, either way. */
   bars: { from: number; to: number } | null;
   /** The chosen mark of the ruler, points of a lane and effect of a panel: delete and the keys act on it. */

@@ -66,15 +66,30 @@ test("a tempo mark typed inside a rit. ends the rit. on its tempo, with no jump"
   expect(f.piece.tempo_map.tempo_changes).toEqual([{ tick: 0, bpm: 120, to: 90 }, { tick: 2 * BAR, bpm: 90 }, { tick: 4 * BAR, bpm: 60 }]);
 });
 
-test("a time signature typed at a bar holds to the next change, and typing the one before it takes the change out", () => {
-  const f = songOf({ tempo_map: { time_signatures: [{ signature: "4/4", bars: 4 }, { signature: "6/8", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 100 }] } });
+test("a time signature changes only its bars: a shorter bar loses its last beats and their notes, a longer one gains silent beats, and the music after keeps its beats", () => {
+  const note = (start: number) => ({ start, length: BEAT, pitch: 60, velocity: 100 });
+  const f = fakeSong({ children: [trackOf("t00", [clipOf("music", 0, 4 * BAR, [note(2 * BAR - BEAT), note(2 * BAR), note(3 * BAR + BEAT)])])] });
   const edits = scoreEdits(f.song);
-  edits.signature(3, "3/4");
-  expect(f.piece.tempo_map.time_signatures).toEqual([{ signature: "4/4", bars: 2 }, { signature: "3/4", bars: 2 }, { signature: "6/8", bars: 1 }]);
-  edits.signature(3, "4/4");
-  expect(f.piece.tempo_map.time_signatures).toEqual([{ signature: "4/4", bars: 4 }, { signature: "6/8", bars: 1 }]);
-  edits.signature(5, "5 / 9");
-  expect(f.steps).toEqual(["Change the time signature", "Change the time signature"]);
+  const starts = () => (childOf(f.self, 0, 1) as { state: { notes: { start: number }[] } }).state.notes.map((each) => each.start);
+  edits.signature(2, 2, "3/4");
+  expect(f.piece.tempo_map.time_signatures).toEqual([{ signature: "4/4", bars: 1 }, { signature: "3/4", bars: 1 }, { signature: "4/4", bars: 1 }]);
+  expect(starts()).toEqual([2 * BAR - BEAT, 3 * BAR]);
+  edits.signature(2, 2, "5/4");
+  expect(starts()).toEqual([2 * BAR + BEAT, 3 * BAR + 2 * BEAT]);
+  expect(edits.end()).toBe(4 * BAR + BEAT);
+  // Nothing typed gives the bars the time signature of the bar before them.
+  edits.signature(2, 2, "");
+  expect(f.piece.tempo_map.time_signatures).toEqual([{ signature: "4/4", bars: 3 }]);
+  expect(starts()).toEqual([2 * BAR, 3 * BAR + BEAT]);
+  const steps = f.steps.length;
+  edits.signature(2, 2, "5 / 9");
+  expect([f.steps.length, new Set(f.steps)]).toEqual([steps, new Set(["Change the time signature"])]);
+});
+
+test("chosen bars in a shorter time signature take the tempo changes after them along, and a fermata on a beat they lose", () => {
+  const f = songOf({ tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 100 }, { tick: 3 * BAR, bpm: 72 }], fermatas: [{ tick: 2 * BAR - BEAT, hold: 2 }] } });
+  scoreEdits(f.song).signature(2, 3, "3/4");
+  expect(f.piece.tempo_map).toEqual({ time_signatures: [{ signature: "4/4", bars: 1 }, { signature: "3/4", bars: 2 }, { signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 100 }, { tick: 3 * BAR - 2 * BEAT, bpm: 72 }] });
 });
 
 test("a fermata goes over the last beat of its bar, in the beat of its time signature, and a second press takes it out", () => {
@@ -86,11 +101,11 @@ test("a fermata goes over the last beat of its bar, in the beat of its time sign
   expect(f.piece.tempo_map.fermatas).toEqual([]);
 });
 
-test("a fermata's menu takes out that fermata, also one a time signature change left off its bar's last beat", () => {
+test("a fermata's menu takes out that fermata, also one a longer bar left off its last beat", () => {
   const f = songOf();
   const edits = scoreEdits(f.song);
   edits.toggleFermata(2);
-  edits.signature(2, "3/4");
+  edits.signature(2, 2, "5/4");
   edits.removeFermata(BAR + 3 * BEAT);
   expect(f.piece.tempo_map.fermatas).toEqual([]);
 });

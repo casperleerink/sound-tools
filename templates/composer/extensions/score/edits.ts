@@ -4,10 +4,10 @@
 import { tempoSteps, type Frozen, type TempoMap } from "../sdk";
 import { freeName } from "../track";
 import { addClip, choose, lengthOf } from "../song/clips";
-import { changeBars, FASTEST, SLOWEST, withoutSignature, withSignature } from "../song/marks";
+import { FASTEST, SLOWEST } from "../song/marks";
 import { isRow, type Memory, type Song } from "../song/model";
 import { barAt, tickOfBar } from "../song/time";
-import { clearNotes, endLine, moveMusic, pieceEnd, placesOf, retimed, signatureOf, ticksOfSignature, withBars } from "./bars";
+import { clearNotes, endLine, inSignature, moveMusic, pieceEnd, placesOf, retimed, signatureOf, ticksOfSignature, withBars } from "./bars";
 
 type Changes = TempoMap["tempo_changes"];
 type Read = Frozen<TempoMap>;
@@ -152,7 +152,7 @@ export const scoreEdits = (song: Song) => {
     typed(typing: Typing, text: string | null) {
       if (sameTyping(memory.typing, typing)) memory.typing = null;
       if (text === null) return;
-      if (typing.kind === "signature") return this.signature(typing.bar, text);
+      if (typing.kind === "signature") return this.signature(typing.bar, typing.last, text);
       const { tick } = typing;
       const was = clock.tempo_map.tempo_changes.find((change) => change.tick === tick);
       if (text.trim() === "") {
@@ -211,26 +211,20 @@ export const scoreEdits = (song: Song) => {
     hold(tick: number, hold: number) {
       clock.update("Change a fermata", (piece) => (piece.tempo_map.fermatas = (piece.tempo_map.fermatas ?? []).map((each) => (each.tick === tick ? { ...each, hold } : each))));
     },
-    /** Bar `bar` and those after it, to the next change, in the time signature `text` says; nothing typed takes the change out. Notes stay where they are. */
-    signature(bar: number, text: string | null) {
+    /**
+     * Bars `first` to `last` in the time signature `text` says, or with nothing typed in the one of
+     * the bar before them: each bar keeps its notes on their beats and gains silent beats at its
+     * end or loses its last ones, everything after moving; the bar after them keeps its own.
+     */
+    signature(first: number, last: number, text: string | null) {
       if (text === null) return;
-      const signature = signatureFrom(text);
-      const firsts = changeBars(runs());
-      if (text.trim() === "" && bar > 1 && firsts.includes(bar)) {
-        clock.update("Remove a time signature change", (piece) => (piece.tempo_map.time_signatures = withoutSignature(piece.tempo_map.time_signatures, bar)));
-        return;
-      }
-      if (signature === null || signature === signatureOf(runs(), bar)) return;
-      clock.update("Change the time signature", (piece) => {
-        let all = withSignature(piece.tempo_map.time_signatures, bar);
-        all = all.map((run, index) => (changeBars(all)[index] === bar ? { ...run, signature } : run));
-        // A change to the time signature of the bars around it is no change.
-        for (const each of [bar, ...changeBars(all).filter((first) => first > bar).slice(0, 1)]) {
-          const index = changeBars(all).indexOf(each);
-          if (index > 0 && all[index - 1]?.signature === all[index]?.signature) all = withoutSignature(all, each);
-        }
-        piece.tempo_map.time_signatures = all;
-      });
+      const signature = text.trim() === "" ? (first > 1 ? signatureOf(runs(), first - 1) : null) : signatureFrom(text);
+      if (signature === null) return;
+      const { tempo_map, moves } = inSignature(clock.tempo_map, first, last, signature);
+      if (moves.length === 0 && JSON.stringify(tempo_map.time_signatures) === JSON.stringify(runs())) return;
+      const label = "Change the time signature";
+      clock.update(label, (piece) => (piece.tempo_map = tempo_map));
+      song.update(label, ({ children }) => moves.forEach(([from, by]) => moveMusic(children, from, by)));
     },
     /** The notes of `track` at `tick`, open in the editor below: of the clip there, or of a new one from that bar to the end of the piece. */
     openMusic(track: string, tick: number) {
