@@ -26,8 +26,7 @@ pub(crate) const MAX_SOUNDS: usize = 4;
 /// What a `delay` holds when it gives no `longest`.
 pub(crate) const DEFAULT_DELAY_MS: f32 = 4000.0;
 /// The seconds the delays and buffers of a tool hold together, per channel. An instrument keeps
-/// [`MAX_VOICES`](crate::MAX_VOICES) voices whatever it plays, so each holds an eighth, 2
-/// minutes: more than any sound could hold before.
+/// [`MAX_VOICES`](crate::MAX_VOICES) voices whatever it plays, so each holds its share.
 pub(crate) const MAX_MEMORY_SECONDS: f32 = 960.0;
 /// The longest a pattern can be.
 pub const MAX_ARRAY_LENGTH: usize = 1024;
@@ -113,8 +112,7 @@ impl Code {
     }
 
     /// This code for samples of one channel: a read on the side of its channel is then the same
-    /// on both channels, so it runs once for both, as cheap as before samples were in stereo. A
-    /// sample in stereo is heard mixed.
+    /// on both channels, so it runs once for both. A sample in stereo is heard mixed.
     pub fn with_samples_of_one_channel(mut self) -> Self {
         for operation in &mut self.operations {
             if let Operation::Read { table, .. } | Operation::Lookup { table, .. } = operation
