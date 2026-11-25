@@ -1,30 +1,6 @@
-//! Sampler: one sample played across the keyboard, or an SFZ instrument of many. It plays the
-//! note events of the `sound-notes` contract, and reads its files through `sound-media`.
-//!
-//! A record on disk, `instrument.json` inside a track folder:
-//!
-//! ```json
-//! {
-//!   "tool": "sampler",
-//!   "state": {
-//!     "sample": "kalimba.wav",
-//!     "root": 60,
-//!     "tune": 0.0,
-//!     "start_seconds": 0.0,
-//!     "reverse": false,
-//!     "loop": false,
-//!     "attack_seconds": 0.002,
-//!     "decay_seconds": 0.4,
-//!     "sustain": 1.0,
-//!     "release_seconds": 0.3,
-//!     "velocity_to_volume": 0.5,
-//!     "gain_db": 0.0
-//!   }
-//! }
-//! ```
-//!
-//! With `"sfz": "cello/cello.sfz"` instead of `sample` it plays the SFZ file
-//! `assets/instruments/cello/cello.sfz` and the samples it names ([`sfz`], [`instrument`]).
+//! Sampler: one sample played across the keyboard, an SFZ instrument, or an instrument of the
+//! library. It plays the note events of the `sound-notes` contract, and reads its files through
+//! `sound-media`.
 
 mod catalog;
 pub mod instrument;
@@ -55,10 +31,7 @@ pub const EXTENSION: &str = "sampler";
 /// now, in seconds of the file. The card draws it as a green line.
 pub const POSITION: &str = "position";
 
-/// The saved state. Voices and where they are in the sample are runtime state and not saved.
-///
-/// A field that a record leaves out takes its default, so `"state": {}` is a sampler with no
-/// sample, which is silent.
+/// The saved state. `"state": {}` is a sampler with no sample, which is silent.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 #[schemars(transform = ranges(&PARAMETERS))]

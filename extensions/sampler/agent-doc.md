@@ -15,7 +15,7 @@ The kalimba in this file sounds a C5, so `root` is 72.
 
 {{fields sampler}}
 
-Without `loop`, a note ends at the end of the file even while the key is held. With `loop` it plays to the end once, then repeats from `loop_start_seconds`, so a short file can hold a long note.
+Without `loop`, a note ends at the end of the file even while the key is held; with it, a short file can hold a long note.
 
 Starting points: a sustained sound (strings, a pad, a held voice) keeps `sustain` 1 and gets `release_seconds` 0.5 or more. A plucked or struck sound plays well with `sustain` 1 too. To shorten one, set `sustain` 0 with `decay_seconds` as long as the part you want.
 
@@ -36,6 +36,4 @@ An SFZ instrument is a folder of samples and an `.sfz` text file that maps them 
 }
 ```
 
-With `sfz`, only `gain_db` of the record applies. A record has `sample` or `sfz`, not both. The samples may be anywhere under `assets/`, not outside it. Opcodes the Sampler does not know are ignored.
-
-To write an SFZ file, open `agent-docs/sfz.md`.
+The samples may be anywhere under `assets/`, not outside it. To write an SFZ file, open `agent-docs/sfz.md`.
