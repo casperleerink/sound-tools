@@ -1,20 +1,12 @@
 import { h } from "../../../sdk";
-import { changeBars } from "../../../song/marks";
-import { barAt, tickOfBar } from "../../../song/time";
+import { tickOfBar } from "../../../song/time";
 import type { Page } from "../../../song/view";
+import { beatOf } from "../../../score/bars";
 import { chosenBars, scoreEdits } from "../../../score/edits";
 import { MenuList, type Item } from "../../menu";
 
 /** What the score's blocks share: where the piece ends and its edits. */
 export type Score = { end: number; edits: ReturnType<typeof scoreEdits> };
-
-/** The bar `tick` is in, from 1, where it starts, and the ticks of a beat of its time signature. */
-export function barTicks(page: Page, tick: number) {
-  const runs = page.song.clock.tempo_map.time_signatures;
-  const { bar, start } = barAt(runs, tick);
-  const unit = Number(runs[changeBars(runs).findLastIndex((first) => first <= bar)]?.signature.split("/")[1]) || 4;
-  return { bar, start, beat: 3840 / unit };
-}
 
 /** Why the menu cannot do something there. */
 const [HERE, ONLY] = ["There is one here already", "The piece needs a bar"];
@@ -22,21 +14,15 @@ const [HERE, ONLY] = ["There is one here already", "The piece needs a bar"];
 /** What a bar or the bars from `first` to `last` are called. */
 export const barsOf = (first: number, last: number) => (first === last ? `Bar ${first}` : `Bars ${first} to ${last}`);
 
-/**
- * The menu of the chosen bars, which a right press on the band or the music chooses first: a bar
- * added before or after them, them taken out with all after moving, their notes cleared; and
- * what starts with them: a section, a time signature, a tempo, a rit. or an accel. over them;
- * and a fermata at their end.
- */
+/** The menu of the chosen bars. */
 export const BarMenu = ({ page, score, id, open = "menu" }: { page: Page; score: Score; id: string; open?: "press" | "menu" }) => {
   const { song, edits } = page;
   const { clock, memory } = song;
   // The right press that opens it chooses its bar first, so the menu is there before a bar is.
-  const { first, last } = chosenBars(memory) ?? { first: 1, last: 1 };
+  const { first, last } = chosenBars(song) ?? { first: 1, last: 1 };
   const runs = clock.tempo_map.time_signatures;
   const start = tickOfBar(runs, first);
-  const { beat } = barTicks(page, tickOfBar(runs, last));
-  const fermata = (clock.tempo_map.fermatas ?? []).some((each) => each.tick === tickOfBar(runs, last + 1) - beat);
+  const fermata = (clock.tempo_map.fermatas ?? []).some((each) => each.tick === tickOfBar(runs, last + 1) - beatOf(runs, last));
   const all = first === 1 && tickOfBar(runs, last + 1) >= score.end;
   const one = first === last;
   const items: Item[] = [

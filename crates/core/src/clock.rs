@@ -772,48 +772,6 @@ impl TempoMap {
         let start = TempoChange::step(Ticks(0), Tempo::default());
         self.tempo_changes.get(index).copied().unwrap_or(start)
     }
-
-    /// The same map with a new tempo change at `tick` that plays the tempo in effect there, so
-    /// nothing sounds different until its tempo is edited. `None` when a change is at that tick
-    /// already. Valid by construction, like [`Self::with_tempo_at`].
-    pub fn with_change_at(&self, tick: Ticks) -> Option<Self> {
-        let change = self.change_at(tick);
-        if change.tick == tick {
-            return None;
-        }
-        let mut tempo_changes = self.tempo_changes.clone();
-        let index = tempo_changes.partition_point(|change| change.tick < tick);
-        tempo_changes.insert(
-            index,
-            TempoChange {
-                tick,
-                to: None,
-                ..change
-            },
-        );
-        Some(Self {
-            tempo_changes,
-            ..self.clone()
-        })
-    }
-
-    /// The same map without the tempo change at `tick`. `None` at tick 0, which every map
-    /// keeps, and where the map has no change.
-    pub fn without_change_at(&self, tick: Ticks) -> Option<Self> {
-        if tick == Ticks(0) {
-            return None;
-        }
-        let index = self
-            .tempo_changes
-            .iter()
-            .position(|change| change.tick == tick)?;
-        let mut tempo_changes = self.tempo_changes.clone();
-        tempo_changes.remove(index);
-        Some(Self {
-            tempo_changes,
-            ..self.clone()
-        })
-    }
 }
 
 /// 120 bpm in 4/4.

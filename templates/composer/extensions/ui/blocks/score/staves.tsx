@@ -7,7 +7,7 @@ import { Button } from "../../button";
 import { EmptyState } from "../empty-state";
 import { DIM } from "../song/heads";
 import { LaneTimes } from "../song/lanes";
-import { RegionWave, tint } from "../song/regions";
+import { RegionWave, shownLength, tint } from "../song/regions";
 import { INSET, Playhead } from "../time";
 import { AFTER } from "../../../score/bars";
 import { chosenBars } from "../../../score/edits";
@@ -18,29 +18,20 @@ const ZOOM_OUT = 10;
 /** How far apart the two lines of a double bar line are, and how thick the end line is, in points. */
 const [DOUBLE, THICK] = [3, 3];
 
-/**
- * The music in time, one line an instrument, with the lines a score has: a bar line at each bar,
- * a double one where a section ends, the end line and a line between instruments. It opens on
- * the whole piece. A press on an instrument's line opens its notes there; a right press opens
- * the menu of the chosen bars, choosing its bar first when it is not one of them.
- */
+/** The music in time, one line an instrument, with the lines a score has. */
 export const Staves = ({ page, score }: { page: Page; score: Score }) => {
   const { song, rows, tracks, height, low } = page;
   const { memory } = song;
   const end = score.end;
   const runs = song.clock.tempo_map.time_signatures;
-  const chosen = chosenBars(memory);
+  const chosen = chosenBars(song);
   return (
     <col grow={1} h="full">
       <row grow={1} w="full">
         <box w={GUTTER} h="full" />
         <box key={PLANE} label="Score" grow={1} h="full" plane={{ x: [0, end + AFTER], y: TIME.y, zoom: [TIME.zoom[0] / ZOOM_OUT, TIME.zoom[1]], follow: live.playhead }}
           onPress={(p) => {
-            if (p.right) {
-              const { bar } = barAt(runs, Math.min(Math.max(p.x, 0), end - 1));
-              if (!chosen || bar < chosen.first || bar > chosen.last) score.edits.choose(bar);
-              return;
-            }
+            if (p.right) return score.edits.chooseForMenu(barAt(runs, Math.min(Math.max(p.x, 0), end - 1)).bar);
             const row = rows.find((each) => p.y >= each.top && p.y < each.top + each.height);
             if (row?.kind === "track") score.edits.openMusic(row.track.name, p.x);
           }}>
@@ -119,7 +110,7 @@ const Staff = ({ page, row, end }: { page: Page; row: Row; end: number }) => {
         {track.children.map((child) => {
           if (child.tool !== "region") return null;
           const path = `${track.name}/${child.name}`;
-          const [start, length] = [child.state.start, lengthAt(song, path)];
+          const [start, length] = [child.state.start, shownLength(child, lengthAt(song, path))];
           return (
             <box place={[start, row.top, length, 1]} inset={[0, INSET, 0, INSET]} radius="sm" fill={tint(colour, 12)} opacity={dim} clip inert>
               <RegionWave region={child} path={path} x={Live.of(start)} y={Live.of(row.top)} length={length} colour={colour} top={0} />

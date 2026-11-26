@@ -83,6 +83,7 @@ export const markEdits = (song: Song) => {
   };
   const choose = (mark: Mark) => {
     memory.selected = [];
+    memory.bars = null;
     memory.point = null;
     memory.mark = mark;
   };

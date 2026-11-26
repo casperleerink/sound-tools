@@ -7,7 +7,7 @@ import { addClip, choose, lengthOf } from "../song/clips";
 import { FASTEST, SLOWEST } from "../song/marks";
 import { isRow, type Memory, type Song } from "../song/model";
 import { barAt, tickOfBar } from "../song/time";
-import { clearNotes, endLine, inSignature, moveMusic, pieceEnd, placesOf, retimed, signatureOf, ticksOfSignature, withBars } from "./bars";
+import { beatOf, clearNotes, endLine, inSignature, moveMusic, pieceEnd, placesOf, retimed, signatureOf, ticksOfSignature, withBars } from "./bars";
 
 type Changes = TempoMap["tempo_changes"];
 type Read = Frozen<TempoMap>;
@@ -38,12 +38,14 @@ export function tempoMarks(changes: Read["tempo_changes"]): TempoMark[] {
 /** The tempo that plays at `tick`, a rit. or an accel. as far as it got, a fermata left out. */
 export const playingAt = (map: Read, tick: number) => bpmOf(tempoSteps({ ...map, fermatas: [] }).findLast((step) => step.tick <= tick)?.bpm ?? 120);
 
-/** The changes without one that adds nothing: after tick 0, the tempo that already plays, with no move to start or end. */
-const needed = (changes: Changes): Changes =>
-  changes.filter((change, index) => {
+/** The changes without one that adds nothing: after tick 0, the tempo that already plays, with no move to start or end; the last moves to nothing. */
+function needed(changes: Changes): Changes {
+  const kept = changes.filter((change, index) => {
     const before = changes[index - 1];
     return !before || change.to !== undefined || before.to !== undefined || before.bpm !== change.bpm;
   });
+  return kept.map((change, index) => (index === kept.length - 1 && change.to !== undefined ? { tick: change.tick, bpm: change.bpm } : change));
+}
 
 /** `changes` with `change` added: a rit. or an accel. it falls inside ends there, at the tempo `change` starts with. */
 function inserted(changes: Changes, change: Changes[number]): Changes {
@@ -56,8 +58,13 @@ function inserted(changes: Changes, change: Changes[number]): Changes {
 const sameTyping = (one: Typing | null, other: Typing) =>
   one !== null && (one.kind === "signature" ? other.kind === "signature" && one.bar === other.bar : other.kind === one.kind && one.tick === other.tick);
 
-/** The chosen bars, first and last, from 1. */
-export const chosenBars = ({ bars }: Pick<Memory, "bars">) => bars && { first: Math.min(bars.from, bars.to), last: Math.max(bars.from, bars.to) };
+/** The chosen bars of the piece, first and last, from 1. */
+export function chosenBars({ memory: { bars }, children, clock: { tempo_map } }: Pick<Song, "memory" | "children" | "clock">) {
+  if (!bars) return null;
+  const final = barAt(tempo_map.time_signatures, pieceEnd(children, tempo_map) - 1).bar;
+  const first = Math.min(bars.from, bars.to);
+  return first > final ? null : { first, last: Math.min(Math.max(bars.from, bars.to), final) };
+}
 
 /** A time signature as typed, `"3/4"`, when the clock takes it. */
 export function signatureFrom(text: string): string | null {
@@ -74,11 +81,7 @@ export const scoreEdits = (song: Song) => {
   const changesOf = (label: string, change: (changes: Changes) => Changes) =>
     clock.update(label, (piece) => (piece.tempo_map.tempo_changes = change(piece.tempo_map.tempo_changes.map((each) => ({ ...each })))));
   /** The tick of the beat a fermata at the end of bar `bar` holds: its last. */
-  const lastBeat = (bar: number) => {
-    const { end: next } = barAt(runs(), tickOfBar(runs(), bar));
-    const [, unit] = signatureOf(runs(), bar).split("/").map(Number);
-    return next - 3840 / (unit ?? 4);
-  };
+  const lastBeat = (bar: number) => tickOfBar(runs(), bar + 1) - beatOf(runs(), bar);
   /**
    * Adds `count` bars of the time signature of `bar` before it, or after it when `after`, or takes
    * `-count` out from it, with all after them: one undo step.
@@ -100,7 +103,7 @@ export const scoreEdits = (song: Song) => {
       const ends = [...clips.map((clip) => clip.start + lengthOf(clip)), ...audio.map(({ start, length }) => (retimed(start, from, by) ?? from) + length)];
       if (ends.length > 0 && endLine(ends, piece.tempo_map.time_signatures) >= last + by) return;
       const empty = clips.find((clip) => clip.start + lengthOf(clip) === reach && clip.notes.length === 0 && [clip.pedal, clip.bend, clip.mod_wheel, clip.pressure].every((points) => !points?.length) && Object.keys(clip.controllers ?? {}).length === 0);
-      const first = children.find((child) => child.name === rows.find((row) => row.tool === "track")?.name);
+      const first = children.find((child) => child.tool === "track");
       if (empty) empty.length = last + by - empty.start;
       else if (first?.tool === "track") first.children.push({ name: freeName(first.children.map((child) => child.name), "music"), tool: "timeline", state: { start: reach, length: last + by - reach, notes: [] } });
     });
@@ -113,6 +116,11 @@ export const scoreEdits = (song: Song) => {
       memory.bars = { from: extend && memory.bars ? memory.bars.from : bar, to: bar };
       [memory.mark, memory.notes] = [null, []];
     },
+    /** Bar `bar` chosen for its menu, unless it is one of the chosen bars. */
+    chooseForMenu(bar: number) {
+      const chosen = chosenBars(song);
+      if (!chosen || bar < chosen.first || bar > chosen.last) this.choose(bar);
+    },
     /** The bars from `from` to `to`, either way, chosen. */
     chooseAcross(from: number, to: number) {
       memory.bars = { from, to };
@@ -121,7 +129,7 @@ export const scoreEdits = (song: Song) => {
     /** `count` bars of the time signature of bar `bar` added before it, or after it when `after`; all after them moves later, the chosen bars with them. */
     addBars(bar: number, count = 1, after = false) {
       bars(count === 1 ? "Add a bar" : "Add bars", bar, count, after);
-      const chosen = chosenBars(memory);
+      const chosen = chosenBars(song);
       if (chosen && (after ? bar < chosen.first : bar <= chosen.first)) memory.bars = { from: chosen.first + count, to: chosen.last + count };
     },
     /** Bars `first` to `last` taken out with what is in them; all after them moves earlier. A bar stays. */
@@ -220,8 +228,8 @@ export const scoreEdits = (song: Song) => {
       if (text === null) return;
       const signature = text.trim() === "" ? (first > 1 ? signatureOf(runs(), first - 1) : null) : signatureFrom(text);
       if (signature === null) return;
-      const { tempo_map, moves } = inSignature(clock.tempo_map, first, last, signature);
-      if (moves.length === 0 && JSON.stringify(tempo_map.time_signatures) === JSON.stringify(runs())) return;
+      if (Array.from({ length: last - first + 1 }, (_, index) => signatureOf(runs(), first + index)).every((each) => each === signature)) return;
+      const { tempo_map, moves } = inSignature(clock.tempo_map, first, last, signature, end());
       const label = "Change the time signature";
       clock.update(label, (piece) => (piece.tempo_map = tempo_map));
       song.update(label, ({ children }) => moves.forEach(([from, by]) => moveMusic(children, from, by)));
@@ -234,12 +242,12 @@ export const scoreEdits = (song: Song) => {
       const here = clips.find((clip) => clip.state.start <= tick && tick < clip.state.start + lengthOf(clip.state));
       let key = here ? `${track}/${here.name}` : undefined;
       if (!key) {
-        const start = clips.length === 0 ? 0 : barAt(runs(), tick).start;
+        // From its bar, or where a clip in it ends, as one does where a bar grew.
+        const start = clips.length === 0 ? 0 : Math.max(barAt(runs(), tick).start, ...clips.map((clip) => clip.state.start + lengthOf(clip.state)).filter((each) => each <= tick));
         const later = clips.map((clip) => clip.state.start).filter((each) => each > start);
         key = addClip(song, track, start, Math.min(end(), ...later) - start);
       }
       if (!key) return;
-      memory.bars = null;
       choose(song, [key]);
       memory.below = { kind: "editor", clip: key };
       memory.notes = [];

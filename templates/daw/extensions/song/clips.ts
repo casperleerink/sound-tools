@@ -34,11 +34,12 @@ export const trackBelow = ({ below }: Song["memory"]) => (below?.kind === "edito
 
 /**
  * Chooses the clips and regions `keys` names: the keyboard plays the track of the first, or
- * `track`, and Export selection exports their bars. A mark, a point or an effect is let go.
+ * `track`, and Export selection exports their bars. Bars, a mark, a point or an effect are let go.
  */
 export function choose(song: Song, keys: readonly string[], track: string | null = trackBelow(song.memory)) {
   const { memory } = song;
   memory.selected = [...new Set(keys)];
+  memory.bars = null;
   memory.point = null;
   memory.mark = null;
   memory.effect = null;

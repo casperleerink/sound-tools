@@ -3,7 +3,7 @@
 // The window draws the sound and moves the handles; the view runs for none of it.
 import { h, live, tempoSteps, type Color, type Drag, type Live, type Pointer } from "../../../sdk";
 import { GAIN } from "../../../song/regions";
-import { BEAT, secondsBetween, ticksAcross, ticksBefore } from "../../../song/time";
+import { BAR, BEAT, secondsBetween, ticksAcross, ticksBefore } from "../../../song/time";
 import { ROW, type Page, type Track } from "../../../song/view";
 import { INSET } from "../time";
 
@@ -22,6 +22,9 @@ export const tint = (colour: Color, percent: number): Color =>
 /** Why its file does not play, in words; null while it plays or is read. */
 export const lostOf = ({ state, facts }: Region) =>
   facts.file.state === "missing" ? `${state.asset} is missing` : facts.file.state === "does_not_play" ? `${state.asset} does not play` : null;
+
+/** How long `region` shows for `length` ticks of sound: two bars when its file is not there, to say why it is silent. */
+export const shownLength = (region: Region, length: number) => Math.max(length, lostOf(region) === null ? 1 : 2 * BAR);
 
 /**
  * Inside the box of `region` at `path`, `top` points under its top, its name's room by default:

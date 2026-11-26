@@ -1,11 +1,17 @@
 import { expect, test } from "bun:test";
+import type { ActionKey } from "../sdk";
+import { editsOf } from "../song/edits";
 import { clipOf, fakeSong, regionOf, tapeOf, trackOf } from "../song/fake";
+import type { Song } from "../song/model";
 import { BAR, BEAT } from "../song/time";
 import { scoreEdits, tempoMarks } from "./edits";
 import { actions } from "./keys";
 
 /** What the track `index` of the song holds at `at`, the fader first. */
 const childOf = (self: unknown, index: number, at: number) => (self as { children: { children: unknown[] }[] }).children[index]?.children[at];
+
+/** A key as the window gives it: the score's actions with that key, from the top, until one does it. */
+const press = (song: Song, key: ActionKey) => Object.entries(actions).find(([, action]) => action.keys?.includes(key) && action.run(song) !== false)?.[0] ?? null;
 
 /** A song of one track with a clip of eight bars, at 100 bpm. */
 const songOf = (piece = {}) => fakeSong({ children: [trackOf("t00", [clipOf("music", 0, 8 * BAR)])] }, { piece: { tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 100 }] }, ...piece } });
@@ -81,9 +87,32 @@ test("a time signature changes only its bars: a shorter bar loses its last beats
   edits.signature(2, 2, "");
   expect(f.piece.tempo_map.time_signatures).toEqual([{ signature: "4/4", bars: 3 }]);
   expect(starts()).toEqual([2 * BAR, 3 * BAR + BEAT]);
+  // Words the clock does not take, or the time signature the bars have, change nothing.
   const steps = f.steps.length;
   edits.signature(2, 2, "5 / 9");
+  edits.signature(5, 6, "4/4");
   expect([f.steps.length, new Set(f.steps)]).toEqual([steps, new Set(["Change the time signature"])]);
+});
+
+test("the last bars in another time signature leave none of the old after the end, and a press in the beats they gain opens a clip after the one there", () => {
+  const f = fakeSong({ children: [trackOf("t00", [clipOf("music", 0, 4 * BAR)])] });
+  const edits = scoreEdits(f.song);
+  edits.signature(4, 4, "5/4");
+  expect(f.piece.tempo_map.time_signatures).toEqual([{ signature: "4/4", bars: 3 }, { signature: "5/4", bars: 1 }]);
+  edits.openMusic("t00", 4 * BAR + BEAT / 2);
+  expect(childOf(f.self, 0, 2)).toMatchObject({ state: { start: 4 * BAR, length: BEAT } });
+});
+
+test("a staff's notes closed, Delete takes no clip the score does not draw; a chosen section takes the key from the chosen bars", () => {
+  const f = songOf({ sections: [{ bar: 2, name: "Verse" }] });
+  const edits = scoreEdits(f.song);
+  edits.openMusic("t00", BAR);
+  press(f.song, "escape");
+  press(f.song, "delete");
+  expect(childOf(f.self, 0, 1)).toMatchObject({ name: "music" });
+  edits.choose(3);
+  editsOf(f.song).marks.pressMark({ kind: "section", bar: 2, tick: BAR }, { clicks: 1 });
+  expect(press(f.song, "delete")).toBe("delete_mark");
 });
 
 test("chosen bars in a shorter time signature take the tempo changes after them along, and a fermata on a beat they lose", () => {

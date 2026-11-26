@@ -595,26 +595,10 @@ fn one_tempo_change_of_a_map_can_be_set_by_its_tick() {
 }
 
 #[test]
-fn a_tempo_change_is_added_with_the_tempo_in_effect_and_removed_by_its_tick() {
+fn the_tempo_change_in_effect_is_the_last_at_or_before_a_tick() {
     let map = tempo_map(&[(0, 120.0), (3840, 60.0)]);
     assert_eq!(map.change_at(Ticks(3839)).tick, Ticks(0));
     assert_eq!(map.change_at(Ticks(99_999)).bpm, bpm(60.0));
-
-    // Added in its place, with the tempo that played there, so nothing sounds different.
-    let added = map.with_change_at(Ticks(1920)).unwrap();
-    assert_eq!(added, tempo_map(&[(0, 120.0), (1920, 120.0), (3840, 60.0)]));
-    let later = map.with_change_at(Ticks(7680)).unwrap();
-    assert_eq!(later, tempo_map(&[(0, 120.0), (3840, 60.0), (7680, 60.0)]));
-    // A tick that has a change already gets no second one.
-    assert_eq!(map.with_change_at(Ticks(3840)), None);
-    assert_eq!(map.with_change_at(Ticks(0)), None);
-
-    // Removed by its tick. The change at tick 0 stays, and a tick without one has nothing.
-    assert_eq!(added.without_change_at(Ticks(1920)), Some(map.clone()));
-    assert_eq!(map.without_change_at(Ticks(0)), None);
-    assert_eq!(map.without_change_at(Ticks(1920)), None);
-    let text = serde_json::to_string(&added).unwrap();
-    assert_eq!(serde_json::from_str::<TempoMap>(&text).unwrap(), added);
 }
 
 /// Bar number, start and time signature of the first `count` bars.

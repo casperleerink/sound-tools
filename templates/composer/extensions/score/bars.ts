@@ -5,7 +5,7 @@ import type { Frozen, Section, TempoMap } from "../sdk";
 import { changeBars } from "../song/marks";
 import { lengthAt, lengthOf } from "../song/clips";
 import { isRow, type Child, type Draft } from "../song/model";
-import { barStarts, tickOfBar, type Runs } from "../song/time";
+import { BAR, barStarts, tickOfBar, type Runs } from "../song/time";
 
 /** How many bars a piece with no music shows. */
 export const FIRST_BARS = 16;
@@ -16,8 +16,20 @@ type Piece = { tempo_map: TempoMap; sections: Section[] };
 /** The ticks a bar of `signature` lasts. */
 export const ticksOfSignature = (signature: string) => {
   const [count, unit] = signature.split("/").map(Number);
-  return ((count ?? 4) * 3840) / (unit ?? 4);
+  return ((count ?? 4) * BAR) / (unit ?? 4);
 };
+/** The ticks of a beat of bar `bar`. */
+export const beatOf = (runs: Runs, bar: number) => BAR / (Number(signatureOf(runs, bar).split("/")[1]) || 4);
+
+/** Runs of one time signature side by side as one, and none of no bars. */
+const merged = (runs: readonly { signature: string; bars: number }[]) =>
+  runs.reduce<{ signature: string; bars: number }[]>((all, run) => {
+    const last = all.at(-1);
+    if (run.bars <= 0) return all;
+    if (last?.signature === run.signature) last.bars += run.bars;
+    else all.push({ ...run });
+    return all;
+  }, []);
 
 /** The signature of bar `bar`, from 1. */
 export function signatureOf(runs: Runs, bar: number): string {
@@ -45,7 +57,7 @@ export function endLine(ends: readonly number[], runs: Runs): number {
 }
 
 /**
- * Where a tick goes when the `length` ticks from `from` are added (above 0) or taken out
+ * Where a tick goes when the `by` ticks from `from` are added (above 0) or taken out
  * (below 0): before `from` it stays, after it moves; inside what is taken out it is gone.
  */
 export function retimed(tick: number, from: number, by: number): number | null {
@@ -65,15 +77,7 @@ export function withBars({ tempo_map, sections }: Frozen<Piece>, bar: number, co
   const by = count * ticksOfSignature(signatureOf(runs, bar));
   const index = changeBars(runs).findLastIndex((first) => first <= bar);
   // The last run goes on, so only a run before it counts its bars; runs of one time signature side by side are one.
-  const time_signatures = runs
-    .map((run, each) => (each === index && each < runs.length - 1 ? { ...run, bars: run.bars + count } : { ...run }))
-    .filter((run) => run.bars > 0)
-    .reduce<{ signature: string; bars: number }[]>((all, run) => {
-      const last = all.at(-1);
-      if (last?.signature === run.signature) last.bars += run.bars;
-      else all.push(run);
-      return all;
-    }, []);
+  const time_signatures = merged(runs.map((run, each) => (each === index && each < runs.length - 1 ? { ...run, bars: run.bars + count } : run)));
   const moved = sections.flatMap((section) => {
     if (section.bar < at) return [{ ...section }];
     if (count > 0) return [{ ...section, bar: section.bar + count }];
@@ -101,20 +105,17 @@ function shifted(tempo_map: Frozen<TempoMap>, from: number, by: number): TempoMa
 }
 
 /**
- * The tempo map with bars `first` to `last` in `signature`, the bar after them in the one it had:
- * each bar longer or shorter at its end, by beats added or taken out, everything after moving.
- * Also where time goes in or out, `[from, by]` from the end back, for `moveMusic`.
+ * The tempo map with bars `first` to `last` in `signature`, the bar after them in the one it had
+ * unless they end the piece, which ends at `end`: each bar longer or shorter at its end, by beats
+ * added or taken out, everything after moving. Also where time goes in or out, `[from, by]` from
+ * the end back, for `moveMusic`.
  */
-export function inSignature(tempo_map: Frozen<TempoMap>, first: number, last: number, signature: string): { tempo_map: TempoMap; moves: [from: number, by: number][] } {
+export function inSignature(tempo_map: Frozen<TempoMap>, first: number, last: number, signature: string, end: number): { tempo_map: TempoMap; moves: [from: number, by: number][] } {
   const runs = tempo_map.time_signatures;
-  const counted = runs.reduce((sum, run) => sum + run.bars, 0);
-  const bars = Array.from({ length: Math.max(counted, last + 1) }, (_, index) => (index + 1 >= first && index + 1 <= last ? signature : signatureOf(runs, index + 1)));
-  const time_signatures = bars.reduce<{ signature: string; bars: number }[]>((all, each) => {
-    const run = all.at(-1);
-    if (run?.signature === each) run.bars += 1;
-    else all.push({ signature: each, bars: 1 });
-    return all;
-  }, []);
+  // The last run goes on, so its first bar is the last that counts.
+  const counted = runs.slice(0, -1).reduce((sum, run) => sum + run.bars, 1);
+  const length = Math.max(counted, tickOfBar(runs, last + 1) >= end ? last : last + 1);
+  const time_signatures = merged(Array.from({ length }, (_, index) => ({ signature: index + 1 >= first && index + 1 <= last ? signature : signatureOf(runs, index + 1), bars: 1 })));
   const moves: [number, number][] = [];
   for (let bar = last; bar >= first; bar--) {
     const by = ticksOfSignature(signature) - ticksOfSignature(signatureOf(runs, bar));
@@ -190,11 +191,15 @@ export function clearNotes(children: Draft["children"], from: number, to: number
     for (const child of track.children) {
       if (child.tool !== "timeline") continue;
       const first = child.state.start;
-      child.state.notes = child.state.notes.flatMap((note) => {
+      const notes = child.state.notes.flatMap((note) => {
         const start = first + note.start;
         if (start >= from && start < to) return [];
         return start < from && start + note.length > from ? [{ ...note, length: from - start }] : [note];
       });
+      if (notes.length === child.state.notes.length && notes.every((note, index) => note === child.state.notes[index])) continue;
+      // A clip as long as its notes keeps its end, and the piece its end line.
+      child.state.length ??= lengthOf(child.state);
+      child.state.notes = notes;
     }
   }
 }
