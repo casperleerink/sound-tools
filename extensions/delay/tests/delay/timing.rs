@@ -79,6 +79,7 @@ fn a_tempo_change_moves_the_repeats_while_it_plays() {
     let change = |tick, bpm| TempoChange {
         tick: Ticks(tick),
         bpm: Tempo::from_bpm(bpm).unwrap(),
+        to: None,
     };
     let map = TempoMap::new(four_four, vec![change(0, 120.0), change(3_840, 60.0)]).unwrap();
     let state = DelayState {

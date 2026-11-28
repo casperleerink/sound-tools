@@ -1,6 +1,6 @@
 // What a region of an audio track keeps of its file: where it starts and ends, its fades and its
 // gain, each change one undo step. Its handles' plane: x in ticks of the song; the gain's y in dB down.
-import type { FilledStateOfTool, Pointer } from "../sdk";
+import { tempoSteps, type FilledStateOfTool, type Pointer } from "../sdk";
 import { itemAt, rowOfKey, type Song } from "./model";
 import { secondsBetween, ticksAcross, ticksBefore } from "./time";
 
@@ -16,7 +16,7 @@ export const fileEndOf = ({ state, facts }: Extract<NonNullable<ReturnType<typeo
 
 /** What a view does to the regions: `seconds` is how long the region plays, as its facts say. */
 export const regionEdits = (song: Song) => {
-  const changes = () => song.clock.tempo_map.tempo_changes;
+  const changes = () => tempoSteps(song.clock.tempo_map);
   const edit = (label: string, keys: readonly string[], change: (region: Region) => void) =>
     song.update(label, ({ children }) => {
       for (const key of keys) {

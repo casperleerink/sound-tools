@@ -419,6 +419,7 @@ fn a_tempo_change_while_playing_plays_every_beat_once_on_a_chain_ahead() {
         let changes = vec![sound_core::TempoChange {
             tick: Ticks(0),
             bpm: sound_core::Tempo::from_bpm(bpm).unwrap(),
+            to: None,
         }];
         let map = sound_core::TempoMap::new(sound_core::TimeSignature::default(), changes);
         chains.control.set_tempo_map(map.unwrap());

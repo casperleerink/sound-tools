@@ -197,6 +197,7 @@ fn tempo_map(changes: &[(u64, f64)]) -> TempoMap {
         .map(|(tick, value)| TempoChange {
             tick: Ticks(*tick),
             bpm: bpm(*value),
+            to: None,
         })
         .collect();
     TempoMap::new(TimeSignature::default(), changes).unwrap()
@@ -363,12 +364,14 @@ fn any_tempo_map() -> impl Strategy<Value = TempoMap> {
         let mut changes = vec![TempoChange {
             tick: Ticks(0),
             bpm: first,
+            to: None,
         }];
         for (gap, bpm) in later {
             tick += gap;
             changes.push(TempoChange {
                 tick: Ticks(tick),
                 bpm,
+                to: None,
             });
         }
         TempoMap::new(TimeSignature::default(), changes).unwrap()

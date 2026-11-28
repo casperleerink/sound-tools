@@ -40,6 +40,7 @@ fn tempo_map(time_signatures: TimeSignatures, changes: &[(u64, f64)]) -> TempoMa
         .map(|&(tick, bpm)| TempoChange {
             tick: Ticks(tick),
             bpm: Tempo::from_bpm(bpm).unwrap(),
+            to: None,
         })
         .collect();
     TempoMap::new(time_signatures, changes).unwrap()

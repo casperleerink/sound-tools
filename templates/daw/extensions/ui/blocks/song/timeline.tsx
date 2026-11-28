@@ -12,7 +12,7 @@ import { EmptyState } from "../empty-state";
 import { Clip, Grid, INSET, Playhead } from "../time";
 import { DIM, renders } from "./heads";
 import { LaneTimes } from "./lanes";
-import { lostOf, RegionHandles, RegionWave, trimsOf, type Region } from "./regions";
+import { RegionHandles, RegionWave, shownLength, trimsOf, type Region } from "./regions";
 import { Shades } from "./shades";
 import { Take } from "./takes";
 
@@ -153,8 +153,7 @@ const TrackTime = ({ page, row, chosen, bounds, hint }: { page: Page; row: Row; 
       {track.children.flatMap((item) => {
         if (item.tool !== "timeline" && item.tool !== "region") return [];
         const key = `${track.name}/${item.name}`;
-        // An audio clip whose file is not there is two bars long, to say why it is silent.
-        const length = item.tool === "timeline" ? lengthOf(item.state) : Math.max(lengthAt({ children: [track], clock: { tempo_map: tempo } }, key), lostOf(item) === null ? 1 : 2 * BAR);
+        const length = item.tool === "timeline" ? lengthOf(item.state) : shownLength(item, lengthAt({ children: [track], clock: { tempo_map: tempo } }, key));
         return [<Item page={page} track={track} itemKey={key} name={item.tool === "timeline" ? item.state.title || "" : item.state.asset.replace(/\.[^.]+$/, "")} region={item.tool === "region" ? item : undefined} start={item.state.start} length={length}
           notes={item.tool === "timeline" ? item.state.notes : []} top={row.top} under={under} chosen={chosen.has(key)} bounds={bounds} colour={colour} dim={dim} />];
       })}

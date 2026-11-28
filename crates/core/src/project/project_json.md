@@ -19,7 +19,8 @@ One file at the top of the project folder. Most work needs no edit here: the con
 }
 ```
 
-- `tempo_map.tempo_changes`: the tempo from a tick on, as steps. The first is at tick 0, ticks go up, `bpm` is 10 to 1000.
+- `tempo_map.tempo_changes`: the tempo from a tick on. The first is at tick 0, ticks go up, `bpm` is 10 to 1000. With `"to": 60` the tempo moves evenly from `bpm` to 60 by the next change: a rit. or an accel., which needs a next change to end at.
+- `tempo_map.fermatas`, optional: `[{"tick": 2880, "hold": 2}]`, ticks going up. The beat from `tick` lasts `hold` times as long, 1 to 8.
 - `tempo_map.time_signatures`: runs of bars, in order. An upper number from 1 to 32 and a lower one of 1, 2, 4, 8, 16 or 32; `bars` is 1 or more. The last run goes on to the end, so the example is 8 bars of 4/4, 2 of 7/8, and 3/4 from bar 11 on. An older project has `"time_signature": "4/4"` in place of the list: one run.
 - Changing the time signatures moves bar lines, never notes: every clip and note keeps its ticks. To keep a part on its bars, move its clips yourself.
 - `sections`: the named parts of the piece. Each runs from the start of its `bar`, counted from 1, up to the next; sorted by bar, each bar once, names not empty. In the example the verse is bars 5 to 12. When you move, repeat or remove the music of a section, move the later sections by as many bars.

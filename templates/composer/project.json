@@ -1,0 +1,39 @@
+{
+  "format": 1,
+  "tempo_map": {
+    "time_signatures": [
+      {
+        "signature": "4/4",
+        "bars": 1
+      }
+    ],
+    "tempo_changes": [
+      {
+        "tick": 0,
+        "bpm": 88.0
+      }
+    ]
+  },
+  "sections": [
+    {
+      "bar": 1,
+      "name": "Opening"
+    },
+    {
+      "bar": 9,
+      "name": "Theme"
+    }
+  ],
+  "connections": [
+    {
+      "from": {
+        "instance": "song",
+        "port": "audio"
+      },
+      "to": {
+        "device_output": 0
+      }
+    }
+  ],
+  "main": "song"
+}

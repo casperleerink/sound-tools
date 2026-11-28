@@ -262,14 +262,13 @@ impl Warp {
     }
 
     /// Where the speed changes, in frames of the region and of the file: its start, each point
-    /// and each tempo change between two.
+    /// and each step of the tempo between two.
     fn knots<'a>(&'a self, clock: &'a Clock) -> impl Iterator<Item = (f64, f64)> + 'a {
         let base = clock.frame_of(self.start).0;
         let frame = move |ticks: u64| {
             let tick = Ticks(self.start.0.saturating_add(ticks));
             clock.frame_of(tick).0.saturating_sub(base) as f64
         };
-        let changes = clock.tempo_map().tempo_changes();
         let anchors = std::iter::once((0, self.origin)).chain(self.points.iter().copied());
         let segments = anchors.zip(self.points.iter().copied());
         let inside = segments.flat_map(move |((from, at), (to, then))| {
@@ -277,15 +276,10 @@ impl Warp {
                 self.start.0.saturating_add(from),
                 self.start.0.saturating_add(to),
             );
-            let after = changes.partition_point(|change| change.tick.0 <= first);
-            let between = (changes.get(after..).unwrap_or_default().iter())
-                .take_while(move |change| change.tick.0 < last);
-            let knots = between.map(move |change| {
-                let along = (change.tick.0 - first) as f64 / (last - first) as f64;
-                (
-                    frame(change.tick.0 - self.start.0),
-                    at + along * (then - at),
-                )
+            let between = clock.steps_between(Ticks(first), Ticks(last));
+            let knots = between.map(move |Ticks(change)| {
+                let along = (change - first) as f64 / (last - first) as f64;
+                (frame(change - self.start.0), at + along * (then - at))
             });
             knots.chain(std::iter::once((frame(to), then)))
         });

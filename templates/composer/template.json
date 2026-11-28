@@ -1,0 +1,12 @@
+{
+  "name": "Composer",
+  "description": "The whole piece as a score in one line. Shape its sections, bars, time signatures and tempo marks on the music.",
+  "shares": [
+    "daw/extensions",
+    "!daw/extensions/song.tsx",
+    "!daw/extensions/song.test.tsx",
+    "!daw/extensions/gallery.tsx",
+    "!daw/extensions/ui/blocks/song/timeline.test.tsx",
+    "!daw/extensions/ui/blocks/song/regions.test.tsx"
+  ]
+}

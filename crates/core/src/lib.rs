@@ -33,7 +33,7 @@ pub use automation::{
     automation_pieces,
 };
 pub use clock::{
-    Bar, BarBeat, Clock, ClockError, Frames, MIN_EXACT_SAMPLE_RATE, SignatureRun,
+    Bar, BarBeat, Clock, ClockError, Fermata, Frames, Hold, MIN_EXACT_SAMPLE_RATE, SignatureRun,
     TICKS_PER_QUARTER, Tempo, TempoChange, TempoMap, Ticks, TimeSignature, TimeSignatures,
 };
 pub use control::{Edit, EngineConfig, EngineControl, EngineStopped, Node};

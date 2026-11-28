@@ -2,7 +2,7 @@
 // song repeats. Marks are in `project.json`, so each change is one undo step of the clock; the
 // repeat is not saved and is no undo step. Its range and whether it repeats are kept in memory
 // too: a view that read the clock's would run again at every play and pause. The ruler's plane: x in ticks of the song.
-import type { Pointer, Section, TempoMap } from "../sdk";
+import { tempoSteps, type Pointer, type Section, type TempoMap } from "../sdk";
 import { lengthAt } from "./clips";
 import { itemAt, repeatOf, type Mark, type Song } from "./model";
 import { barNear, barStarts, BEAT, cellOf, lineFrom, linesAround, nearestOf, tickOfBar, type Runs } from "./time";
@@ -83,6 +83,7 @@ export const markEdits = (song: Song) => {
   };
   const choose = (mark: Mark) => {
     memory.selected = [];
+    memory.bars = null;
     memory.point = null;
     memory.mark = mark;
   };
@@ -90,7 +91,14 @@ export const markEdits = (song: Song) => {
   const tempoAt = (tick: number) => {
     const changes = clock.tempo_map.tempo_changes;
     if (!changes.some((change) => change.tick === tick)) {
-      clock.update("Add a tempo change", (piece) => (piece.tempo_map.tempo_changes = [...piece.tempo_map.tempo_changes, { tick, bpm: bpmAt(changes, tick) }].sort((a, b) => a.tick - b.tick)));
+      // A change inside a rit. or an accel. ends it at the tempo it had reached, and plays that.
+      const bpm = Math.round(bpmAt(tempoSteps({ ...clock.tempo_map, fermatas: [] }), tick) * 10) / 10;
+      clock.update("Add a tempo change", (piece) => {
+        const changes = piece.tempo_map.tempo_changes;
+        const before = changes.findLast((change) => change.tick < tick);
+        if (before?.to !== undefined) before.to = bpm;
+        piece.tempo_map.tempo_changes = [...changes, { tick, bpm }].sort((a, b) => a.tick - b.tick);
+      });
     }
     const starts = barStarts(runs(), tick + 1);
     choose({ kind: "tempo", bar: Math.max(starts.findIndex((start) => start > tick), 1), tick });
@@ -205,7 +213,7 @@ export const markEdits = (song: Song) => {
         if (!was || (to !== mark.tick && changes.some((change) => change.tick === to)) || (to === mark.tick && speed === was.bpm)) return false;
         clock.update(to === mark.tick ? "Change the tempo" : "Move a tempo change", (piece) => {
           const rest = piece.tempo_map.tempo_changes.filter((change) => change.tick !== mark.tick);
-          piece.tempo_map.tempo_changes = [...rest, { tick: to, bpm: speed }].sort((a, b) => a.tick - b.tick);
+          piece.tempo_map.tempo_changes = [...rest, { ...was, tick: to, bpm: speed }].sort((a, b) => a.tick - b.tick);
         });
         moved = { kind: "tempo", bar: barNear(runs(), to).bar, tick: to };
       }

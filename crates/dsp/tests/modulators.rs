@@ -249,6 +249,7 @@ fn render_synced_saw(buffer: usize, late: bool) -> Vec<f32> {
     let changes = [(0, 120.0), (1920, 90.0)].map(|(tick, bpm)| TempoChange {
         tick: Ticks(tick),
         bpm: Tempo::from_bpm(bpm).unwrap(),
+        to: None,
     });
     control.set_tempo_map(TempoMap::new(TimeSignature::default(), changes.to_vec()).unwrap());
     let mut rendered = vec![0.0; 100 + 150_000];

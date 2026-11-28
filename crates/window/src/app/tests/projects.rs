@@ -122,8 +122,8 @@ fn an_empty_project_starts_from_a_template_in_place() {
     redraw(&mut window);
     assert!(window.find("empty-project").is_some());
     assert!(
-        window.find("start-from-1").is_none(),
-        "only the DAW, not Bare"
+        window.find("start-from-2").is_none(),
+        "the DAW and the Composer, not Bare"
     );
     let (x, y) = window.find("start-from-0").unwrap();
     window.pointer_down(x, y);

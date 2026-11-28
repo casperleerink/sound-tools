@@ -434,10 +434,21 @@ pub fn summary(project: &Project) -> String {
     }
     for change in tempo_map.tempo_changes() {
         let position = time_signatures.bar_beat_of(change.tick);
+        let moving = (change.to).map_or(String::new(), |to| {
+            format!(", moving to {} bpm by the next change", to.bpm())
+        });
         lines.push(format!(
-            "tempo: {} bpm from {position} (tick {})",
+            "tempo: {} bpm from {position} (tick {}){moving}",
             change.bpm.bpm(),
             change.tick.0
+        ));
+    }
+    for fermata in tempo_map.fermatas() {
+        let position = time_signatures.bar_beat_of(fermata.tick);
+        lines.push(format!(
+            "fermata: the beat at {position} (tick {}) {} times as long",
+            fermata.tick.0,
+            fermata.hold.times()
         ));
     }
     lines.extend(sections(project));

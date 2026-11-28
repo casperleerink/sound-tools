@@ -1,9 +1,10 @@
 // A song for the tests of `song/`: its records, memory and clock as the window keeps them, and
 // what its code asked for: each undo step by its label, what it sent, selected, rendered and showed.
+import type { Section, TempoMap } from "../sdk";
 import { memory as fresh, type Memory, type Song } from "./model";
 
 type Records = { state?: Partial<Song["state"]>; children: unknown[] };
-type Piece = { tempo_map: { time_signatures: { signature: string; bars: number }[]; tempo_changes: { tick: number; bpm: number }[] }; sections: { bar: number; name: string }[] };
+type Piece = { tempo_map: TempoMap; sections: Section[] };
 
 export function fakeSong(records: Records, { tick = 0, piece, answers = {} }: { tick?: number; piece?: Partial<Piece>; answers?: { confirm?: boolean; render?: string | null } } = {}) {
   let self = { state: { order: [], solo: [], sidechains: [], limit_off: false, ...records.state }, children: structuredClone(records.children) };

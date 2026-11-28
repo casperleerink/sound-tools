@@ -355,7 +355,7 @@ impl Session {
                 tick: tick.0,
                 bar: at.bar,
                 beat: at.beat,
-                bpm: tempo_map.change_at(tick).bpm.bpm(),
+                bpm: self.project.clock().tempo_at(tick).bpm(),
                 repeat: looped
                     .on
                     .then_some([looped.range.start.0, looped.range.end.0]),

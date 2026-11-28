@@ -6,8 +6,8 @@ use proptest::prelude::*;
 use std::num::NonZeroU32;
 
 use sound_core::{
-    Bar, BarBeat, Clock, ClockError, Frames, MIN_EXACT_SAMPLE_RATE, SignatureRun, Tempo,
-    TempoChange, TempoMap, Ticks, TimeSignature, TimeSignatures,
+    Bar, BarBeat, Clock, ClockError, Fermata, Frames, Hold, MIN_EXACT_SAMPLE_RATE, SignatureRun,
+    Tempo, TempoChange, TempoMap, Ticks, TimeSignature, TimeSignatures,
 };
 
 fn bpm(value: f64) -> Tempo {
@@ -20,6 +20,7 @@ fn tempo_map(changes: &[(u64, f64)]) -> TempoMap {
         .map(|(tick, value)| TempoChange {
             tick: Ticks(*tick),
             bpm: bpm(*value),
+            to: None,
         })
         .collect();
     TempoMap::new(TimeSignature::default(), changes).unwrap()
@@ -30,23 +31,39 @@ fn any_tempo() -> impl Strategy<Value = Tempo> {
     (10_000_u32..=1_000_000).prop_map(|milli_bpm| bpm(f64::from(milli_bpm) / 1000.0))
 }
 
-/// One to eight tempo changes, from one tick apart to many bars apart.
+/// One to eight tempo changes, from one tick apart to many bars apart, some moving to the
+/// next, and up to four fermatas.
 fn any_tempo_map() -> impl Strategy<Value = TempoMap> {
-    let later = prop::collection::vec((1_u64..200_000, any_tempo()), 0..8);
-    (any_tempo(), later).prop_map(|(first, later)| {
+    let change = || (any_tempo(), prop::option::of(any_tempo()));
+    let later = prop::collection::vec((1_u64..200_000, change()), 0..8);
+    let fermatas = prop::collection::vec((1_u64..400_000, 1_000_u32..=8_000), 0..4);
+    (change(), later, fermatas).prop_map(|((first, to), later, fermatas)| {
         let mut tick = 0;
         let mut changes = vec![TempoChange {
             tick: Ticks(0),
             bpm: first,
+            to,
         }];
-        for (gap, bpm) in later {
+        for (gap, (bpm, to)) in later {
             tick += gap;
             changes.push(TempoChange {
                 tick: Ticks(tick),
                 bpm,
+                to,
             });
         }
-        TempoMap::new(TimeSignature::default(), changes).unwrap()
+        let mut ticks: Vec<u64> = fermatas.iter().map(|(tick, _)| *tick).collect();
+        ticks.sort_unstable();
+        ticks.dedup();
+        let fermatas = (ticks.iter().zip(fermatas.iter()))
+            .map(|(tick, (_, hold))| Fermata {
+                tick: Ticks(*tick),
+                hold: Hold::new(f64::from(*hold) / 1000.0).unwrap(),
+            })
+            .collect();
+        (TempoMap::new(TimeSignature::default(), changes).unwrap())
+            .with_fermatas(fermatas)
+            .unwrap()
     })
 }
 
@@ -388,6 +405,7 @@ fn tempo_changes_must_start_at_zero_and_go_up() {
     let change = |tick, value| TempoChange {
         tick: Ticks(tick),
         bpm: bpm(value),
+        to: None,
     };
     let new = |changes| TempoMap::new(TimeSignature::default(), changes);
     assert_eq!(new(vec![]), Err(ClockError::NoTempoAtStart));
@@ -410,10 +428,12 @@ fn the_saved_json_is_plain_bpm_and_ticks() {
             TempoChange {
                 tick: Ticks(0),
                 bpm: bpm(120.0),
+                to: None,
             },
             TempoChange {
                 tick: Ticks(15_360),
                 bpm: bpm(93.5),
+                to: None,
             },
         ],
     )
@@ -455,6 +475,107 @@ fn invalid_json_is_rejected_with_the_reason() {
     assert!(error(neither).contains("the tempo map needs \"time_signatures\""));
 }
 
+/// A map read the way `project.json` holds it, in 4/4.
+fn saved(tempo_changes: &str, fermatas: &str) -> TempoMap {
+    let json = format!(
+        r#"{{"time_signatures":[{{"signature":"4/4","bars":1}}],"tempo_changes":{tempo_changes},"fermatas":{fermatas}}}"#
+    );
+    serde_json::from_str(&json).unwrap()
+}
+
+#[test]
+fn a_rit_takes_the_time_of_an_even_slowing_down() {
+    let map = saved(
+        r#"[{"tick":0,"bpm":120,"to":60},{"tick":3840,"bpm":60}]"#,
+        "[]",
+    );
+    let clock = Clock::new(map, 48_000);
+    // A tempo that goes evenly from 120 to 60 over 4 beats, worked out exactly: 4 ln 2 seconds.
+    let exact = 4.0 * 2.0_f64.ln();
+    assert!((clock.seconds_of(Ticks(3840)) - exact).abs() < 0.002);
+    assert!((clock.tempo_at(Ticks(1920)).bpm() - 90.0).abs() < 2.0);
+    assert_eq!(clock.tempo_at(Ticks(3840)), bpm(60.0));
+}
+
+#[test]
+fn a_rit_and_a_fermata_play_as_these_steps_in_the_sdk_too() {
+    // The same piece and steps are in the DAW template's `song/time.test.ts`.
+    let json = r#"{"time_signatures":[{"signature":"6/8","bars":1},{"signature":"4/4","bars":1}],"tempo_changes":[{"tick":0,"bpm":120,"to":60},{"tick":720,"bpm":90}],"fermatas":[{"tick":1440,"hold":1.5}]}"#;
+    let map: TempoMap = serde_json::from_str(json).unwrap();
+    let steps: Vec<(u64, f64)> = (map.steps().iter())
+        .map(|step| (step.tick.0, step.bpm.bpm()))
+        .collect();
+    let expected = [
+        (0, 115.0),
+        (120, 105.0),
+        (240, 95.0),
+        (360, 85.0),
+        (480, 75.0),
+        (600, 65.0),
+        (720, 90.0),
+        (1440, 60.0),
+        (1920, 90.0),
+    ];
+    assert_eq!(steps, expected);
+    let held = saved(r#"[{"tick":0,"bpm":16.005}]"#, r#"[{"tick":0,"hold":2}]"#);
+    let held: Vec<(u64, f64)> = (held.steps().iter())
+        .map(|step| (step.tick.0, step.bpm.bpm()))
+        .collect();
+    assert_eq!(held, [(0, 8.003), (960, 16.005)]);
+    // A next change far away takes longer steps, not more of them.
+    let far = saved(
+        r#"[{"tick":0,"bpm":120,"to":60},{"tick":1000000000,"bpm":60}]"#,
+        "[]",
+    );
+    assert!(far.steps().len() <= 4097);
+}
+
+#[test]
+fn a_moving_tempo_on_the_last_change_plays_as_a_step() {
+    let moving = Clock::new(saved(r#"[{"tick":0,"bpm":120,"to":60}]"#, "[]"), 48_000);
+    let step = Clock::new(tempo_map(&[(0, 120.0)]), 48_000);
+    assert_eq!(moving.frame_of(Ticks(7680)), step.frame_of(Ticks(7680)));
+}
+
+#[test]
+fn a_fermata_holds_its_beat_and_the_tempo_comes_back_after() {
+    let map = saved(r#"[{"tick":0,"bpm":120}]"#, r#"[{"tick":2880,"hold":2}]"#);
+    let clock = Clock::new(map, 48_000);
+    // Three beats at 120, then the fourth twice as long: 2.5 seconds for the bar.
+    assert_eq!(clock.seconds_of(Ticks(3840)), 2.5);
+    assert_eq!(clock.tempo_at(Ticks(2880)), bpm(60.0));
+    assert_eq!(clock.tempo_at(Ticks(3840)), bpm(120.0));
+
+    // As slow as a tempo goes, a fermata still holds its beat as long as it says.
+    let slowest = Clock::new(
+        saved(r#"[{"tick":0,"bpm":10}]"#, r#"[{"tick":0,"hold":2}]"#),
+        48_000,
+    );
+    assert_eq!(slowest.seconds_of(Ticks(960)), 12.0);
+}
+
+#[test]
+fn moving_tempos_and_fermatas_are_saved_only_where_there_are_some() {
+    let json = r#"{"time_signatures":[{"signature":"4/4","bars":1}],"tempo_changes":[{"tick":0,"bpm":120.0,"to":60.0},{"tick":3840,"bpm":60.0}],"fermatas":[{"tick":2880,"hold":2.0}]}"#;
+    let map: TempoMap = serde_json::from_str(json).unwrap();
+    assert_eq!(serde_json::to_string(&map).unwrap(), json);
+    assert_eq!(
+        map.with_time_signatures(time_signatures(&[("3/4", 1)]))
+            .fermatas(),
+        map.fermatas()
+    );
+
+    let error = |json: &str| {
+        serde_json::from_str::<TempoMap>(json)
+            .unwrap_err()
+            .to_string()
+    };
+    let unsorted = r#"{"time_signature":"4/4","tempo_changes":[{"tick":0,"bpm":120}],"fermatas":[{"tick":960,"hold":2},{"tick":960,"hold":2}]}"#;
+    assert!(error(unsorted).contains("fermatas must be sorted by tick"));
+    let too_long = r#"{"time_signature":"4/4","tempo_changes":[{"tick":0,"bpm":120}],"fermatas":[{"tick":960,"hold":20}]}"#;
+    assert!(error(too_long).contains("1 to 8 times as long, not 20"));
+}
+
 #[test]
 fn one_tempo_change_of_a_map_can_be_set_by_its_tick() {
     let map = tempo_map(&[(0, 120.0), (3840, 60.0), (7680, 93.5)]);
@@ -474,26 +595,10 @@ fn one_tempo_change_of_a_map_can_be_set_by_its_tick() {
 }
 
 #[test]
-fn a_tempo_change_is_added_with_the_tempo_in_effect_and_removed_by_its_tick() {
+fn the_tempo_change_in_effect_is_the_last_at_or_before_a_tick() {
     let map = tempo_map(&[(0, 120.0), (3840, 60.0)]);
     assert_eq!(map.change_at(Ticks(3839)).tick, Ticks(0));
     assert_eq!(map.change_at(Ticks(99_999)).bpm, bpm(60.0));
-
-    // Added in its place, with the tempo that played there, so nothing sounds different.
-    let added = map.with_change_at(Ticks(1920)).unwrap();
-    assert_eq!(added, tempo_map(&[(0, 120.0), (1920, 120.0), (3840, 60.0)]));
-    let later = map.with_change_at(Ticks(7680)).unwrap();
-    assert_eq!(later, tempo_map(&[(0, 120.0), (3840, 60.0), (7680, 60.0)]));
-    // A tick that has a change already gets no second one.
-    assert_eq!(map.with_change_at(Ticks(3840)), None);
-    assert_eq!(map.with_change_at(Ticks(0)), None);
-
-    // Removed by its tick. The change at tick 0 stays, and a tick without one has nothing.
-    assert_eq!(added.without_change_at(Ticks(1920)), Some(map.clone()));
-    assert_eq!(map.without_change_at(Ticks(0)), None);
-    assert_eq!(map.without_change_at(Ticks(1920)), None);
-    let text = serde_json::to_string(&added).unwrap();
-    assert_eq!(serde_json::from_str::<TempoMap>(&text).unwrap(), added);
 }
 
 /// Bar number, start and time signature of the first `count` bars.
@@ -568,6 +673,7 @@ fn a_tempo_change_per_beat_gives_the_same_piece_at_every_sample_rate() {
             tick: Ticks(beat * 960),
             // A tempo that gives and takes, and never a whole number of frames per beat.
             bpm: Tempo::from_bpm(96.0 + f64::from((beat % 37) as u32) * 0.137).unwrap(),
+            to: None,
         })
         .collect();
     let map = TempoMap::new(signature("4/4"), changes).unwrap();
