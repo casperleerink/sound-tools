@@ -1,10 +1,7 @@
 //! `sound-tools`: the app. Every form without a window is the runtime's (`runtime::cli`).
 //!
 //! `sound-tools <project-folder>` opens the window; a missing or empty folder becomes a new
-//! project of the DAW. With Rune's `--snap`, `--tree` or `--script` it runs without a window,
-//! on a copy of the folder, and adds `--play <seconds>` (plays from the start first),
-//! `--act <steps.json>` (runs actions on controls by label or key first, in the folder itself)
-//! and `--main <instance>` (shows that instance in place of the project's main one).
+//! project of the DAW.
 //!
 //! On Windows it is a window program, so the app opens no console window next to its own.
 //! Started from a terminal, it prints there anyway: see `print_to_the_terminal`.

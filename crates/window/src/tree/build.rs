@@ -428,8 +428,8 @@ pub(crate) fn scrolled(e: El, axes: Scroll) -> El {
 /// How far the edge of a scroll fades, in points.
 const FADE: f32 = 24.0;
 /// How thick a scroll bar's thumb is, and how far from the edge.
-const THUMB: f32 = 4.0;
-const THUMB_EDGE: f32 = 2.0;
+pub(super) const THUMB: f32 = 4.0;
+pub(super) const THUMB_EDGE: f32 = 2.0;
 
 /// `bar`, the thumb along axis `i` of the scroll `key`, scrolling it as it drags: the whole
 /// of what scrolls is the length of the bar.
