@@ -74,7 +74,7 @@ pub(crate) struct Gesture {
     pub(super) key: String,
     drag: Option<Dragging>,
     /// Where the pointer was from the press, and how far it moved the element, in points: with
-    /// Shift held, a tenth as far.
+    /// Shift held, [`FINE`] as far.
     last: [f32; 2],
     moved: [f32; 2],
     /// It went past the slop: a drag, and no press.

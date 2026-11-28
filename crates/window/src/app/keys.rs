@@ -367,10 +367,9 @@ impl State {
     }
 }
 
-/// A key that reaches the views before Rune presses what has the keys there, as the old app
-/// had it: Space is the keymap's wherever the focus is, so it plays, but a switch or a step the
-/// keys moved onto it turns, as the old step grid did; Enter presses the focused element that
-/// has a press, however it got the focus. Either presses with `clicks: 0`, so its code tells a
+/// A key that reaches the views before Rune presses what has the keys there: Space is the
+/// keymap's wherever the focus is, so it plays, but a switch or a step the keys moved onto it
+/// turns; Enter presses the focused element that has a press, however it got the focus. Either presses with `clicks: 0`, so its code tells a
 /// press of the keys from a click. A text field that types keeps both (`on_key`).
 pub(crate) fn in_views(state: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
     let Mods {

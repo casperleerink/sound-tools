@@ -14,7 +14,7 @@ use sound_typescript::live::Num;
 use crate::app::State;
 use crate::lives::Shows;
 
-use super::build::{build, drawn_now, holds_plane, is_overlay};
+use super::build::{THUMB, THUMB_EDGE, build, drawn_now, holds_plane, is_overlay};
 use super::{AxisSpec, BoxNode, Node, Place, PlaneSpec, Scope};
 
 /// The cameras of the planes, kept by key across the views' runs, and what is built in them.
@@ -120,9 +120,6 @@ const ZOOM_STEP: f32 = 1.25;
 /// How long what a plane follows rests before its moving again is a new start, in seconds: as
 /// when the piece plays again.
 const RESTED: f64 = 0.25;
-/// How thick a scroll bar's thumb is, and how far from the edge.
-const THUMB: f32 = 4.0;
-const THUMB_EDGE: f32 = 2.0;
 
 impl Planes {
     /// The points per unit of the plane `key`, across and down.
