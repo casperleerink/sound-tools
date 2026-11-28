@@ -413,8 +413,8 @@ pub fn write(
 }
 
 /// A lane as steps for a file: its value at each tick where it moved by a step, and at its
-/// points. An `expression` lane holds its first value from tick 0 and rests at `length`, as bend
-/// plays.
+/// points. An `expression` lane holds its first value from tick 0 and rests at `length`, as it
+/// plays in a clip.
 fn steps<V: ExpressionValue>(
     points: &[Point<V>],
     length: Ticks,

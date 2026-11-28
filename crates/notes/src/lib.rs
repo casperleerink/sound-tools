@@ -1,14 +1,6 @@
-//! The note contract: what a tool that sends notes and a tool that plays them agree on.
-//!
-//! Both sides depend on this crate and not on each other. It holds the saved [`Note`] and
-//! [`Clip`] with its expression lanes ([`Point`]), the saved [`RawTake`] a recording writes,
-//! the realtime [`NoteEvent`] with the wheels an instrument follows ([`Expression`]), and the
-//! port names of an instrument and an effect.
-//!
-//! It also holds how the bundled instruments play notes, [`Voices`] and [`Wheels`], so they
-//! all play them the same way, and the note lengths a time that follows the tempo is picked
-//! in, [`Division`] and [`Feel`]. Extensions never depend on each other, so this is the one place
-//! they share.
+//! The note contract: what a tool that sends notes and a tool that plays them agree on. Both
+//! sides depend on this crate and not on each other. Extensions never depend on each other, so
+//! what the bundled tools share lives here too, such as how they play notes ([`Voices`]).
 //!
 //! Rules for a sender of notes, which no type enforces:
 //!
@@ -201,8 +193,7 @@ impl From<Velocity> for u8 {
 /// How far the sustain pedal is pressed, 0 to 127, as it was played.
 ///
 /// It is a number and not a bool because a piano that knows half pedal must lose nothing. The
-/// synth of this repository only asks [`is_down`](Self::is_down), which is MIDI's rule: down
-/// from [`DOWN_FROM`](Self::DOWN_FROM).
+/// bundled instruments only ask [`is_down`](Self::is_down).
 #[derive(
     Copy,
     Clone,
@@ -531,7 +522,7 @@ pub struct PlacedPedal {
 ///   load, so a note written with a timeline position instead is an error and not silence.
 /// - A note that is longer than the rest of the clip ends where the clip ends.
 /// - `pedal` is the sustain pedal as it was played, and follows the same rules as the notes.
-///   A clip that was not recorded leaves it out, and is written back without it.
+///   Left out when empty, so a clip of before the pedal existed is written back as it was.
 /// - `bend`, `mod_wheel` and `pressure` are the expression lanes: points inside the clip, in
 ///   tick order, one per tick, read with [`value_at`]. An empty lane is left out of the file
 ///   and moves nothing; a lane with points holds for the whole clip, and ends with it.
@@ -545,20 +536,14 @@ pub struct Clip {
     pub start: Ticks,
     pub length: Length,
     pub notes: Vec<Note>,
-    /// Left out of a clip with no pedal, so a clip of before the pedal existed loads unchanged
-    /// and is written back byte for byte as it was.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pedal: Vec<PedalChange>,
-    /// The bend wheel. Left out when empty, like the pedal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bend: Vec<Point<Bend>>,
-    /// The modulation wheel.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mod_wheel: Vec<Point<Amount>>,
-    /// The key pressure.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pressure: Vec<Point<Amount>>,
-    /// MIDI controllers by number, each played from its first point and held after.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub controllers: Controllers,
 }
@@ -613,6 +598,7 @@ impl Clip {
         self.pressure = cut(&self.pressure, inside.clone());
         self.controllers = cut_controllers(&self.controllers, inside);
     }
+
     /// Whether it follows the rules above, with a message that names the field when not.
     pub fn validate(&self) -> Result<(), String> {
         let length = self.length.ticks();

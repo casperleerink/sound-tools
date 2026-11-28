@@ -1,7 +1,6 @@
 //! The shared voice engine: which voice a new note takes, the pedal, `AllOff`, mono, legato and
 //! glide. Played with a voice that only records what it was told.
 
-// Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them.
 #![allow(clippy::unwrap_used)]
 
 use proptest::prelude::*;

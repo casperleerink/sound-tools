@@ -31,7 +31,7 @@ pub struct NoteTimeline {
 
 impl NoteTimeline {
     /// Clips may overlap: the notes and the pedal moves of all of them play. A lane has one
-    /// owner at a time, see [`PlayedLane::new`].
+    /// owner at a time, the clip with points in it that started last.
     pub fn new<'a>(clips: impl IntoIterator<Item = &'a Clip>) -> Self {
         let clips: Vec<&Clip> = clips.into_iter().collect();
         let first = clips.iter().map(|clip| clip.start).min();
@@ -119,8 +119,7 @@ impl NoteTimeline {
         self.pedal.get(first..last).unwrap_or_default()
     }
 
-    /// Where the pedal stands just before `tick`: the last move before it, or up. Clips may
-    /// overlap, so of several moves at one tick the last in sorted order wins, as for notes.
+    /// Where the pedal stands just before `tick`: the last move before it, or up.
     pub(crate) fn pedal_before(&self, tick: Ticks) -> Pedal {
         let before = self.pedal.partition_point(|change| change.start < tick);
         self.pedal
